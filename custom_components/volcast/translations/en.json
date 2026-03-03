@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Volcast",
+        "description": "Enter your Volcast API key. You can find it in the Volcast app under Settings > API Access.",
+        "data": {
+          "api_key": "API Key",
+          "api_url": "API URL (advanced)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to Volcast API. Check your internet connection.",
+      "invalid_auth": "Invalid API key or premium subscription required.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This API key is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Volcast Options",
+        "data": {
+          "update_interval": "Update interval (minutes)",
+          "peak_threshold": "Peak production threshold (%)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_today": {
+        "name": "Energy forecast today"
+      },
+      "energy_tomorrow": {
+        "name": "Energy forecast tomorrow"
+      },
+      "power_now": {
+        "name": "Power now"
+      },
+      "api_status": {
+        "name": "API status"
+      }
+    },
+    "binary_sensor": {
+      "peak_production": {
+        "name": "Peak production"
+      }
+    }
+  }
+}
