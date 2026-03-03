@@ -38,6 +38,21 @@
       "energy_tomorrow": {
         "name": "Energy forecast tomorrow"
       },
+      "energy_day_3": {
+        "name": "Energy forecast day 3"
+      },
+      "energy_day_4": {
+        "name": "Energy forecast day 4"
+      },
+      "energy_day_5": {
+        "name": "Energy forecast day 5"
+      },
+      "energy_day_6": {
+        "name": "Energy forecast day 6"
+      },
+      "energy_day_7": {
+        "name": "Energy forecast day 7"
+      },
       "power_now": {
         "name": "Power now"
       },

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -29,14 +29,18 @@ async def async_setup_entry(
     """Set up Volcast sensors from a config entry."""
     coordinator: VolcastCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    async_add_entities(
-        [
-            VolcastEnergyTodaySensor(coordinator, entry),
-            VolcastEnergyTomorrowSensor(coordinator, entry),
-            VolcastPowerNowSensor(coordinator, entry),
-            VolcastApiStatusSensor(coordinator, entry),
-        ]
-    )
+    entities: list[SensorEntity] = [
+        VolcastEnergyTodaySensor(coordinator, entry),
+        VolcastEnergyTomorrowSensor(coordinator, entry),
+        VolcastPowerNowSensor(coordinator, entry),
+        VolcastApiStatusSensor(coordinator, entry),
+    ]
+
+    # Day 3-7 forecast sensors
+    for day_num in range(3, 8):
+        entities.append(VolcastEnergyDaySensor(coordinator, entry, day_num))
+
+    async_add_entities(entities)
 
 
 class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
@@ -66,6 +70,45 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
     def _data(self) -> VolcastData | None:
         """Shortcut to coordinator data."""
         return self.coordinator.data
+
+    def _get_tz(self):
+        """Return HA configured timezone."""
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(self.hass.config.time_zone)
+        except Exception:
+            from datetime import timezone
+            return timezone.utc
+
+    def _date_str(self, days_ahead: int = 0) -> str:
+        """Return date string for today + N days."""
+        tz = self._get_tz()
+        dt = datetime.now(tz) + timedelta(days=days_ahead)
+        return dt.strftime("%Y-%m-%d")
+
+    def _hourly_list(self, date_str: str) -> list[dict[str, Any]]:
+        """Return hourly breakdown for a specific date."""
+        if self._data is None:
+            return []
+        hours = self._data.hourly.get(date_str, [])
+        return [
+            {"hour": h.hour, "power_kw": h.power_kw, "energy_kwh": h.energy_kwh}
+            for h in hours
+        ]
+
+    def _day_attributes(self, date_str: str) -> dict[str, Any]:
+        """Return daily summary + hourly breakdown for a date."""
+        if self._data is None:
+            return {}
+        attrs: dict[str, Any] = {"date": date_str}
+        day = next((d for d in self._data.forecast if d.date == date_str), None)
+        if day:
+            attrs["peak_power_kw"] = day.peak_power_kw
+            attrs["confidence"] = day.confidence
+            attrs["sunshine_hours"] = day.sunshine_hours
+            attrs["cloud_cover_pct"] = day.cloud_cover_pct
+        attrs["hours"] = self._hourly_list(date_str)
+        return attrs
 
 
 # =============================================================================
@@ -100,35 +143,20 @@ class VolcastEnergyTodaySensor(VolcastBaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return forecast details as attributes."""
-        if self._data is None:
-            return {}
-        today = next((d for d in self._data.forecast if d.date == self._today_str), None)
-        attrs: dict[str, Any] = {}
-        if today:
-            attrs["peak_power_kw"] = today.peak_power_kw
-            attrs["confidence"] = today.confidence
-            attrs["sunshine_hours"] = today.sunshine_hours
-            attrs["cloud_cover_pct"] = today.cloud_cover_pct
-        attrs["forecast"] = [
-            {
-                "date": d.date,
-                "energy_kwh": d.energy_kwh,
-                "peak_power_kw": d.peak_power_kw,
-            }
-            for d in self._data.forecast
-        ]
+        """Return today's details + hourly breakdown + 7-day summary."""
+        today_str = self._date_str(0)
+        attrs = self._day_attributes(today_str)
+        # Full 7-day daily summary for overview
+        if self._data:
+            attrs["forecast"] = [
+                {
+                    "date": d.date,
+                    "energy_kwh": d.energy_kwh,
+                    "peak_power_kw": d.peak_power_kw,
+                }
+                for d in self._data.forecast
+            ]
         return attrs
-
-    @property
-    def _today_str(self) -> str:
-        try:
-            from zoneinfo import ZoneInfo
-            tz = ZoneInfo(self.hass.config.time_zone)
-        except Exception:
-            from datetime import timezone
-            tz = timezone.utc
-        return datetime.now(tz).strftime("%Y-%m-%d")
 
 
 # =============================================================================
@@ -160,6 +188,56 @@ class VolcastEnergyTomorrowSensor(VolcastBaseSensor):
             return None
         return round(self._data.energy_tomorrow, 2)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return tomorrow's details + hourly breakdown."""
+        return self._day_attributes(self._date_str(1))
+
+
+# =============================================================================
+# ENERGY DAY 3-7 (generic)
+# =============================================================================
+
+
+class VolcastEnergyDaySensor(VolcastBaseSensor):
+    """Forecasted energy for day N (3-7)."""
+
+    def __init__(
+        self,
+        coordinator: VolcastCoordinator,
+        entry: ConfigEntry,
+        day_number: int,
+    ) -> None:
+        """Initialize."""
+        self._days_ahead = day_number - 1  # day 3 = 2 days from today
+        super().__init__(
+            coordinator,
+            entry,
+            SensorEntityDescription(
+                key=f"energy_day_{day_number}",
+                translation_key=f"energy_day_{day_number}",
+                native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+                device_class=SensorDeviceClass.ENERGY,
+                suggested_display_precision=1,
+            ),
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return forecasted energy for this day."""
+        if self._data is None:
+            return None
+        date_str = self._date_str(self._days_ahead)
+        day = next((d for d in self._data.forecast if d.date == date_str), None)
+        if day is None:
+            return None
+        return round(day.energy_kwh, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return day details + hourly breakdown."""
+        return self._day_attributes(self._date_str(self._days_ahead))
+
 
 # =============================================================================
 # POWER NOW
@@ -190,13 +268,7 @@ class VolcastPowerNowSensor(VolcastBaseSensor):
         if self._data is None:
             return None
 
-        try:
-            from zoneinfo import ZoneInfo
-            tz = ZoneInfo(self.hass.config.time_zone)
-        except Exception:
-            from datetime import timezone
-            tz = timezone.utc
-
+        tz = self._get_tz()
         now = datetime.now(tz)
         today_str = now.strftime("%Y-%m-%d")
         current_hour = now.hour
