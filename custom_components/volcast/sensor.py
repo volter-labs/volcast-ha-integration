@@ -129,7 +129,6 @@ class VolcastEnergyTodaySensor(VolcastBaseSensor):
                 translation_key="energy_today",
                 native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
                 device_class=SensorDeviceClass.ENERGY,
-                state_class=SensorStateClass.TOTAL,
                 suggested_display_precision=1,
             ),
         )
