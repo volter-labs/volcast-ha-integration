@@ -263,13 +263,25 @@ class VolcastPowerNowSensor(VolcastBaseSensor):
 
     @property
     def native_value(self) -> float | None:
-        """Return interpolated current power in W."""
+        """Return current power in W (from 5-min data or hourly fallback)."""
         if self._data is None:
             return None
 
         tz = self._get_tz()
         now = datetime.now(tz)
         today_str = now.strftime("%Y-%m-%d")
+
+        # Prefer 5-min detailed data (api_version >= 2)
+        detailed = self._data.detailed.get(today_str, [])
+        if detailed:
+            slot_minute = (now.minute // 5) * 5
+            slot_key = f"{now.hour:02d}:{slot_minute:02d}"
+            entry = next((e for e in detailed if e.time == slot_key), None)
+            if entry is not None:
+                return entry.power_w
+            return 0
+
+        # Fallback: hourly linear interpolation
         current_hour = now.hour
         minute_fraction = now.minute / 60.0
 
@@ -277,7 +289,6 @@ class VolcastPowerNowSensor(VolcastBaseSensor):
         if not hours:
             return 0
 
-        # Find current and next hour entries
         current_entry = next((h for h in hours if h.hour == current_hour), None)
         next_entry = next((h for h in hours if h.hour == current_hour + 1), None)
 
@@ -286,7 +297,6 @@ class VolcastPowerNowSensor(VolcastBaseSensor):
 
         power_kw = current_entry.power_kw
         if next_entry is not None:
-            # Linear interpolation between current and next hour
             power_kw = (
                 current_entry.power_kw * (1 - minute_fraction)
                 + next_entry.power_kw * minute_fraction
@@ -328,9 +338,9 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
         if self._data is None:
             return {}
         return {
-            "from_cache": self._data.from_cache,
             "cache_age_minutes": self._data.cache_age_minutes,
             "generated_at": self._data.generated_at,
             "location": self._data.location,
             "system_capacity_kwp": self._data.system_capacity_kwp,
+            "api_version": self._data.api_version,
         }

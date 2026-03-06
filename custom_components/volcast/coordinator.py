@@ -39,6 +39,15 @@ class HourlyEntry:
 
 
 @dataclass
+class DetailedEntry:
+    """5-minute forecast entry."""
+
+    time: str  # "HH:MM"
+    power_w: int
+    energy_wh: int
+
+
+@dataclass
 class VolcastData:
     """Parsed API response."""
 
@@ -46,12 +55,13 @@ class VolcastData:
     energy_tomorrow: float
     forecast: list[DailyForecast]
     hourly: dict[str, list[HourlyEntry]]  # date → hours
+    detailed: dict[str, list[DetailedEntry]]  # date → 5-min entries (today+tomorrow)
     wh_hours: dict[str, float | int]  # ISO timestamp → Wh (for Energy Dashboard)
     system_capacity_kwp: float | None
     location: str
     generated_at: str
-    from_cache: bool
     cache_age_minutes: int
+    api_version: int
     api_status: str  # "Active", "Premium required", etc.
 
 
@@ -88,6 +98,8 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
                         return _error_data("Premium required")
                     if resp.status == 429:
                         raise UpdateFailed("Rate limit exceeded — retry later")
+                    if resp.status == 503:
+                        raise UpdateFailed("Forecast not yet available — cache being populated")
                     if resp.status >= 500:
                         raise UpdateFailed(f"Volcast API error: {resp.status}")
                     if not resp.ok:
@@ -107,12 +119,13 @@ def _error_data(status: str) -> VolcastData:
         energy_tomorrow=0,
         forecast=[],
         hourly={},
+        detailed={},
         wh_hours={},
         system_capacity_kwp=None,
         location="",
         generated_at=datetime.now(timezone.utc).isoformat(),
-        from_cache=False,
         cache_age_minutes=0,
+        api_version=0,
         api_status=status,
     )
 
@@ -120,6 +133,7 @@ def _error_data(status: str) -> VolcastData:
 def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
     """Parse API JSON into VolcastData."""
     attrs = raw.get("attributes", {})
+    api_version = attrs.get("api_version", 1)
 
     # Daily forecast
     forecast: list[DailyForecast] = []
@@ -148,8 +162,20 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
             for h in hours
         ]
 
+    # Detailed 5-min data (api_version >= 2)
+    detailed: dict[str, list[DetailedEntry]] = {}
+    raw_detailed = attrs.get("detailed", {})
+    for date_str, entries in raw_detailed.items():
+        detailed[date_str] = [
+            DetailedEntry(
+                time=e.get("time", "00:00"),
+                power_w=e.get("power_w", 0),
+                energy_wh=e.get("energy_wh", 0),
+            )
+            for e in entries
+        ]
+
     # Build wh_hours for HA Energy Dashboard
-    # Uses HA configured timezone for proper ISO timestamps
     ha_tz = hass.config.time_zone
     try:
         from zoneinfo import ZoneInfo
@@ -157,21 +183,7 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
     except Exception:
         tz = timezone.utc
 
-    wh_hours: dict[str, float | int] = {}
-    for date_str, hours in hourly.items():
-        for h in hours:
-            try:
-                dt = datetime(
-                    int(date_str[:4]),
-                    int(date_str[5:7]),
-                    int(date_str[8:10]),
-                    h.hour,
-                    tzinfo=tz,
-                )
-                wh = round(h.energy_kwh * 1000)  # kWh → Wh
-                wh_hours[dt.isoformat()] = wh
-            except (ValueError, IndexError):
-                continue
+    wh_hours = _build_wh_hours(hourly, detailed, tz)
 
     # Today/tomorrow energy
     today_str = datetime.now(tz).strftime("%Y-%m-%d")
@@ -190,11 +202,66 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         energy_tomorrow=energy_tomorrow,
         forecast=forecast,
         hourly=hourly,
+        detailed=detailed,
         wh_hours=wh_hours,
         system_capacity_kwp=attrs.get("system_capacity_kwp"),
         location=attrs.get("location", ""),
         generated_at=attrs.get("generated_at", ""),
-        from_cache=attrs.get("from_cache", False),
         cache_age_minutes=attrs.get("cache_age_minutes", 0),
+        api_version=api_version,
         api_status="Active",
     )
+
+
+def _build_wh_hours(
+    hourly: dict[str, list[HourlyEntry]],
+    detailed: dict[str, list[DetailedEntry]],
+    tz: Any,
+) -> dict[str, float | int]:
+    """Build wh_hours dict for HA Energy Dashboard.
+
+    For dates with 5-min detailed data: aggregate energy_wh into hourly Wh.
+    For other dates: use hourly energy_kwh * 1000.
+    """
+    wh_hours: dict[str, float | int] = {}
+
+    for date_str, hours in hourly.items():
+        if date_str in detailed and detailed[date_str]:
+            # Aggregate 5-min entries into hourly Wh
+            hourly_wh: dict[int, int] = {}
+            for entry in detailed[date_str]:
+                try:
+                    entry_hour = int(entry.time.split(":")[0])
+                except (ValueError, IndexError):
+                    continue
+                hourly_wh[entry_hour] = hourly_wh.get(entry_hour, 0) + entry.energy_wh
+
+            for hour_num, wh in hourly_wh.items():
+                try:
+                    dt = datetime(
+                        int(date_str[:4]),
+                        int(date_str[5:7]),
+                        int(date_str[8:10]),
+                        hour_num,
+                        tzinfo=tz,
+                    )
+                    wh_hours[dt.isoformat()] = wh
+                except (ValueError, IndexError):
+                    continue
+        else:
+            # Fallback: hourly data
+            for h in hours:
+                try:
+                    dt = datetime(
+                        int(date_str[:4]),
+                        int(date_str[5:7]),
+                        int(date_str[8:10]),
+                        h.hour,
+                        tzinfo=tz,
+                    )
+                    wh = round(h.energy_kwh * 1000)  # kWh → Wh
+                    wh_hours[dt.isoformat()] = wh
+                except (ValueError, IndexError):
+                    continue
+
+    return wh_hours

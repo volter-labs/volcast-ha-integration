@@ -83,6 +83,18 @@ class VolcastPeakProductionSensor(
         if not today_forecast or today_forecast.peak_power_kw <= 0:
             return False
 
+        # Prefer 5-min detailed data
+        detailed = data.detailed.get(today_str, [])
+        if detailed:
+            slot_minute = (now.minute // 5) * 5
+            slot_key = f"{now.hour:02d}:{slot_minute:02d}"
+            entry = next((e for e in detailed if e.time == slot_key), None)
+            if entry is None:
+                return False
+            threshold_w = today_forecast.peak_power_kw * 1000 * (self._threshold_pct / 100.0)
+            return entry.power_w >= threshold_w
+
+        # Fallback: hourly data
         hours = data.hourly.get(today_str, [])
         current_entry = next((h for h in hours if h.hour == now.hour), None)
         if current_entry is None:
