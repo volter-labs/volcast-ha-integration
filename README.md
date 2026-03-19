@@ -101,6 +101,77 @@ automation:
           entity_id: switch.ev_charger
 ```
 
+## Direct API Usage (without Home Assistant)
+
+You can call the Volcast forecast API directly using curl or any HTTP client — no Home Assistant or HACS required.
+
+**Important:** The API is hosted at `https://jzihchpmkhawegqcfbeo.supabase.co`, **not** at `volcast.app` (which is the marketing website). Calling `volcast.app/api/...` will return a 404 error.
+
+### Endpoint
+
+```
+GET https://jzihchpmkhawegqcfbeo.supabase.co/functions/v1/get-forecast-api?key=YOUR_API_KEY
+```
+
+### Example
+
+```bash
+curl "https://jzihchpmkhawegqcfbeo.supabase.co/functions/v1/get-forecast-api?key=vk_your_api_key"
+```
+
+### Response
+
+The API returns JSON with the following structure:
+
+```json
+{
+  "state": 12.5,
+  "attributes": {
+    "forecast": [
+      {
+        "date": "2025-07-15",
+        "energy_kwh": 12.5,
+        "peak_power_kw": 3.2,
+        "confidence": 0.85,
+        "sunshine_hours": 8.5,
+        "cloud_cover_pct": 25
+      }
+    ],
+    "hourly": {
+      "2025-07-15": [
+        { "hour": 8, "power_kw": 1.2, "energy_kwh": 0.9 }
+      ]
+    },
+    "detailed": {
+      "2025-07-15": [
+        { "time": "08:00", "power_w": 1200, "energy_wh": 100 }
+      ]
+    },
+    "system_capacity_kwp": 5.0,
+    "location": "Warsaw, Poland",
+    "generated_at": "2025-07-15T06:00:00Z",
+    "cache_age_minutes": 5,
+    "api_version": 2
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `state` | Today's total forecasted energy (kWh) |
+| `attributes.forecast` | 7-day daily forecast |
+| `attributes.hourly` | Hourly breakdown per day |
+| `attributes.detailed` | 5-minute resolution data (today + tomorrow, API v2) |
+
+### Common Errors
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| 401 | Invalid API key |
+| 403 | Premium subscription required |
+| 429 | Rate limit exceeded — retry later |
+| 503 | Forecast not yet available — cache being populated |
+
 ## How It Works
 
 Volcast uses a multi-model weather ensemble (ECMWF, GFS, ICON, and regional models) combined with a physics-based PV simulation model. The forecast is calibrated against your actual production data using a Kalman filter, improving accuracy over time.
