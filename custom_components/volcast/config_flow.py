@@ -16,10 +16,13 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import callback
+from homeassistant.helpers import selector
 
 from .const import (
     CONF_API_URL,
     CONF_PEAK_THRESHOLD,
+    CONF_PV_ENERGY_ENTITY,
+    CONF_PV_POWER_ENTITY,
     CONF_UPDATE_INTERVAL,
     DEFAULT_API_URL,
     DEFAULT_PEAK_THRESHOLD,
@@ -65,6 +68,10 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        """Initialize."""
+        self._api_data: dict[str, Any] = {}
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -88,15 +95,57 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(api_key)
                 self._abort_if_unique_id_configured()
 
-                return self.async_create_entry(
-                    title=info["title"],
-                    data={CONF_API_KEY: api_key, CONF_API_URL: api_url},
-                )
+                self._api_data = {
+                    CONF_API_KEY: api_key,
+                    CONF_API_URL: api_url,
+                    "title": info["title"],
+                }
+                return await self.async_step_production()
 
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
+        )
+
+    async def async_step_production(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle step 2 — optional PV production sensor mapping."""
+        if user_input is not None:
+            options = {
+                CONF_PV_ENERGY_ENTITY: user_input.get(CONF_PV_ENERGY_ENTITY, ""),
+                CONF_PV_POWER_ENTITY: user_input.get(CONF_PV_POWER_ENTITY, ""),
+            }
+            return self.async_create_entry(
+                title=self._api_data["title"],
+                data={
+                    CONF_API_KEY: self._api_data[CONF_API_KEY],
+                    CONF_API_URL: self._api_data[CONF_API_URL],
+                },
+                options=options,
+            )
+
+        production_schema = vol.Schema(
+            {
+                vol.Optional(CONF_PV_ENERGY_ENTITY, default=""): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="energy",
+                    )
+                ),
+                vol.Optional(CONF_PV_POWER_ENTITY, default=""): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="power",
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="production",
+            data_schema=production_schema,
         )
 
     @staticmethod
@@ -130,6 +179,28 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                         CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD
                     ),
                 ): vol.All(int, vol.Range(min=50, max=100)),
+                vol.Optional(
+                    CONF_PV_ENERGY_ENTITY,
+                    default=self.config_entry.options.get(
+                        CONF_PV_ENERGY_ENTITY, ""
+                    ),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="energy",
+                    )
+                ),
+                vol.Optional(
+                    CONF_PV_POWER_ENTITY,
+                    default=self.config_entry.options.get(
+                        CONF_PV_POWER_ENTITY, ""
+                    ),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="power",
+                    )
+                ),
             }
         )
 

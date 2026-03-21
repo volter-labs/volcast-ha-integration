@@ -24,7 +24,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Volcast binary sensors from a config entry."""
-    coordinator: VolcastCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: VolcastCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     peak_threshold = entry.options.get(CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD)
 
     async_add_entities([VolcastPeakProductionSensor(coordinator, entry, peak_threshold)])

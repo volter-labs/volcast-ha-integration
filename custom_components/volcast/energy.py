@@ -16,8 +16,9 @@ async def async_get_solar_forecast(
     Called by HA Energy Dashboard to display solar production forecast.
     Returns {"wh_hours": {"ISO_TIMESTAMP": wh_value, ...}} or None.
     """
-    coordinator: VolcastCoordinator | None = hass.data.get(DOMAIN, {}).get(
-        config_entry_id
+    entry_data = hass.data.get(DOMAIN, {}).get(config_entry_id, {})
+    coordinator: VolcastCoordinator | None = (
+        entry_data.get("coordinator") if isinstance(entry_data, dict) else None
     )
     if coordinator is None or coordinator.data is None:
         return None

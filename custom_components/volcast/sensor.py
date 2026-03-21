@@ -27,7 +27,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Volcast sensors from a config entry."""
-    coordinator: VolcastCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: VolcastCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     entities: list[SensorEntity] = [
         VolcastEnergyTodaySensor(coordinator, entry),
@@ -155,6 +155,7 @@ class VolcastEnergyTodaySensor(VolcastBaseSensor):
                 }
                 for d in self._data.forecast
             ]
+            attrs["nowcast_applied"] = self._data.nowcast_applied
         return attrs
 
 
@@ -324,6 +325,7 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
                 entity_category=EntityCategory.DIAGNOSTIC,
             ),
         )
+        self._entry_id = entry.entry_id
 
     @property
     def native_value(self) -> str | None:
@@ -334,13 +336,30 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return connection details."""
+        """Return connection details + production tracking status."""
         if self._data is None:
             return {}
-        return {
+        attrs: dict[str, Any] = {
             "cache_age_minutes": self._data.cache_age_minutes,
             "generated_at": self._data.generated_at,
             "location": self._data.location,
             "system_capacity_kwp": self._data.system_capacity_kwp,
             "api_version": self._data.api_version,
+            "nowcast_applied": self._data.nowcast_applied,
+            "nowcast_ratio": self._data.nowcast_ratio,
         }
+
+        # Production tracker info (jeśli aktywny)
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {})
+        tracker = entry_data.get("tracker") if isinstance(entry_data, dict) else None
+        if tracker is not None:
+            attrs["production_tracking"] = True
+            attrs["submissions_today"] = tracker.submissions_today
+            if tracker.calibration:
+                attrs["kalman_bias"] = tracker.calibration.get("bias")
+            if tracker.last_submission_time:
+                attrs["last_submission"] = tracker.last_submission_time.isoformat()
+        else:
+            attrs["production_tracking"] = False
+
+        return attrs

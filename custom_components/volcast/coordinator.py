@@ -63,6 +63,9 @@ class VolcastData:
     cache_age_minutes: int
     api_version: int
     api_status: str  # "Active", "Premium required", etc.
+    nowcast_applied: bool = False
+    nowcast_ratio: float | None = None
+    submit_url: str = ""
 
 
 class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
@@ -127,6 +130,9 @@ def _error_data(status: str) -> VolcastData:
         cache_age_minutes=0,
         api_version=0,
         api_status=status,
+        nowcast_applied=False,
+        nowcast_ratio=None,
+        submit_url="",
     )
 
 
@@ -210,6 +216,9 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         cache_age_minutes=attrs.get("cache_age_minutes", 0),
         api_version=api_version,
         api_status="Active",
+        nowcast_applied=attrs.get("nowcast_applied", False),
+        nowcast_ratio=attrs.get("nowcast_ratio"),
+        submit_url=attrs.get("submit_url", ""),
     )
 
 
