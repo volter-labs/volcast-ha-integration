@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.repairs import IssueSeverity
+try:
+    from homeassistant.components.repairs import IssueSeverity
+except ImportError:
+    IssueSeverity = None
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
@@ -63,15 +66,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Wyczyść ewentualny repair issue (użytkownik już skonfigurował)
         ir.async_delete_issue(hass, DOMAIN, "production_tracking_available")
     else:
-        # Pokaż repair issue — poinformuj o nowej funkcji
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            "production_tracking_available",
-            is_fixable=False,
-            severity=IssueSeverity.WARNING,
-            translation_key="production_tracking_available",
-        )
+        if IssueSeverity is not None:
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                "production_tracking_available",
+                is_fixable=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="production_tracking_available",
+            )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
