@@ -52,6 +52,7 @@ class VolcastProductionTracker:
         self._capacity_kwp = system_capacity_kwp
 
         self._current_bucket: HourBucket | None = None
+        self._previous_bucket: HourBucket | None = None
         self._last_flushed_hour: int = -1
         self._unsub_state: callback | None = None
         self._unsub_timer: callback | None = None
@@ -127,6 +128,9 @@ class VolcastProductionTracker:
 
         # Inicjalizuj bucket jeśli brak lub zmiana godziny
         if self._current_bucket is None or self._current_bucket.hour != current_hour:
+            # Zachowaj poprzedni bucket do flushu
+            if self._current_bucket is not None and self._current_bucket.hour != current_hour:
+                self._previous_bucket = self._current_bucket
             self._current_bucket = HourBucket(hour=current_hour)
 
         bucket = self._current_bucket
@@ -154,18 +158,19 @@ class VolcastProductionTracker:
         if prev_hour == self._last_flushed_hour:
             return  # Już wysłano w tej godzinie
 
-        if self._current_bucket is None:
-            self._last_flushed_hour = prev_hour
-            return
+        # Znajdź bucket do flushu — bieżący (jeśli z prev_hour) lub zachowany previous
+        bucket: HourBucket | None = None
+        if self._current_bucket is not None and self._current_bucket.hour == prev_hour:
+            bucket = self._current_bucket
+            self._current_bucket = HourBucket(hour=current_hour)
+        elif self._previous_bucket is not None and self._previous_bucket.hour == prev_hour:
+            bucket = self._previous_bucket
 
-        # Flush tylko jeśli bucket jest z poprzedniej godziny
-        if self._current_bucket.hour != prev_hour:
-            self._last_flushed_hour = prev_hour
-            return
-
-        bucket = self._current_bucket
-        self._current_bucket = HourBucket(hour=current_hour)
+        self._previous_bucket = None
         self._last_flushed_hour = prev_hour
+
+        if bucket is None:
+            return
 
         # Oblicz actual_kwh
         actual_kwh, data_method = self._compute_energy(bucket)
