@@ -3,7 +3,7 @@
   "name": "Volcast Solar Forecast",
   "codeowners": ["@volter-labs"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["repairs"],
   "documentation": "https://github.com/volter-labs/volcast-ha-integration",
   "integration_type": "service",
   "iot_class": "cloud_polling",
