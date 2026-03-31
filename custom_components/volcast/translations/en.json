@@ -8,6 +8,18 @@
           "api_key": "API Key",
           "api_url": "API URL (advanced)"
         }
+      },
+      "production": {
+        "title": "Production Tracking (optional)",
+        "description": "Connect your inverter sensors to improve forecast accuracy. Volcast will send hourly production summaries for calibration.\n\nBoth are optional — you can configure them later in integration options.",
+        "data": {
+          "pv_energy_entity": "Today's PV generation (kWh)",
+          "pv_power_entity": "Current PV power (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "A sensor that shows today's total solar production in kWh (resets daily). This is the primary source for tracking — look for sensors like \"Today's PV Generation\" or \"Daily Yield\" from your inverter (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_power_entity": "A sensor that shows current solar power output in watts. Used as a fallback when the energy sensor is unavailable or resets mid-day."
+        }
       }
     },
     "error": {
@@ -25,7 +37,13 @@
         "title": "Volcast Options",
         "data": {
           "update_interval": "Update interval (minutes)",
-          "peak_threshold": "Peak production threshold (%)"
+          "peak_threshold": "Peak production threshold (%)",
+          "pv_energy_entity": "Today's PV generation (kWh)",
+          "pv_power_entity": "Current PV power (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "A sensor that shows today's total solar production in kWh (resets daily).",
+          "pv_power_entity": "A sensor that shows current solar power output in watts. Used as fallback."
         }
       }
     }
