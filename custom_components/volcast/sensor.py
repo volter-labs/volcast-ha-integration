@@ -96,6 +96,58 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
             for h in hours
         ]
 
+    def _detailed_hourly(self, date_str: str) -> list[dict[str, Any]]:
+        """Return hourly data with ISO timestamps (Solcast-compatible format)."""
+        if self._data is None:
+            return []
+        tz = self._get_tz()
+        hours = self._data.hourly.get(date_str, [])
+        result = []
+        for h in hours:
+            try:
+                dt = datetime(
+                    int(date_str[:4]),
+                    int(date_str[5:7]),
+                    int(date_str[8:10]),
+                    h.hour,
+                    tzinfo=tz,
+                )
+                result.append({
+                    "period_start": dt.isoformat(),
+                    "power_kw": h.power_kw,
+                    "energy_kwh": h.energy_kwh,
+                })
+            except (ValueError, IndexError):
+                continue
+        return result
+
+    def _detailed_forecast(self, date_str: str) -> list[dict[str, Any]]:
+        """Return 5-minute detailed data with ISO timestamps."""
+        if self._data is None:
+            return []
+        tz = self._get_tz()
+        entries = self._data.detailed.get(date_str, [])
+        result = []
+        for e in entries:
+            try:
+                parts = e.time.split(":")
+                dt = datetime(
+                    int(date_str[:4]),
+                    int(date_str[5:7]),
+                    int(date_str[8:10]),
+                    int(parts[0]),
+                    int(parts[1]),
+                    tzinfo=tz,
+                )
+                result.append({
+                    "period_start": dt.isoformat(),
+                    "power_w": e.power_w,
+                    "energy_wh": e.energy_wh,
+                })
+            except (ValueError, IndexError):
+                continue
+        return result
+
     def _day_attributes(self, date_str: str) -> dict[str, Any]:
         """Return daily summary + hourly breakdown for a date."""
         if self._data is None:
@@ -108,6 +160,10 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
             attrs["sunshine_hours"] = day.sunshine_hours
             attrs["cloud_cover_pct"] = day.cloud_cover_pct
         attrs["hours"] = self._hourly_list(date_str)
+        attrs["detailedHourly"] = self._detailed_hourly(date_str)
+        detailed = self._detailed_forecast(date_str)
+        if detailed:
+            attrs["detailedForecast"] = detailed
         return attrs
 
 
