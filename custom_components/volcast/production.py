@@ -132,6 +132,10 @@ class VolcastProductionTracker:
             if self._current_bucket is not None and self._current_bucket.hour != current_hour:
                 self._previous_bucket = self._current_bucket
             self._current_bucket = HourBucket(hour=current_hour)
+            # Przenieś ostatni odczyt energii z poprzedniego bucketa jako start nowego
+            # (eliminuje lukę między ostatnim odczytem starej godziny a pierwszym nowej)
+            if self._previous_bucket is not None and self._previous_bucket.energy_latest is not None:
+                self._current_bucket.energy_start = self._previous_bucket.energy_latest
 
         bucket = self._current_bucket
 
