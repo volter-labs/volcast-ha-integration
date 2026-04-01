@@ -3,16 +3,45 @@
 [![HACS Validation](https://github.com/volter-labs/volcast-ha-integration/actions/workflows/hacs.yaml/badge.svg)](https://github.com/volter-labs/volcast-ha-integration/actions/workflows/hacs.yaml)
 [![hassfest](https://github.com/volter-labs/volcast-ha-integration/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/volter-labs/volcast-ha-integration/actions/workflows/hassfest.yaml)
 
-Home Assistant integration for [Volcast](https://volcast.app) — high-accuracy solar PV production forecasts powered by multi-model weather ensemble and Kalman filter calibration.
+Home Assistant integration for [Volcast](https://volcast.app) — solar PV production forecasts powered by multi-model weather ensemble, Kalman filter calibration, and real-time nowcasting.
 
 ## Features
 
 - **Energy Dashboard integration** — appears as a solar forecast source in the HA Energy Dashboard
-- **7-day forecast** — daily energy (kWh) and peak power (kW)
+- **7-day forecast** — daily energy (kWh) and peak power (kW) for up to 7 days
 - **Hourly & 5-min data** — `detailedHourly` and `detailedForecast` attributes on every daily sensor
 - **Live power estimate** — interpolated current power output (W)
+- **Production tracking** — sends your actual inverter data to Volcast for forecast calibration
+- **Nowcasting** — adjusts today's remaining forecast based on actual production so far
 - **Peak production alert** — binary sensor for automations (configurable threshold)
-- **UI-based setup** — no YAML needed, just enter your API key
+- **UI-based setup** — no YAML needed, just enter your API key and select your sensors
+
+## How It Works
+
+### Forecast Model
+
+Volcast uses a physics-based PV simulation model fed by a multi-model weather ensemble (ECMWF IFS, GFS, and regional models like ICON, UKMO, JMA depending on your location). The models are blended with horizon-dependent weighting — regional models dominate for short-range forecasts, global models take over for longer horizons.
+
+The integration polls the Volcast cloud API at a configurable interval (default: 60 minutes). Data is served from a server-side cache that refreshes every 2 hours, so values match exactly what you see in the Volcast mobile app.
+
+### Production Tracking & Calibration
+
+When you connect your inverter's energy or power sensor, the integration sends **hourly production summaries** to Volcast. This data drives two mechanisms:
+
+**Kalman filter calibration** — Volcast maintains a per-user bias estimate that adjusts forecasts based on how your actual production compares to predictions. The filter uses hourly cloud cover to apply different corrections for clear vs. cloudy conditions. This means the forecast learns your system's real-world characteristics (shading, soiling, inverter efficiency) over time. Calibration requires at least 5 days of data to activate and is applied to future days only — today's forecast stays unbiased.
+
+**Nowcasting** — After receiving at least 2 hourly readings for today, Volcast computes an actual-to-forecast ratio and adjusts the remaining hours of today's forecast. The adjustment decays exponentially for hours further from the last reading, so it has the strongest effect on the next few hours. This helps when conditions differ from the morning forecast — for example, unexpected cloud cover or clearer skies than predicted. Nowcast resets daily.
+
+Both mechanisms are optional — the forecast works without production tracking, it just won't improve over time.
+
+### How production data is collected
+
+The integration tracks your inverter sensor via state change events and accumulates data in hourly buckets:
+
+- **Energy sensor** (preferred): Computes the delta between the first and last reading each hour. Handles counter resets and carries over the last reading to the next hour to avoid gaps.
+- **Power sensor** (fallback): If the energy sensor is unavailable or resets, uses trapezoidal integration of power readings to estimate hourly energy.
+
+Data is submitted to Volcast once per hour (at ~5 minutes past each hour). A quality score and peak power reading are included with each submission.
 
 ## Sensors
 
@@ -20,6 +49,7 @@ Home Assistant integration for [Volcast](https://volcast.app) — high-accuracy 
 |--------|------|-------------|
 | `sensor.volcast_energy_forecast_today` | Energy (kWh) | Today's total forecasted production |
 | `sensor.volcast_energy_forecast_tomorrow` | Energy (kWh) | Tomorrow's total forecasted production |
+| `sensor.volcast_energy_forecast_day_3` – `day_7` | Energy (kWh) | Days 3–7 forecasted production |
 | `sensor.volcast_power_now` | Power (W) | Current estimated power output |
 | `binary_sensor.volcast_peak_production` | Binary | ON when power > threshold % of today's peak |
 | `sensor.volcast_api_status` | Diagnostic | API connection status |
@@ -51,7 +81,12 @@ Home Assistant integration for [Volcast](https://volcast.app) — high-accuracy 
 1. Go to **Settings > Devices & Services > Add Integration**
 2. Search for **Volcast**
 3. Enter your API key (`vk_...`)
-4. Done — sensors will appear automatically
+4. **(Optional)** Connect your inverter sensors for production tracking:
+   - **Today's PV generation (kWh)** — a sensor showing today's total solar production that resets daily (e.g. "Today's PV Generation", "Daily Yield" from GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase)
+   - **Current PV power (W)** — a sensor showing real-time power output, used as fallback when the energy sensor is unavailable
+5. Done — sensors will appear automatically
+
+Both production sensors are optional. You can add or change them later in the integration options.
 
 ### Energy Dashboard
 
@@ -68,6 +103,8 @@ After setup, click **Configure** on the integration to adjust:
 |--------|---------|-------|-------------|
 | Update interval | 60 min | 15–1440 | How often to poll the API |
 | Peak threshold | 80% | 50–100 | Threshold for peak production binary sensor |
+| PV energy sensor | — | — | Today's generation sensor (kWh, resets daily) |
+| PV power sensor | — | — | Current power sensor (W, fallback) |
 
 ## Sensor Attributes
 
@@ -77,11 +114,11 @@ Each daily energy sensor (`energy_today`, `energy_tomorrow`, days 3–7) exposes
 |-----------|--------|-------------|
 | `hours` | `[{"hour": 10, "power_kw": 3.5, "energy_kwh": 3.2}, ...]` | Hourly breakdown (24 entries) |
 | `detailedHourly` | `[{"period_start": "ISO8601", "power_kw": 3.5, "energy_kwh": 3.2}, ...]` | Hourly with ISO timestamps (Solcast-compatible) |
-| `detailedForecast` | `[{"period_start": "ISO8601", "power_w": 3500, "energy_wh": 292}, ...]` | 5-minute granularity (Premium, API v2) |
+| `detailedForecast` | `[{"period_start": "ISO8601", "power_w": 3500, "energy_wh": 292}, ...]` | 5-minute granularity |
 | `peak_power_kw` | `float` | Day's peak power |
-| `confidence` | `float` | Forecast confidence |
+| `confidence` | `high` / `medium` / `low` | Forecast confidence level |
 | `sunshine_hours` | `float` | Expected sunshine hours |
-| `cloud_cover_pct` | `float` | Cloud cover percentage |
+| `cloud_cover_pct` | `float` | Average cloud cover percentage |
 
 The `energy_today` sensor additionally includes a `forecast` attribute with a 7-day daily summary.
 
@@ -137,16 +174,34 @@ automation:
           entity_id: switch.ev_charger
 ```
 
-## How It Works
+### Run appliances when nowcast shows surplus
 
-Volcast uses a multi-model weather ensemble (ECMWF, GFS, ICON, and regional models) combined with a physics-based PV simulation model. The forecast is calibrated against your actual production data using a Kalman filter, improving accuracy over time.
+```yaml
+automation:
+  - alias: "Run washing machine during high production"
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.volcast_power_now
+        above: 3000
+        for: "00:10:00"
+    action:
+      - service: switch.turn_on
+        target:
+          entity_id: switch.washing_machine
+```
 
-The integration polls the Volcast cloud API at a configurable interval (default: 60 minutes). Data is served from cache when available, ensuring the values match exactly what you see in the Volcast mobile app.
+## Accuracy & Limitations
+
+- **Forecast horizon**: Accuracy is highest for today and tomorrow. Days 5–7 are less reliable, especially in variable weather.
+- **Calibration ramp-up**: The Kalman filter needs ~5 days of production data before calibration activates. During this period, forecasts use the uncalibrated model.
+- **Nowcast availability**: Requires at least 2 hourly readings with meaningful production (>0.01 kWh) and forecast (>0.5 kWh). Early morning hours or heavily overcast days may not produce enough data.
+- **Sensor compatibility**: Works with any inverter that exposes an energy or power entity in HA. Tested with GoodWe, Fronius, SolarEdge, Huawei, SMA, and Enphase.
 
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/volter-labs/volcast-ha-integration/issues)
 - **App support**: In-app chat (Settings > Help)
+- **Website**: [volcast.app](https://volcast.app)
 
 ## License
 
