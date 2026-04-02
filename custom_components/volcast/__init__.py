@@ -15,6 +15,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     CONF_API_URL,
+    CONF_BATTERY_SOC_ENTITY,
     CONF_PV_ENERGY_ENTITY,
     CONF_PV_POWER_ENTITY,
     CONF_UPDATE_INTERVAL,
@@ -43,6 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Production tracker — opcjonalny (wymaga skonfigurowanych sensorów)
     energy_entity = entry.options.get(CONF_PV_ENERGY_ENTITY, "")
     power_entity = entry.options.get(CONF_PV_POWER_ENTITY, "")
+    battery_soc_entity = entry.options.get(CONF_BATTERY_SOC_ENTITY, "")
 
     tracker: VolcastProductionTracker | None = None
     if energy_entity or power_entity:
@@ -57,6 +59,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             submit_url=submit_url,
             energy_entity=energy_entity,
             power_entity=power_entity,
+            battery_soc_entity=battery_soc_entity,
             system_capacity_kwp=(
                 coordinator.data.system_capacity_kwp if coordinator.data else None
             ),

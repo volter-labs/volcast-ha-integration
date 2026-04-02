@@ -29,6 +29,7 @@ class HourBucket:
     energy_latest: float | None = None
     power_readings: list[tuple[float, float]] = field(default_factory=list)  # (timestamp, watts)
     peak_power_w: float = 0.0
+    max_soc: float | None = None
 
 
 class VolcastProductionTracker:
@@ -41,6 +42,7 @@ class VolcastProductionTracker:
         submit_url: str,
         energy_entity: str,
         power_entity: str,
+        battery_soc_entity: str = "",
         system_capacity_kwp: float | None = None,
     ) -> None:
         """Initialize."""
@@ -49,6 +51,7 @@ class VolcastProductionTracker:
         self._submit_url = submit_url or DEFAULT_SUBMIT_URL
         self._energy_entity = energy_entity
         self._power_entity = power_entity
+        self._battery_soc_entity = battery_soc_entity
         self._capacity_kwp = system_capacity_kwp
 
         self._current_bucket: HourBucket | None = None
@@ -79,6 +82,8 @@ class VolcastProductionTracker:
             entities.append(self._energy_entity)
         if self._power_entity:
             entities.append(self._power_entity)
+        if self._battery_soc_entity:
+            entities.append(self._battery_soc_entity)
 
         if not entities:
             _LOGGER.warning("No production entities configured — tracker idle")
@@ -94,9 +99,10 @@ class VolcastProductionTracker:
         )
 
         _LOGGER.info(
-            "Production tracker started (energy=%s, power=%s, submit_url=%s)",
+            "Production tracker started (energy=%s, power=%s, battery_soc=%s, submit_url=%s)",
             self._energy_entity or "none",
             self._power_entity or "none",
+            self._battery_soc_entity or "none",
             self._submit_url,
         )
 
@@ -148,6 +154,10 @@ class VolcastProductionTracker:
             bucket.power_readings.append((now.timestamp(), value))
             if value > bucket.peak_power_w:
                 bucket.peak_power_w = value
+
+        if entity_id == self._battery_soc_entity:
+            if bucket.max_soc is None or value > bucket.max_soc:
+                bucket.max_soc = value
 
     async def _async_check_flush(self, _now: datetime) -> None:
         """Co 5 minut sprawdź, czy trzeba wysłać dane z poprzedniej godziny."""
@@ -203,6 +213,9 @@ class VolcastProductionTracker:
 
         if bucket.peak_power_w > 0:
             reading["peak_power_w"] = round(bucket.peak_power_w, 1)
+
+        if bucket.max_soc is not None:
+            reading["battery_soc"] = round(bucket.max_soc, 1)
 
         await self._async_submit([reading])
 
