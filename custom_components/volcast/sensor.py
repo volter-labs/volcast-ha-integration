@@ -129,6 +129,8 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
         entries = self._data.detailed.get(date_str, [])
         result = []
         for e in entries:
+            if e.power_w <= 0:
+                continue
             try:
                 parts = e.time.split(":")
                 dt = datetime(
