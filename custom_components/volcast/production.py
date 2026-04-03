@@ -53,6 +53,7 @@ class VolcastProductionTracker:
         self._power_entity = power_entity
         self._battery_soc_entity = battery_soc_entity
         self._capacity_kwp = system_capacity_kwp
+        self._last_known_soc: float | None = None
 
         self._current_bucket: HourBucket | None = None
         self._previous_bucket: HourBucket | None = None
@@ -158,6 +159,7 @@ class VolcastProductionTracker:
         if entity_id == self._battery_soc_entity:
             if bucket.max_soc is None or value > bucket.max_soc:
                 bucket.max_soc = value
+            self._last_known_soc = value
 
     async def _async_check_flush(self, _now: datetime) -> None:
         """Co 5 minut sprawdź, czy trzeba wysłać dane z poprzedniej godziny."""
@@ -214,8 +216,11 @@ class VolcastProductionTracker:
         if bucket.peak_power_w > 0:
             reading["peak_power_w"] = round(bucket.peak_power_w, 1)
 
-        if bucket.max_soc is not None:
-            reading["battery_soc"] = round(bucket.max_soc, 1)
+        # Użyj max_soc z bucketa, fallback na ostatnią znaną wartość
+        # (sensory Modbus mogą mieć krótkie przerwy — SoC nie zmienia się gwałtownie)
+        soc_value = bucket.max_soc if bucket.max_soc is not None else self._last_known_soc
+        if soc_value is not None:
+            reading["battery_soc"] = round(soc_value, 1)
 
         await self._async_submit([reading])
 
