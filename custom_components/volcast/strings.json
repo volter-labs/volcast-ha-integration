@@ -15,12 +15,14 @@
         "data": {
           "pv_energy_entity": "Today's PV generation (kWh)",
           "pv_power_entity": "Current PV power (W)",
-          "battery_soc_entity": "Battery state of charge (%)"
+          "battery_soc_entity": "Battery state of charge (%)",
+          "battery_charge_power_entity": "Battery charge power (W)"
         },
         "data_description": {
           "pv_energy_entity": "A sensor that shows today's total solar production in kWh (resets daily). This is the primary source for tracking — look for sensors like \"Today's PV Generation\" or \"Daily Yield\" from your inverter (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "A sensor that shows current solar power output in watts. Used as a fallback when the energy sensor is unavailable or resets mid-day.",
-          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect inverter curtailment when the battery is full. Optional — only needed if you have a battery system."
+          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect inverter curtailment when the battery is full. Optional — only needed if you have a battery system.",
+          "battery_charge_power_entity": "A sensor that shows battery charging power in watts. Used to confirm curtailment (battery full, not accepting charge) and detect grid charging (negative price scenarios). Optional."
         }
       }
     },
@@ -42,12 +44,14 @@
           "peak_threshold": "Peak production threshold (%)",
           "pv_energy_entity": "Today's PV generation (kWh)",
           "pv_power_entity": "Current PV power (W)",
-          "battery_soc_entity": "Battery state of charge (%)"
+          "battery_soc_entity": "Battery state of charge (%)",
+          "battery_charge_power_entity": "Battery charge power (W)"
         },
         "data_description": {
           "pv_energy_entity": "A sensor that shows today's total solar production in kWh (resets daily).",
           "pv_power_entity": "A sensor that shows current solar power output in watts. Used as fallback.",
-          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect curtailment."
+          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect curtailment.",
+          "battery_charge_power_entity": "A sensor for battery charging power in watts. Detects curtailment and grid charging."
         }
       }
     }

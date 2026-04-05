@@ -30,6 +30,10 @@ class HourBucket:
     power_readings: list[tuple[float, float]] = field(default_factory=list)  # (timestamp, watts)
     peak_power_w: float = 0.0
     max_soc: float | None = None
+    # Battery charge power — do detekcji curtailmentu i ładowania z sieci
+    charge_power_sum: float = 0.0
+    charge_power_count: int = 0
+    charge_power_max: float | None = None
 
 
 class VolcastProductionTracker:
@@ -43,6 +47,7 @@ class VolcastProductionTracker:
         energy_entity: str,
         power_entity: str,
         battery_soc_entity: str = "",
+        battery_charge_power_entity: str = "",
         system_capacity_kwp: float | None = None,
     ) -> None:
         """Initialize."""
@@ -52,6 +57,7 @@ class VolcastProductionTracker:
         self._energy_entity = energy_entity
         self._power_entity = power_entity
         self._battery_soc_entity = battery_soc_entity
+        self._battery_charge_power_entity = battery_charge_power_entity
         self._capacity_kwp = system_capacity_kwp
         self._last_known_soc: float | None = None
 
@@ -85,6 +91,8 @@ class VolcastProductionTracker:
             entities.append(self._power_entity)
         if self._battery_soc_entity:
             entities.append(self._battery_soc_entity)
+        if self._battery_charge_power_entity:
+            entities.append(self._battery_charge_power_entity)
 
         if not entities:
             _LOGGER.warning("No production entities configured — tracker idle")
@@ -100,10 +108,11 @@ class VolcastProductionTracker:
         )
 
         _LOGGER.info(
-            "Production tracker started (energy=%s, power=%s, battery_soc=%s, submit_url=%s)",
+            "Production tracker started (energy=%s, power=%s, battery_soc=%s, charge_power=%s, submit_url=%s)",
             self._energy_entity or "none",
             self._power_entity or "none",
             self._battery_soc_entity or "none",
+            self._battery_charge_power_entity or "none",
             self._submit_url,
         )
 
@@ -160,6 +169,13 @@ class VolcastProductionTracker:
             if bucket.max_soc is None or value > bucket.max_soc:
                 bucket.max_soc = value
             self._last_known_soc = value
+
+        if entity_id == self._battery_charge_power_entity:
+            # Akumuluj do obliczenia avg i max mocy ładowania
+            bucket.charge_power_sum += value
+            bucket.charge_power_count += 1
+            if bucket.charge_power_max is None or value > bucket.charge_power_max:
+                bucket.charge_power_max = value
 
     async def _async_check_flush(self, _now: datetime) -> None:
         """Co 5 minut sprawdź, czy trzeba wysłać dane z poprzedniej godziny."""
@@ -221,6 +237,13 @@ class VolcastProductionTracker:
         soc_value = bucket.max_soc if bucket.max_soc is not None else self._last_known_soc
         if soc_value is not None:
             reading["battery_soc"] = round(soc_value, 1)
+
+        # Battery charge power — avg i max do detekcji curtailmentu
+        if bucket.charge_power_count > 0:
+            avg_power = bucket.charge_power_sum / bucket.charge_power_count
+            reading["battery_charge_power_avg"] = round(avg_power, 1)
+        if bucket.charge_power_max is not None:
+            reading["battery_charge_power_max"] = round(bucket.charge_power_max, 1)
 
         await self._async_submit([reading])
 
