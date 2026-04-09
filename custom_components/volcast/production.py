@@ -14,8 +14,13 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.storage import Store
 
 from .const import DEFAULT_SUBMIT_URL
+
+STORAGE_KEY = "volcast_production_queue"
+STORAGE_VERSION = 1
+MAX_QUEUE_SIZE = 48
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,11 +72,45 @@ class VolcastProductionTracker:
         self._unsub_state: callback | None = None
         self._unsub_timer: callback | None = None
 
+        # Persystentna kolejka retry — readingi, które nie dotarły do backendu
+        self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._queue: list[dict[str, Any]] = []
+        self._queue_loaded: bool = False
+
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
         self.calibration: dict[str, Any] | None = None
         self.last_submission_time: datetime | None = None
         self.submissions_today: int = 0
         self._last_submission_date: str = ""
+
+    @property
+    def queued_count(self) -> int:
+        """Liczba zakolejkowanych readingów czekających na retry."""
+        return len(self._queue)
+
+    async def _async_load_queue(self) -> None:
+        """Załaduj kolejkę retry z persystentnego Store (lazy, raz)."""
+        if self._queue_loaded:
+            return
+        try:
+            data = await self._store.async_load()
+            if isinstance(data, list):
+                self._queue = data
+                if self._queue:
+                    _LOGGER.info("Loaded %d queued readings from store", len(self._queue))
+        except Exception:
+            _LOGGER.warning("Failed to load retry queue from storage", exc_info=True)
+        self._queue_loaded = True
+
+    async def _async_save_queue(self) -> None:
+        """Zapisz kolejkę do Store (lub wyczyść jeśli pusta)."""
+        try:
+            if self._queue:
+                await self._store.async_save(self._queue)
+            else:
+                await self._store.async_remove()
+        except Exception:
+            _LOGGER.warning("Failed to persist retry queue to storage", exc_info=True)
 
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""
@@ -281,13 +320,29 @@ class VolcastProductionTracker:
 
         return None, ""
 
-    async def _async_submit(self, readings: list[dict[str, Any]]) -> None:
-        """Wyślij dane produkcji do backendu."""
+    async def _async_submit(self, readings: list[dict[str, Any]]) -> bool:
+        """Wyślij dane produkcji do backendu. Zwraca True jeśli sukces.
+
+        Łączy zakolejkowane readingi (retry) z bieżącymi i wysyła w jednym POST.
+        Na sukces czyści kolejkę; na fail dodaje readingi do kolejki.
+        """
+        # Załaduj kolejkę retry (lazy, raz)
+        await self._async_load_queue()
+
+        # Połącz zakolejkowane + nowe (dedup po date+hour)
+        all_readings = list(self._queue)
+        seen = {(r["date"], r["hour"]) for r in all_readings}
+        for r in readings:
+            key = (r["date"], r["hour"])
+            if key not in seen:
+                all_readings.append(r)
+                seen.add(key)
+
         try:
             session = async_get_clientsession(self._hass)
             async with session.post(
                 self._submit_url,
-                json={"readings": readings},
+                json={"readings": all_readings},
                 headers={
                     "X-API-Key": self._api_key,
                     "Content-Type": "application/json",
@@ -299,12 +354,23 @@ class VolcastProductionTracker:
                     self.calibration = data.get("calibration")
                     self.last_submission_time = datetime.now(timezone.utc)
                     self.submissions_today += data.get("accepted", 0)
-                    _LOGGER.info(
-                        "Production submitted: accepted=%s rejected=%s calibration=%s",
-                        data.get("accepted", 0),
-                        data.get("rejected", 0),
-                        self.calibration,
-                    )
+                    if self._queue:
+                        _LOGGER.info(
+                            "Production submitted with %d retried readings: accepted=%s",
+                            len(self._queue),
+                            data.get("accepted", 0),
+                        )
+                    else:
+                        _LOGGER.info(
+                            "Production submitted: accepted=%s rejected=%s calibration=%s",
+                            data.get("accepted", 0),
+                            data.get("rejected", 0),
+                            self.calibration,
+                        )
+                    # Sukces — wyczyść kolejkę retry
+                    self._queue = []
+                    await self._async_save_queue()
+                    return True
                 elif resp.status == 429:
                     _LOGGER.warning("Production submit rate limited (429)")
                 else:
@@ -313,3 +379,11 @@ class VolcastProductionTracker:
 
         except Exception:
             _LOGGER.exception("Error during production submit")
+
+        # Fail — zapisz wszystkie readingi do kolejki retry
+        self._queue = all_readings
+        if len(self._queue) > MAX_QUEUE_SIZE:
+            self._queue = self._queue[-MAX_QUEUE_SIZE:]
+        await self._async_save_queue()
+        _LOGGER.info("Queued %d readings for retry (total queued: %d)", len(readings), len(self._queue))
+        return False

@@ -413,6 +413,7 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
         if tracker is not None:
             attrs["production_tracking"] = True
             attrs["submissions_today"] = tracker.submissions_today
+            attrs["queued_readings"] = tracker.queued_count
             if tracker.calibration:
                 attrs["kalman_bias"] = tracker.calibration.get("bias")
             if tracker.last_submission_time:

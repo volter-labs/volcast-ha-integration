@@ -35,14 +35,31 @@ class _FakeHomeAssistant:
     config = _Config()
 
 
+def _fake_callback(func):
+    """Stub for @callback decorator."""
+    return func
+
+
+class _FakeEvent:
+    """Stub for homeassistant.core.Event."""
+    def __init__(self, data=None):
+        self.data = data or {}
+
+
 _make_module("homeassistant")
-_make_module("homeassistant.core", {"HomeAssistant": _FakeHomeAssistant})
+_make_module("homeassistant.core", {
+    "HomeAssistant": _FakeHomeAssistant,
+    "Event": _FakeEvent,
+    "callback": _fake_callback,
+})
 _make_module("homeassistant.const", {
     "CONF_API_KEY": "api_key",
     "Platform": MagicMock(),
     "EntityCategory": MagicMock(),
     "UnitOfEnergy": MagicMock(),
     "UnitOfPower": MagicMock(),
+    "STATE_UNAVAILABLE": "unavailable",
+    "STATE_UNKNOWN": "unknown",
 })
 
 # --- homeassistant.config_entries ---
@@ -58,6 +75,38 @@ _make_module("homeassistant.config_entries", {"ConfigEntry": _FakeConfigEntry})
 # --- homeassistant.helpers ---
 _make_module("homeassistant.helpers")
 _make_module("homeassistant.helpers.entity_platform", {"AddEntitiesCallback": Any})
+
+
+class _FakeStore:
+    """Minimal stub for homeassistant.helpers.storage.Store."""
+
+    def __init__(self, hass=None, version: int = 1, key: str = ""):
+        self._version = version
+        self._key = key
+        self._data: Any = None
+
+    async def async_load(self) -> Any:
+        return self._data
+
+    async def async_save(self, data: Any) -> None:
+        self._data = data
+
+    async def async_remove(self) -> None:
+        self._data = None
+
+
+_make_module("homeassistant.helpers.storage", {"Store": _FakeStore})
+_make_module("homeassistant.helpers.event", {
+    "async_track_state_change_event": MagicMock(return_value=MagicMock()),
+    "async_track_time_interval": MagicMock(return_value=MagicMock()),
+})
+_make_module("homeassistant.helpers.aiohttp_client", {
+    "async_get_clientsession": MagicMock(),
+})
+_make_module("homeassistant.helpers.issue_registry", {
+    "async_create_issue": MagicMock(),
+    "async_delete_issue": MagicMock(),
+})
 
 
 class _FakeCoordinatorEntity:
