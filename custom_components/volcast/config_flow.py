@@ -20,8 +20,10 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_API_URL,
+    CONF_BATTERY_CHARGE_POWER_ENTITY,
     CONF_PEAK_THRESHOLD,
     CONF_PV_ENERGY_ENTITY,
+    CONF_BATTERY_SOC_ENTITY,
     CONF_PV_POWER_ENTITY,
     CONF_UPDATE_INTERVAL,
     DEFAULT_API_URL,
@@ -116,6 +118,8 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
             options = {
                 CONF_PV_ENERGY_ENTITY: user_input.get(CONF_PV_ENERGY_ENTITY, ""),
                 CONF_PV_POWER_ENTITY: user_input.get(CONF_PV_POWER_ENTITY, ""),
+                CONF_BATTERY_SOC_ENTITY: user_input.get(CONF_BATTERY_SOC_ENTITY, ""),
+                CONF_BATTERY_CHARGE_POWER_ENTITY: user_input.get(CONF_BATTERY_CHARGE_POWER_ENTITY, ""),
             }
             return self.async_create_entry(
                 title=self._api_data["title"],
@@ -135,6 +139,18 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                 ),
                 vol.Optional(CONF_PV_POWER_ENTITY, default=""): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="power",
+                    )
+                ),
+                vol.Optional(CONF_BATTERY_SOC_ENTITY, default=""): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="battery",
+                    )
+                ),
+                vol.Optional(CONF_BATTERY_CHARGE_POWER_ENTITY, default=""): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         domain="sensor",
                         device_class="power",
@@ -194,6 +210,28 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                     CONF_PV_POWER_ENTITY,
                     default=self.config_entry.options.get(
                         CONF_PV_POWER_ENTITY, ""
+                    ),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="power",
+                    )
+                ),
+                vol.Optional(
+                    CONF_BATTERY_SOC_ENTITY,
+                    default=self.config_entry.options.get(
+                        CONF_BATTERY_SOC_ENTITY, ""
+                    ),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="battery",
+                    )
+                ),
+                vol.Optional(
+                    CONF_BATTERY_CHARGE_POWER_ENTITY,
+                    default=self.config_entry.options.get(
+                        CONF_BATTERY_CHARGE_POWER_ENTITY, ""
                     ),
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(
