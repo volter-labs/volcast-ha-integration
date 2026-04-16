@@ -13,6 +13,8 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 - **Live power estimate** — interpolated current power output (W)
 - **Production tracking** — sends your actual inverter data to Volcast for forecast calibration
 - **Nowcasting** — adjusts today's remaining forecast based on actual production so far
+- **Curtailment detection** — uses battery SoC to detect inverter curtailment; affected hours are excluded from calibration so a capped system doesn't skew the forecast
+- **Persistent retry queue** — production submissions that fail (network issues, API downtime) are queued locally and retried automatically
 - **Peak production alert** — binary sensor for automations (configurable threshold)
 - **UI-based setup** — no YAML needed, just enter your API key and select your sensors
 
@@ -32,7 +34,9 @@ When you connect your inverter's energy or power sensor, the integration sends *
 
 **Nowcasting** — After receiving at least 2 hourly readings for today, Volcast computes an actual-to-forecast ratio and adjusts the remaining hours of today's forecast. The adjustment decays exponentially for hours further from the last reading, so it has the strongest effect on the next few hours. This helps when conditions differ from the morning forecast — for example, unexpected cloud cover or clearer skies than predicted. Nowcast resets daily.
 
-Both mechanisms are optional — the forecast works without production tracking, it just won't improve over time.
+**Curtailment detection** — When you connect a battery state-of-charge sensor, the integration detects hours when the inverter caps production (battery full + clear sky + low output vs. forecast). Curtailed hours are marked so calibration ignores them — otherwise the Kalman filter would learn a downward bias from artificially low production. Battery sensors are optional; without them, curtailment is not detected but calibration still works.
+
+All three mechanisms are optional — the forecast works without production tracking, it just won't improve over time.
 
 ### How production data is collected
 
@@ -84,9 +88,12 @@ Data is submitted to Volcast once per hour (at ~5 minutes past each hour). A qua
 4. **(Optional)** Connect your inverter sensors for production tracking:
    - **Today's PV generation (kWh)** — a sensor showing today's total solar production that resets daily (e.g. "Today's PV Generation", "Daily Yield" from GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase)
    - **Current PV power (W)** — a sensor showing real-time power output, used as fallback when the energy sensor is unavailable
-5. Done — sensors will appear automatically
+5. **(Optional)** Connect your battery sensors for curtailment detection:
+   - **Battery state of charge (%)** — enables detection of inverter curtailment when the battery is full
+   - **Battery charge power (W)** — power flowing to/from the battery, improves curtailment accuracy (v2 detection)
+6. Done — sensors will appear automatically
 
-Both production sensors are optional. You can add or change them later in the integration options.
+All production and battery sensors are optional. You can add or change them later in the integration options.
 
 ### Energy Dashboard
 
@@ -105,6 +112,8 @@ After setup, click **Configure** on the integration to adjust:
 | Peak threshold | 80% | 50–100 | Threshold for peak production binary sensor |
 | PV energy sensor | — | — | Today's generation sensor (kWh, resets daily) |
 | PV power sensor | — | — | Current power sensor (W, fallback) |
+| Battery SoC sensor | — | — | State of charge (%) — enables curtailment detection |
+| Battery charge power sensor | — | — | Battery power flow (W) — improves curtailment accuracy |
 
 ## Sensor Attributes
 
