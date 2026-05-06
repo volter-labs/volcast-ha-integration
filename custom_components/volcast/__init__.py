@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 try:
     from homeassistant.components.repairs import IssueSeverity
@@ -12,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
     CONF_API_URL,
@@ -90,6 +92,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    # Scheduled refresh — synchronizacja z cyklem cache po stronie serwera.
+    # Cron `refresh-forecast-cache` tyka co godzinę o :35 UTC. Polling klienta o :45
+    # lokalnym daje 10 min bufora i trafia w świeże dane (najgorszy przypadek <1h stary cache).
+    # Dodatkowy refresh o 00:02 lokalnym przyspiesza rollover "today" po lokalnej północy
+    # (bez tego user musiałby czekać do następnego :45 = nawet 45 min).
+    async def _scheduled_refresh(_now: datetime) -> None:
+        await coordinator.async_request_refresh()
+
+    entry.async_on_unload(
+        async_track_time_change(hass, _scheduled_refresh, minute=45, second=0)
+    )
+    entry.async_on_unload(
+        async_track_time_change(hass, _scheduled_refresh, hour=0, minute=2, second=0)
+    )
 
     return True
 

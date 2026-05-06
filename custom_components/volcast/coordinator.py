@@ -196,7 +196,15 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
     tomorrow_dt = datetime.now(tz) + timedelta(days=1)
     tomorrow_str = tomorrow_dt.strftime("%Y-%m-%d")
 
+    # energy_today: lookup po lokalnej dacie HA, NIE raw API state.
+    # Server liczy state w UTC — dla userów east of UTC raw state pokazuje
+    # wczorajszą prognozę między lokalną północą a UTC północą (np. 00:00–02:00 CEST).
     energy_today = raw.get("state", 0)
+    for d in forecast:
+        if d.date == today_str:
+            energy_today = d.energy_kwh
+            break
+
     energy_tomorrow = 0.0
     for d in forecast:
         if d.date == tomorrow_str:

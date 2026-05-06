@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -213,3 +214,129 @@ class TestErrorData:
         assert result.forecast == []
         assert result.hourly == {}
         assert result.detailed == {}
+
+
+# ---------------------------------------------------------------------------
+# Local-timezone "today" rollover (regression for v1.6.1 bug fix)
+# ---------------------------------------------------------------------------
+
+WARSAW = ZoneInfo("Europe/Warsaw")
+
+
+class TestEnergyTodayLocalTimezone:
+    """energy_today must roll over at LOCAL midnight, not UTC.
+
+    Server `state` is computed in UTC (see get-forecast-api/index.ts:203). For users
+    east of UTC this means raw `state` shows yesterday's forecast between local
+    midnight and UTC midnight (00:00–02:00 CEST in summer for Polish users).
+    The integration must look up today_str in the forecast list using HA local time.
+    """
+
+    @patch("custom_components.volcast.coordinator.datetime")
+    def test_energy_today_uses_local_today_not_raw_state(self, mock_dt):
+        """At 00:30 CEST May 6 (= 22:30 UTC May 5), energy_today must be May 6's value."""
+        mock_dt.now.return_value = datetime(2026, 5, 6, 0, 30, tzinfo=WARSAW)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        raw = _make_api_response(
+            state=18.0,  # API state = May 5 (UTC-today, local-yesterday)
+            forecast=[
+                {
+                    "date": "2026-05-05",
+                    "energy_kwh": 18.0,
+                    "peak_power_kw": 3.5,
+                    "confidence": 0.8,
+                    "sunshine_hours": 7,
+                    "cloud_cover_pct": 30,
+                },
+                {
+                    "date": "2026-05-06",
+                    "energy_kwh": 25.5,
+                    "peak_power_kw": 4.2,
+                    "confidence": 0.85,
+                    "sunshine_hours": 8.5,
+                    "cloud_cover_pct": 25,
+                },
+            ],
+        )
+        result = _parse_response(raw, FakeHass())
+
+        assert result.energy_today == 25.5, (
+            f"energy_today should be local-today's forecast (May 6 = 25.5), "
+            f"got {result.energy_today}. Bug: raw API state is UTC-based."
+        )
+
+    @patch("custom_components.volcast.coordinator.datetime")
+    def test_energy_today_after_utc_midnight_unchanged(self, mock_dt):
+        """At 03:00 CEST May 6 (= 01:00 UTC May 6), local and UTC agree on May 6."""
+        mock_dt.now.return_value = datetime(2026, 5, 6, 3, 0, tzinfo=WARSAW)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        raw = _make_api_response(
+            state=25.5,  # API state = May 6 (matches local)
+            forecast=[
+                {
+                    "date": "2026-05-06",
+                    "energy_kwh": 25.5,
+                    "peak_power_kw": 4.2,
+                    "confidence": 0.85,
+                    "sunshine_hours": 8.5,
+                    "cloud_cover_pct": 25,
+                },
+                {
+                    "date": "2026-05-07",
+                    "energy_kwh": 30.0,
+                    "peak_power_kw": 4.5,
+                    "confidence": 0.7,
+                    "sunshine_hours": 9,
+                    "cloud_cover_pct": 20,
+                },
+            ],
+        )
+        result = _parse_response(raw, FakeHass())
+
+        assert result.energy_today == 25.5
+
+    @patch("custom_components.volcast.coordinator.datetime")
+    def test_energy_today_falls_back_to_state_when_today_missing(self, mock_dt):
+        """Defensive: if forecast[] has no entry for local-today, fall back to raw state."""
+        mock_dt.now.return_value = datetime(2026, 5, 6, 12, 0, tzinfo=WARSAW)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        raw = _make_api_response(
+            state=42.0,
+            forecast=[
+                {
+                    "date": "2026-05-07",  # only future days
+                    "energy_kwh": 30.0,
+                    "peak_power_kw": 4.5,
+                    "confidence": 0.7,
+                    "sunshine_hours": 9,
+                    "cloud_cover_pct": 20,
+                },
+            ],
+        )
+        result = _parse_response(raw, FakeHass())
+
+        assert result.energy_today == 42.0
+
+    @patch("custom_components.volcast.coordinator.datetime")
+    def test_energy_tomorrow_still_uses_local_tomorrow(self, mock_dt):
+        """Regression guard: energy_tomorrow logic remains correct after the fix."""
+        mock_dt.now.return_value = datetime(2026, 5, 6, 0, 30, tzinfo=WARSAW)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        raw = _make_api_response(
+            state=18.0,
+            forecast=[
+                {"date": "2026-05-05", "energy_kwh": 18.0, "peak_power_kw": 3.5,
+                 "confidence": 0.8, "sunshine_hours": 7, "cloud_cover_pct": 30},
+                {"date": "2026-05-06", "energy_kwh": 25.5, "peak_power_kw": 4.2,
+                 "confidence": 0.85, "sunshine_hours": 8.5, "cloud_cover_pct": 25},
+                {"date": "2026-05-07", "energy_kwh": 30.0, "peak_power_kw": 4.5,
+                 "confidence": 0.7, "sunshine_hours": 9, "cloud_cover_pct": 20},
+            ],
+        )
+        result = _parse_response(raw, FakeHass())
+
+        assert result.energy_tomorrow == 30.0  # May 7 from local-May-6 perspective
