@@ -18,7 +18,9 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 - **Peak production alert** — binary sensor for automations (configurable threshold)
 - **UI-based setup** — no YAML needed, just enter your API key and select your sensors
 
-### Resilience & Reconciliation (v1.7.0)
+### Resilience & Reconciliation (preview — v1.6.1-beta2)
+
+> Pre-release. Opt-in via HACS pre-release toggle. Stabilizes to 1.7.0 once dogfooded.
 
 The integration now ships three layered resilience mechanisms:
 
