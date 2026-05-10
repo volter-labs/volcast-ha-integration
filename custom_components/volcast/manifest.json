@@ -1,10 +1,10 @@
 {
   "domain": "volcast",
   "name": "Volcast Solar Forecast",
+  "after_dependencies": ["recorder"],
   "codeowners": ["@volter-labs"],
   "config_flow": true,
   "dependencies": ["repairs"],
-  "after_dependencies": ["recorder"],
   "documentation": "https://github.com/volter-labs/volcast-ha-integration",
   "integration_type": "service",
   "iot_class": "cloud_polling",
