@@ -41,6 +41,7 @@ def _make_sensor(sensor_cls, data: VolcastData | None, **kwargs):
     sensor = sensor_cls.__new__(sensor_cls)
     sensor.coordinator = coordinator
     sensor.hass = FakeHass()
+    sensor._entry_id = entry.entry_id
     sensor._attr_has_entity_name = True
     sensor._attr_unique_id = "test"
     sensor._attr_device_info = {}

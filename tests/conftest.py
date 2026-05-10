@@ -320,6 +320,9 @@ class FakeHass:
         time_zone = "Europe/Warsaw"
     config = _Config()
 
+    def __init__(self):
+        self.data: dict = {}
+
 
 @pytest.fixture
 def fake_hass() -> FakeHass:
