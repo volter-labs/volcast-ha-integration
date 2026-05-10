@@ -291,3 +291,114 @@ async def test_reconcile_day_zero_kwh_excluded():
     assert all(h >= 6 for h in submitted_hours), "no nighttime hours submitted"
     assert len(submitted_hours) == 13
     assert result.submitted == 13
+
+
+# ---------------------------------------------------------------------------
+# _setup_reconciler — trigger wiring (Task 19)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingConfigEntry:
+    """Test double for ConfigEntry that records async_on_unload registrations."""
+
+    entry_id = "test_entry_id"
+    data = {"api_key": "fake"}
+    options: dict = {}
+
+    def __init__(self):
+        self.unload_callbacks: list = []
+
+    def add_update_listener(self, _):
+        return lambda: None
+
+    def async_on_unload(self, cb):
+        self.unload_callbacks.append(cb)
+
+
+def _make_setup_tracker(hass) -> VolcastProductionTracker:
+    """Tracker for _setup_reconciler tests — Stores stubbed but no async_start."""
+    tracker = VolcastProductionTracker(
+        hass=hass,
+        api_key="test-key",
+        submit_url="https://example.com/api/submit-production",
+        energy_entity="sensor.pv_energy",
+        power_entity="sensor.pv_power",
+    )
+    tracker._store = _FakeStore()
+    tracker._accepted_store = _FakeStore()
+    return tracker
+
+
+@pytest.mark.asyncio
+async def test_setup_reconciler_registers_scheduled_trigger():
+    """_setup_reconciler calls async_track_time_change(hour=0, minute=30, second=0)."""
+    from custom_components.volcast import _setup_reconciler
+
+    hass = FakeHass(is_running=False)
+    entry = _RecordingConfigEntry()
+    tracker = _make_setup_tracker(hass)
+
+    with patch("custom_components.volcast.async_track_time_change") as mock_track:
+        mock_track.return_value = lambda: None  # cancel callback
+        reconciler = _setup_reconciler(
+            hass=hass,
+            entry=entry,
+            tracker=tracker,
+            energy_entity="sensor.pv_energy",
+            api_key="k",
+            submit_url="http://x",
+        )
+
+    assert reconciler is not None
+    # Exactly one call with the daily-00:30 schedule
+    assert mock_track.call_count == 1
+    call_kwargs = mock_track.call_args.kwargs
+    assert call_kwargs["hour"] == 0
+    assert call_kwargs["minute"] == 30
+    assert call_kwargs["second"] == 0
+    # Cancel callback registered for unload
+    assert len(entry.unload_callbacks) == 1
+
+
+@pytest.mark.asyncio
+async def test_setup_reconciler_listens_for_started_when_not_running():
+    """When hass.is_running is False, the on-startup hook goes via bus.async_listen_once."""
+    from custom_components.volcast import _setup_reconciler
+
+    hass = FakeHass(is_running=False)
+    entry = _RecordingConfigEntry()
+    tracker = _make_setup_tracker(hass)
+
+    with patch("custom_components.volcast.async_track_time_change",
+               return_value=lambda: None):
+        _setup_reconciler(
+            hass=hass, entry=entry, tracker=tracker,
+            energy_entity="sensor.pv_energy", api_key="k", submit_url="http://x",
+        )
+
+    # Bus listener registered for HOMEASSISTANT_STARTED
+    listener_events = [evt for evt, _ in hass.bus.listeners]
+    assert "homeassistant_started" in listener_events
+    # No task created yet (waiting for the started event)
+    assert hass.created_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_setup_reconciler_runs_immediately_when_running():
+    """When hass.is_running is True, the on-startup hook runs via async_create_task."""
+    from custom_components.volcast import _setup_reconciler
+
+    hass = FakeHass(is_running=True)
+    entry = _RecordingConfigEntry()
+    tracker = _make_setup_tracker(hass)
+
+    with patch("custom_components.volcast.async_track_time_change",
+               return_value=lambda: None):
+        _setup_reconciler(
+            hass=hass, entry=entry, tracker=tracker,
+            energy_entity="sensor.pv_energy", api_key="k", submit_url="http://x",
+        )
+
+    # Task created (the _on_started coroutine), bus NOT used
+    assert len(hass.created_tasks) == 1
+    assert hass.bus.listeners == []

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import logging
 
 try:
@@ -9,9 +10,10 @@ try:
 except ImportError:
     IssueSeverity = None
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_API_KEY, Platform
+from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
     CONF_API_URL,
@@ -27,6 +29,7 @@ from .const import (
 )
 from .coordinator import VolcastCoordinator
 from .production import VolcastProductionTracker
+from .reconciler import DailyReconciler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,11 +90,80 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "tracker": tracker,
     }
 
+    # Daily reconciler — tylko jeśli mamy energy_entity (recorder potrzebny).
+    reconciler: DailyReconciler | None = None
+    if energy_entity and tracker is not None:
+        submit_url = tracker._submit_url
+        reconciler = _setup_reconciler(
+            hass=hass,
+            entry=entry,
+            tracker=tracker,
+            energy_entity=energy_entity,
+            api_key=api_key,
+            submit_url=submit_url,
+        )
+        hass.data[DOMAIN][entry.entry_id]["reconciler"] = reconciler
+    else:
+        _LOGGER.info(
+            "Reconciler not started — energy_entity not configured (or tracker missing)"
+        )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
+
+
+def _setup_reconciler(
+    *,
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    tracker: VolcastProductionTracker,
+    energy_entity: str,
+    api_key: str,
+    submit_url: str,
+) -> DailyReconciler:
+    """Stwórz DailyReconciler i podłącz dwa triggery: 00:30 codziennie + na startup.
+
+    Wyodrębnione z async_setup_entry żeby można je było pokryć testem bez
+    konieczności stubowania całego setupu integracji (config_entries
+    forward, coordinator first refresh, tracker.async_start, etc.).
+    """
+    reconciler = DailyReconciler(
+        hass=hass,
+        tracker=tracker,
+        energy_entity=energy_entity,
+        api_key=api_key,
+        submit_url=submit_url,
+    )
+
+    # Codzienny przebieg — 00:30 lokalnego czasu (po północy → wczorajszy dzień
+    # już zamknięty w recorder, backend jeszcze przyjmuje wpisy z dnia D-1
+    # (36h window)).
+    async def _scheduled_reconcile(_now):
+        target = (datetime.now(reconciler._tz) - timedelta(days=1)).date()
+        await reconciler.reconcile_day(target)
+
+    entry.async_on_unload(
+        async_track_time_change(
+            hass, _scheduled_reconcile, hour=0, minute=30, second=0,
+        )
+    )
+
+    # Na startupie HA — spróbuj uzgodnić ostatnie 2 dni (D-2 i D-1). Idempotentne:
+    # już-zaakceptowane godziny są pomijane przez reconcile_day.
+    async def _on_started(_event=None):
+        today = datetime.now(reconciler._tz).date()
+        for days_back in (2, 1):
+            await reconciler.reconcile_day(today - timedelta(days=days_back))
+
+    if hass.is_running:
+        hass.async_create_task(_on_started())
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+
+    return reconciler
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
