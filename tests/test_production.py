@@ -386,6 +386,9 @@ class TestSubmitWithHttpRetry:
         assert ok is True
         assert tracker._queue == []
         assert 12 in tracker._accepted.get("2026-05-10", [])
+        # Diagnostic state populated (consumed by Task 20 sensors)
+        assert tracker._last_submit_status == "ok"
+        assert tracker._last_submit_attempts == 2
 
     @pytest.mark.asyncio
     async def test_submit_exhaustion_queues_readings(self):
@@ -413,9 +416,12 @@ class TestSubmitWithHttpRetry:
         assert tracker._queue[0]["hour"] == 12
         # Hour should NOT be marked accepted on failure
         assert 12 not in tracker._accepted.get("2026-05-10", [])
+        # Diagnostic state populated even on failure (consumed by Task 20 sensors)
+        assert "502" in (tracker._last_submit_status or "")
+        assert tracker._last_submit_attempts == 4
 
     @pytest.mark.asyncio
-    async def test_submit_non_retriable_breaks_loop(self):
+    async def test_submit_non_retriable_still_queues(self):
         """401 from http_with_retry → readings still queued (in case API key fixed later)."""
         from custom_components.volcast.http_retry import RetryResult
 

@@ -168,6 +168,10 @@ class VolcastProductionTracker:
         """
         await self._load_accepted_store()
         cutoff = (_utcnow_date() - timedelta(days=ACCEPTED_RETENTION_DAYS)).isoformat()
+        # GC pre-existing entries older than retention window. The new mark
+        # itself is NOT retention-checked here — it survives one cycle even
+        # if its date_str < cutoff (e.g. backfill of stale rejections).
+        # The next mark on a different date will GC it. By design.
         self._accepted = {k: v for k, v in self._accepted.items() if k >= cutoff}
         if hour not in self._accepted.setdefault(date_str, []):
             self._accepted[date_str].append(hour)
