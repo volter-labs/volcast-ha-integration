@@ -67,6 +67,13 @@ class DailyReconciler:
         self._api_key = api_key
         self._submit_url = submit_url
 
+        # Diagnostyka ostatniego przebiegu (dla LastReconciliationSensor /
+        # IntegrationHealthyBinarySensor — Task 20). Aktualizowane na każdej
+        # ścieżce wyjścia z reconcile_day, niezależnie czy skipped/success/fail.
+        self._last_run_at: datetime | None = None
+        self._last_result: ReconcileResult | None = None
+        self._last_target_date: str | None = None
+
     @property
     def _tz(self) -> ZoneInfo:
         """Strefa czasowa HA — używana do określenia granic dnia 00:00→24:00."""
@@ -86,6 +93,21 @@ class DailyReconciler:
 
         Inaczej: zbiera brakujące godziny, POST przez _post_reconciliation
         z `is_reconciliation: true` w payloadzie.
+
+        Każda ścieżka wyjścia aktualizuje _last_run_at / _last_result /
+        _last_target_date (diagnostyka).
+        """
+        result = await self._reconcile_day_impl(target_date)
+        self._last_run_at = datetime.now(timezone.utc)
+        self._last_target_date = target_date.isoformat()
+        self._last_result = result
+        return result
+
+    async def _reconcile_day_impl(self, target_date: date) -> ReconcileResult:
+        """Faktyczna logika reconcile_day — bez aktualizacji pól diagnostycznych.
+
+        Wyodrębnione, żeby reconcile_day mogło mieć jeden punkt wyjścia
+        i aktualizować _last_* niezależnie od wybranej ścieżki.
         """
         today = datetime.now(self._tz).date()
         age_hours = (today - target_date).days * 24

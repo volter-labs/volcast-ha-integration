@@ -404,3 +404,56 @@ async def test_setup_reconciler_runs_immediately_when_running():
     # Task created (the _on_started coroutine), bus NOT used
     assert len(hass.created_tasks) == 1
     assert hass.bus.listeners == []
+
+
+# ---------------------------------------------------------------------------
+# _last_run_at / _last_result tracking — Task 20a
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_day_records_last_run_on_skip():
+    """After a skipped reconcile_day, _last_run_at and _last_result populated."""
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=3)  # out_of_window
+
+    assert reconciler._last_run_at is None
+    assert reconciler._last_result is None
+    assert reconciler._last_target_date is None
+
+    result = await reconciler.reconcile_day(target)
+
+    assert reconciler._last_run_at is not None
+    assert reconciler._last_run_at.tzinfo is not None  # tz-aware (UTC)
+    assert reconciler._last_target_date == target.isoformat()
+    assert reconciler._last_result is result
+    assert reconciler._last_result.skipped is True
+    assert reconciler._last_result.reason == "out_of_window"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_day_records_last_run_on_success():
+    """After a successful POST, _last_result reflects the success."""
+    from custom_components.volcast.http_retry import RetryResult
+
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+    tracker._accepted = {target.isoformat(): list(range(6, 18))}  # missing 18
+
+    full_day = {h: 1.0 for h in range(6, 19)}
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=full_day), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 1, "rejected": 0, "rejections": []},
+        )
+        await reconciler.reconcile_day(target)
+
+    assert reconciler._last_result is not None
+    assert reconciler._last_result.success is True
+    assert reconciler._last_result.submitted == 1
+    assert reconciler._last_target_date == target.isoformat()
