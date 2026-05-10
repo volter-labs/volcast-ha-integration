@@ -395,3 +395,210 @@ class TestPowerNowSensor:
         sensor = _make_sensor(VolcastPowerNowSensor, data)
         # hour 22 has 0 kW, hour 23 also 0 kW
         assert sensor.native_value == 0
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic sensors (Task 20b): SubmitQueueDepth + LastReconciliation
+# + IntegrationHealthy binary sensor
+# ---------------------------------------------------------------------------
+
+
+from datetime import timezone  # noqa: E402  (kept here so existing tests don't import it)
+from unittest.mock import MagicMock  # noqa: E402
+
+from custom_components.volcast.reconciler import ReconcileResult  # noqa: E402
+
+
+class TestSubmitQueueDepthSensor:
+    """Diagnostic sensor for the production retry queue depth + last attempt."""
+
+    def test_state_is_queue_length(self):
+        from custom_components.volcast.sensor import SubmitQueueDepthSensor
+
+        tracker = MagicMock()
+        tracker._queue = [
+            {"date": "2026-05-09", "hour": 14},
+            {"date": "2026-05-09", "hour": 15},
+        ]
+        tracker._last_submit_status = "HTTP 502"
+        tracker._last_submit_attempts = 4
+        tracker.last_submission_time = None
+
+        sensor = SubmitQueueDepthSensor(tracker, entry_id="x")
+        assert sensor.state == 2
+        attrs = sensor.extra_state_attributes
+        assert attrs["last_attempt_status"] == "HTTP 502"
+        assert attrs["last_attempt_count"] == 4
+        # First reading exposed for "what's blocking the queue?" UX
+        assert attrs["oldest_date"] == "2026-05-09"
+        assert attrs["oldest_hour"] == 14
+
+    def test_empty_queue_state_zero_no_oldest_attrs(self):
+        from custom_components.volcast.sensor import SubmitQueueDepthSensor
+
+        tracker = MagicMock()
+        tracker._queue = []
+        tracker._last_submit_status = "ok"
+        tracker._last_submit_attempts = 1
+        tracker.last_submission_time = None
+
+        sensor = SubmitQueueDepthSensor(tracker, entry_id="x")
+        assert sensor.state == 0
+        attrs = sensor.extra_state_attributes
+        assert "oldest_date" not in attrs
+        assert "oldest_hour" not in attrs
+
+    def test_last_submission_time_iso_when_present(self):
+        from custom_components.volcast.sensor import SubmitQueueDepthSensor
+
+        tracker = MagicMock()
+        tracker._queue = []
+        tracker._last_submit_status = "ok"
+        tracker._last_submit_attempts = 1
+        tracker.last_submission_time = datetime(2026, 5, 10, 11, 5, tzinfo=timezone.utc)
+
+        sensor = SubmitQueueDepthSensor(tracker, entry_id="x")
+        attrs = sensor.extra_state_attributes
+        assert attrs["last_attempt_at"] == "2026-05-10T11:05:00+00:00"
+
+
+class TestLastReconciliationSensor:
+    """Diagnostic sensor for the daily reconciler's last run."""
+
+    def test_state_is_iso_timestamp(self):
+        from custom_components.volcast.sensor import LastReconciliationSensor
+
+        reconciler = MagicMock()
+        reconciler._last_run_at = datetime(2026, 5, 10, 0, 30, tzinfo=timezone.utc)
+        reconciler._last_result = ReconcileResult(success=True, submitted=2)
+        reconciler._last_target_date = "2026-05-09"
+
+        sensor = LastReconciliationSensor(reconciler, entry_id="x")
+        assert sensor.state == "2026-05-10T00:30:00+00:00"
+        attrs = sensor.extra_state_attributes
+        assert attrs["hours_submitted_last_run"] == 2
+        assert attrs["last_target_date"] == "2026-05-09"
+        assert attrs["last_run_status"] == "ok"
+
+    def test_state_none_before_first_run(self):
+        from custom_components.volcast.sensor import LastReconciliationSensor
+
+        reconciler = MagicMock()
+        reconciler._last_run_at = None
+        reconciler._last_result = None
+        reconciler._last_target_date = None
+
+        sensor = LastReconciliationSensor(reconciler, entry_id="x")
+        assert sensor.state is None
+        attrs = sensor.extra_state_attributes
+        assert attrs["last_run_status"] == "never"
+
+    def test_status_skipped_uses_reason(self):
+        from custom_components.volcast.sensor import LastReconciliationSensor
+
+        reconciler = MagicMock()
+        reconciler._last_run_at = datetime(2026, 5, 10, 0, 30, tzinfo=timezone.utc)
+        reconciler._last_result = ReconcileResult(skipped=True, reason="no_stats")
+        reconciler._last_target_date = "2026-05-09"
+
+        sensor = LastReconciliationSensor(reconciler, entry_id="x")
+        assert sensor.extra_state_attributes["last_run_status"] == "skipped_no_stats"
+
+    def test_status_failed_when_not_success(self):
+        from custom_components.volcast.sensor import LastReconciliationSensor
+
+        reconciler = MagicMock()
+        reconciler._last_run_at = datetime(2026, 5, 10, 0, 30, tzinfo=timezone.utc)
+        reconciler._last_result = ReconcileResult(
+            success=False, submitted=2, error="HTTP 503",
+        )
+        reconciler._last_target_date = "2026-05-09"
+
+        sensor = LastReconciliationSensor(reconciler, entry_id="x")
+        assert sensor.extra_state_attributes["last_run_status"] == "failed"
+
+
+class TestIntegrationHealthyBinarySensor:
+    """Single-signal health binary sensor — wireable into automations."""
+
+    def test_healthy_when_all_subsystems_ok(self):
+        from custom_components.volcast.binary_sensor import IntegrationHealthyBinarySensor
+
+        coord = MagicMock()
+        coord.last_update_success = True
+        tracker = MagicMock()
+        tracker._queue = []
+        reconciler = MagicMock()
+        reconciler._last_result = ReconcileResult(success=True)
+
+        sensor = IntegrationHealthyBinarySensor(coord, tracker, reconciler, entry_id="x")
+        assert sensor.is_on is True
+
+    def test_unhealthy_when_queue_above_24(self):
+        from custom_components.volcast.binary_sensor import IntegrationHealthyBinarySensor
+
+        coord = MagicMock()
+        coord.last_update_success = True
+        tracker = MagicMock()
+        tracker._queue = [{} for _ in range(30)]
+        reconciler = None  # power-only user
+
+        sensor = IntegrationHealthyBinarySensor(coord, tracker, reconciler, entry_id="x")
+        assert sensor.is_on is False
+
+    def test_healthy_for_power_only_user_no_reconciler(self):
+        """reconciler=None (power-only user) → reconcile_ok defaults to True."""
+        from custom_components.volcast.binary_sensor import IntegrationHealthyBinarySensor
+
+        coord = MagicMock()
+        coord.last_update_success = True
+        tracker = MagicMock()
+        tracker._queue = []
+
+        sensor = IntegrationHealthyBinarySensor(coord, tracker, None, entry_id="x")
+        assert sensor.is_on is True
+
+    def test_unhealthy_when_forecast_failing(self):
+        from custom_components.volcast.binary_sensor import IntegrationHealthyBinarySensor
+
+        coord = MagicMock()
+        coord.last_update_success = False
+        tracker = MagicMock()
+        tracker._queue = []
+        reconciler = MagicMock()
+        reconciler._last_result = ReconcileResult(success=True)
+
+        sensor = IntegrationHealthyBinarySensor(coord, tracker, reconciler, entry_id="x")
+        assert sensor.is_on is False
+
+    def test_healthy_when_reconciler_skipped(self):
+        """A skipped reconcile (e.g. out_of_window, no_stats) is NOT a failure."""
+        from custom_components.volcast.binary_sensor import IntegrationHealthyBinarySensor
+
+        coord = MagicMock()
+        coord.last_update_success = True
+        tracker = MagicMock()
+        tracker._queue = []
+        reconciler = MagicMock()
+        reconciler._last_result = ReconcileResult(skipped=True, reason="no_stats")
+
+        sensor = IntegrationHealthyBinarySensor(coord, tracker, reconciler, entry_id="x")
+        assert sensor.is_on is True
+
+    def test_diagnostic_attributes_exposed(self):
+        """Per-subsystem flags exposed for UI diagnostics."""
+        from custom_components.volcast.binary_sensor import IntegrationHealthyBinarySensor
+
+        coord = MagicMock()
+        coord.last_update_success = True
+        tracker = MagicMock()
+        tracker._queue = []
+        reconciler = MagicMock()
+        reconciler._last_result = ReconcileResult(success=True)
+
+        sensor = IntegrationHealthyBinarySensor(coord, tracker, reconciler, entry_id="x")
+        attrs = sensor.extra_state_attributes
+        assert attrs["forecast_ok"] is True
+        assert attrs["submit_ok"] is True
+        assert attrs["reconcile_ok"] is True
+        assert "last_check" in attrs
