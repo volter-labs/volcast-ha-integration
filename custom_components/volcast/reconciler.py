@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -77,3 +79,52 @@ class DailyReconciler:
             return ZoneInfo(self._hass.config.time_zone)
         except Exception:
             return ZoneInfo("UTC")
+
+    async def _fetch_ha_statistics(self, target_date: date) -> dict[int, float]:
+        """Zwróć {hour: kwh} dla target_date z HA recorder statystyk.
+
+        Okno rozszerzone 1h wstecz — godzina 00 dnia X potrzebuje sumy z 23
+        dnia X-1 jako baseline do policzenia delty. Wpisy z poprzedniego dnia
+        są używane TYLKO jako prev_sum, nie trafiają do wyniku.
+
+        Counter reset (delta < 0): clamping do 0.0 zamiast ujemnej energii.
+        """
+        start = (
+            datetime.combine(target_date, time.min, tzinfo=self._tz)
+            - timedelta(hours=1)
+        )
+        end = start + timedelta(days=1, hours=1)
+
+        raw = await get_instance(self._hass).async_add_executor_job(
+            statistics_during_period,
+            self._hass,
+            start,
+            end,
+            {self._energy_entity},
+            "hour",
+            None,
+            {"sum", "state"},
+        )
+        entries = raw.get(self._energy_entity, [])
+        if not entries:
+            return {}
+
+        hourly: dict[int, float] = {}
+        prev_sum: float | None = None
+        for entry in sorted(entries, key=lambda e: e["start"]):
+            local_start = entry["start"]
+            if local_start.tzinfo is None:
+                local_start = local_start.replace(tzinfo=timezone.utc)
+            local_start = local_start.astimezone(self._tz)
+            if local_start.date() != target_date:
+                # Baseline-seed (poprzedni dzień) — zachowaj sum, nie raportuj.
+                prev_sum = entry.get("sum")
+                continue
+            cur = entry.get("sum")
+            if cur is None or prev_sum is None:
+                prev_sum = cur
+                continue
+            delta = max(cur - prev_sum, 0.0)
+            hourly[local_start.hour] = delta
+            prev_sum = cur
+        return hourly

@@ -177,6 +177,28 @@ _make_module("homeassistant.components.binary_sensor", {
 })
 
 
+# --- homeassistant.components.recorder + recorder.statistics ---
+class _FakeRecorderInstance:
+    """Stub for the object returned by recorder.get_instance(hass).
+
+    `async_add_executor_job(fn, *args)` runs the function inline in tests —
+    sufficient because reconciler tests patch statistics_during_period
+    directly so the function itself is a stub MagicMock.
+    """
+
+    async def async_add_executor_job(self, fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+
+_make_module("homeassistant.components.recorder", {
+    "get_instance": MagicMock(return_value=_FakeRecorderInstance()),
+})
+_make_module("homeassistant.components.recorder.statistics", {
+    # Default returns no entries; tests override via patch().
+    "statistics_during_period": MagicMock(return_value={}),
+})
+
+
 # ---------------------------------------------------------------------------
 # Now we can safely import integration code
 # ---------------------------------------------------------------------------
