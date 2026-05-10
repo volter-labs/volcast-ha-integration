@@ -80,6 +80,114 @@ class DailyReconciler:
         except Exception:
             return ZoneInfo("UTC")
 
+    async def reconcile_day(self, target_date: date) -> ReconcileResult:
+        """Uzgodnij produkcję dla pojedynczego dnia. Idempotentne.
+
+        Skip-gates (kolejność):
+         1. age > RECONCILE_WINDOW_HOURS → reason='out_of_window'
+         2. _fetch_ha_statistics zwrócił {} → reason='no_stats'
+         3. brak luk (każda godzina z statystyk już w _accepted lub kwh<próg)
+            → success=True, submitted=0, brak POSTu
+
+        Inaczej: zbiera brakujące godziny, POST przez _post_reconciliation
+        z `is_reconciliation: true` w payloadzie.
+        """
+        today = datetime.now(self._tz).date()
+        age_hours = (today - target_date).days * 24
+        if age_hours > RECONCILE_WINDOW_HOURS:
+            _LOGGER.debug(
+                "Skip reconcile %s — too old (%dh > %dh window)",
+                target_date, age_hours, RECONCILE_WINDOW_HOURS,
+            )
+            return ReconcileResult(skipped=True, reason="out_of_window")
+
+        hourly_stats = await self._fetch_ha_statistics(target_date)
+        if not hourly_stats:
+            _LOGGER.warning(
+                "No statistics for %s — recorder unavailable or no data?",
+                target_date,
+            )
+            return ReconcileResult(skipped=True, reason="no_stats")
+
+        await self._tracker._load_accepted_store()
+        accepted_hours = set(self._tracker._accepted.get(target_date.isoformat(), []))
+
+        missing: list[dict] = []
+        for hour, kwh in sorted(hourly_stats.items()):
+            if hour in accepted_hours:
+                continue
+            if kwh < MIN_REPORT_KWH:
+                continue
+            missing.append({
+                "date": target_date.isoformat(),
+                "hour": hour,
+                "actual_kwh": round(kwh, 4),
+                "data_method": "energy_delta_reconciliation",
+            })
+
+        if not missing:
+            _LOGGER.debug("Reconcile %s — no gaps", target_date)
+            return ReconcileResult(success=True, submitted=0)
+
+        return await self._post_reconciliation(missing)
+
+    async def _post_reconciliation(self, readings: list[dict]) -> ReconcileResult:
+        """POST brakujących godzin z flagą is_reconciliation=true.
+
+        Backend rozpoznaje tę flagę i pomija Kalman+nowcast (Phase 1 commits).
+        Na sukces oznacza godziny jako accepted; non-permanent-skip rejections
+        zostają NIE oznaczone, żeby kolejny przebieg reconciler je powtórzył.
+        """
+        session = async_get_clientsession(self._hass)
+        result = await http_with_retry(
+            session,
+            method="POST",
+            url=self._submit_url,
+            payload={"readings": readings, "is_reconciliation": True},
+            headers={
+                "X-API-Key": self._api_key,
+                "Content-Type": "application/json",
+            },
+        )
+
+        if result.success:
+            data = result.data or {}
+            rejections = data.get("rejections") or []
+            rejected_keys: dict[tuple[str, int], str] = {}
+            for rej in rejections:
+                try:
+                    rejected_keys[(rej["date"], rej["hour"])] = rej.get("reason", "")
+                except (KeyError, TypeError):
+                    continue
+
+            for r in readings:
+                key = (r["date"], r["hour"])
+                reason = rejected_keys.get(key)
+                if reason is None or reason in RECONCILER_PERMANENT_SKIP_REASONS:
+                    await self._tracker._mark_accepted(r["date"], r["hour"])
+
+            accepted_count = data.get("accepted", 0)
+            rejected_count = data.get("rejected", len(rejected_keys))
+            _LOGGER.info(
+                "Reconciliation: submitted %d hours for %s, accepted=%d rejected=%d",
+                len(readings), readings[0]["date"], accepted_count, rejected_count,
+            )
+            return ReconcileResult(
+                success=True,
+                submitted=len(readings),
+                accepted=accepted_count,
+            )
+
+        _LOGGER.warning(
+            "Reconciliation submit failed after %d attempts (%s); will retry next schedule",
+            result.attempts, result.last_error,
+        )
+        return ReconcileResult(
+            success=False,
+            submitted=len(readings),
+            error=result.last_error,
+        )
+
     async def _fetch_ha_statistics(self, target_date: date) -> dict[int, float]:
         """Zwróć {hour: kwh} dla target_date z HA recorder statystyk.
 

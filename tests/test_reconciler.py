@@ -7,8 +7,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from tests.conftest import FakeHass
+from tests.conftest import FakeHass, _FakeStore
 
+from custom_components.volcast.production import VolcastProductionTracker
 from custom_components.volcast.reconciler import (
     DailyReconciler,
     ReconcileResult,
@@ -47,6 +48,33 @@ def _make_reconciler(hass=None, tracker=None, energy_entity="sensor.pv_energy"):
         api_key="test-key",
         submit_url="https://example.com/api/submit-production",
     )
+
+
+def _make_real_tracker(
+    accepted: dict[str, list[int]] | None = None,
+    hass=None,
+) -> VolcastProductionTracker:
+    """Build a real tracker with pre-populated _accepted (no Store load needed).
+
+    Used by reconcile_day tests so the reconciler's
+    `await tracker._load_accepted_store()` and `await tracker._mark_accepted()`
+    calls hit the real coroutines, not MagicMock awaitables.
+    """
+    if hass is None:
+        hass = FakeHass()
+    tracker = VolcastProductionTracker(
+        hass=hass,
+        api_key="test-key",
+        submit_url="https://example.com/api/submit-production",
+        energy_entity="sensor.pv_energy",
+        power_entity="sensor.pv_power",
+    )
+    tracker._store = _FakeStore()
+    tracker._accepted_store = _FakeStore()
+    if accepted is not None:
+        tracker._accepted = {k: list(v) for k, v in accepted.items()}
+    tracker._accepted_loaded = True  # skip Store load on next call
+    return tracker
 
 
 def _build_cumulative_entries(target_date: date, *, kwh_per_hour: float = 0.5,
@@ -132,3 +160,134 @@ async def test_fetch_ha_statistics_empty_when_no_data():
         hourly = await reconciler._fetch_ha_statistics(target)
 
     assert hourly == {}
+
+
+# ---------------------------------------------------------------------------
+# reconcile_day — core logic with skip gates + POST + mark_accepted (Task 18)
+# ---------------------------------------------------------------------------
+
+
+def _today_local(reconciler: DailyReconciler) -> date:
+    """Today's date in the reconciler's local tz — matches `reconcile_day`'s reference."""
+    return datetime.now(reconciler._tz).date()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_day_skips_out_of_window():
+    """target_date older than RECONCILE_WINDOW_HOURS (36h) is skipped."""
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=3)  # > 36h
+
+    result = await reconciler.reconcile_day(target)
+
+    assert result.skipped is True
+    assert result.reason == "out_of_window"
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_reconcile_day_skips_no_stats():
+    """Empty hourly stats → skip with reason='no_stats'."""
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value={}):
+        result = await reconciler.reconcile_day(target)
+
+    assert result.skipped is True
+    assert result.reason == "no_stats"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_day_no_gaps_no_submit():
+    """When _accepted has every hour the stats reports, no POST is made."""
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+    tracker._accepted = {target.isoformat(): list(range(6, 19))}
+
+    full_day = {h: 1.0 for h in range(6, 19)}  # 13 daylight hours
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=full_day), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http:
+        result = await reconciler.reconcile_day(target)
+
+    assert result.success is True
+    assert result.submitted == 0
+    assert mock_http.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_day_one_gap_filled():
+    """13 stat hours, 12 already accepted → POST 1 reading with is_reconciliation=true."""
+    from custom_components.volcast.http_retry import RetryResult
+
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+    # Missing hour 18 only
+    tracker._accepted = {target.isoformat(): list(range(6, 18))}
+
+    full_day = {h: 1.0 for h in range(6, 19)}
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=full_day), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 1, "rejected": 0, "rejections": []},
+        )
+        result = await reconciler.reconcile_day(target)
+
+    assert result.success is True
+    assert result.submitted == 1
+    assert result.accepted == 1
+
+    # Verify POST payload shape
+    call_kwargs = mock_http.call_args.kwargs
+    assert call_kwargs["payload"]["is_reconciliation"] is True
+    assert len(call_kwargs["payload"]["readings"]) == 1
+    reading = call_kwargs["payload"]["readings"][0]
+    assert reading["hour"] == 18
+    assert reading["date"] == target.isoformat()
+    assert reading["data_method"] == "energy_delta_reconciliation"
+    # Headers match the production submit path
+    assert call_kwargs["headers"]["X-API-Key"] == "test-key"
+    assert call_kwargs["headers"]["Content-Type"] == "application/json"
+    assert call_kwargs["method"] == "POST"
+
+    # Hour 18 marked accepted on success
+    assert 18 in tracker._accepted[target.isoformat()]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_day_zero_kwh_excluded():
+    """Hours with kWh < MIN_REPORT_KWH (nighttime) are NOT submitted."""
+    from custom_components.volcast.http_retry import RetryResult
+
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+
+    stats = {h: 0.0 for h in range(0, 6)}  # nighttime zeros
+    stats.update({h: 1.0 for h in range(6, 19)})  # 13 daylight hours
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 13, "rejected": 0, "rejections": []},
+        )
+        result = await reconciler.reconcile_day(target)
+
+    submitted_hours = [
+        r["hour"] for r in mock_http.call_args.kwargs["payload"]["readings"]
+    ]
+    assert all(h >= 6 for h in submitted_hours), "no nighttime hours submitted"
+    assert len(submitted_hours) == 13
+    assert result.submitted == 13
