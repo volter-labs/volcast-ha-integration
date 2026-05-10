@@ -120,6 +120,13 @@ class _FakeCoordinatorEntity:
 
 class _FakeDataUpdateCoordinator:
     """Minimal stub for DataUpdateCoordinator."""
+    def __init__(self, hass=None, logger=None, *, name: str = "", update_interval=None):
+        self.hass = hass
+        self.logger = logger
+        self.name = name
+        self.update_interval = update_interval
+        self.data = None
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
 

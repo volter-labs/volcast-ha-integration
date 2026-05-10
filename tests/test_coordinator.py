@@ -213,3 +213,110 @@ class TestErrorData:
         assert result.forecast == []
         assert result.hourly == {}
         assert result.detailed == {}
+
+
+# ---------------------------------------------------------------------------
+# _async_update_data — refactored to delegate to http_with_retry
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch
+
+from custom_components.volcast.coordinator import VolcastCoordinator
+from custom_components.volcast.http_retry import RetryResult
+
+
+@pytest.mark.asyncio
+async def test_coordinator_uses_http_with_retry_on_success():
+    """Coordinator delegates to http_with_retry and parses success result."""
+    coord = VolcastCoordinator(
+        hass=FakeHass(),
+        api_key="test",
+        api_url="http://stub/forecast",
+        update_interval_minutes=15,
+    )
+
+    # Build a minimal valid forecast payload that _parse_response accepts
+    sample_payload = {
+        "daily": [],
+        "hourly": {},
+        "energy_today": 0,
+        "energy_tomorrow": 0,
+        "system_capacity_kwp": None,
+        "location": "",
+        "generated_at": "",
+        "cache_age_minutes": 0,
+        "api_version": 0,
+    }
+
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = RetryResult(
+            success=True, status=200, data=sample_payload, attempts=2,
+        )
+        await coord._async_update_data()
+
+    assert mock_http.call_count == 1
+    # Verify it was called with method=GET (forecast is GET)
+    assert mock_http.call_args.kwargs["method"] == "GET"
+    assert "key=test" in mock_http.call_args.kwargs["url"]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_raises_UpdateFailed_after_retry_exhaustion_5xx():
+    """When http_with_retry returns failure with 503, coordinator raises UpdateFailed."""
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    coord = VolcastCoordinator(
+        hass=FakeHass(), api_key="test",
+        api_url="http://stub/forecast", update_interval_minutes=15,
+    )
+
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = RetryResult(
+            success=False, status=503, attempts=4,
+            last_error="HTTP 503", retriable=True,
+        )
+        with pytest.raises(UpdateFailed):
+            await coord._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_401_raises_UpdateFailed_immediately():
+    """401 from http_with_retry → UpdateFailed (Invalid API key)."""
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    coord = VolcastCoordinator(
+        hass=FakeHass(), api_key="bad",
+        api_url="http://stub/forecast", update_interval_minutes=15,
+    )
+
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = RetryResult(
+            success=False, status=401, attempts=1,
+            last_error="non-retriable HTTP 401", retriable=False,
+        )
+        with pytest.raises(UpdateFailed, match="API key"):
+            await coord._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_403_returns_premium_required_error_data():
+    """403 from http_with_retry → return error_data (premium required), NO UpdateFailed."""
+    coord = VolcastCoordinator(
+        hass=FakeHass(), api_key="non-premium",
+        api_url="http://stub/forecast", update_interval_minutes=15,
+    )
+
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = RetryResult(
+            success=False, status=403, attempts=1,
+            last_error="non-retriable HTTP 403", retriable=False,
+        )
+        # Should NOT raise — should return error_data structure
+        result = await coord._async_update_data()
+        assert result is not None
+        # api_status field carries the error message (existing _error_data behavior)
+        assert result.api_status == "Premium required"
