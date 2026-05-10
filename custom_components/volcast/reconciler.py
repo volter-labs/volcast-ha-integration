@@ -94,12 +94,27 @@ class DailyReconciler:
         Inaczej: zbiera brakujące godziny, POST przez _post_reconciliation
         z `is_reconciliation: true` w payloadzie.
 
+        NEVER raises: każdy nieprzewidziany wyjątek z _reconcile_day_impl
+        (np. recorder ABI shift, jak w beta3 z float vs datetime) jest
+        łapany i zamieniany na ReconcileResult(success=False, error=...).
+        Dzięki temu binary_sensor.volcast_integration_healthy może
+        odzwierciedlić rzeczywistą awarię — nie domyślać się że "no
+        _last_result = OK".
+
         Każda ścieżka wyjścia aktualizuje _last_run_at / _last_result /
-        _last_target_date (diagnostyka).
+        _last_target_date (diagnostyka). _last_run_at i _last_target_date
+        są ustawiane PRZED try, żeby reflektowały próbę nawet gdy crash.
         """
-        result = await self._reconcile_day_impl(target_date)
         self._last_run_at = datetime.now(timezone.utc)
         self._last_target_date = target_date.isoformat()
+        try:
+            result = await self._reconcile_day_impl(target_date)
+        except Exception as exc:
+            _LOGGER.exception("Reconciliation crashed for %s", target_date)
+            result = ReconcileResult(
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+            )
         self._last_result = result
         return result
 
@@ -237,9 +252,16 @@ class DailyReconciler:
         hourly: dict[int, float] = {}
         prev_sum: float | None = None
         for entry in sorted(entries, key=lambda e: e["start"]):
-            local_start = entry["start"]
-            if local_start.tzinfo is None:
-                local_start = local_start.replace(tzinfo=timezone.utc)
+            raw_start = entry["start"]
+            if isinstance(raw_start, (int, float)):
+                # Modern HA (>=2023.x): start is Unix epoch seconds (float).
+                # Confirmed on 2025.10.3 — see PLAN-040 beta3 bug report.
+                local_start = datetime.fromtimestamp(raw_start, tz=timezone.utc)
+            else:
+                # Legacy HA: start is a datetime (with or without tzinfo).
+                local_start = raw_start
+                if local_start.tzinfo is None:
+                    local_start = local_start.replace(tzinfo=timezone.utc)
             local_start = local_start.astimezone(self._tz)
             if local_start.date() != target_date:
                 # Baseline-seed (poprzedni dzień) — zachowaj sum, nie raportuj.

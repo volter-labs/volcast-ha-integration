@@ -78,12 +78,18 @@ def _make_real_tracker(
 
 
 def _build_cumulative_entries(target_date: date, *, kwh_per_hour: float = 0.5,
-                              start_cumulative: float = 100.0, hours: int = 25):
+                              start_cumulative: float = 100.0, hours: int = 25,
+                              timestamp_format: str = "datetime"):
     """Build 25 hourly entries (1 baseline at hour-1 + 24 of target_date) in HA-tz.
 
     HA recorder returns entries in *local* tz; the reconciler treats the
     baseline-seed entry as "previous day" and ignores it for hour mapping
     but uses its sum to compute the first delta.
+
+    timestamp_format:
+      - 'datetime' (default): legacy HA — entry["start"]/"end" are datetimes.
+      - 'float': modern HA (>=2023.x, confirmed on 2025.10.3) — Unix epoch
+        seconds (float). This is the format that crashed beta3.
     """
     tz = ZoneInfo("Europe/Warsaw")
     base_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=tz) - timedelta(hours=1)
@@ -91,9 +97,11 @@ def _build_cumulative_entries(target_date: date, *, kwh_per_hour: float = 0.5,
     cumulative = start_cumulative
     for h in range(hours):
         cumulative += kwh_per_hour
+        start_dt = base_dt + timedelta(hours=h)
+        end_dt = base_dt + timedelta(hours=h + 1)
         entries.append({
-            "start": base_dt + timedelta(hours=h),
-            "end": base_dt + timedelta(hours=h + 1),
+            "start": start_dt.timestamp() if timestamp_format == "float" else start_dt,
+            "end": end_dt.timestamp() if timestamp_format == "float" else end_dt,
             "sum": cumulative,
         })
     return entries
@@ -160,6 +168,30 @@ async def test_fetch_ha_statistics_empty_when_no_data():
         hourly = await reconciler._fetch_ha_statistics(target)
 
     assert hourly == {}
+
+
+@pytest.mark.asyncio
+async def test_fetch_ha_statistics_float_timestamps_modern_ha():
+    """Modern HA (>=2023.x, confirmed on 2025.10.3) returns 'start'/'end' as
+    Unix epoch floats, not datetime. Beta3 crashed with AttributeError —
+    this test is the regression guard."""
+    target = date(2026, 5, 10)
+    entries = _build_cumulative_entries(target, kwh_per_hour=0.5, timestamp_format="float")
+
+    # Regression guard for the fixture itself: assert it really produces floats.
+    assert isinstance(entries[0]["start"], float)
+
+    with patch(
+        "custom_components.volcast.reconciler.statistics_during_period",
+        return_value={"sensor.pv_energy": entries},
+    ):
+        reconciler = _make_reconciler()
+        hourly = await reconciler._fetch_ha_statistics(target)
+
+    assert len(hourly) == 24
+    for h in range(24):
+        assert h in hourly, f"hour {h} missing"
+        assert abs(hourly[h] - 0.5) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -456,4 +488,30 @@ async def test_reconcile_day_records_last_run_on_success():
     assert reconciler._last_result is not None
     assert reconciler._last_result.success is True
     assert reconciler._last_result.submitted == 1
+    assert reconciler._last_target_date == target.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_day_catches_impl_exception():
+    """When _reconcile_day_impl raises, _last_result is populated with failure
+    (NOT None). Beta3 regression: AttributeError leaked from the impl, leaving
+    _last_result=None, which made integration_healthy report HEALTHY despite
+    the reconciler being broken."""
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+
+    boom = RuntimeError("simulated recorder crash")
+    with patch.object(DailyReconciler, "_reconcile_day_impl", side_effect=boom):
+        result = await reconciler.reconcile_day(target)
+
+    # Wrapper must NOT propagate the exception.
+    assert result is not None
+    assert result.success is False
+    assert "RuntimeError" in (result.error or "")
+    assert "simulated recorder crash" in (result.error or "")
+    # Diagnostic state must be populated so integration_healthy reflects truth.
+    assert reconciler._last_result is not None
+    assert reconciler._last_result.success is False
+    assert reconciler._last_run_at is not None
     assert reconciler._last_target_date == target.isoformat()
