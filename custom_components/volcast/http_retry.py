@@ -39,11 +39,26 @@ async def http_with_retry(
     delays: tuple[int, ...] = DEFAULT_DELAYS,
     per_attempt_timeout: int = DEFAULT_TIMEOUT,
 ) -> RetryResult:
-    """Execute HTTP with retry. Returns RetryResult — never raises for HTTP errors."""
+    """Execute HTTP with retry. Returns RetryResult on every HTTP/network outcome.
+
+    Contract:
+      - NEVER raises for HTTP status codes (any of 1xx-5xx is wrapped in
+        RetryResult). Callers inspect ``result.success`` / ``result.status`` /
+        ``result.retriable`` and decide whether to raise UpdateFailed,
+        queue for later, or surface to the user.
+      - NEVER raises for network-level errors (``aiohttp.ClientError``,
+        ``asyncio.TimeoutError``) — these are caught, recorded in
+        ``last_error``, and counted as retriable attempts.
+      - DOES raise ``ValueError`` if ``delays`` is empty. This is a
+        programmer error / API misuse, not a runtime HTTP/network failure,
+        so callers must fix the call site rather than handling it.
+    """
+    if not delays:
+        raise ValueError("delays must be a non-empty tuple")
+
     last_status: int | None = None
     last_err: str | None = None
     last_retriable: bool = True
-    attempt: int = 0
     timeout_obj = aiohttp.ClientTimeout(total=per_attempt_timeout)
 
     for attempt, delay in enumerate(delays):
@@ -61,7 +76,12 @@ async def http_with_retry(
                 if resp.ok:
                     try:
                         data = await resp.json()
-                    except Exception:
+                    except (aiohttp.ContentTypeError, ValueError) as err:
+                        _LOGGER.debug(
+                            "Failed to parse JSON body on %d response: %s",
+                            resp.status,
+                            err,
+                        )
                         data = {}
                     return RetryResult(
                         success=True,
