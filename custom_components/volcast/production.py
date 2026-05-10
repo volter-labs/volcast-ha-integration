@@ -22,7 +22,18 @@ STORAGE_KEY = "volcast_production_queue"
 STORAGE_VERSION = 1
 MAX_QUEUE_SIZE = 48
 
+# Accepted-hours store — pamięć "co już udało się dostarczyć", używana przez
+# reconciler żeby nie reposyłał tych samych godzin w nieskończoność.
+ACCEPTED_STORAGE_KEY = "volcast_accepted_hours"
+ACCEPTED_STORAGE_VERSION = 1
+ACCEPTED_RETENTION_DAYS = 7
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _utcnow_date():
+    """Return today's date in UTC. Module-level seam for test monkeypatching."""
+    return datetime.now(timezone.utc).date()
 
 
 @dataclass
@@ -77,6 +88,12 @@ class VolcastProductionTracker:
         self._queue: list[dict[str, Any]] = []
         self._queue_loaded: bool = False
 
+        # Persystentna mapa "godziny już zaakceptowane przez backend" — używana
+        # przez reconciler, GC po ACCEPTED_RETENTION_DAYS dniach.
+        self._accepted_store = Store(hass, ACCEPTED_STORAGE_VERSION, ACCEPTED_STORAGE_KEY)
+        self._accepted: dict[str, list[int]] = {}
+        self._accepted_loaded: bool = False
+
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
         self.calibration: dict[str, Any] | None = None
         self.last_submission_time: datetime | None = None
@@ -111,6 +128,38 @@ class VolcastProductionTracker:
                 await self._store.async_remove()
         except Exception:
             _LOGGER.warning("Failed to persist retry queue to storage", exc_info=True)
+
+    async def _load_accepted_store(self) -> dict[str, list[int]]:
+        """Załaduj mapę zaakceptowanych godzin z persystentnego Store (lazy, raz)."""
+        if self._accepted_loaded:
+            return self._accepted
+        try:
+            data = await self._accepted_store.async_load()
+            if isinstance(data, dict):
+                self._accepted = {
+                    k: list(v) for k, v in data.items() if isinstance(v, list)
+                }
+        except Exception:
+            _LOGGER.warning("Failed to load accepted-hours store", exc_info=True)
+        self._accepted_loaded = True
+        return self._accepted
+
+    async def _mark_accepted(self, date_str: str, hour: int) -> None:
+        """Oznacz (date, hour) jako dostarczone do backendu i zapisz do Store.
+
+        GC: usuwa wpisy starsze niż ACCEPTED_RETENTION_DAYS (po dacie produkcji).
+        Idempotentne — tę samą godzinę można oznaczyć wielokrotnie bez efektu.
+        """
+        await self._load_accepted_store()
+        cutoff = (_utcnow_date() - timedelta(days=ACCEPTED_RETENTION_DAYS)).isoformat()
+        self._accepted = {k: v for k, v in self._accepted.items() if k >= cutoff}
+        if hour not in self._accepted.setdefault(date_str, []):
+            self._accepted[date_str].append(hour)
+            self._accepted[date_str].sort()
+        try:
+            await self._accepted_store.async_save(self._accepted)
+        except Exception:
+            _LOGGER.warning("Failed to persist accepted-hours store", exc_info=True)
 
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""

@@ -20,8 +20,9 @@ from custom_components.volcast.production import VolcastProductionTracker
 def _make_tracker(
     hass: Any | None = None,
     store: _FakeStore | None = None,
+    accepted_store: _FakeStore | None = None,
 ) -> VolcastProductionTracker:
-    """Create a tracker with sensible defaults and injectable Store."""
+    """Create a tracker with sensible defaults and injectable Stores."""
     if hass is None:
         hass = FakeHass()
     tracker = VolcastProductionTracker(
@@ -32,9 +33,11 @@ def _make_tracker(
         power_entity="sensor.pv_power",
         system_capacity_kwp=6.0,
     )
-    # Wstrzyknij fake Store jeśli podany
+    # Wstrzyknij fake Stores jeśli podane
     if store is not None:
         tracker._store = store
+    if accepted_store is not None:
+        tracker._accepted_store = accepted_store
     return tracker
 
 
@@ -264,3 +267,74 @@ class TestRetryQueue:
 
         tracker._queue = [_make_reading(), _make_reading()]
         assert tracker.queued_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Accepted-hours store + _mark_accepted (Task 14)
+# ---------------------------------------------------------------------------
+
+
+class TestAcceptedHoursStore:
+    """Tests for the persistent accepted-hours Store and _mark_accepted."""
+
+    @pytest.mark.asyncio
+    async def test_mark_accepted_persists_to_store(self):
+        """_mark_accepted writes (date, hour) into the in-memory dict and Store."""
+        accepted_store = _FakeStore()
+        tracker = _make_tracker(accepted_store=accepted_store)
+
+        await tracker._mark_accepted("2026-05-10", 12)
+        await tracker._mark_accepted("2026-05-10", 13)
+        await tracker._mark_accepted("2026-05-09", 23)
+
+        # Verify in-memory state
+        assert 12 in tracker._accepted.get("2026-05-10", [])
+        assert 13 in tracker._accepted.get("2026-05-10", [])
+        assert 23 in tracker._accepted.get("2026-05-09", [])
+
+        # Verify persisted state (fresh tracker reads same Store)
+        tracker2 = _make_tracker(accepted_store=accepted_store)
+        accepted = await tracker2._load_accepted_store()
+        assert 12 in accepted.get("2026-05-10", [])
+        assert 13 in accepted.get("2026-05-10", [])
+        assert 23 in accepted.get("2026-05-09", [])
+
+    @pytest.mark.asyncio
+    async def test_mark_accepted_dedup(self):
+        """Marking same (date, hour) twice is idempotent."""
+        accepted_store = _FakeStore()
+        tracker = _make_tracker(accepted_store=accepted_store)
+
+        await tracker._mark_accepted("2026-05-10", 12)
+        await tracker._mark_accepted("2026-05-10", 12)
+        await tracker._mark_accepted("2026-05-10", 12)
+
+        accepted = await tracker._load_accepted_store()
+        assert accepted["2026-05-10"].count(12) == 1
+
+    @pytest.mark.asyncio
+    async def test_mark_accepted_gc_after_7_days(self, monkeypatch):
+        """Entries older than ACCEPTED_RETENTION_DAYS dropped on next mark."""
+        from datetime import datetime, timezone
+        from custom_components.volcast import production as production_mod
+
+        # Fixed "today" = 2026-05-17 (>7 days after 2026-05-09)
+        fixed_now = datetime(2026, 5, 17, 0, 30, tzinfo=timezone.utc)
+        monkeypatch.setattr(
+            production_mod, "_utcnow_date", lambda: fixed_now.date()
+        )
+
+        accepted_store = _FakeStore()
+        tracker = _make_tracker(accepted_store=accepted_store)
+
+        # Pre-populate without GC (bypass _mark_accepted to inject old data)
+        tracker._accepted = {"2026-05-09": [12], "2026-05-15": [12]}
+        tracker._accepted_loaded = True  # don't overwrite from store on load
+
+        await tracker._mark_accepted("2026-05-17", 12)
+
+        # 2026-05-09 is 8 days before 2026-05-17 → cutoff = 2026-05-10 → drop
+        assert "2026-05-09" not in tracker._accepted
+        # 2026-05-15 is 2 days before → keep
+        assert "2026-05-15" in tracker._accepted
+        assert "2026-05-17" in tracker._accepted
