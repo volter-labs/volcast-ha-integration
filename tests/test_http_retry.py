@@ -56,3 +56,71 @@ async def test_http_with_retry_first_attempt_success():
     assert result.success is True
     assert result.attempts == 1
     assert result.data == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_http_with_retry_503_then_success():
+    session = _mock_session([
+        _FakeResponse(503),
+        _FakeResponse(200, {"ok": True}),
+    ])
+    result = await http_with_retry(
+        session, method="POST", url="http://test", payload={}, headers={},
+        delays=(0, 0), per_attempt_timeout=1,
+    )
+    assert result.success is True
+    assert result.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_http_with_retry_all_attempts_503():
+    session = _mock_session([_FakeResponse(503) for _ in range(4)])
+    result = await http_with_retry(
+        session, method="POST", url="http://test", payload={}, headers={},
+        delays=(0, 0, 0, 0), per_attempt_timeout=1,
+    )
+    assert result.success is False
+    assert result.status == 503
+    assert result.retriable is True
+    assert result.attempts == 4
+
+
+@pytest.mark.asyncio
+async def test_http_with_retry_401_no_retry():
+    session = _mock_session([_FakeResponse(401)])
+    result = await http_with_retry(
+        session, method="POST", url="http://test", payload={}, headers={},
+        delays=(0, 0, 0, 0), per_attempt_timeout=1,
+    )
+    assert result.success is False
+    assert result.status == 401
+    assert result.retriable is False
+    assert result.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_http_with_retry_timeout_then_success():
+    session = _mock_session([
+        asyncio.TimeoutError(),
+        _FakeResponse(200, {"ok": True}),
+    ])
+    result = await http_with_retry(
+        session, method="POST", url="http://test", payload={}, headers={},
+        delays=(0, 0), per_attempt_timeout=1,
+    )
+    assert result.success is True
+    assert result.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_http_with_retry_429_is_retriable():
+    session = _mock_session([
+        _FakeResponse(429),
+        _FakeResponse(200, {"ok": True}),
+    ])
+    result = await http_with_retry(
+        session, method="POST", url="http://test", payload={}, headers={},
+        delays=(0, 0), per_attempt_timeout=1,
+    )
+    assert result.success is True
+    assert result.attempts == 2
