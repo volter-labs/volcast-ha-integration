@@ -93,7 +93,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Daily reconciler — tylko jeśli mamy energy_entity (recorder potrzebny).
     reconciler: DailyReconciler | None = None
     if energy_entity and tracker is not None:
-        submit_url = tracker._submit_url
+        # submit_url już policzone wyżej (linia ~57) — używamy tej samej wartości
+        # zamiast sięgać do tracker._submit_url (private attribute).
         reconciler = _setup_reconciler(
             hass=hass,
             entry=entry,
@@ -155,13 +156,17 @@ def _setup_reconciler(
     # już-zaakceptowane godziny są pomijane przez reconcile_day.
     async def _on_started(_event=None):
         today = datetime.now(reconciler._tz).date()
-        for days_back in (2, 1):
+        # D-1 first (most likely to succeed within 36h window), then D-2
+        # (may already be out_of_window — best-effort cleanup).
+        for days_back in (1, 2):
             await reconciler.reconcile_day(today - timedelta(days=days_back))
 
     if hass.is_running:
         hass.async_create_task(_on_started())
     else:
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+        entry.async_on_unload(
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+        )
 
     return reconciler
 

@@ -22,19 +22,14 @@ from .production import VolcastProductionTracker
 
 _LOGGER = logging.getLogger(__name__)
 
-# Powody odrzucenia, których reconciler NIE powinien retry'ować — semantycznie
-# permanentne. Rozszerzona o "older_than_24h" względem PERMANENT_SKIP_REASONS
-# w production.py: jeśli backend już odmówił z powodu zbyt starego wpisu,
-# kolejna próba też się nie uda.
-RECONCILER_PERMANENT_SKIP_REASONS = frozenset({
-    "nighttime_hour",
-    "negative_production",
-    "exceeds_capacity",
-    "invalid_date",
-    "invalid_hour",
-    "missing_fields",
-    "older_than_24h",
-})
+from .production import PERMANENT_SKIP_REASONS
+
+# Powody odrzucenia, których reconciler NIE powinien retry'ować — bazujemy na
+# zestawie z production.py + dorzucamy "older_than_24h" (jeśli backend już
+# odmówił z powodu zbyt starego wpisu, kolejna próba też się nie uda).
+# Dziedziczenie z production.py zapobiega driftowi gdy ktoś rozszerzy zestaw
+# w jednym miejscu a zapomni o drugim.
+RECONCILER_PERMANENT_SKIP_REASONS = PERMANENT_SKIP_REASONS | frozenset({"older_than_24h"})
 
 # Maksymalny wiek dnia, który backend jeszcze przyjmuje (godziny).
 RECONCILE_WINDOW_HOURS = 36

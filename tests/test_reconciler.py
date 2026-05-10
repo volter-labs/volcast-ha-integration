@@ -356,8 +356,10 @@ async def test_setup_reconciler_registers_scheduled_trigger():
     assert call_kwargs["hour"] == 0
     assert call_kwargs["minute"] == 30
     assert call_kwargs["second"] == 0
-    # Cancel callback registered for unload
-    assert len(entry.unload_callbacks) == 1
+    # Cancel callbacks registered for unload — schedule + bus listener
+    # (is_running=False here, so on-startup wires via bus.async_listen_once
+    # and that cancel is also registered for clean unload).
+    assert len(entry.unload_callbacks) == 2
 
 
 @pytest.mark.asyncio
