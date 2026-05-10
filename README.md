@@ -18,6 +18,21 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 - **Peak production alert** — binary sensor for automations (configurable threshold)
 - **UI-based setup** — no YAML needed, just enter your API key and select your sensors
 
+### Resilience & Reconciliation (v1.7.0)
+
+The integration now ships three layered resilience mechanisms:
+
+- **Forecast retry** — short network blips no longer flap entities to `unavailable`. The integration retries failed forecast fetches with 5/15/45s backoff inside one update cycle.
+- **Submit retry** — hourly production submits use the same 5/15/45 retry pattern before queuing. Persistent retry queue still kicks in for longer outages.
+- **Daily reconciliation** — at 00:30 local each day (and once at HA startup), the integration reads the previous day's hourly statistics from HA Recorder and fills any gaps in your Volcast cloud history. Requires `energy_entity` configured with `state_class: total_increasing`.
+
+New diagnostic entities (under integration → Diagnostic):
+- `sensor.volcast_submit_queue_depth` — readings waiting to be retried (0 = healthy).
+- `sensor.volcast_last_reconciliation` — timestamp + status of last daily backfill.
+- `binary_sensor.volcast_integration_healthy` — single signal you can wire into automations.
+
+Power-only users (no `energy_entity` configured): retry mechanisms apply, but daily reconciliation is **not** active. Planned for a future release.
+
 ## How It Works
 
 ### Forecast Model
