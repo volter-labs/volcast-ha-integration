@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -52,7 +51,11 @@ def _make_reading(date: str = "2026-04-09", hour: int = 11, kwh: float = 3.5) ->
 
 
 def _mock_session_ok(accepted: int = 1, rejected: int = 0, calibration: dict | None = None):
-    """Return a mock aiohttp session whose POST returns 200 OK."""
+    """Return a mock aiohttp session whose POST returns 200 OK.
+
+    Used by the success-path tests that exercise the real http_with_retry
+    against a mocked session (verifies merge / payload shape end-to-end).
+    """
     resp = AsyncMock()
     resp.ok = True
     resp.status = 200
@@ -64,33 +67,6 @@ def _mock_session_ok(accepted: int = 1, rejected: int = 0, calibration: dict | N
 
     ctx = AsyncMock()
     ctx.__aenter__ = AsyncMock(return_value=resp)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-
-    session = MagicMock()
-    session.post = MagicMock(return_value=ctx)
-    return session
-
-
-def _mock_session_error(status: int = 500, text: str = "Internal Server Error"):
-    """Return a mock aiohttp session whose POST returns an error."""
-    resp = AsyncMock()
-    resp.ok = False
-    resp.status = status
-    resp.text = AsyncMock(return_value=text)
-
-    ctx = AsyncMock()
-    ctx.__aenter__ = AsyncMock(return_value=resp)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-
-    session = MagicMock()
-    session.post = MagicMock(return_value=ctx)
-    return session
-
-
-def _mock_session_timeout():
-    """Return a mock aiohttp session whose POST raises a timeout."""
-    ctx = AsyncMock()
-    ctx.__aenter__ = AsyncMock(side_effect=TimeoutError("DNS timeout"))
     ctx.__aexit__ = AsyncMock(return_value=False)
 
     session = MagicMock()
@@ -131,15 +107,22 @@ class TestRetryQueue:
 
     @pytest.mark.asyncio
     async def test_failed_submit_queues_reading(self):
-        """Gdy POST rzuci wyjątek (DNS timeout), reading powinien trafić do kolejki."""
+        """Gdy http_with_retry zwróci network failure, reading powinien trafić do kolejki."""
+        from custom_components.volcast.http_retry import RetryResult
+
         store = _FakeStore()
         tracker = _make_tracker(store=store)
 
-        session = _mock_session_timeout()
-
+        result = RetryResult(
+            success=False, status=None, attempts=4,
+            last_error="network: DNS timeout", retriable=True,
+        )
         with patch(
+            "custom_components.volcast.production.http_with_retry",
+            return_value=result,
+        ), patch(
             "custom_components.volcast.production.async_get_clientsession",
-            return_value=session,
+            return_value=MagicMock(),
         ):
             readings = [_make_reading(hour=11, kwh=3.5)]
             success = await tracker._async_submit(readings)
@@ -190,6 +173,8 @@ class TestRetryQueue:
     @pytest.mark.asyncio
     async def test_queue_max_48_fifo(self):
         """Kolejka nie powinna przekroczyć 48 wpisów — najstarsze usuwane."""
+        from custom_components.volcast.http_retry import RetryResult
+
         store = _FakeStore()
         # Pre-populate z 48 wpisami (unikalne date+hour combo)
         full_queue = [
@@ -201,11 +186,16 @@ class TestRetryQueue:
         tracker = _make_tracker(store=store)
         await tracker._async_load_queue()
 
-        session = _mock_session_timeout()
-
+        result = RetryResult(
+            success=False, status=None, attempts=4,
+            last_error="network: DNS timeout", retriable=True,
+        )
         with patch(
+            "custom_components.volcast.production.http_with_retry",
+            return_value=result,
+        ), patch(
             "custom_components.volcast.production.async_get_clientsession",
-            return_value=session,
+            return_value=MagicMock(),
         ):
             # Próba wysłania nowego readinga (unikalna data) — fail → dodaje do kolejki
             new_reading = _make_reading(date="2026-04-10", hour=12, kwh=99.0)
@@ -219,15 +209,23 @@ class TestRetryQueue:
 
     @pytest.mark.asyncio
     async def test_rate_limit_429_queues_reading(self):
-        """429 rate limit powinien kolejkować reading, nie tracić go."""
+        """429 rate limit (po wyczerpaniu retry) powinien kolejkować reading, nie tracić go."""
+        from custom_components.volcast.http_retry import RetryResult
+
         store = _FakeStore()
         tracker = _make_tracker(store=store)
 
-        session = _mock_session_error(status=429, text="rate limited")
-
+        # 429 jest retriable, zakładamy że po 4 próbach nadal trzyma rate limit
+        result = RetryResult(
+            success=False, status=429, attempts=4,
+            last_error="HTTP 429", retriable=True,
+        )
         with patch(
+            "custom_components.volcast.production.http_with_retry",
+            return_value=result,
+        ), patch(
             "custom_components.volcast.production.async_get_clientsession",
-            return_value=session,
+            return_value=MagicMock(),
         ):
             readings = [_make_reading(hour=11, kwh=3.5)]
             success = await tracker._async_submit(readings)
@@ -238,15 +236,23 @@ class TestRetryQueue:
     @pytest.mark.asyncio
     async def test_queue_persists_across_tracker_restart(self):
         """Kolejka powinna przetrwać restart trackera (Store persystencja)."""
+        from custom_components.volcast.http_retry import RetryResult
+
         store = _FakeStore()
 
         # Tracker 1: fail → queue reading
         tracker1 = _make_tracker(store=store)
-        session = _mock_session_timeout()
 
+        result = RetryResult(
+            success=False, status=None, attempts=4,
+            last_error="network: DNS timeout", retriable=True,
+        )
         with patch(
+            "custom_components.volcast.production.http_with_retry",
+            return_value=result,
+        ), patch(
             "custom_components.volcast.production.async_get_clientsession",
-            return_value=session,
+            return_value=MagicMock(),
         ):
             await tracker1._async_submit([_make_reading(hour=11, kwh=3.5)])
 
@@ -338,3 +344,128 @@ class TestAcceptedHoursStore:
         # 2026-05-15 is 2 days before → keep
         assert "2026-05-15" in tracker._accepted
         assert "2026-05-17" in tracker._accepted
+
+
+# ---------------------------------------------------------------------------
+# _async_submit refactored to delegate to http_with_retry (Task 15)
+# ---------------------------------------------------------------------------
+
+
+def _patch_http_with_retry(retry_result):
+    """Helper: patch production.http_with_retry to return a fixed RetryResult."""
+    return patch(
+        "custom_components.volcast.production.http_with_retry",
+        return_value=retry_result,
+    )
+
+
+class TestSubmitWithHttpRetry:
+    """Tests for the http_with_retry-driven _async_submit path."""
+
+    @pytest.mark.asyncio
+    async def test_submit_intra_flush_retry_success(self):
+        """http_with_retry returns success after attempts=2 — queue clears, hour marked accepted."""
+        from custom_components.volcast.http_retry import RetryResult
+
+        store = _FakeStore()
+        accepted_store = _FakeStore()
+        tracker = _make_tracker(store=store, accepted_store=accepted_store)
+
+        result = RetryResult(
+            success=True, status=200, attempts=2,
+            data={"accepted": 1, "rejected": 0, "rejections": []},
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            ok = await tracker._async_submit(
+                [{"date": "2026-05-10", "hour": 12, "actual_kwh": 1.5}]
+            )
+
+        assert ok is True
+        assert tracker._queue == []
+        assert 12 in tracker._accepted.get("2026-05-10", [])
+
+    @pytest.mark.asyncio
+    async def test_submit_exhaustion_queues_readings(self):
+        """http_with_retry returns failure with status=502 (retriable, exhausted) — readings queued."""
+        from custom_components.volcast.http_retry import RetryResult
+
+        store = _FakeStore()
+        accepted_store = _FakeStore()
+        tracker = _make_tracker(store=store, accepted_store=accepted_store)
+
+        result = RetryResult(
+            success=False, status=502, attempts=4,
+            last_error="HTTP 502", retriable=True,
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            ok = await tracker._async_submit(
+                [{"date": "2026-05-10", "hour": 12, "actual_kwh": 1.5}]
+            )
+
+        assert ok is False
+        assert len(tracker._queue) == 1
+        assert tracker._queue[0]["hour"] == 12
+        # Hour should NOT be marked accepted on failure
+        assert 12 not in tracker._accepted.get("2026-05-10", [])
+
+    @pytest.mark.asyncio
+    async def test_submit_non_retriable_breaks_loop(self):
+        """401 from http_with_retry → readings still queued (in case API key fixed later)."""
+        from custom_components.volcast.http_retry import RetryResult
+
+        store = _FakeStore()
+        accepted_store = _FakeStore()
+        tracker = _make_tracker(store=store, accepted_store=accepted_store)
+
+        result = RetryResult(
+            success=False, status=401, attempts=1,
+            last_error="non-retriable HTTP 401", retriable=False,
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            ok = await tracker._async_submit(
+                [{"date": "2026-05-10", "hour": 12, "actual_kwh": 1.5}]
+            )
+
+        assert ok is False
+        # Reading preserved for retry once API key issue is addressed
+        assert len(tracker._queue) == 1
+
+    @pytest.mark.asyncio
+    async def test_permanent_skip_rejection_marks_accepted(self):
+        """Backend returns 'nighttime_hour' rejection → mark accepted to stop reconciler retries."""
+        from custom_components.volcast.http_retry import RetryResult
+
+        store = _FakeStore()
+        accepted_store = _FakeStore()
+        tracker = _make_tracker(store=store, accepted_store=accepted_store)
+
+        result = RetryResult(
+            success=True, status=200, attempts=1,
+            data={
+                "accepted": 0,
+                "rejected": 1,
+                "rejections": [
+                    {"date": "2026-05-10", "hour": 22, "reason": "nighttime_hour"}
+                ],
+            },
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit(
+                [{"date": "2026-05-10", "hour": 22, "actual_kwh": 0.1}]
+            )
+
+        assert 22 in tracker._accepted.get("2026-05-10", []), (
+            "permanent-skip rejections must be marked to prevent reconciler retries"
+        )

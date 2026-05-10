@@ -17,6 +17,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 
 from .const import DEFAULT_SUBMIT_URL
+from .http_retry import http_with_retry
 
 STORAGE_KEY = "volcast_production_queue"
 STORAGE_VERSION = 1
@@ -27,6 +28,18 @@ MAX_QUEUE_SIZE = 48
 ACCEPTED_STORAGE_KEY = "volcast_accepted_hours"
 ACCEPTED_STORAGE_VERSION = 1
 ACCEPTED_RETENTION_DAYS = 7
+
+# Powody odrzucenia readinga przez backend, których NIE warto retry'ować:
+# semantycznie permanentne — kolejne wysyłanie zawsze da ten sam rezultat.
+# Reconciler powinien traktować je jak "już dostarczone" by nie spamować.
+PERMANENT_SKIP_REASONS = frozenset({
+    "nighttime_hour",
+    "negative_production",
+    "exceeds_capacity",
+    "invalid_date",
+    "invalid_hour",
+    "missing_fields",
+})
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,6 +112,9 @@ class VolcastProductionTracker:
         self.last_submission_time: datetime | None = None
         self.submissions_today: int = 0
         self._last_submission_date: str = ""
+        # Diagnostyka ostatniego POSTu (dla sensora, Task 20)
+        self._last_submit_status: str = ""
+        self._last_submit_attempts: int = 0
 
     @property
     def queued_count(self) -> int:
@@ -372,11 +388,16 @@ class VolcastProductionTracker:
     async def _async_submit(self, readings: list[dict[str, Any]]) -> bool:
         """Wyślij dane produkcji do backendu. Zwraca True jeśli sukces.
 
-        Łączy zakolejkowane readingi (retry) z bieżącymi i wysyła w jednym POST.
-        Na sukces czyści kolejkę; na fail dodaje readingi do kolejki.
+        Łączy zakolejkowane readingi (retry) z bieżącymi i wysyła w jednym POST
+        z retry 5/15/45s wewnątrz jednego wywołania (http_with_retry).
+        Na sukces:
+         - czyści kolejkę,
+         - oznacza każdy reading jako "accepted" (poza odrzuceniami z powodów
+           NIE-PERMANENT_SKIP_REASONS — te zostaną retry'owane przez reconciler).
+        Na fail: zapisuje wszystkie readingi do kolejki (cap MAX_QUEUE_SIZE FIFO).
         """
-        # Załaduj kolejkę retry (lazy, raz)
         await self._async_load_queue()
+        await self._load_accepted_store()
 
         # Połącz zakolejkowane + nowe (dedup po date+hour)
         all_readings = list(self._queue)
@@ -387,52 +408,70 @@ class VolcastProductionTracker:
                 all_readings.append(r)
                 seen.add(key)
 
-        try:
-            session = async_get_clientsession(self._hass)
-            async with session.post(
-                self._submit_url,
-                json={"readings": all_readings},
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Content-Type": "application/json",
-                },
-                timeout=15,
-            ) as resp:
-                if resp.ok:
-                    data = await resp.json()
-                    self.calibration = data.get("calibration")
-                    self.last_submission_time = datetime.now(timezone.utc)
-                    self.submissions_today += data.get("accepted", 0)
-                    if self._queue:
-                        _LOGGER.info(
-                            "Production submitted with %d retried readings: accepted=%s",
-                            len(self._queue),
-                            data.get("accepted", 0),
-                        )
-                    else:
-                        _LOGGER.info(
-                            "Production submitted: accepted=%s rejected=%s calibration=%s",
-                            data.get("accepted", 0),
-                            data.get("rejected", 0),
-                            self.calibration,
-                        )
-                    # Sukces — wyczyść kolejkę retry
-                    self._queue = []
-                    await self._async_save_queue()
-                    return True
-                elif resp.status == 429:
-                    _LOGGER.warning("Production submit rate limited (429)")
-                else:
-                    text = await resp.text()
-                    _LOGGER.error("Production submit failed (%s): %s", resp.status, text)
+        session = async_get_clientsession(self._hass)
+        result = await http_with_retry(
+            session,
+            method="POST",
+            url=self._submit_url,
+            payload={"readings": all_readings},
+            headers={
+                "X-API-Key": self._api_key,
+                "Content-Type": "application/json",
+            },
+        )
 
-        except Exception:
-            _LOGGER.exception("Error during production submit")
+        self._last_submit_attempts = result.attempts
 
-        # Fail — zapisz wszystkie readingi do kolejki retry
-        self._queue = all_readings
-        if len(self._queue) > MAX_QUEUE_SIZE:
-            self._queue = self._queue[-MAX_QUEUE_SIZE:]
+        if result.success:
+            data = result.data or {}
+            self.calibration = data.get("calibration")
+            self.last_submission_time = datetime.now(timezone.utc)
+            self.submissions_today += data.get("accepted", 0)
+
+            # Map rejections by (date, hour) → reason. Readings without a
+            # rejection (and those rejected for permanent-skip reasons) are
+            # marked accepted to prevent reconciler retry spam.
+            rejections = data.get("rejections") or []
+            rejected_keys: dict[tuple[str, int], str] = {}
+            for rej in rejections:
+                try:
+                    rejected_keys[(rej["date"], rej["hour"])] = rej.get("reason", "")
+                except (KeyError, TypeError):
+                    continue
+
+            for r in all_readings:
+                key = (r["date"], r["hour"])
+                reason = rejected_keys.get(key)
+                if reason is None or reason in PERMANENT_SKIP_REASONS:
+                    await self._mark_accepted(r["date"], r["hour"])
+
+            self._queue = []
+            await self._async_save_queue()
+            self._last_submit_status = "ok"
+            if result.attempts > 1:
+                _LOGGER.info(
+                    "Production submitted after %d attempts: accepted=%s rejected=%s",
+                    result.attempts,
+                    data.get("accepted", 0),
+                    data.get("rejected", 0),
+                )
+            else:
+                _LOGGER.info(
+                    "Production submitted: accepted=%s rejected=%s calibration=%s",
+                    data.get("accepted", 0),
+                    data.get("rejected", 0),
+                    self.calibration,
+                )
+            return True
+
+        # Failure path — zapisz wszystkie readingi do kolejki retry (FIFO cap)
+        self._queue = all_readings[-MAX_QUEUE_SIZE:]
         await self._async_save_queue()
-        _LOGGER.info("Queued %d readings for retry (total queued: %d)", len(readings), len(self._queue))
+        self._last_submit_status = result.last_error or f"HTTP {result.status}"
+        _LOGGER.warning(
+            "Production submit failed after %d attempts (%s); %d readings queued",
+            result.attempts,
+            result.last_error or f"HTTP {result.status}",
+            len(self._queue),
+        )
         return False
