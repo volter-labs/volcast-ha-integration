@@ -120,7 +120,7 @@ class _FakeCoordinatorEntity:
 
 class _FakeDataUpdateCoordinator:
     """Minimal stub for DataUpdateCoordinator."""
-    def __init__(self, hass=None, logger=None, *, name: str = "", update_interval=None):
+    def __init__(self, hass=None, logger=None, *, name: str = "", update_interval=None, **_kwargs):
         self.hass = hass
         self.logger = logger
         self.name = name

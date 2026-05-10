@@ -19,6 +19,11 @@ from custom_components.volcast.coordinator import (
 )
 from tests.conftest import FakeHass
 
+from unittest.mock import patch
+
+from custom_components.volcast.coordinator import VolcastCoordinator
+from custom_components.volcast.http_retry import RetryResult
+
 
 # ---------------------------------------------------------------------------
 # _parse_response
@@ -219,15 +224,16 @@ class TestErrorData:
 # _async_update_data — refactored to delegate to http_with_retry
 # ---------------------------------------------------------------------------
 
-from unittest.mock import patch
-
-from custom_components.volcast.coordinator import VolcastCoordinator
-from custom_components.volcast.http_retry import RetryResult
-
 
 @pytest.mark.asyncio
 async def test_coordinator_uses_http_with_retry_on_success():
-    """Coordinator delegates to http_with_retry and parses success result."""
+    """Coordinator delegates to http_with_retry and parses success result.
+
+    Test scope: verify the helper IS called with the right method/url. The
+    parsed VolcastData is intentionally not asserted (sample_payload is flat
+    rather than wrapped in {'attributes': {...}} as _parse_response expects);
+    parser correctness is covered by the dedicated _parse_response tests above.
+    """
     coord = VolcastCoordinator(
         hass=FakeHass(),
         api_key="test",
@@ -235,18 +241,7 @@ async def test_coordinator_uses_http_with_retry_on_success():
         update_interval_minutes=15,
     )
 
-    # Build a minimal valid forecast payload that _parse_response accepts
-    sample_payload = {
-        "daily": [],
-        "hourly": {},
-        "energy_today": 0,
-        "energy_tomorrow": 0,
-        "system_capacity_kwp": None,
-        "location": "",
-        "generated_at": "",
-        "cache_age_minutes": 0,
-        "api_version": 0,
-    }
+    sample_payload: dict[str, Any] = {}  # parser returns empty VolcastData; we don't assert on it
 
     with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
          patch("custom_components.volcast.coordinator.async_get_clientsession"):

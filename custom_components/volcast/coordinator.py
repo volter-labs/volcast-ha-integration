@@ -110,6 +110,10 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
             return _error_data("Premium required")
         if result.status == 503:
             raise UpdateFailed("Forecast not yet available — cache being populated")
+        if result.status == 429:
+            raise UpdateFailed(
+                f"Rate limit exceeded — retry later (after {result.attempts} attempts)"
+            )
         if result.status is not None:
             raise UpdateFailed(
                 f"Volcast API error: {result.status} (after {result.attempts} attempts)"
