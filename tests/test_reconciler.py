@@ -285,7 +285,14 @@ async def test_reconcile_day_one_gap_filled():
     reading = call_kwargs["payload"]["readings"][0]
     assert reading["hour"] == 18
     assert reading["date"] == target.isoformat()
-    assert reading["data_method"] == "energy_delta_reconciliation"
+    # data_method MUST be a value allowed by the backend CHECK constraint —
+    # specifically 'energy_delta' or 'power_average'. beta4 used a custom
+    # 'energy_delta_reconciliation' string that caused HTTP 500 on every
+    # reconciliation submit. Regression guard.
+    assert reading["data_method"] in {"energy_delta", "power_average"}, (
+        f"data_method must satisfy backend CHECK constraint; got {reading['data_method']!r}"
+    )
+    assert reading["data_method"] == "energy_delta"
     # Headers match the production submit path
     assert call_kwargs["headers"]["X-API-Key"] == "test-key"
     assert call_kwargs["headers"]["Content-Type"] == "application/json"

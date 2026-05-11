@@ -151,10 +151,17 @@ class DailyReconciler:
             if kwh < MIN_REPORT_KWH:
                 continue
             missing.append({
+                # data_method MUST be one of the values allowed by the backend
+                # CHECK constraint on pv_actual_production_hourly.data_method:
+                # ('energy_delta', 'power_average'). Reconciler computes hourly
+                # delta from cumulative sum in recorder statistics — same
+                # algorithm as live submit's "energy_delta" branch. The
+                # "this came from reconciliation" distinction is captured at
+                # request level via `is_reconciliation: true`, not in the row.
                 "date": target_date.isoformat(),
                 "hour": hour,
                 "actual_kwh": round(kwh, 4),
-                "data_method": "energy_delta_reconciliation",
+                "data_method": "energy_delta",
             })
 
         if not missing:
