@@ -152,14 +152,15 @@ def _setup_reconciler(
         )
     )
 
-    # Na startupie HA — spróbuj uzgodnić ostatnie 2 dni (D-2 i D-1). Idempotentne:
-    # już-zaakceptowane godziny są pomijane przez reconcile_day.
+    # Na startupie HA — uzgodnij D-1 (wczoraj). Idempotentne: już-zaakceptowane
+    # godziny pomijane przez reconcile_day.
+    #
+    # Wcześniejsza wersja iterowała też D-2, ale backend 36h window i tak zawsze
+    # rzuca D-2 jako `out_of_window` → no-op cleanup, plus nadpisywał
+    # `_last_target_date` zostawiając mniej-użyteczne info w diagnostic sensor.
     async def _on_started(_event=None):
         today = datetime.now(reconciler._tz).date()
-        # D-1 first (most likely to succeed within 36h window), then D-2
-        # (may already be out_of_window — best-effort cleanup).
-        for days_back in (1, 2):
-            await reconciler.reconcile_day(today - timedelta(days=days_back))
+        await reconciler.reconcile_day(today - timedelta(days=1))
 
     if hass.is_running:
         hass.async_create_task(_on_started())

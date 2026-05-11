@@ -57,6 +57,19 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
 
     _attr_has_entity_name = True
 
+    # Exclude large attributes from recorder storage. HA recorder rejects rows
+    # with state_attributes blob > 16384 bytes (warns + drops the attribute
+    # write). `detailedForecast` is the main offender: ~288 five-minute entries
+    # per day × ~50 bytes JSON each ≈ 14-17 KB. Excluding `hours` and
+    # `detailedHourly` too to keep total well under the limit even on edge cases.
+    # Sensor state and other small attributes still recorded normally.
+    _unrecorded_attributes = frozenset({
+        "detailedForecast",
+        "detailedHourly",
+        "hours",
+        "forecast",
+    })
+
     def __init__(
         self,
         coordinator: VolcastCoordinator,
