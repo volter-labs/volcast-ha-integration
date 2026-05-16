@@ -70,7 +70,51 @@ class _FakeConfigEntry:
     def add_update_listener(self, _): ...
     def async_on_unload(self, _): ...
 
-_make_module("homeassistant.config_entries", {"ConfigEntry": _FakeConfigEntry})
+class _FakeConfigFlow:
+    """Stub for homeassistant.config_entries.ConfigFlow."""
+    VERSION = 1
+
+    def __init_subclass__(cls, **kwargs):
+        # Discard the `domain=` kwarg HA's real ConfigFlow accepts at subclass time
+        kwargs.pop("domain", None)
+        super().__init_subclass__(**kwargs)
+
+    async def async_set_unique_id(self, *_a, **_kw): ...
+    def _abort_if_unique_id_configured(self): ...
+    def async_show_form(self, **kwargs): return {"type": "form", **kwargs}
+    def async_create_entry(self, **kwargs): return {"type": "create_entry", **kwargs}
+
+
+class _FakeOptionsFlowWithConfigEntry:
+    """Stub for homeassistant.config_entries.OptionsFlowWithConfigEntry."""
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+    def async_show_form(self, **kwargs): return {"type": "form", **kwargs}
+    def async_create_entry(self, **kwargs): return {"type": "create_entry", **kwargs}
+
+
+_make_module("homeassistant.config_entries", {
+    "ConfigEntry": _FakeConfigEntry,
+    "ConfigFlow": _FakeConfigFlow,
+    "ConfigFlowResult": dict,
+    "OptionsFlowWithConfigEntry": _FakeOptionsFlowWithConfigEntry,
+})
+
+
+class _FakeEntitySelectorConfig:
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+class _FakeEntitySelector:
+    def __init__(self, *_a, **_kw): ...
+
+
+_FakeSelectorModule = types.ModuleType("homeassistant.helpers.selector")
+_FakeSelectorModule.EntitySelector = _FakeEntitySelector
+_FakeSelectorModule.EntitySelectorConfig = _FakeEntitySelectorConfig
+sys.modules["homeassistant.helpers.selector"] = _FakeSelectorModule
 
 # --- homeassistant.helpers ---
 _make_module("homeassistant.helpers")

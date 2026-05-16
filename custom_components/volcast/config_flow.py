@@ -58,8 +58,26 @@ async def _validate_api_key(api_key: str, api_url: str) -> dict[str, Any]:
                     raise CannotConnect(f"Unexpected status: {resp.status}")
 
                 data = await resp.json()
-                location = data.get("attributes", {}).get("location", "Volcast")
-                return {"title": f"Volcast — {location}"}
+                # `.get("attributes", {})` only catches a missing key. If the
+                # backend returns `{"attributes": null}` we'd call `.get(...)` on
+                # None and crash with AttributeError — that exception would
+                # surface as the opaque "unknown" config-flow error. Guard the
+                # attributes value before reading location, and treat a non-string
+                # location as absent.
+                #
+                # `.get("location", "Volcast")` similarly only catches a missing
+                # key, not an empty-string value. The Volcast backend has been
+                # observed to return `location: ""` (eg. when system geolocation
+                # is unset server-side), which produced the malformed title
+                # "Volcast — " (trailing em-dash and space). Normalise empty /
+                # whitespace strings to None so the title degrades cleanly.
+                attributes = data.get("attributes")
+                if not isinstance(attributes, dict):
+                    attributes = {}
+                raw_location = attributes.get("location")
+                location = raw_location.strip() if isinstance(raw_location, str) else ""
+                title = f"Volcast — {location}" if location else "Volcast"
+                return {"title": title}
 
     except aiohttp.ClientError as err:
         raise CannotConnect(str(err)) from err
