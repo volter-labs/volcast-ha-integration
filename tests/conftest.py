@@ -315,10 +315,18 @@ class FakeCoordinator:
 
 
 class FakeHass:
-    """Minimal hass stub."""
+    """Minimal hass stub.
+
+    `data` is initialised per-instance (NOT a class attribute) to avoid
+    cross-test pollution — two tests instantiating FakeHass would otherwise
+    share the same dict and any mutation in one test would leak into another.
+    """
     class _Config:
         time_zone = "Europe/Warsaw"
     config = _Config()
+
+    def __init__(self) -> None:
+        self.data: dict = {}
 
 
 @pytest.fixture
