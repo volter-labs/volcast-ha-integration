@@ -221,12 +221,27 @@ class VolcastProductionTracker:
         now = self._get_local_now()
         current_hour = now.hour
 
+        current_bucket_hour = self._current_bucket.hour if self._current_bucket else None
+        previous_bucket_hour = self._previous_bucket.hour if self._previous_bucket else None
+        _LOGGER.debug(
+            "Flush tick: minute=%d current_hour=%d last_flushed=%d "
+            "current_bucket=%s previous_bucket=%s queue=%d",
+            now.minute,
+            current_hour,
+            self._last_flushed_hour,
+            current_bucket_hour,
+            previous_bucket_hour,
+            len(self._queue),
+        )
+
         # Flush raz na godzinę po :05 — flag-based (odporny na timer drift)
         if now.minute < 5:
+            _LOGGER.debug("Flush skipped: in grace window (minute=%d < 5)", now.minute)
             return
 
         prev_hour = (current_hour - 1) % 24
         if prev_hour == self._last_flushed_hour:
+            _LOGGER.debug("Flush skipped: hour %d already flushed this cycle", prev_hour)
             return  # Już wysłano w tej godzinie
 
         # Znajdź bucket do flushu — bieżący (jeśli z prev_hour) lub zachowany previous
@@ -241,12 +256,47 @@ class VolcastProductionTracker:
         self._last_flushed_hour = prev_hour
 
         if bucket is None:
+            _LOGGER.warning(
+                "Flush skipped for hour %d: no bucket data. "
+                "No state_changed events fired for configured entities during that hour "
+                "(common overnight when PV power/energy values are unchanged).",
+                prev_hour,
+            )
             return
+
+        _LOGGER.debug(
+            "Flush bucket hour=%d energy_start=%s energy_latest=%s "
+            "power_readings=%d peak_w=%.1f max_soc=%s charge_n=%d",
+            prev_hour,
+            bucket.energy_start,
+            bucket.energy_latest,
+            len(bucket.power_readings),
+            bucket.peak_power_w,
+            bucket.max_soc,
+            bucket.charge_power_count,
+        )
 
         # Oblicz actual_kwh
         actual_kwh, data_method = self._compute_energy(bucket)
 
-        if actual_kwh is None or actual_kwh < 0:
+        if actual_kwh is None:
+            _LOGGER.warning(
+                "Flush skipped for hour %d: insufficient data to compute energy "
+                "(energy_start=%s energy_latest=%s power_readings=%d). "
+                "Hour will not be retried.",
+                prev_hour,
+                bucket.energy_start,
+                bucket.energy_latest,
+                len(bucket.power_readings),
+            )
+            return
+        if actual_kwh < 0:
+            _LOGGER.warning(
+                "Flush skipped for hour %d: negative actual_kwh=%.4f method=%s",
+                prev_hour,
+                actual_kwh,
+                data_method,
+            )
             return
 
         # Resetuj counter jeśli nowy dzień
@@ -284,6 +334,14 @@ class VolcastProductionTracker:
         if bucket.charge_power_max is not None:
             reading["battery_charge_power_max"] = round(bucket.charge_power_max, 1)
 
+        _LOGGER.info(
+            "Flushing hour %d: kwh=%.4f method=%s peak_w=%s queue=%d",
+            prev_hour,
+            actual_kwh,
+            data_method,
+            reading.get("peak_power_w"),
+            len(self._queue),
+        )
         await self._async_submit([reading])
 
     def _compute_energy(self, bucket: HourBucket) -> tuple[float | None, str]:
@@ -294,15 +352,22 @@ class VolcastProductionTracker:
 
             # Reset detection (licznik wyzerowany)
             if delta < 0:
-                _LOGGER.debug("Energy counter reset detected (delta=%s), fallback to power", delta)
+                _LOGGER.debug(
+                    "Energy counter reset detected (start=%.4f latest=%.4f delta=%.4f), fallback to power",
+                    bucket.energy_start, bucket.energy_latest, delta,
+                )
             else:
                 # Capacity glitch detection
                 if self._capacity_kwp and delta > self._capacity_kwp * 1.2:
                     _LOGGER.warning(
-                        "Energy delta %s kWh exceeds capacity %s kWp × 1.2, skipping",
+                        "Energy delta %.4f kWh exceeds capacity %s kWp x 1.2, skipping",
                         delta, self._capacity_kwp,
                     )
                     return None, "energy_delta"
+                _LOGGER.debug(
+                    "Energy compute method=energy_delta start=%.4f latest=%.4f delta=%.4f",
+                    bucket.energy_start, bucket.energy_latest, delta,
+                )
                 return delta, "energy_delta"
 
         # Metoda 2: Power trapezoidal (fallback)
@@ -316,8 +381,16 @@ class VolcastProductionTracker:
                 avg_power_w = (p0 + p1) / 2.0
                 total_wh += avg_power_w * dt_hours
             kwh = total_wh / 1000.0
+            _LOGGER.debug(
+                "Energy compute method=power_average readings=%d kwh=%.4f",
+                len(readings), kwh,
+            )
             return kwh, "power_average"
 
+        _LOGGER.debug(
+            "Energy compute no method viable: energy_start=%s energy_latest=%s power_readings=%d",
+            bucket.energy_start, bucket.energy_latest, len(bucket.power_readings),
+        )
         return None, ""
 
     async def _async_submit(self, readings: list[dict[str, Any]]) -> bool:
@@ -338,6 +411,10 @@ class VolcastProductionTracker:
                 all_readings.append(r)
                 seen.add(key)
 
+        _LOGGER.debug(
+            "Production POST: url=%s new_readings=%d queued_readings=%d total=%d",
+            self._submit_url, len(readings), len(self._queue), len(all_readings),
+        )
         try:
             session = async_get_clientsession(self._hass)
             async with session.post(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -91,28 +92,55 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
     async def _async_update_data(self) -> VolcastData:
         """Fetch data from Volcast API."""
         url = f"{self._api_url}?key={self._api_key}"
+        _LOGGER.debug("Volcast refresh start (url=%s, interval=%s)", self._api_url, self.update_interval)
 
+        t0 = time.monotonic()
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     if resp.status == 401:
+                        _LOGGER.error("Volcast refresh failed: HTTP 401 — invalid API key")
                         raise UpdateFailed("Invalid API key")
                     if resp.status == 403:
+                        _LOGGER.warning("Volcast refresh: HTTP 403 — premium subscription required")
                         return _error_data("Premium required")
                     if resp.status == 429:
+                        _LOGGER.warning("Volcast refresh: HTTP 429 — rate limit exceeded")
                         raise UpdateFailed("Rate limit exceeded — retry later")
                     if resp.status == 503:
+                        _LOGGER.warning("Volcast refresh: HTTP 503 — forecast cache being populated")
                         raise UpdateFailed("Forecast not yet available — cache being populated")
                     if resp.status >= 500:
+                        _LOGGER.error("Volcast refresh failed: HTTP %s — server error", resp.status)
                         raise UpdateFailed(f"Volcast API error: {resp.status}")
                     if not resp.ok:
+                        _LOGGER.error("Volcast refresh failed: HTTP %s — unexpected status", resp.status)
                         raise UpdateFailed(f"Unexpected status: {resp.status}")
 
                     raw = await resp.json()
         except aiohttp.ClientError as err:
+            _LOGGER.warning("Volcast refresh: connection error after %.2fs: %s", time.monotonic() - t0, err)
             raise UpdateFailed(f"Connection error: {err}") from err
 
-        return _parse_response(raw, self.hass)
+        data = _parse_response(raw, self.hass)
+        elapsed = time.monotonic() - t0
+        _LOGGER.debug(
+            "Volcast refresh done in %.2fs: energy_today=%s gen=%s cache_age=%dmin nowcast=%s days=%d",
+            elapsed,
+            data.energy_today,
+            data.generated_at,
+            data.cache_age_minutes,
+            data.nowcast_applied,
+            len(data.forecast),
+        )
+        if data.cache_age_minutes >= 180:
+            _LOGGER.warning(
+                "Volcast server forecast is stale: cache_age=%dmin (gen=%s). "
+                "This is a server-side issue, not a local integration problem.",
+                data.cache_age_minutes,
+                data.generated_at,
+            )
+        return data
 
 
 def _error_data(status: str) -> VolcastData:
