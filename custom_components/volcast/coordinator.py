@@ -204,7 +204,16 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
     tomorrow_dt = datetime.now(tz) + timedelta(days=1)
     tomorrow_str = tomorrow_dt.strftime("%Y-%m-%d")
 
-    energy_today = raw.get("state", 0)
+    # energy_today is derived from the forecast array using HA's local timezone.
+    # We intentionally ignore raw["state"] because the server computes it with a
+    # UTC date, which is wrong for east-of-UTC users in their local evening
+    # (UTC date < local date → "today's" state is actually yesterday's value).
+    # Mirror image of the energy_tomorrow logic immediately below.
+    energy_today = 0.0
+    for d in forecast:
+        if d.date == today_str:
+            energy_today = d.energy_kwh
+            break
     energy_tomorrow = 0.0
     for d in forecast:
         if d.date == tomorrow_str:

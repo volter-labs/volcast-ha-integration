@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -62,10 +62,14 @@ class TestParseResponse:
     """Tests for _parse_response."""
 
     def test_basic_daily_forecast(self):
+        # energy_today is derived from the forecast entry matching HA's local
+        # "today" — fixture date must therefore be computed at runtime.
+        tz = ZoneInfo("Europe/Warsaw")
+        today_str = datetime.now(tz).strftime("%Y-%m-%d")
         raw = _make_api_response(
             forecast=[
                 {
-                    "date": "2026-03-20",
+                    "date": today_str,
                     "energy_kwh": 25.5,
                     "peak_power_kw": 4.2,
                     "confidence": 0.85,
@@ -82,10 +86,40 @@ class TestParseResponse:
         assert result.api_status == "Active"
         assert result.system_capacity_kwp == 6.5
         assert len(result.forecast) == 1
-        assert result.forecast[0].date == "2026-03-20"
+        assert result.forecast[0].date == today_str
         assert result.forecast[0].energy_kwh == 25.5
         assert result.forecast[0].peak_power_kw == 4.2
         assert result.forecast[0].confidence == 0.85
+
+    def test_today_energy_from_forecast_not_state(self):
+        """Regression: energy_today must come from forecast array (HA local
+        timezone), not from server's `state` field which is UTC-date-based.
+
+        Bug exposed on 2026-05-17: Polish user in evening, UTC=2026-05-16,
+        local=2026-05-17. Server returned state=8.65 (UTC-today=Polish-yesterday)
+        and forecast[2026-05-17]=7.33. HA Today sensor showed 8.65 instead of
+        7.33.
+        """
+        tz = ZoneInfo("Europe/Warsaw")
+        today_str = datetime.now(tz).strftime("%Y-%m-%d")
+        yesterday_str = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+        tomorrow_str = (datetime.now(tz) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        raw = _make_api_response(
+            state=99.99,  # bogus value — must NOT leak into energy_today
+            forecast=[
+                {"date": yesterday_str, "energy_kwh": 8.65, "peak_power_kw": 1.278},
+                {"date": today_str, "energy_kwh": 7.33, "peak_power_kw": 0.937},
+                {"date": tomorrow_str, "energy_kwh": 23.87, "peak_power_kw": 3.137},
+            ],
+        )
+        result = _parse_response(raw, FakeHass())
+
+        assert result.energy_today == 7.33, (
+            f"energy_today should come from forecast[today], got {result.energy_today} "
+            f"— likely still reading raw.state"
+        )
+        assert result.energy_tomorrow == 23.87
 
     def test_hourly_parsing(self):
         raw = _make_api_response(
