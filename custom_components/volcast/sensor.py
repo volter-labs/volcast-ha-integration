@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -12,13 +13,16 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower, UnitOfTime
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import VolcastCoordinator, VolcastData
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -34,6 +38,7 @@ async def async_setup_entry(
         VolcastEnergyTomorrowSensor(coordinator, entry),
         VolcastPowerNowSensor(coordinator, entry),
         VolcastApiStatusSensor(coordinator, entry),
+        VolcastForecastAgeSensor(coordinator, entry),
     ]
 
     # Day 3-7 forecast sensors
@@ -422,3 +427,105 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
             attrs["production_tracking"] = False
 
         return attrs
+
+
+# =============================================================================
+# FORECAST AGE (diagnostic)
+# =============================================================================
+
+
+class VolcastForecastAgeSensor(VolcastBaseSensor):
+    """Wall-clock age of the server's last forecast generation, in minutes.
+
+    Distinguishes server-side staleness from local integration issues. The
+    server reports its own `cache_age_minutes` in API responses, but that
+    value only refreshes when the integration polls (every `update_interval`
+    minutes, default 30). This sensor computes age locally on every read,
+    so automations can trigger on stale-forecast thresholds with second-level
+    resolution.
+
+    Returns `None` (unavailable) when `generated_at` is missing or unparseable.
+    """
+
+    # How often to push a state refresh while idle between coordinator updates.
+    # 1 minute matches the integer resolution of the sensor (unit = minutes),
+    # so every published change actually represents a 1-tick advance.
+    _SELF_REFRESH_INTERVAL = timedelta(minutes=1)
+
+    def __init__(self, coordinator: VolcastCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(
+            coordinator,
+            entry,
+            SensorEntityDescription(
+                key="forecast_age",
+                translation_key="forecast_age",
+                entity_category=EntityCategory.DIAGNOSTIC,
+                native_unit_of_measurement=UnitOfTime.MINUTES,
+                state_class=SensorStateClass.MEASUREMENT,
+                icon="mdi:clock-alert-outline",
+                suggested_display_precision=0,
+            ),
+        )
+        self._unsub_refresh: CALLBACK_TYPE | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Register a 1-min self-refresh so age advances between coordinator polls.
+
+        Without this, the sensor would only emit a new state on each coordinator
+        refresh (default 30 min). The whole point of this sensor is to give a
+        continuously-updating wall-clock view of server staleness, so it must
+        re-publish its computed value independently of the coordinator's cadence.
+        """
+        await super().async_added_to_hass()
+        self._unsub_refresh = async_track_time_interval(
+            self.hass,
+            self._async_handle_refresh,
+            self._SELF_REFRESH_INTERVAL,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Tear down the self-refresh timer on entity removal."""
+        if self._unsub_refresh is not None:
+            self._unsub_refresh()
+            self._unsub_refresh = None
+        await super().async_will_remove_from_hass()
+
+    async def _async_handle_refresh(self, _now) -> None:
+        """Push a state update so native_value gets re-computed against current time."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> int | None:
+        """Return age in minutes between now (UTC) and server's generated_at."""
+        if self._data is None or not self._data.generated_at:
+            return None
+        try:
+            # Server returns ISO 8601 with trailing 'Z' or '+00:00' offset.
+            # `datetime.fromisoformat` accepts the latter on all supported Python
+            # versions; normalise Z → +00:00 so we don't lose precision on
+            # whichever shape the backend emits.
+            gen = self._data.generated_at.replace("Z", "+00:00")
+            gen_dt = datetime.fromisoformat(gen)
+        except (ValueError, TypeError):
+            _LOGGER.debug(
+                "Volcast forecast_age sensor: unparseable generated_at=%r",
+                self._data.generated_at,
+            )
+            return None
+        if gen_dt.tzinfo is None:
+            # Defensive: assume UTC if backend dropped the offset
+            gen_dt = gen_dt.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - gen_dt
+        # Negative ages (server clock ahead of ours) clamp to 0 — confusing UX
+        # but better than negative minutes on a dashboard.
+        return max(0, int(delta.total_seconds() // 60))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Surface generated_at and server's self-reported cache_age for cross-check."""
+        if self._data is None:
+            return {}
+        return {
+            "generated_at": self._data.generated_at,
+            "server_reported_cache_age_minutes": self._data.cache_age_minutes,
+        }

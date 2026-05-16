@@ -51,6 +51,7 @@ _make_module("homeassistant.core", {
     "HomeAssistant": _FakeHomeAssistant,
     "Event": _FakeEvent,
     "callback": _fake_callback,
+    "CALLBACK_TYPE": Any,
 })
 _make_module("homeassistant.const", {
     "CONF_API_KEY": "api_key",
@@ -58,6 +59,7 @@ _make_module("homeassistant.const", {
     "EntityCategory": MagicMock(),
     "UnitOfEnergy": MagicMock(),
     "UnitOfPower": MagicMock(),
+    "UnitOfTime": MagicMock(),
     "STATE_UNAVAILABLE": "unavailable",
     "STATE_UNKNOWN": "unknown",
 })
@@ -116,6 +118,15 @@ class _FakeCoordinatorEntity:
 
     def __class_getitem__(cls, item):
         return cls
+
+    async def async_added_to_hass(self) -> None:
+        """Stub — real HA hooks up coordinator listeners here."""
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Stub — real HA tears down coordinator listeners here."""
+
+    def async_write_ha_state(self) -> None:
+        """Stub — real HA pushes state to the registry/dispatch."""
 
 
 class _FakeDataUpdateCoordinator:
@@ -315,10 +326,18 @@ class FakeCoordinator:
 
 
 class FakeHass:
-    """Minimal hass stub."""
+    """Minimal hass stub.
+
+    `data` is initialised per-instance (NOT a class attribute) to avoid
+    cross-test pollution — two tests instantiating FakeHass would otherwise
+    share the same dict and any mutation in one test would leak into another.
+    """
     class _Config:
         time_zone = "Europe/Warsaw"
     config = _Config()
+
+    def __init__(self) -> None:
+        self.data: dict = {}
 
 
 @pytest.fixture

@@ -44,6 +44,8 @@ def _make_sensor(sensor_cls, data: VolcastData | None, **kwargs):
     sensor._attr_has_entity_name = True
     sensor._attr_unique_id = "test"
     sensor._attr_device_info = {}
+    # ApiStatusSensor + ForecastAgeSensor use this in extra_state_attributes to find their tracker
+    sensor._entry_id = entry.entry_id
 
     if hasattr(sensor_cls, '_days_ahead'):
         sensor._days_ahead = kwargs.get("days_ahead", 0)

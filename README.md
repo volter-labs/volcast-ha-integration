@@ -24,7 +24,7 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 
 Volcast uses a physics-based PV simulation model fed by a multi-model weather ensemble (ECMWF IFS, GFS, and regional models like ICON, UKMO, JMA depending on your location). The models are blended with horizon-dependent weighting — regional models dominate for short-range forecasts, global models take over for longer horizons.
 
-The integration polls the Volcast cloud API at a configurable interval (default: 60 minutes). Data is served from a server-side cache that refreshes every 2 hours, so values match exactly what you see in the Volcast mobile app.
+The integration polls the Volcast cloud API at a configurable interval (default: 30 minutes). Data is served from a server-side cache that refreshes every 2 hours, so values match exactly what you see in the Volcast mobile app.
 
 ### Production Tracking & Calibration
 
@@ -57,6 +57,7 @@ Data is submitted to Volcast once per hour (at ~5 minutes past each hour). A qua
 | `sensor.volcast_power_now` | Power (W) | Current estimated power output |
 | `binary_sensor.volcast_peak_production` | Binary | ON when power > threshold % of today's peak |
 | `sensor.volcast_api_status` | Diagnostic | API connection status |
+| `sensor.volcast_forecast_age` | Diagnostic (minutes) | Wall-clock age of the server's last forecast generation. Updates locally every read, independent of the integration's poll interval. Useful for automations that detect server-side staleness. |
 
 ## Prerequisites
 
@@ -108,7 +109,7 @@ After setup, click **Configure** on the integration to adjust:
 
 | Option | Default | Range | Description |
 |--------|---------|-------|-------------|
-| Update interval | 60 min | 15–1440 | How often to poll the API |
+| Update interval | 30 min | 15–1440 | How often to poll the API |
 | Peak threshold | 80% | 50–100 | Threshold for peak production binary sensor |
 | PV energy sensor | — | — | Today's generation sensor (kWh, resets daily) |
 | PV power sensor | — | — | Current power sensor (W, fallback) |
