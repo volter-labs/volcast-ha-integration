@@ -22,6 +22,9 @@ STORAGE_KEY = "volcast_production_queue"
 STORAGE_VERSION = 1
 MAX_QUEUE_SIZE = 48
 
+STATE_STORAGE_KEY = "volcast_tracker_state"
+STATE_STORAGE_VERSION = 1
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -77,6 +80,13 @@ class VolcastProductionTracker:
         self._queue: list[dict[str, Any]] = []
         self._queue_loaded: bool = False
 
+        # Persistent diagnostic-counter store (separate from retry queue).
+        # Survives HA restarts and integration reloads so the api_status sensor
+        # doesn't reset submissions_today / last_submission_time / calibration
+        # every time the user reloads.
+        self._state_store = Store(hass, STATE_STORAGE_VERSION, STATE_STORAGE_KEY)
+        self._state_loaded: bool = False
+
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
         self.calibration: dict[str, Any] | None = None
         self.last_submission_time: datetime | None = None
@@ -112,6 +122,102 @@ class VolcastProductionTracker:
         except Exception:
             _LOGGER.warning("Failed to persist retry queue to storage", exc_info=True)
 
+    async def _async_load_state(self) -> None:
+        """Restore diagnostic counters from persistent store.
+
+        Survives HA restarts and integration reloads so the api_status sensor
+        does not reset every time the user reloads. Day-rollover is handled:
+        if the stored date is not today's local date, submissions_today
+        resets to 0 (last_submission_time stays valid across days).
+        """
+        if self._state_loaded:
+            return
+        try:
+            data = await self._state_store.async_load()
+        except Exception:
+            _LOGGER.warning("Failed to load tracker state from storage", exc_info=True)
+            self._state_loaded = True
+            return
+
+        if not isinstance(data, dict):
+            self._state_loaded = True
+            return
+
+        # Day rollover: if stored date != today, counter resets but last_submission_time stays.
+        stored_date = data.get("last_submission_date", "")
+        today_str = self._get_local_now().strftime("%Y-%m-%d")
+        if stored_date == today_str:
+            # Defensive: persisted submissions_today may be malformed (eg. "abc"
+            # if a previous version wrote a different schema, or storage corruption).
+            # Fall back to 0 rather than letting the int() cast raise out of
+            # startup state restore.
+            raw_submissions = data.get("submissions_today", 0)
+            try:
+                self.submissions_today = int(raw_submissions)
+            except (TypeError, ValueError):
+                _LOGGER.warning(
+                    "Stored submissions_today is malformed (%r), resetting to 0",
+                    raw_submissions,
+                )
+                self.submissions_today = 0
+        else:
+            self.submissions_today = 0
+        self._last_submission_date = today_str if stored_date == today_str else stored_date
+
+        last_iso = data.get("last_submission_time")
+        if isinstance(last_iso, str) and last_iso:
+            try:
+                self.last_submission_time = datetime.fromisoformat(last_iso)
+            except ValueError:
+                _LOGGER.debug("Stored last_submission_time invalid ISO: %s", last_iso)
+                self.last_submission_time = None
+
+        calibration = data.get("calibration")
+        if isinstance(calibration, dict):
+            self.calibration = calibration
+
+        self._state_loaded = True
+        # Only log "restored" if we actually restored something — fresh installs
+        # (no prior state) would otherwise emit a noisy INFO line with all defaults.
+        if (
+            self.submissions_today
+            or self.last_submission_time is not None
+            or self.calibration is not None
+        ):
+            _LOGGER.info(
+                "Tracker state restored: submissions_today=%d last_submission_time=%s calibration=%s",
+                self.submissions_today,
+                self.last_submission_time.isoformat() if self.last_submission_time else None,
+                self.calibration,
+            )
+
+    async def _async_save_state(self) -> None:
+        """Persist diagnostic counters to store. Called after every successful submit.
+
+        `last_submission_date` is derived from the current local time at save time
+        rather than from `self._last_submission_date` because the latter is only
+        populated by `_async_check_flush`'s rollover logic — direct submit paths
+        (eg. from queue flush via retry) would otherwise persist an empty date and
+        break the day-match check on load.
+        """
+        today_str = self._get_local_now().strftime("%Y-%m-%d")
+        if self._last_submission_date != today_str:
+            self._last_submission_date = today_str
+        payload = {
+            "submissions_today": self.submissions_today,
+            "last_submission_date": self._last_submission_date,
+            "last_submission_time": (
+                self.last_submission_time.isoformat()
+                if self.last_submission_time
+                else None
+            ),
+            "calibration": self.calibration,
+        }
+        try:
+            await self._state_store.async_save(payload)
+        except Exception:
+            _LOGGER.warning("Failed to persist tracker state to storage", exc_info=True)
+
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""
         try:
@@ -123,6 +229,11 @@ class VolcastProductionTracker:
 
     async def async_start(self) -> None:
         """Uruchom nasłuchiwanie na state changes i timer godzinowy."""
+        # Restore counters BEFORE timer/listeners fire so the api_status sensor
+        # reads correct values immediately after restart, not zeros for the
+        # first poll cycle.
+        await self._async_load_state()
+
         entities: list[str] = []
         if self._energy_entity:
             entities.append(self._energy_entity)
@@ -370,6 +481,8 @@ class VolcastProductionTracker:
                     # Sukces — wyczyść kolejkę retry
                     self._queue = []
                     await self._async_save_queue()
+                    # Persist counters so reload/restart preserves them
+                    await self._async_save_state()
                     return True
                 elif resp.status == 429:
                     _LOGGER.warning("Production submit rate limited (429)")
