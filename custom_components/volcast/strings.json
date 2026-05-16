@@ -90,6 +90,9 @@
       },
       "api_status": {
         "name": "API status"
+      },
+      "forecast_age": {
+        "name": "Forecast age"
       }
     },
     "binary_sensor": {
