@@ -32,6 +32,13 @@ class HourBucket:
     hour: int
     energy_start: float | None = None
     energy_latest: float | None = None
+    # True iff energy_start was carried over from previous hour's last reading
+    # (so a delta against energy_latest from a single in-hour event is meaningful).
+    # False if energy_start was set by the first energy event of this hour
+    # (in which case a single event makes energy_start == energy_latest → delta=0,
+    # which is a false zero — method 1 must require >=2 events to trust the delta).
+    energy_start_carried: bool = False
+    energy_event_count: int = 0
     power_readings: list[tuple[float, float]] = field(default_factory=list)  # (timestamp, watts)
     peak_power_w: float = 0.0
     max_soc: float | None = None
@@ -191,6 +198,7 @@ class VolcastProductionTracker:
             # (eliminuje lukę między ostatnim odczytem starej godziny a pierwszym nowej)
             if self._previous_bucket is not None and self._previous_bucket.energy_latest is not None:
                 self._current_bucket.energy_start = self._previous_bucket.energy_latest
+                self._current_bucket.energy_start_carried = True
 
         bucket = self._current_bucket
 
@@ -198,6 +206,7 @@ class VolcastProductionTracker:
             if bucket.energy_start is None:
                 bucket.energy_start = value
             bucket.energy_latest = value
+            bucket.energy_event_count += 1
 
         if entity_id == self._power_entity:
             bucket.power_readings.append((now.timestamp(), value))
@@ -233,7 +242,16 @@ class VolcastProductionTracker:
         bucket: HourBucket | None = None
         if self._current_bucket is not None and self._current_bucket.hour == prev_hour:
             bucket = self._current_bucket
-            self._current_bucket = HourBucket(hour=current_hour)
+            # Mirror the rollover carry-over from _async_state_changed: when this
+            # path creates a new bucket for current_hour, carry over the flushed
+            # bucket's energy_latest as the new bucket's energy_start so the
+            # first event of the new hour is treated as a carried-over start
+            # (delta-against-previous is meaningful, not a single-event zero).
+            new_bucket = HourBucket(hour=current_hour)
+            if bucket.energy_latest is not None:
+                new_bucket.energy_start = bucket.energy_latest
+                new_bucket.energy_start_carried = True
+            self._current_bucket = new_bucket
         elif self._previous_bucket is not None and self._previous_bucket.hour == prev_hour:
             bucket = self._previous_bucket
 
@@ -288,9 +306,22 @@ class VolcastProductionTracker:
 
     def _compute_energy(self, bucket: HourBucket) -> tuple[float | None, str]:
         """Oblicz energię z danych w bucket. Zwraca (kwh, method)."""
-        # Metoda 1: Energy delta (preferowana)
-        if bucket.energy_start is not None and bucket.energy_latest is not None:
-            delta = bucket.energy_latest - bucket.energy_start
+        # Method 1 (energy delta) is only meaningful when energy_start represents a
+        # different point in time from energy_latest. Two situations qualify:
+        #   - energy_start was carried over from the previous hour's last reading,
+        #     so it's older than energy_latest regardless of in-hour event count
+        #   - at least 2 energy events fired in this hour (start and latest came
+        #     from different events)
+        # If a single energy event fires in an hour with no carry-over, the same
+        # value gets assigned to BOTH energy_start and energy_latest, giving
+        # delta=0 — a false zero. Fall through to method 2 instead.
+        method1_viable = (
+            bucket.energy_start is not None
+            and bucket.energy_latest is not None
+            and (bucket.energy_start_carried or bucket.energy_event_count >= 2)
+        )
+        if method1_viable:
+            delta = bucket.energy_latest - bucket.energy_start  # type: ignore[operator]
 
             # Reset detection (licznik wyzerowany)
             if delta < 0:
@@ -304,6 +335,18 @@ class VolcastProductionTracker:
                     )
                     return None, "energy_delta"
                 return delta, "energy_delta"
+        elif (
+            bucket.energy_start is not None
+            and bucket.energy_latest is not None
+        ):
+            # Method 1 had both values but wasn't viable (single event, no carry-over).
+            # Log so the data-loss-avoidance fall-through is visible.
+            _LOGGER.debug(
+                "Energy delta unreliable (single event, no carry-over): start=%s latest=%s "
+                "event_count=%d carried=%s — trying method 2",
+                bucket.energy_start, bucket.energy_latest,
+                bucket.energy_event_count, bucket.energy_start_carried,
+            )
 
         # Metoda 2: Power trapezoidal (fallback)
         if len(bucket.power_readings) >= 2:
