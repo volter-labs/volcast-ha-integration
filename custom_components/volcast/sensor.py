@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -27,7 +27,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Volcast sensors from a config entry."""
-    coordinator: VolcastCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    coordinator: VolcastCoordinator = entry_data["coordinator"]
+    tracker = entry_data.get("tracker")
+    reconciler = entry_data.get("reconciler")
 
     entities: list[SensorEntity] = [
         VolcastEnergyTodaySensor(coordinator, entry),
@@ -40,6 +43,12 @@ async def async_setup_entry(
     for day_num in range(3, 8):
         entities.append(VolcastEnergyDaySensor(coordinator, entry, day_num))
 
+    # Diagnostyczne — tylko jeśli odpowiedni subsystem aktywny
+    if tracker is not None:
+        entities.append(SubmitQueueDepthSensor(tracker, entry_id=entry.entry_id))
+    if reconciler is not None:
+        entities.append(LastReconciliationSensor(reconciler, entry_id=entry.entry_id))
+
     async_add_entities(entities)
 
 
@@ -47,6 +56,19 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
     """Base class for Volcast sensors."""
 
     _attr_has_entity_name = True
+
+    # Exclude large attributes from recorder storage. HA recorder rejects rows
+    # with state_attributes blob > 16384 bytes (warns + drops the attribute
+    # write). `detailedForecast` is the main offender: ~288 five-minute entries
+    # per day × ~50 bytes JSON each ≈ 14-17 KB. Excluding `hours` and
+    # `detailedHourly` too to keep total well under the limit even on edge cases.
+    # Sensor state and other small attributes still recorded normally.
+    _unrecorded_attributes = frozenset({
+        "detailedForecast",
+        "detailedHourly",
+        "hours",
+        "forecast",
+    })
 
     def __init__(
         self,
@@ -422,3 +444,108 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
             attrs["production_tracking"] = False
 
         return attrs
+
+
+# =============================================================================
+# DIAGNOSTIC: Submit queue depth (Task 20b)
+# =============================================================================
+
+
+class SubmitQueueDepthSensor(SensorEntity):
+    """Liczba readingów czekających na retry w kolejce produkcyjnej.
+
+    State = len(tracker._queue). 0 = healthy, > 0 = backend lub sieć
+    nie odebrały ostatnich submitów. Atrybuty pokazują też ostatni
+    status / liczbę prób / timestamp dla szybkiej diagnozy w UI.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:database-clock"
+    _attr_has_entity_name = True
+    _attr_translation_key = "submit_queue_depth"
+    _attr_name = "Submit Queue Depth"
+
+    def __init__(self, tracker, entry_id: str) -> None:
+        self._tracker = tracker
+        self._attr_unique_id = f"{entry_id}_submit_queue_depth"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": "Volcast Solar Forecast",
+            "manufacturer": "Volter Labs",
+            "model": "PV Forecast",
+            "entry_type": "service",
+        }
+
+    @property
+    def state(self) -> int:
+        return len(self._tracker._queue)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {
+            "last_attempt_status": getattr(self._tracker, "_last_submit_status", None),
+            "last_attempt_count": getattr(self._tracker, "_last_submit_attempts", None),
+            "last_attempt_at": (
+                self._tracker.last_submission_time.isoformat()
+                if self._tracker.last_submission_time
+                else None
+            ),
+        }
+        if self._tracker._queue:
+            oldest = self._tracker._queue[0]
+            attrs["oldest_date"] = oldest.get("date")
+            attrs["oldest_hour"] = oldest.get("hour")
+        return attrs
+
+
+# =============================================================================
+# DIAGNOSTIC: Last reconciliation (Task 20b)
+# =============================================================================
+
+
+class LastReconciliationSensor(SensorEntity):
+    """Timestamp ostatniego przebiegu DailyReconciler + atrybuty wyniku.
+
+    State = ISO timestamp `_last_run_at` (None przed pierwszym przebiegiem).
+    Atrybuty: hours_submitted_last_run, last_target_date, last_run_status
+    (ok / skipped_<reason> / failed / never).
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:database-sync"
+    _attr_has_entity_name = True
+    _attr_translation_key = "last_reconciliation"
+    _attr_name = "Last Reconciliation"
+
+    def __init__(self, reconciler, entry_id: str) -> None:
+        self._reconciler = reconciler
+        self._attr_unique_id = f"{entry_id}_last_reconciliation"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": "Volcast Solar Forecast",
+            "manufacturer": "Volter Labs",
+            "model": "PV Forecast",
+            "entry_type": "service",
+        }
+
+    @property
+    def state(self) -> str | None:
+        ts = getattr(self._reconciler, "_last_run_at", None)
+        return ts.isoformat() if ts else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        result = getattr(self._reconciler, "_last_result", None)
+        if result is None:
+            return {"last_run_status": "never"}
+        if result.success:
+            status = "ok"
+        elif result.skipped:
+            status = f"skipped_{result.reason}"
+        else:
+            status = "failed"
+        return {
+            "last_run_status": status,
+            "hours_submitted_last_run": result.submitted,
+            "last_target_date": getattr(self._reconciler, "_last_target_date", None),
+        }

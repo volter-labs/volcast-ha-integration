@@ -17,12 +17,36 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 
 from .const import DEFAULT_SUBMIT_URL
+from .http_retry import http_with_retry
 
 STORAGE_KEY = "volcast_production_queue"
 STORAGE_VERSION = 1
 MAX_QUEUE_SIZE = 48
 
+# Accepted-hours store — pamięć "co już udało się dostarczyć", używana przez
+# reconciler żeby nie reposyłał tych samych godzin w nieskończoność.
+ACCEPTED_STORAGE_KEY = "volcast_accepted_hours"
+ACCEPTED_STORAGE_VERSION = 1
+ACCEPTED_RETENTION_DAYS = 7
+
+# Powody odrzucenia readinga przez backend, których NIE warto retry'ować:
+# semantycznie permanentne — kolejne wysyłanie zawsze da ten sam rezultat.
+# Reconciler powinien traktować je jak "już dostarczone" by nie spamować.
+PERMANENT_SKIP_REASONS = frozenset({
+    "nighttime_hour",
+    "negative_production",
+    "exceeds_capacity",
+    "invalid_date",
+    "invalid_hour",
+    "missing_fields",
+})
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _utcnow_date():
+    """Return today's date in UTC. Module-level seam for test monkeypatching."""
+    return datetime.now(timezone.utc).date()
 
 
 @dataclass
@@ -77,11 +101,20 @@ class VolcastProductionTracker:
         self._queue: list[dict[str, Any]] = []
         self._queue_loaded: bool = False
 
+        # Persystentna mapa "godziny już zaakceptowane przez backend" — używana
+        # przez reconciler, GC po ACCEPTED_RETENTION_DAYS dniach.
+        self._accepted_store = Store(hass, ACCEPTED_STORAGE_VERSION, ACCEPTED_STORAGE_KEY)
+        self._accepted: dict[str, list[int]] = {}
+        self._accepted_loaded: bool = False
+
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
         self.calibration: dict[str, Any] | None = None
         self.last_submission_time: datetime | None = None
         self.submissions_today: int = 0
         self._last_submission_date: str = ""
+        # Diagnostyka ostatniego POSTu (dla sensora, Task 20)
+        self._last_submit_status: str = ""
+        self._last_submit_attempts: int = 0
 
     @property
     def queued_count(self) -> int:
@@ -111,6 +144,42 @@ class VolcastProductionTracker:
                 await self._store.async_remove()
         except Exception:
             _LOGGER.warning("Failed to persist retry queue to storage", exc_info=True)
+
+    async def _load_accepted_store(self) -> dict[str, list[int]]:
+        """Załaduj mapę zaakceptowanych godzin z persystentnego Store (lazy, raz)."""
+        if self._accepted_loaded:
+            return self._accepted
+        try:
+            data = await self._accepted_store.async_load()
+            if isinstance(data, dict):
+                self._accepted = {
+                    k: list(v) for k, v in data.items() if isinstance(v, list)
+                }
+        except Exception:
+            _LOGGER.warning("Failed to load accepted-hours store", exc_info=True)
+        self._accepted_loaded = True
+        return self._accepted
+
+    async def _mark_accepted(self, date_str: str, hour: int) -> None:
+        """Oznacz (date, hour) jako dostarczone do backendu i zapisz do Store.
+
+        GC: usuwa wpisy starsze niż ACCEPTED_RETENTION_DAYS (po dacie produkcji).
+        Idempotentne — tę samą godzinę można oznaczyć wielokrotnie bez efektu.
+        """
+        await self._load_accepted_store()
+        cutoff = (_utcnow_date() - timedelta(days=ACCEPTED_RETENTION_DAYS)).isoformat()
+        # GC pre-existing entries older than retention window. The new mark
+        # itself is NOT retention-checked here — it survives one cycle even
+        # if its date_str < cutoff (e.g. backfill of stale rejections).
+        # The next mark on a different date will GC it. By design.
+        self._accepted = {k: v for k, v in self._accepted.items() if k >= cutoff}
+        if hour not in self._accepted.setdefault(date_str, []):
+            self._accepted[date_str].append(hour)
+            self._accepted[date_str].sort()
+        try:
+            await self._accepted_store.async_save(self._accepted)
+        except Exception:
+            _LOGGER.warning("Failed to persist accepted-hours store", exc_info=True)
 
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""
@@ -323,11 +392,16 @@ class VolcastProductionTracker:
     async def _async_submit(self, readings: list[dict[str, Any]]) -> bool:
         """Wyślij dane produkcji do backendu. Zwraca True jeśli sukces.
 
-        Łączy zakolejkowane readingi (retry) z bieżącymi i wysyła w jednym POST.
-        Na sukces czyści kolejkę; na fail dodaje readingi do kolejki.
+        Łączy zakolejkowane readingi (retry) z bieżącymi i wysyła w jednym POST
+        z retry 5/15/45s wewnątrz jednego wywołania (http_with_retry).
+        Na sukces:
+         - czyści kolejkę,
+         - oznacza każdy reading jako "accepted" (poza odrzuceniami z powodów
+           NIE-PERMANENT_SKIP_REASONS — te zostaną retry'owane przez reconciler).
+        Na fail: zapisuje wszystkie readingi do kolejki (cap MAX_QUEUE_SIZE FIFO).
         """
-        # Załaduj kolejkę retry (lazy, raz)
         await self._async_load_queue()
+        await self._load_accepted_store()
 
         # Połącz zakolejkowane + nowe (dedup po date+hour)
         all_readings = list(self._queue)
@@ -338,52 +412,70 @@ class VolcastProductionTracker:
                 all_readings.append(r)
                 seen.add(key)
 
-        try:
-            session = async_get_clientsession(self._hass)
-            async with session.post(
-                self._submit_url,
-                json={"readings": all_readings},
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Content-Type": "application/json",
-                },
-                timeout=15,
-            ) as resp:
-                if resp.ok:
-                    data = await resp.json()
-                    self.calibration = data.get("calibration")
-                    self.last_submission_time = datetime.now(timezone.utc)
-                    self.submissions_today += data.get("accepted", 0)
-                    if self._queue:
-                        _LOGGER.info(
-                            "Production submitted with %d retried readings: accepted=%s",
-                            len(self._queue),
-                            data.get("accepted", 0),
-                        )
-                    else:
-                        _LOGGER.info(
-                            "Production submitted: accepted=%s rejected=%s calibration=%s",
-                            data.get("accepted", 0),
-                            data.get("rejected", 0),
-                            self.calibration,
-                        )
-                    # Sukces — wyczyść kolejkę retry
-                    self._queue = []
-                    await self._async_save_queue()
-                    return True
-                elif resp.status == 429:
-                    _LOGGER.warning("Production submit rate limited (429)")
-                else:
-                    text = await resp.text()
-                    _LOGGER.error("Production submit failed (%s): %s", resp.status, text)
+        session = async_get_clientsession(self._hass)
+        result = await http_with_retry(
+            session,
+            method="POST",
+            url=self._submit_url,
+            payload={"readings": all_readings},
+            headers={
+                "X-API-Key": self._api_key,
+                "Content-Type": "application/json",
+            },
+        )
 
-        except Exception:
-            _LOGGER.exception("Error during production submit")
+        self._last_submit_attempts = result.attempts
 
-        # Fail — zapisz wszystkie readingi do kolejki retry
-        self._queue = all_readings
-        if len(self._queue) > MAX_QUEUE_SIZE:
-            self._queue = self._queue[-MAX_QUEUE_SIZE:]
+        if result.success:
+            data = result.data or {}
+            self.calibration = data.get("calibration")
+            self.last_submission_time = datetime.now(timezone.utc)
+            self.submissions_today += data.get("accepted", 0)
+
+            # Map rejections by (date, hour) → reason. Readings without a
+            # rejection (and those rejected for permanent-skip reasons) are
+            # marked accepted to prevent reconciler retry spam.
+            rejections = data.get("rejections") or []
+            rejected_keys: dict[tuple[str, int], str] = {}
+            for rej in rejections:
+                try:
+                    rejected_keys[(rej["date"], rej["hour"])] = rej.get("reason", "")
+                except (KeyError, TypeError):
+                    continue
+
+            for r in all_readings:
+                key = (r["date"], r["hour"])
+                reason = rejected_keys.get(key)
+                if reason is None or reason in PERMANENT_SKIP_REASONS:
+                    await self._mark_accepted(r["date"], r["hour"])
+
+            self._queue = []
+            await self._async_save_queue()
+            self._last_submit_status = "ok"
+            if result.attempts > 1:
+                _LOGGER.info(
+                    "Production submitted after %d attempts: accepted=%s rejected=%s",
+                    result.attempts,
+                    data.get("accepted", 0),
+                    data.get("rejected", 0),
+                )
+            else:
+                _LOGGER.info(
+                    "Production submitted: accepted=%s rejected=%s calibration=%s",
+                    data.get("accepted", 0),
+                    data.get("rejected", 0),
+                    self.calibration,
+                )
+            return True
+
+        # Failure path — zapisz wszystkie readingi do kolejki retry (FIFO cap)
+        self._queue = all_readings[-MAX_QUEUE_SIZE:]
         await self._async_save_queue()
-        _LOGGER.info("Queued %d readings for retry (total queued: %d)", len(readings), len(self._queue))
+        self._last_submit_status = result.last_error or f"HTTP {result.status}"
+        _LOGGER.warning(
+            "Production submit failed after %d attempts (%s); %d readings queued",
+            result.attempts,
+            result.last_error or f"HTTP {result.status}",
+            len(self._queue),
+        )
         return False

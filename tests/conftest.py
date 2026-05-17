@@ -60,6 +60,7 @@ _make_module("homeassistant.const", {
     "UnitOfPower": MagicMock(),
     "STATE_UNAVAILABLE": "unavailable",
     "STATE_UNKNOWN": "unknown",
+    "EVENT_HOMEASSISTANT_STARTED": "homeassistant_started",
 })
 
 # --- homeassistant.config_entries ---
@@ -99,6 +100,7 @@ _make_module("homeassistant.helpers.storage", {"Store": _FakeStore})
 _make_module("homeassistant.helpers.event", {
     "async_track_state_change_event": MagicMock(return_value=MagicMock()),
     "async_track_time_interval": MagicMock(return_value=MagicMock()),
+    "async_track_time_change": MagicMock(return_value=MagicMock()),
 })
 _make_module("homeassistant.helpers.aiohttp_client", {
     "async_get_clientsession": MagicMock(),
@@ -120,6 +122,13 @@ class _FakeCoordinatorEntity:
 
 class _FakeDataUpdateCoordinator:
     """Minimal stub for DataUpdateCoordinator."""
+    def __init__(self, hass=None, logger=None, *, name: str = "", update_interval=None, **_kwargs):
+        self.hass = hass
+        self.logger = logger
+        self.name = name
+        self.update_interval = update_interval
+        self.data = None
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
 
@@ -167,6 +176,28 @@ class _FakeBinarySensorEntityDescription:
 _make_module("homeassistant.components.binary_sensor", {
     "BinarySensorEntity": _FakeBinarySensorEntity,
     "BinarySensorEntityDescription": _FakeBinarySensorEntityDescription,
+})
+
+
+# --- homeassistant.components.recorder + recorder.statistics ---
+class _FakeRecorderInstance:
+    """Stub for the object returned by recorder.get_instance(hass).
+
+    `async_add_executor_job(fn, *args)` runs the function inline in tests —
+    sufficient because reconciler tests patch statistics_during_period
+    directly so the function itself is a stub MagicMock.
+    """
+
+    async def async_add_executor_job(self, fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+
+_make_module("homeassistant.components.recorder", {
+    "get_instance": MagicMock(return_value=_FakeRecorderInstance()),
+})
+_make_module("homeassistant.components.recorder.statistics", {
+    # Default returns no entries; tests override via patch().
+    "statistics_during_period": MagicMock(return_value={}),
 })
 
 
@@ -314,11 +345,37 @@ class FakeCoordinator:
         self.data = data
 
 
+class _FakeBus:
+    """Stub for hass.bus — records async_listen_once calls."""
+
+    def __init__(self):
+        self.listeners: list[tuple[str, Any]] = []
+
+    def async_listen_once(self, event_type, listener):
+        self.listeners.append((event_type, listener))
+        return lambda: None  # cancel callback
+
+
 class FakeHass:
     """Minimal hass stub."""
     class _Config:
         time_zone = "Europe/Warsaw"
     config = _Config()
+
+    def __init__(self, *, is_running: bool = False):
+        self.data: dict = {}
+        self.is_running = is_running
+        self.bus = _FakeBus()
+        self.created_tasks: list[Any] = []
+
+    def async_create_task(self, coro, *_args, **_kwargs):
+        # Don't actually schedule — record and close coroutine to silence warnings.
+        self.created_tasks.append(coro)
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return MagicMock()
 
 
 @pytest.fixture

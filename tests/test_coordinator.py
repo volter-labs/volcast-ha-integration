@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -18,6 +18,11 @@ from custom_components.volcast.coordinator import (
     _parse_response,
 )
 from tests.conftest import FakeHass
+
+from unittest.mock import patch
+
+from custom_components.volcast.coordinator import VolcastCoordinator
+from custom_components.volcast.http_retry import RetryResult
 
 
 # ---------------------------------------------------------------------------
@@ -57,10 +62,14 @@ class TestParseResponse:
     """Tests for _parse_response."""
 
     def test_basic_daily_forecast(self):
+        # energy_today is derived from the forecast entry matching HA's local
+        # "today" — fixture date must therefore be computed at runtime.
+        tz = ZoneInfo("Europe/Warsaw")
+        today_str = datetime.now(tz).strftime("%Y-%m-%d")
         raw = _make_api_response(
             forecast=[
                 {
-                    "date": "2026-03-20",
+                    "date": today_str,
                     "energy_kwh": 25.5,
                     "peak_power_kw": 4.2,
                     "confidence": 0.85,
@@ -77,10 +86,40 @@ class TestParseResponse:
         assert result.api_status == "Active"
         assert result.system_capacity_kwp == 6.5
         assert len(result.forecast) == 1
-        assert result.forecast[0].date == "2026-03-20"
+        assert result.forecast[0].date == today_str
         assert result.forecast[0].energy_kwh == 25.5
         assert result.forecast[0].peak_power_kw == 4.2
         assert result.forecast[0].confidence == 0.85
+
+    def test_today_energy_from_forecast_not_state(self):
+        """Regression: energy_today must come from forecast array (HA local
+        timezone), not from server's `state` field which is UTC-date-based.
+
+        Bug exposed on 2026-05-17: Polish user in evening, UTC=2026-05-16,
+        local=2026-05-17. Server returned state=8.65 (UTC-today=Polish-yesterday)
+        and forecast[2026-05-17]=7.33. HA Today sensor showed 8.65 instead of
+        7.33.
+        """
+        tz = ZoneInfo("Europe/Warsaw")
+        today_str = datetime.now(tz).strftime("%Y-%m-%d")
+        yesterday_str = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+        tomorrow_str = (datetime.now(tz) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        raw = _make_api_response(
+            state=99.99,  # bogus value — must NOT leak into energy_today
+            forecast=[
+                {"date": yesterday_str, "energy_kwh": 8.65, "peak_power_kw": 1.278},
+                {"date": today_str, "energy_kwh": 7.33, "peak_power_kw": 0.937},
+                {"date": tomorrow_str, "energy_kwh": 23.87, "peak_power_kw": 3.137},
+            ],
+        )
+        result = _parse_response(raw, FakeHass())
+
+        assert result.energy_today == 7.33, (
+            f"energy_today should come from forecast[today], got {result.energy_today} "
+            f"— likely still reading raw.state"
+        )
+        assert result.energy_tomorrow == 23.87
 
     def test_hourly_parsing(self):
         raw = _make_api_response(
@@ -213,3 +252,100 @@ class TestErrorData:
         assert result.forecast == []
         assert result.hourly == {}
         assert result.detailed == {}
+
+
+# ---------------------------------------------------------------------------
+# _async_update_data — refactored to delegate to http_with_retry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_coordinator_uses_http_with_retry_on_success():
+    """Coordinator delegates to http_with_retry and parses success result.
+
+    Test scope: verify the helper IS called with the right method/url. The
+    parsed VolcastData is intentionally not asserted (sample_payload is flat
+    rather than wrapped in {'attributes': {...}} as _parse_response expects);
+    parser correctness is covered by the dedicated _parse_response tests above.
+    """
+    coord = VolcastCoordinator(
+        hass=FakeHass(),
+        api_key="test",
+        api_url="http://stub/forecast",
+        update_interval_minutes=15,
+    )
+
+    sample_payload: dict[str, Any] = {}  # parser returns empty VolcastData; we don't assert on it
+
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = RetryResult(
+            success=True, status=200, data=sample_payload, attempts=2,
+        )
+        await coord._async_update_data()
+
+    assert mock_http.call_count == 1
+    # Verify it was called with method=GET (forecast is GET)
+    assert mock_http.call_args.kwargs["method"] == "GET"
+    assert "key=test" in mock_http.call_args.kwargs["url"]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_raises_UpdateFailed_after_retry_exhaustion_5xx():
+    """When http_with_retry returns failure with 503, coordinator raises UpdateFailed."""
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    coord = VolcastCoordinator(
+        hass=FakeHass(), api_key="test",
+        api_url="http://stub/forecast", update_interval_minutes=15,
+    )
+
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = RetryResult(
+            success=False, status=503, attempts=4,
+            last_error="HTTP 503", retriable=True,
+        )
+        with pytest.raises(UpdateFailed):
+            await coord._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_401_raises_UpdateFailed_immediately():
+    """401 from http_with_retry → UpdateFailed (Invalid API key)."""
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    coord = VolcastCoordinator(
+        hass=FakeHass(), api_key="bad",
+        api_url="http://stub/forecast", update_interval_minutes=15,
+    )
+
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = RetryResult(
+            success=False, status=401, attempts=1,
+            last_error="non-retriable HTTP 401", retriable=False,
+        )
+        with pytest.raises(UpdateFailed, match="API key"):
+            await coord._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_403_returns_premium_required_error_data():
+    """403 from http_with_retry → return error_data (premium required), NO UpdateFailed."""
+    coord = VolcastCoordinator(
+        hass=FakeHass(), api_key="non-premium",
+        api_url="http://stub/forecast", update_interval_minutes=15,
+    )
+
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = RetryResult(
+            success=False, status=403, attempts=1,
+            last_error="non-retriable HTTP 403", retriable=False,
+        )
+        # Should NOT raise — should return error_data structure
+        result = await coord._async_update_data()
+        assert result is not None
+        # api_status field carries the error message (existing _error_data behavior)
+        assert result.api_status == "Premium required"

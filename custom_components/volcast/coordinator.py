@@ -7,12 +7,12 @@ from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
-import aiohttp
-
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, DEFAULT_UPDATE_INTERVAL
+from .http_retry import http_with_retry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -89,30 +89,38 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
         self._api_url = api_url
 
     async def _async_update_data(self) -> VolcastData:
-        """Fetch data from Volcast API."""
+        """Fetch data from Volcast API with retry (5/15/45s) on transient errors."""
         url = f"{self._api_url}?key={self._api_key}"
+        session = async_get_clientsession(self.hass)
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status == 401:
-                        raise UpdateFailed("Invalid API key")
-                    if resp.status == 403:
-                        return _error_data("Premium required")
-                    if resp.status == 429:
-                        raise UpdateFailed("Rate limit exceeded — retry later")
-                    if resp.status == 503:
-                        raise UpdateFailed("Forecast not yet available — cache being populated")
-                    if resp.status >= 500:
-                        raise UpdateFailed(f"Volcast API error: {resp.status}")
-                    if not resp.ok:
-                        raise UpdateFailed(f"Unexpected status: {resp.status}")
+        result = await http_with_retry(
+            session,
+            method="GET",
+            url=url,
+            headers={},
+        )
 
-                    raw = await resp.json()
-        except aiohttp.ClientError as err:
-            raise UpdateFailed(f"Connection error: {err}") from err
+        if result.success:
+            return _parse_response(result.data, self.hass)
 
-        return _parse_response(raw, self.hass)
+        # Mapowanie statusów po wyczerpaniu retries — zachowujemy istniejącą semantykę
+        if result.status == 401:
+            raise UpdateFailed("Invalid API key")
+        if result.status == 403:
+            return _error_data("Premium required")
+        if result.status == 503:
+            raise UpdateFailed("Forecast not yet available — cache being populated")
+        if result.status == 429:
+            raise UpdateFailed(
+                f"Rate limit exceeded — retry later (after {result.attempts} attempts)"
+            )
+        if result.status is not None:
+            raise UpdateFailed(
+                f"Volcast API error: {result.status} (after {result.attempts} attempts)"
+            )
+        raise UpdateFailed(
+            f"Connection error: {result.last_error} (after {result.attempts} attempts)"
+        )
 
 
 def _error_data(status: str) -> VolcastData:
@@ -196,7 +204,16 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
     tomorrow_dt = datetime.now(tz) + timedelta(days=1)
     tomorrow_str = tomorrow_dt.strftime("%Y-%m-%d")
 
-    energy_today = raw.get("state", 0)
+    # energy_today is derived from the forecast array using HA's local timezone.
+    # We intentionally ignore raw["state"] because the server computes it with a
+    # UTC date, which is wrong for east-of-UTC users in their local evening
+    # (UTC date < local date → "today's" state is actually yesterday's value).
+    # Mirror image of the energy_tomorrow logic immediately below.
+    energy_today = 0.0
+    for d in forecast:
+        if d.date == today_str:
+            energy_today = d.energy_kwh
+            break
     energy_tomorrow = 0.0
     for d in forecast:
         if d.date == tomorrow_str:
