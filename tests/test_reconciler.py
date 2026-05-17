@@ -445,6 +445,86 @@ async def test_setup_reconciler_runs_immediately_when_running():
     assert hass.bus.listeners == []
 
 
+@pytest.mark.asyncio
+async def test_setup_reconciler_skips_listener_cancel_after_started_fired():
+    """Regression: after homeassistant_started fires, unload must NOT call remove().
+
+    async_listen_once self-removes after firing; the previous code wrapped the
+    cancel in async_on_unload directly, which caused HA to log
+    "Unable to remove unknown job listener" on every config-entry unload
+    (e.g. HACS upgrade). The guard keeps a fired flag so remove() runs only when
+    unload happens before the event has fired.
+    """
+    from custom_components.volcast import _setup_reconciler
+
+    hass = FakeHass(is_running=False)
+    entry = _RecordingConfigEntry()
+    tracker = _make_setup_tracker(hass)
+
+    cancel_calls: list[str] = []
+
+    def spy_listen_once(event_type, listener):
+        hass.bus.listeners.append((event_type, listener))
+        def cancel():
+            cancel_calls.append(event_type)
+        return cancel
+
+    hass.bus.async_listen_once = spy_listen_once
+
+    with patch("custom_components.volcast.async_track_time_change",
+               return_value=lambda: None):
+        _setup_reconciler(
+            hass=hass, entry=entry, tracker=tracker,
+            energy_entity="sensor.pv_energy", api_key="k", submit_url="http://x",
+        )
+
+    # Fire the homeassistant_started listener (simulates HA finishing startup).
+    _, listener = hass.bus.listeners[0]
+    with patch.object(DailyReconciler, "reconcile_day", new=AsyncMock()):
+        await listener(None)
+
+    # Now run all unload callbacks (simulates config-entry unload / HACS upgrade).
+    for cb in entry.unload_callbacks:
+        cb()
+
+    # Listener cancel must NOT have been called — it already self-removed.
+    assert "homeassistant_started" not in cancel_calls
+
+
+@pytest.mark.asyncio
+async def test_setup_reconciler_cancels_listener_if_unloaded_before_started():
+    """If unload happens before homeassistant_started fires, cancel the listener."""
+    from custom_components.volcast import _setup_reconciler
+
+    hass = FakeHass(is_running=False)
+    entry = _RecordingConfigEntry()
+    tracker = _make_setup_tracker(hass)
+
+    cancel_calls: list[str] = []
+
+    def spy_listen_once(event_type, listener):
+        hass.bus.listeners.append((event_type, listener))
+        def cancel():
+            cancel_calls.append(event_type)
+        return cancel
+
+    hass.bus.async_listen_once = spy_listen_once
+
+    with patch("custom_components.volcast.async_track_time_change",
+               return_value=lambda: None):
+        _setup_reconciler(
+            hass=hass, entry=entry, tracker=tracker,
+            energy_entity="sensor.pv_energy", api_key="k", submit_url="http://x",
+        )
+
+    # Unload without firing the started event.
+    for cb in entry.unload_callbacks:
+        cb()
+
+    # Listener cancel MUST have been called — listener never self-removed.
+    assert "homeassistant_started" in cancel_calls
+
+
 # ---------------------------------------------------------------------------
 # _last_run_at / _last_result tracking — Task 20a
 # ---------------------------------------------------------------------------

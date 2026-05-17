@@ -165,9 +165,27 @@ def _setup_reconciler(
     if hass.is_running:
         hass.async_create_task(_on_started())
     else:
-        entry.async_on_unload(
-            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+        # async_listen_once samodzielnie wyrejestrowuje listener po fire'owaniu.
+        # Naiwne `async_on_unload(remove)` powoduje przy unloadzie (np. HACS upgrade)
+        # próbę usunięcia już-usuniętego listenera → "Unable to remove unknown job
+        # listener". Trzymamy flagę żeby wywołać remove tylko gdy unload nastąpi
+        # przed startem HA.
+        listener_fired = False
+
+        async def _on_started_tracked(event=None):
+            nonlocal listener_fired
+            listener_fired = True
+            await _on_started(event)
+
+        remove_listener = hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STARTED, _on_started_tracked
         )
+
+        def _safe_remove() -> None:
+            if not listener_fired:
+                remove_listener()
+
+        entry.async_on_unload(_safe_remove)
 
     return reconciler
 
