@@ -6,7 +6,7 @@ DOMAIN = "volcast"
 
 DEFAULT_API_URL = "https://volcast.app/api/forecast"
 DEFAULT_SUBMIT_URL = "https://volcast.app/api/submit-production"
-DEFAULT_UPDATE_INTERVAL = 30  # minutes (API is cheap cache read)
+DEFAULT_UPDATE_INTERVAL = 60  # minutes — server cache refreshes hourly, no value in polling more often
 DEFAULT_PEAK_THRESHOLD = 80  # percent of today's peak power
 
 CONF_API_URL = "api_url"
