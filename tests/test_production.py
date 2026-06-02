@@ -284,8 +284,16 @@ class TestAcceptedHoursStore:
     """Tests for the persistent accepted-hours Store and _mark_accepted."""
 
     @pytest.mark.asyncio
-    async def test_mark_accepted_persists_to_store(self):
+    async def test_mark_accepted_persists_to_store(self, monkeypatch):
         """_mark_accepted writes (date, hour) into the in-memory dict and Store."""
+        from datetime import datetime, timezone
+        from custom_components.volcast import production as production_mod
+
+        # Freeze "today" close to the hard-coded dates so the 7-day retention
+        # GC in _mark_accepted does not wipe them on subsequent calls.
+        fixed_now = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr(production_mod, "_utcnow_date", lambda: fixed_now.date())
+
         accepted_store = _FakeStore()
         tracker = _make_tracker(accepted_store=accepted_store)
 
