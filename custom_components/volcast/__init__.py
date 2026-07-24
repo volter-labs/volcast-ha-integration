@@ -95,7 +95,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_url = entry.data.get(CONF_API_URL, DEFAULT_API_URL)
     update_interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
 
-    coordinator = VolcastCoordinator(hass, api_key, api_url, update_interval)
+    coordinator = VolcastCoordinator(
+        hass, api_key, api_url, update_interval, entry_id=entry.entry_id
+    )
+    # Load retained past-day forecast history before the first poll so the Energy
+    # Dashboard keeps showing previous days even if that first refresh fails.
+    await coordinator.async_load_forecast_history()
     await coordinator.async_config_entry_first_refresh()
 
     # Production tracker — opcjonalny (wymaga skonfigurowanych sensorów)

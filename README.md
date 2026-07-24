@@ -140,6 +140,11 @@ All production and battery sensors are optional. You can add or change them late
 3. Select **Volcast Solar Forecast**
 4. Your forecast will appear on the Energy Dashboard
 
+The integration retains a rolling forecast history (last 14 days), so when you
+navigate back to previous days the Energy Dashboard still shows what was
+forecast for those days — not just today and the future. The history is
+persisted across restarts.
+
 ## Configuration Options
 
 After setup, click **Configure** on the integration to adjust:

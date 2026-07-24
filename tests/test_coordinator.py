@@ -22,6 +22,7 @@ from tests.conftest import FakeHass
 from unittest.mock import patch
 
 from custom_components.volcast.coordinator import VolcastCoordinator
+from custom_components.volcast.const import FORECAST_HISTORY_RETENTION_DAYS
 from custom_components.volcast.http_retry import RetryResult
 
 
@@ -349,3 +350,96 @@ async def test_coordinator_403_returns_premium_required_error_data():
         assert result is not None
         # api_status field carries the error message (existing _error_data behavior)
         assert result.api_status == "Premium required"
+
+
+# ---------------------------------------------------------------------------
+# Forecast history retention (past-day Energy Dashboard forecast)
+# ---------------------------------------------------------------------------
+
+
+class TestForecastHistory:
+    """The coordinator must retain past-day forecasts so the Energy Dashboard
+    keeps showing them after the API drops those days from its response."""
+
+    def _coord(self) -> VolcastCoordinator:
+        return VolcastCoordinator(
+            hass=FakeHass(), api_key="k", api_url="http://stub", entry_id=None,
+        )
+
+    def _ts(self, days_ago: int, hour: int = 10) -> str:
+        tz = ZoneInfo("Europe/Warsaw")
+        dt = datetime.now(tz) - timedelta(days=days_ago)
+        return datetime(
+            dt.year, dt.month, dt.day, hour, tzinfo=tz
+        ).isoformat()
+
+    @pytest.mark.asyncio
+    async def test_empty_history_returns_none(self):
+        coord = self._coord()
+        assert coord.get_solar_forecast_wh_hours() is None
+
+    @pytest.mark.asyncio
+    async def test_merge_accumulates_past_days(self):
+        """Yesterday's forecast must survive a poll that only returns today."""
+        coord = self._coord()
+        yesterday, today = self._ts(1), self._ts(0)
+
+        await coord._async_merge_forecast_history({yesterday: 3200})
+        # Next poll: API no longer returns yesterday, only today.
+        await coord._async_merge_forecast_history({today: 4100})
+
+        merged = coord.get_solar_forecast_wh_hours()
+        assert merged == {yesterday: 3200, today: 4100}
+
+    @pytest.mark.asyncio
+    async def test_merge_newest_wins_for_same_timestamp(self):
+        """Intra-day re-polls (nowcast) override today's value, not duplicate it."""
+        coord = self._coord()
+        today = self._ts(0)
+
+        await coord._async_merge_forecast_history({today: 4000})
+        await coord._async_merge_forecast_history({today: 4500})
+
+        assert coord.get_solar_forecast_wh_hours() == {today: 4500}
+
+    @pytest.mark.asyncio
+    async def test_prune_drops_entries_beyond_retention(self):
+        coord = self._coord()
+        stale = self._ts(FORECAST_HISTORY_RETENTION_DAYS + 3)
+        fresh = self._ts(1)
+
+        await coord._async_merge_forecast_history({stale: 1000, fresh: 2000})
+
+        merged = coord.get_solar_forecast_wh_hours()
+        assert stale not in merged
+        assert fresh in merged
+
+    @pytest.mark.asyncio
+    async def test_unparseable_key_is_pruned(self):
+        coord = self._coord()
+        await coord._async_merge_forecast_history({"not-a-timestamp": 5})
+        assert coord.get_solar_forecast_wh_hours() is None
+
+    @pytest.mark.asyncio
+    async def test_update_data_merges_into_history(self):
+        """A successful poll feeds wh_hours into the retained history."""
+        tz = ZoneInfo("Europe/Warsaw")
+        today_str = datetime.now(tz).strftime("%Y-%m-%d")
+        coord = self._coord()
+
+        raw = _make_api_response(
+            hourly={today_str: [{"hour": 11, "power_kw": 4.0, "energy_kwh": 3.8}]},
+        )
+        with patch(
+            "custom_components.volcast.coordinator.http_with_retry"
+        ) as mock_http, patch(
+            "custom_components.volcast.coordinator.async_get_clientsession"
+        ):
+            mock_http.return_value = RetryResult(
+                success=True, status=200, data=raw, attempts=1,
+            )
+            await coord._async_update_data()
+
+        merged = coord.get_solar_forecast_wh_hours()
+        assert merged is not None
+        assert 3800 in merged.values()

@@ -9,6 +9,15 @@ DEFAULT_SUBMIT_URL = "https://volcast.app/api/submit-production"
 DEFAULT_UPDATE_INTERVAL = 60  # minutes — server cache refreshes hourly, no value in polling more often
 DEFAULT_PEAK_THRESHOLD = 80  # percent of today's peak power
 
+# Forecast history persistence — retain past-day forecasts so the HA Energy
+# Dashboard can display "what was forecast" when navigating to previous days.
+# The Volcast API only returns today + future days; without retention the
+# past-day forecast line vanishes the moment the day rolls over (unlike
+# Solcast, which keeps a rolling history). We snapshot each poll's wh_hours,
+# merge newest-wins, and prune anything older than the retention window.
+FORECAST_HISTORY_STORAGE_VERSION = 1
+FORECAST_HISTORY_RETENTION_DAYS = 14
+
 CONF_API_URL = "api_url"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_PEAK_THRESHOLD = "peak_threshold"
