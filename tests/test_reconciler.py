@@ -525,6 +525,34 @@ async def test_setup_reconciler_cancels_listener_if_unloaded_before_started():
     assert "homeassistant_started" in cancel_calls
 
 
+@pytest.mark.asyncio
+async def test_setup_reconciler_startup_runs_reconcile_recent():
+    """On-startup hook wywołuje reconcile_recent (D-1 + D-0), nie samo D-1.
+
+    Restart HA to dokładnie moment powstawania luk (update systemu) —
+    dzisiejsze braki muszą się uzupełnić od razu, nie o 00:30.
+    """
+    from custom_components.volcast import _setup_reconciler
+
+    hass = FakeHass(is_running=False)
+    entry = _RecordingConfigEntry()
+    tracker = _make_setup_tracker(hass)
+
+    with patch("custom_components.volcast.async_track_time_change",
+               return_value=lambda: None):
+        _setup_reconciler(
+            hass=hass, entry=entry, tracker=tracker,
+            energy_entity="sensor.pv_energy", api_key="k", submit_url="http://x",
+        )
+
+    _, listener = hass.bus.listeners[0]
+    with patch.object(DailyReconciler, "reconcile_recent",
+                      new=AsyncMock()) as mock_recent:
+        await listener(None)
+
+    assert mock_recent.await_count == 1
+
+
 # ---------------------------------------------------------------------------
 # _last_run_at / _last_result tracking — Task 20a
 # ---------------------------------------------------------------------------

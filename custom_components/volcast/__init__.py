@@ -152,15 +152,12 @@ def _setup_reconciler(
         )
     )
 
-    # Na startupie HA — uzgodnij D-1 (wczoraj). Idempotentne: już-zaakceptowane
-    # godziny pomijane przez reconcile_day.
-    #
-    # Wcześniejsza wersja iterowała też D-2, ale backend 36h window i tak zawsze
-    # rzuca D-2 jako `out_of_window` → no-op cleanup, plus nadpisywał
-    # `_last_target_date` zostawiając mniej-użyteczne info w diagnostic sensor.
+    # Na startupie HA — uzgodnij wczoraj + dziś. Restart HA to dokładnie
+    # moment, w którym powstają luki (update systemu = restart). Idempotentne:
+    # godziny już dostarczone i bieżąca godzina (własność live trackera) są
+    # pomijane wewnątrz reconcile_recent/reconcile_day.
     async def _on_started(_event=None):
-        today = datetime.now(reconciler._tz).date()
-        await reconciler.reconcile_day(today - timedelta(days=1))
+        await reconciler.reconcile_recent()
 
     if hass.is_running:
         hass.async_create_task(_on_started())
