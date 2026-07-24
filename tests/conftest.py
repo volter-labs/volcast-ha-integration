@@ -189,6 +189,17 @@ _make_module("homeassistant.components.binary_sensor", {
     "BinarySensorEntityDescription": _FakeBinarySensorEntityDescription,
 })
 
+# --- homeassistant.components.button ---
+class _FakeButtonEntity:
+    _attr_has_entity_name = False
+    _attr_unique_id = None
+    _attr_device_info = None
+
+
+_make_module("homeassistant.components.button", {
+    "ButtonEntity": _FakeButtonEntity,
+})
+
 
 # --- homeassistant.components.recorder + recorder.statistics ---
 class _FakeRecorderInstance:

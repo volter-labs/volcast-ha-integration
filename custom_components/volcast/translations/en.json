@@ -98,6 +98,11 @@
       "peak_production": {
         "name": "Peak production"
       }
+    },
+    "button": {
+      "sync_now": {
+        "name": "Sync production now"
+      }
     }
   }
 }
