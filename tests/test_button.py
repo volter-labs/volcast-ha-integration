@@ -56,3 +56,23 @@ async def test_press_runs_reconcile_recent():
     await button.async_press()
 
     reconciler.reconcile_recent.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_press_logs_summary_for_nonempty_results():
+    """Press z niepustymi wynikami wykonuje ścieżkę budowania logu —
+    regression guard na rename pól ReconcileResult używanych w f-stringu."""
+    from custom_components.volcast.button import VolcastSyncButton
+    from custom_components.volcast.reconciler import ReconcileResult
+
+    reconciler = MagicMock()
+    reconciler.reconcile_recent = AsyncMock(return_value=[
+        ReconcileResult(skipped=True, reason="out_of_window", submitted=0),
+        ReconcileResult(success=True, submitted=2, accepted=2),
+    ])
+    button = VolcastSyncButton(reconciler, "test_entry_id")
+
+    # Must not raise while formatting the log line from real ReconcileResult objects.
+    await button.async_press()
+
+    reconciler.reconcile_recent.assert_awaited_once()
