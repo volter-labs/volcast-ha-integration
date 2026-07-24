@@ -51,6 +51,7 @@ _make_module("homeassistant.core", {
     "HomeAssistant": _FakeHomeAssistant,
     "Event": _FakeEvent,
     "callback": _fake_callback,
+    "ServiceCall": MagicMock(),
 })
 _make_module("homeassistant.const", {
     "CONF_API_KEY": "api_key",
@@ -61,6 +62,16 @@ _make_module("homeassistant.const", {
     "STATE_UNAVAILABLE": "unavailable",
     "STATE_UNKNOWN": "unknown",
     "EVENT_HOMEASSISTANT_STARTED": "homeassistant_started",
+})
+
+# --- homeassistant.exceptions ---
+class _FakeServiceValidationError(Exception):
+    """Stub for ServiceValidationError."""
+
+
+_make_module("homeassistant.exceptions", {
+    "ServiceValidationError": _FakeServiceValidationError,
+    "HomeAssistantError": Exception,
 })
 
 # --- homeassistant.config_entries ---
@@ -356,6 +367,22 @@ class _FakeBus:
         return lambda: None  # cancel callback
 
 
+class _FakeServices:
+    """Stub for hass.services — records registrations."""
+
+    def __init__(self):
+        self.registered: dict[tuple[str, str], Any] = {}
+
+    def has_service(self, domain: str, service: str) -> bool:
+        return (domain, service) in self.registered
+
+    def async_register(self, domain: str, service: str, handler, schema=None):
+        self.registered[(domain, service)] = handler
+
+    def async_remove(self, domain: str, service: str) -> None:
+        self.registered.pop((domain, service), None)
+
+
 class FakeHass:
     """Minimal hass stub."""
     class _Config:
@@ -367,6 +394,7 @@ class FakeHass:
         self.is_running = is_running
         self.bus = _FakeBus()
         self.created_tasks: list[Any] = []
+        self.services = _FakeServices()
 
     def async_create_task(self, coro, *_args, **_kwargs):
         # Don't actually schedule — record and close coroutine to silence warnings.
