@@ -16,3 +16,6 @@ CONF_PV_ENERGY_ENTITY = "pv_energy_entity"
 CONF_PV_POWER_ENTITY = "pv_power_entity"
 CONF_BATTERY_SOC_ENTITY = "battery_soc_entity"
 CONF_BATTERY_CHARGE_POWER_ENTITY = "battery_charge_power_entity"
+
+SERVICE_SYNC_PRODUCTION = "sync_production"
+ATTR_DATE = "date"
