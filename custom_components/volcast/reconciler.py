@@ -172,6 +172,13 @@ class DailyReconciler:
                 # Bieżąca (niedokończona) godzina należy do live trackera —
                 # flush o :05 po pełnej godzinie. Częściowa wartość wisiałaby
                 # w aplikacji do czasu korekty upsertem.
+                #
+                # Uwaga: w oknie :00–:05 świeżo zamknięta godzina (np. 13 o 14:02)
+                # jest już eligible dla reconcilera (13 < 14), ale tracker jeszcze
+                # jej nie flushnął (czeka na minute>=5). Oba zapisy trafią więc na
+                # backend — reconciler z is_reconciliation:true, tracker normalnie.
+                # Bezpieczne: backend upsertuje po (user_id, production_date, hour),
+                # a późniejszy normalny submit karmi Kalmana realnym pomiarem.
                 continue
             if hour in accepted_hours:
                 continue
