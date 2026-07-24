@@ -18,7 +18,7 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 - **Peak production alert** — binary sensor for automations (configurable threshold)
 - **UI-based setup** — no YAML needed, just enter your API key and select your sensors
 
-### Resilience & Reconciliation (preview — v1.6.1-beta6)
+### Resilience & Reconciliation (preview — v1.7.0-beta1)
 
 > Pre-release. Opt-in via HACS pre-release toggle. Stabilizes to 1.7.0 once dogfooded.
 
@@ -26,7 +26,7 @@ The integration now ships three layered resilience mechanisms:
 
 - **Forecast retry** — short network blips no longer flap entities to `unavailable`. The integration retries failed forecast fetches with 5/15/45s backoff inside one update cycle.
 - **Submit retry** — hourly production submits use the same 5/15/45 retry pattern before queuing. Persistent retry queue still kicks in for longer outages.
-- **Daily reconciliation** — at 00:30 local each day (and once at HA startup), the integration reads the previous day's hourly statistics from HA Recorder and fills any gaps in your Volcast cloud history. Requires `energy_entity` configured with `state_class: total_increasing`.
+- **Daily reconciliation** — the integration reads hourly statistics from HA Recorder and fills any gaps in your Volcast cloud history. The scheduled run at 00:30 local each day backfills the **previous day**. Additionally, on **HA startup** it reconciles **both yesterday and today**, so a gap left by an HA restart or update during the day self-heals immediately instead of waiting for 00:30. Requires `energy_entity` configured with `state_class: total_increasing`.
 
 New diagnostic entities (under integration → Diagnostic):
 - `sensor.volcast_submit_queue_depth` — readings waiting to be retried (0 = healthy).
@@ -34,6 +34,27 @@ New diagnostic entities (under integration → Diagnostic):
 - `binary_sensor.volcast_integration_healthy` — single signal you can wire into automations.
 
 Power-only users (no `energy_entity` configured): retry mechanisms apply, but daily reconciliation is **not** active. Planned for a future release.
+
+### Manual sync (force sync)
+
+If Home Assistant was offline (system update, reboot) and an hour of production
+is missing in Volcast, the integration self-heals on the next HA start and daily
+at 00:30. To force it immediately without waiting:
+
+- Press the **Sync production now** button on the Volcast device page, or
+- Call the `volcast.sync_production` action — optionally with a `date` (within
+  the last ~24–38 hours) to reconcile one specific day. Without a date it
+  reconciles yesterday and today.
+
+Both are safe to repeat: hours already delivered (and the current in-progress
+hour) are skipped, so nothing is double-counted.
+
+**Limitation:** if HA was fully down during an hour, HA Recorder may have no
+statistics row for that hour. The energy is not lost — it lands in the next
+hour's delta — but no sync can split it back out. Daily totals stay correct.
+
+_(The button and service require an energy sensor configured — power-only
+users have nothing to reconcile.)_
 
 ## How It Works
 
