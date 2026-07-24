@@ -52,6 +52,18 @@
       }
     }
   },
+  "services": {
+    "sync_production": {
+      "name": "Sync production",
+      "description": "Force-syncs hourly PV production to Volcast using Home Assistant recorder statistics. Fills gaps left by HA downtime (e.g. a system update). Without a date, syncs yesterday and today.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "Specific day to sync (must be within the last ~24-38 hours). Leave empty to sync yesterday and today."
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "energy_today": {
