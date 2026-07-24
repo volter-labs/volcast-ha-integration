@@ -38,6 +38,12 @@ RECONCILE_WINDOW_HOURS = 36
 MIN_REPORT_KWH = 0.001
 
 
+def _now_local(tz) -> datetime:
+    """Bieżący czas w strefie tz. Module-level seam for test monkeypatching
+    (ten sam wzorzec co production._utcnow_date)."""
+    return datetime.now(tz)
+
+
 @dataclass
 class ReconcileResult:
     """Wynik pojedynczego wywołania reconcile_day."""
@@ -124,7 +130,8 @@ class DailyReconciler:
         Wyodrębnione, żeby reconcile_day mogło mieć jeden punkt wyjścia
         i aktualizować _last_* niezależnie od wybranej ścieżki.
         """
-        today = datetime.now(self._tz).date()
+        now_local = _now_local(self._tz)
+        today = now_local.date()
         age_hours = (today - target_date).days * 24
         if age_hours > RECONCILE_WINDOW_HOURS:
             _LOGGER.debug(
@@ -144,8 +151,14 @@ class DailyReconciler:
         await self._tracker._load_accepted_store()
         accepted_hours = set(self._tracker._accepted.get(target_date.isoformat(), []))
 
+        is_today = target_date == today
         missing: list[dict] = []
         for hour, kwh in sorted(hourly_stats.items()):
+            if is_today and hour >= now_local.hour:
+                # Bieżąca (niedokończona) godzina należy do live trackera —
+                # flush o :05 po pełnej godzinie. Częściowa wartość wisiałaby
+                # w aplikacji do czasu korekty upsertem.
+                continue
             if hour in accepted_hours:
                 continue
             if kwh < MIN_REPORT_KWH:
