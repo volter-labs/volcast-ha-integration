@@ -124,6 +124,20 @@ class DailyReconciler:
         self._last_result = result
         return result
 
+    async def reconcile_recent(self) -> list[ReconcileResult]:
+        """Uzgodnij wczoraj + dziś (w tej kolejności). Idempotentne.
+
+        Używane przez: startup HA, button `sync_now`, serwis
+        `volcast.sync_production` bez daty. Kolejność celowa — diagnostyka
+        `_last_target_date` kończy na dzisiejszym dniu, co po ręcznym syncu
+        daje bardziej użyteczną wartość w sensorze.
+        """
+        today = _now_local(self._tz).date()
+        results: list[ReconcileResult] = []
+        for target in (today - timedelta(days=1), today):
+            results.append(await self.reconcile_day(target))
+        return results
+
     async def _reconcile_day_impl(self, target_date: date) -> ReconcileResult:
         """Faktyczna logika reconcile_day — bez aktualizacji pól diagnostycznych.
 

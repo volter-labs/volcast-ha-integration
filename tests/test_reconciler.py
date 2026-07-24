@@ -684,3 +684,32 @@ async def test_reconcile_yesterday_still_submits_all_hours(monkeypatch):
     ]
     assert submitted_hours == list(range(6, 19))
     assert result.submitted == 13
+
+
+# ---------------------------------------------------------------------------
+# reconcile_recent — wczoraj + dziś (force sync)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_recent_runs_yesterday_then_today(monkeypatch):
+    """reconcile_recent uzgadnia wczoraj, potem dziś — kolejność celowa,
+    żeby diagnostyka _last_target_date kończyła na dzisiejszym dniu."""
+    from custom_components.volcast import reconciler as reconciler_mod
+
+    fixed_now = datetime(2026, 7, 24, 13, 40, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(reconciler_mod, "_now_local", lambda tz: fixed_now)
+
+    reconciler = _make_reconciler()
+    calls: list[date] = []
+
+    async def fake_reconcile_day(target):
+        calls.append(target)
+        return ReconcileResult(success=True)
+
+    with patch.object(reconciler, "reconcile_day", side_effect=fake_reconcile_day):
+        results = await reconciler.reconcile_recent()
+
+    assert calls == [date(2026, 7, 23), date(2026, 7, 24)]
+    assert len(results) == 2
+    assert all(r.success for r in results)
