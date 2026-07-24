@@ -53,7 +53,12 @@ def _async_register_services(hass: HomeAssistant) -> None:
         raw_date = call.data.get(ATTR_DATE)
         target: date | None = None
         if raw_date is not None:
-            if isinstance(raw_date, date):
+            if isinstance(raw_date, datetime):
+                # datetime dziedziczy po date — sprowadź do czystej daty,
+                # inaczej date - datetime rzuci TypeError w reconcile_day
+                # (połknięty w success=False = cichy no-op zamiast błędu).
+                target = raw_date.date()
+            elif isinstance(raw_date, date):
                 target = raw_date
             else:
                 try:
