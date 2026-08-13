@@ -483,3 +483,81 @@ class TestSubmitWithHttpRetry:
         assert 22 in tracker._accepted.get("2026-05-10", []), (
             "permanent-skip rejections must be marked to prevent reconciler retries"
         )
+
+
+class TestBatchCap:
+    """Backend odrzuca >24 odczyty kodem 400, a 400 nie jest retriable.
+
+    Bez ograniczenia paczki kolejka rosnąca powyżej 24 wpisów zakleszczała się na
+    stałe: każdy POST dostawał 400, ścieżka porażki zapisywała te same wpisy z
+    powrotem, a stan przeżywał restart HA i naprawę backendu. Wymagało to ręcznego
+    usunięcia pliku Store u każdego dotkniętego użytkownika.
+    """
+
+    @pytest.mark.asyncio
+    async def test_payload_nigdy_nie_przekracza_limitu_backendu(self):
+        """Nawet przy pełnej kolejce POST niesie najwyżej MAX_READINGS_PER_REQUEST."""
+        from custom_components.volcast.production import MAX_READINGS_PER_REQUEST
+
+        store = _FakeStore()
+        full_queue = [
+            _make_reading(date=f"2026-04-{(i // 24 + 1):02d}", hour=i % 24, kwh=float(i))
+            for i in range(48)
+        ]
+        await store.async_save(full_queue)
+        tracker = _make_tracker(store=store)
+        await tracker._async_load_queue()
+
+        captured = {}
+
+        async def _capture(session, **kwargs):
+            from custom_components.volcast.http_retry import RetryResult
+            captured["n"] = len(kwargs["payload"]["readings"])
+            return RetryResult(success=True, status=200, attempts=1,
+                               last_error=None, retriable=False,
+                               data={"accepted": captured["n"], "rejected": 0})
+
+        with patch(
+            "custom_components.volcast.production.http_with_retry", new=_capture
+        ), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit([_make_reading(date="2026-04-10", hour=12, kwh=99.0)])
+
+        assert captured["n"] <= MAX_READINGS_PER_REQUEST, (
+            f"paczka {captured['n']} > limit backendu {MAX_READINGS_PER_REQUEST} — "
+            "to jest dokladnie warunek zakleszczenia"
+        )
+
+    @pytest.mark.asyncio
+    async def test_niewyslana_reszta_zostaje_w_kolejce_po_sukcesie(self):
+        """Sukces czyści tylko to, co poszło — nadmiar czeka na następny flush."""
+        store = _FakeStore()
+        full_queue = [
+            _make_reading(date=f"2026-04-{(i // 24 + 1):02d}", hour=i % 24, kwh=float(i))
+            for i in range(40)
+        ]
+        await store.async_save(full_queue)
+        tracker = _make_tracker(store=store)
+        await tracker._async_load_queue()
+
+        async def _ok(session, **kwargs):
+            from custom_components.volcast.http_retry import RetryResult
+            n = len(kwargs["payload"]["readings"])
+            return RetryResult(success=True, status=200, attempts=1,
+                               last_error=None, retriable=False,
+                               data={"accepted": n, "rejected": 0})
+
+        with patch(
+            "custom_components.volcast.production.http_with_retry", new=_ok
+        ), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit([])
+
+        # 40 w kolejce, 24 poszlo → 16 zostaje, nie 0 i nie 40.
+        assert len(tracker._queue) == 16, (
+            f"oczekiwano 16 odlozonych, jest {len(tracker._queue)}"
+        )

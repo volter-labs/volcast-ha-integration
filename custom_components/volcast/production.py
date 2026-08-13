@@ -23,6 +23,14 @@ STORAGE_KEY = "volcast_production_queue"
 STORAGE_VERSION = 1
 MAX_QUEUE_SIZE = 48
 
+# Backend odrzuca zadania z wieksza liczba odczytow kodem HTTP 400
+# (submit-production/index.ts: "Maximum 24 readings per request"), a 400 NIE jest
+# w RETRIABLE_STATUSES. Bez tego ograniczenia kolejka, ktora raz przekroczyla 24
+# wpisy, zakleszczala sie na stale: kazdy POST dostawal 400, sciezka porazki
+# zapisywala te same wpisy z powrotem, a stan przezywal restart HA i naprawe
+# backendu. Odblokowanie wymagalo recznego usuniecia pliku Store u uzytkownika.
+MAX_READINGS_PER_REQUEST = 24
+
 # Accepted-hours store — pamięć "co już udało się dostarczyć", używana przez
 # reconciler żeby nie reposyłał tych samych godzin w nieskończoność.
 ACCEPTED_STORAGE_KEY = "volcast_accepted_hours"
@@ -412,12 +420,27 @@ class VolcastProductionTracker:
                 all_readings.append(r)
                 seen.add(key)
 
+        # Paczka nie moze przekroczyc limitu backendu. Wysylamy NAJNOWSZE odczyty —
+        # sa najbardziej wartosciowe (kalibracja i nowcast dzialaja na dzisiejszych
+        # godzinach), a starsze i tak wpadaja w backendowy prog "older_than_24h".
+        # Nadmiar czeka w kolejce na kolejny flush zamiast blokowac wszystko.
+        if len(all_readings) > MAX_READINGS_PER_REQUEST:
+            deferred = all_readings[:-MAX_READINGS_PER_REQUEST]
+            batch = all_readings[-MAX_READINGS_PER_REQUEST:]
+            _LOGGER.debug(
+                "Batch capped at %d readings; %d deferred to next flush",
+                len(batch), len(deferred),
+            )
+        else:
+            deferred = []
+            batch = all_readings
+
         session = async_get_clientsession(self._hass)
         result = await http_with_retry(
             session,
             method="POST",
             url=self._submit_url,
-            payload={"readings": all_readings},
+            payload={"readings": batch},
             headers={
                 "X-API-Key": self._api_key,
                 "Content-Type": "application/json",
@@ -449,7 +472,10 @@ class VolcastProductionTracker:
                 if reason is None or reason in PERMANENT_SKIP_REASONS:
                     await self._mark_accepted(r["date"], r["hour"])
 
-            self._queue = []
+            # Sukces czysci tylko to, co faktycznie poszlo. Nadmiar ponad limit
+            # paczki czeka na kolejny flush — wyczyszczenie calej kolejki gubiloby
+            # odczyty, ktorych backend nigdy nie widzial.
+            self._queue = deferred
             await self._async_save_queue()
             self._last_submit_status = "ok"
             if result.attempts > 1:
@@ -469,7 +495,7 @@ class VolcastProductionTracker:
             return True
 
         # Failure path — zapisz wszystkie readingi do kolejki retry (FIFO cap)
-        self._queue = all_readings[-MAX_QUEUE_SIZE:]
+        self._queue = (deferred + batch)[-MAX_QUEUE_SIZE:]
         await self._async_save_queue()
         self._last_submit_status = result.last_error or f"HTTP {result.status}"
         _LOGGER.warning(
