@@ -20,6 +20,7 @@ def _make_tracker(
     hass: Any | None = None,
     store: _FakeStore | None = None,
     accepted_store: _FakeStore | None = None,
+    baseline_store: _FakeStore | None = None,
 ) -> VolcastProductionTracker:
     """Create a tracker with sensible defaults and injectable Stores."""
     if hass is None:
@@ -37,6 +38,8 @@ def _make_tracker(
         tracker._store = store
     if accepted_store is not None:
         tracker._accepted_store = accepted_store
+    if baseline_store is not None:
+        tracker._baseline_store = baseline_store
     return tracker
 
 
@@ -561,3 +564,164 @@ class TestBatchCap:
         assert len(tracker._queue) == 16, (
             f"oczekiwano 16 odlozonych, jest {len(tracker._queue)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Utrata energii przy restarcie trackera (zgloszenie andras.m.vass, 2026-08-20)
+# ---------------------------------------------------------------------------
+
+class TestRestartEnergyBaseline:
+    """Po restarcie tracker musi znac stan licznika z POCZATKU biezacej godziny.
+
+    Bez tego `energy_start` ustawia sie na pierwszy odczyt PO restarcie i cala
+    energia od poczatku godziny do restartu przepada. Na prodzie 2026-08-20
+    dalo to 3.7 kWh zamiast 7.7 dla godziny 13 i dokladne 0.0000 dla godziny 9.
+    Sygnatura kohortowa: godziny z restartem maja 2.5x wyzszy odsetek zanizen
+    (13.9% vs 5.5% na czystych godzinach), a godzina NASTEPNA jest normalna —
+    czyli energia jest tracona, nie przesuwana.
+    """
+
+    @pytest.mark.asyncio
+    async def test_baseline_survives_restart_mid_hour(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Warsaw")
+        clock = {"t": datetime(2026, 8, 20, 12, 59, tzinfo=tz)}
+
+        def _ev(entity_id: str, value: float):
+            st = MagicMock()
+            st.state = str(value)
+            ev = MagicMock()
+            ev.data = {"new_state": st, "entity_id": entity_id}
+            return ev
+
+        baseline_store = _FakeStore()
+
+        # --- instancja przed restartem ---
+        a = _make_tracker(baseline_store=baseline_store)
+        a._capacity_kwp = 10.34  # instalacja ze zgloszenia — 7.7 kWh/h musi przejsc
+        monkeypatch.setattr(a, "_get_local_now", lambda: clock["t"])
+        a._async_submit = AsyncMock(return_value=True)
+        await a.async_start()
+
+        a._async_state_changed(_ev("sensor.pv_energy", 100.0))     # 12:59, licznik 100.0
+
+        clock["t"] = datetime(2026, 8, 20, 13, 0, 10, tzinfo=tz)
+        a._async_state_changed(_ev("sensor.pv_energy", 100.1))     # rollover -> godzina 13
+
+        clock["t"] = datetime(2026, 8, 20, 13, 5, tzinfo=tz)
+        await a._async_check_flush(None)                            # tick: utrwal baseline godziny 13
+
+        # --- RESTART: nowa instancja, ten sam Store, nic w pamieci ---
+        b = _make_tracker(baseline_store=baseline_store)
+        b._capacity_kwp = 10.34
+        monkeypatch.setattr(b, "_get_local_now", lambda: clock["t"])
+        submitted: list[list[dict]] = []
+        b._async_submit = AsyncMock(side_effect=lambda r: submitted.append(r) or True)
+        await b.async_start()
+
+        clock["t"] = datetime(2026, 8, 20, 13, 30, tzinfo=tz)
+        b._async_state_changed(_ev("sensor.pv_energy", 104.0))      # pierwszy odczyt po restarcie
+
+        clock["t"] = datetime(2026, 8, 20, 13, 59, tzinfo=tz)
+        b._async_state_changed(_ev("sensor.pv_energy", 107.7))      # koniec godziny 13
+
+        clock["t"] = datetime(2026, 8, 20, 14, 0, 20, tzinfo=tz)
+        b._async_state_changed(_ev("sensor.pv_energy", 107.8))      # rollover -> godzina 14
+
+        clock["t"] = datetime(2026, 8, 20, 14, 5, tzinfo=tz)
+        await b._async_check_flush(None)                            # flush godziny 13
+
+        assert submitted, "godzina 13 powinna zostac wyslana"
+        reading = submitted[-1][0]
+        assert reading["hour"] == 13
+        # 107.7 - 100.0 = 7.7 (a NIE 107.7 - 104.0 = 3.7)
+        assert reading["actual_kwh"] == pytest.approx(7.7, abs=1e-4), (
+            f"po restarcie stracono energie od 13:00 do 13:30: {reading['actual_kwh']}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stale_baseline_from_other_hour_is_ignored(self, monkeypatch):
+        """Baseline ze starszej godziny NIE moze byc uzyty.
+
+        Gdyby HA bylo wylaczone przez cala godzine, delta liczona od takiego
+        baseline'u objelaby takze godzine, ktorej nigdy nie zaraportowano —
+        czyli zawyzylaby biezaca. Wolimy stracic czesc godziny (i zostawic ja
+        reconcilerowi, ktory czyta statystyki HA) niz zaraportowac zla liczbe.
+        """
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Warsaw")
+        clock = {"t": datetime(2026, 8, 20, 13, 30, tzinfo=tz)}
+
+        def _ev(entity_id: str, value: float):
+            st = MagicMock()
+            st.state = str(value)
+            ev = MagicMock()
+            ev.data = {"new_state": st, "entity_id": entity_id}
+            return ev
+
+        baseline_store = _FakeStore()
+        # Baseline dotyczy godziny 12, a jestesmy w 13.
+        await baseline_store.async_save({"date": "2026-08-20", "hour": 12, "value": 100.0})
+
+        t = _make_tracker(baseline_store=baseline_store)
+        t._capacity_kwp = 10.34
+        monkeypatch.setattr(t, "_get_local_now", lambda: clock["t"])
+        submitted: list[list[dict]] = []
+        t._async_submit = AsyncMock(side_effect=lambda r: submitted.append(r) or True)
+        await t.async_start()
+
+        t._async_state_changed(_ev("sensor.pv_energy", 104.0))
+        clock["t"] = datetime(2026, 8, 20, 13, 59, tzinfo=tz)
+        t._async_state_changed(_ev("sensor.pv_energy", 107.7))
+        clock["t"] = datetime(2026, 8, 20, 14, 0, 20, tzinfo=tz)
+        t._async_state_changed(_ev("sensor.pv_energy", 107.8))
+        clock["t"] = datetime(2026, 8, 20, 14, 5, tzinfo=tz)
+        await t._async_check_flush(None)
+
+        assert submitted
+        # 107.7 - 104.0 = 3.7. NIE 7.7 — baseline godziny 12 jest nieadekwatny.
+        assert submitted[-1][0]["actual_kwh"] == pytest.approx(3.7, abs=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_normal_rollover_still_carries_previous_bucket(self, monkeypatch):
+        """Sciezka bez restartu bez zmian — baseline bierze sie z poprzedniego bucketa.
+
+        Regresja: odzyskiwanie z Store to gałąź `else`, nie moze przeslonic
+        normalnego przeniesienia energy_latest miedzy kubelkami.
+        """
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Warsaw")
+        clock = {"t": datetime(2026, 8, 20, 12, 30, tzinfo=tz)}
+
+        def _ev(entity_id: str, value: float):
+            st = MagicMock()
+            st.state = str(value)
+            ev = MagicMock()
+            ev.data = {"new_state": st, "entity_id": entity_id}
+            return ev
+
+        t = _make_tracker(baseline_store=_FakeStore())  # Store pusty
+        t._capacity_kwp = 10.34
+        monkeypatch.setattr(t, "_get_local_now", lambda: clock["t"])
+        submitted: list[list[dict]] = []
+        t._async_submit = AsyncMock(side_effect=lambda r: submitted.append(r) or True)
+        await t.async_start()
+
+        t._async_state_changed(_ev("sensor.pv_energy", 90.0))
+        clock["t"] = datetime(2026, 8, 20, 12, 59, tzinfo=tz)
+        t._async_state_changed(_ev("sensor.pv_energy", 100.0))   # koniec godziny 12
+        clock["t"] = datetime(2026, 8, 20, 13, 0, 10, tzinfo=tz)
+        t._async_state_changed(_ev("sensor.pv_energy", 100.1))   # rollover -> 13
+        clock["t"] = datetime(2026, 8, 20, 13, 59, tzinfo=tz)
+        t._async_state_changed(_ev("sensor.pv_energy", 107.7))
+        clock["t"] = datetime(2026, 8, 20, 14, 0, 20, tzinfo=tz)
+        t._async_state_changed(_ev("sensor.pv_energy", 107.8))
+        clock["t"] = datetime(2026, 8, 20, 14, 5, tzinfo=tz)
+        await t._async_check_flush(None)
+
+        h13 = [r for batch in submitted for r in batch if r["hour"] == 13]
+        assert h13, "godzina 13 powinna byc wyslana"
+        assert h13[0]["actual_kwh"] == pytest.approx(7.7, abs=1e-4)

@@ -37,6 +37,21 @@ ACCEPTED_STORAGE_KEY = "volcast_accepted_hours"
 ACCEPTED_STORAGE_VERSION = 1
 ACCEPTED_RETENTION_DAYS = 7
 
+# Baseline licznika energii na POCZATKU biezacej godziny.
+#
+# Bez tego restart HA (albo przeladowanie integracji) w srodku godziny kasuje
+# _previous_bucket, przez co `energy_start` ustawia sie na pierwszy odczyt PO
+# restarcie i cala energia od poczatku godziny przepada BEZ SLADU. Nie jest to
+# przesuniecie do sasiedniej godziny — pomiar kohortowy 2026-08-22 pokazal, ze
+# godzina nastepna po restarcie jest normalna (0.811 kWh/kW peaku vs 0.814 dla
+# godzin bez restartu), a godzina z restartem ma 0.755 i 2.5x wyzszy odsetek
+# zanizen (13.9% vs 5.5% na czystych godzinach, 692 przypadki u 74 z 83 kont).
+#
+# Zgloszenie zrodlowe (2026-08-20): godzina 13 zapisana jako 3.7 kWh zamiast
+# 7.7, godzina 9 jako dokladne 0.0000 zamiast ~2.2.
+BASELINE_STORAGE_KEY = "volcast_energy_baseline"
+BASELINE_STORAGE_VERSION = 1
+
 # Powody odrzucenia readinga przez backend, których NIE warto retry'ować:
 # semantycznie permanentne — kolejne wysyłanie zawsze da ten sam rezultat.
 # Reconciler powinien traktować je jak "już dostarczone" by nie spamować.
@@ -115,6 +130,11 @@ class VolcastProductionTracker:
         self._accepted: dict[str, list[int]] = {}
         self._accepted_loaded: bool = False
 
+        # Baseline licznika na poczatku biezacej godziny — przezywa restart.
+        self._baseline_store = Store(hass, BASELINE_STORAGE_VERSION, BASELINE_STORAGE_KEY)
+        self._baseline: dict[str, Any] | None = None
+        self._baseline_loaded: bool = False
+
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
         self.calibration: dict[str, Any] | None = None
         self.last_submission_time: datetime | None = None
@@ -189,6 +209,67 @@ class VolcastProductionTracker:
         except Exception:
             _LOGGER.warning("Failed to persist accepted-hours store", exc_info=True)
 
+    async def _load_baseline(self) -> dict[str, Any] | None:
+        """Wczytaj baseline licznika z persystentnego Store (lazy, raz).
+
+        MUSI byc wywolane przed pierwszym state changem — inaczej odzyskanie
+        po restarcie nie zadziala, bo _async_state_changed jest synchroniczne
+        i nie moze czekac na I/O.
+        """
+        if self._baseline_loaded:
+            return self._baseline
+        try:
+            data = await self._baseline_store.async_load()
+            if isinstance(data, dict) and "value" in data:
+                self._baseline = data
+        except Exception:
+            _LOGGER.warning("Failed to load energy baseline from storage", exc_info=True)
+        self._baseline_loaded = True
+        return self._baseline
+
+    async def _persist_baseline(self, now: datetime) -> None:
+        """Utrwal stan licznika z poczatku biezacej godziny.
+
+        Wolane z kazdego ticku (co 5 min), wiec okno ekspozycji na restart to
+        maksymalnie 5 minut zamiast pelnej godziny. Zapis tylko gdy rekord sie
+        zmienil — bez tego pisalibysmy na dysk 12 razy na godzine bez powodu.
+        """
+        bucket = self._current_bucket
+        if bucket is None or bucket.energy_start is None:
+            return
+        # Kubelek nieaktualny (brak state changow przez ponad godzine) — jego
+        # energy_start nie jest baseline'em biezacej godziny. Nie zapisujemy.
+        if bucket.hour != now.hour:
+            return
+        record = {
+            "date": now.strftime("%Y-%m-%d"),
+            "hour": bucket.hour,
+            "value": bucket.energy_start,
+        }
+        if record == self._baseline:
+            return
+        self._baseline = record
+        try:
+            await self._baseline_store.async_save(record)
+        except Exception:
+            _LOGGER.warning("Failed to persist energy baseline", exc_info=True)
+
+    def _baseline_for_hour(self, hour: int, now: datetime) -> float | None:
+        """Zwroc utrwalony baseline, jesli dotyczy DOKLADNIE tej godziny i doby.
+
+        Dopasowanie po (date, hour) jest celowo scisle. Baseline ze starszej
+        godziny bylby gorszy niz brak: HA moglo byc wylaczone przez cala godzine,
+        a wtedy delta objelaby takze godziny, ktorych nigdy nie zaraportowano.
+        Taki przypadek zostawiamy reconcilerowi, ktory czyta statystyki HA.
+        """
+        b = self._baseline
+        if not isinstance(b, dict):
+            return None
+        if b.get("hour") != hour or b.get("date") != now.strftime("%Y-%m-%d"):
+            return None
+        value = b.get("value")
+        return float(value) if isinstance(value, (int, float)) else None
+
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""
         try:
@@ -213,6 +294,10 @@ class VolcastProductionTracker:
         if not entities:
             _LOGGER.warning("No production entities configured — tracker idle")
             return
+
+        # PRZED rejestracja listenerow: _async_state_changed jest synchroniczne
+        # i czyta self._baseline z pamieci, wiec musi juz byc wczytany.
+        await self._load_baseline()
 
         self._unsub_state = async_track_state_change_event(
             self._hass, entities, self._async_state_changed
@@ -268,6 +353,17 @@ class VolcastProductionTracker:
             # (eliminuje lukę między ostatnim odczytem starej godziny a pierwszym nowej)
             if self._previous_bucket is not None and self._previous_bucket.energy_latest is not None:
                 self._current_bucket.energy_start = self._previous_bucket.energy_latest
+            else:
+                # Brak poprzedniego bucketa = restart HA albo przeładowanie integracji.
+                # Bez tej gałęzi energy_start ustawiłby się na pierwszy odczyt PO
+                # restarcie i energia od początku godziny przepadłaby bezpowrotnie.
+                recovered = self._baseline_for_hour(current_hour, now)
+                if recovered is not None:
+                    self._current_bucket.energy_start = recovered
+                    _LOGGER.debug(
+                        "Odzyskano baseline licznika dla godziny %s po restarcie: %s",
+                        current_hour, recovered,
+                    )
 
         bucket = self._current_bucket
 
@@ -297,6 +393,10 @@ class VolcastProductionTracker:
         """Co 5 minut sprawdź, czy trzeba wysłać dane z poprzedniej godziny."""
         now = self._get_local_now()
         current_hour = now.hour
+
+        # Utrwal baseline PRZED wszystkimi wczesnymi returnami — inaczej zapis
+        # dzialby sie raz na godzinę i okno ekspozycji na restart wracaloby do 60 min.
+        await self._persist_baseline(now)
 
         # Flush raz na godzinę po :05 — flag-based (odporny na timer drift)
         if now.minute < 5:
