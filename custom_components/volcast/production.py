@@ -42,10 +42,24 @@ ACCEPTED_RETENTION_DAYS = 7
 # Bez tego restart HA (albo przeladowanie integracji) w srodku godziny kasuje
 # _previous_bucket, przez co `energy_start` ustawia sie na pierwszy odczyt PO
 # restarcie i cala energia od poczatku godziny przepada BEZ SLADU. Nie jest to
-# przesuniecie do sasiedniej godziny — pomiar kohortowy 2026-08-22 pokazal, ze
-# godzina nastepna po restarcie jest normalna (0.811 kWh/kW peaku vs 0.814 dla
-# godzin bez restartu), a godzina z restartem ma 0.755 i 2.5x wyzszy odsetek
-# zanizen (13.9% vs 5.5% na czystych godzinach, 692 przypadki u 74 z 83 kont).
+# przesuniecie do sasiedniej godziny — godzina NASTEPNA po restarcie jest
+# normalna, wiec energia jest tracona, nie przesuwana.
+#
+# Pomiar kohortowy 2026-08-25, czyste godziny (cloud < 25), 30 dni.
+# Restart wykrywany po SKOKU offsetu flusha > 20 s utrzymanym w kolejnej
+# godzinie — timer jest zakotwiczony w momencie startu trackera, wiec sekundy
+# created_at sa stale dopoki tracker zyje:
+#
+#   bez restartu        6082 h / 80 kont   0.810 kWh na kW peaku    5.9% zanizen
+#   PRAWDZIWY restart    114 h / 43 konta  0.455 kWh na kW peaku   50.9% zanizen
+#
+# Czyli restart kosztuje srednio ~44% energii tej godziny. Zgadza sie to z
+# teoria: przy restartach rozlozonych rownomiernie w godzinie oczekiwana strata
+# to ~50%.
+#
+# UWAGA na detektor: liczenie KAZDEJ zmiany kotwicy (bez progu 20 s) lapie
+# jitter submitu i rozwadnia efekt — pierwsza wersja tego pomiaru dala przez to
+# 692 "restarty" i pozorne 0.755 vs 0.814. Prog jest konieczny.
 #
 # Zgloszenie zrodlowe (2026-08-20): godzina 13 zapisana jako 3.7 kWh zamiast
 # 7.7, godzina 9 jako dokladne 0.0000 zamiast ~2.2.
