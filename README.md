@@ -17,10 +17,9 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 - **Persistent retry queue** — production submissions that fail (network issues, API downtime) are queued locally and retried automatically
 - **Peak production alert** — binary sensor for automations (configurable threshold)
 - **UI-based setup** — no YAML needed, just enter your API key and select your sensors
+- **Key sanity check at setup** — a pasted key that is not a real Volcast key (for example the shortened preview shown in the app) is rejected instantly with a clear hint, before any network call
 
-### Resilience & Reconciliation (preview — v1.7.0-beta1)
-
-> Pre-release. Opt-in via HACS pre-release toggle. Stabilizes to 1.7.0 once dogfooded.
+### Resilience & Reconciliation
 
 The integration now ships three layered resilience mechanisms:
 
