@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Volcast",
-        "description": "Enter your Volcast API key. You can find it in the Volcast app under Settings > API Access.",
+        "description": "Enter your Volcast API key. You can find it in the Volcast app under Settings > API Key.",
         "data": {
           "api_key": "API Key",
           "api_url": "API URL (advanced)"
@@ -29,6 +29,8 @@
     "error": {
       "cannot_connect": "Unable to connect to Volcast API. Check your internet connection.",
       "invalid_auth": "Invalid API key or premium subscription required.",
+      "masked_key": "This looks like the shortened preview from the app (vk_xxxx...xxxx), not the full key. In the Volcast app open Settings > API Key and use the Copy or Share button, then paste the full 67-character key here.",
+      "invalid_key_format": "That is not a Volcast API key. A key starts with vk_ and is 67 characters long. Use the Copy or Share button in the Volcast app under Settings > API Key.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
