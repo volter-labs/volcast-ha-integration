@@ -525,6 +525,34 @@ async def test_setup_reconciler_cancels_listener_if_unloaded_before_started():
     assert "homeassistant_started" in cancel_calls
 
 
+@pytest.mark.asyncio
+async def test_setup_reconciler_startup_runs_reconcile_recent():
+    """On-startup hook wywołuje reconcile_recent (D-1 + D-0), nie samo D-1.
+
+    Restart HA to dokładnie moment powstawania luk (update systemu) —
+    dzisiejsze braki muszą się uzupełnić od razu, nie o 00:30.
+    """
+    from custom_components.volcast import _setup_reconciler
+
+    hass = FakeHass(is_running=False)
+    entry = _RecordingConfigEntry()
+    tracker = _make_setup_tracker(hass)
+
+    with patch("custom_components.volcast.async_track_time_change",
+               return_value=lambda: None):
+        _setup_reconciler(
+            hass=hass, entry=entry, tracker=tracker,
+            energy_entity="sensor.pv_energy", api_key="k", submit_url="http://x",
+        )
+
+    _, listener = hass.bus.listeners[0]
+    with patch.object(DailyReconciler, "reconcile_recent",
+                      new=AsyncMock()) as mock_recent:
+        await listener(None)
+
+    assert mock_recent.await_count == 1
+
+
 # ---------------------------------------------------------------------------
 # _last_run_at / _last_result tracking — Task 20a
 # ---------------------------------------------------------------------------
@@ -602,3 +630,114 @@ async def test_reconcile_day_catches_impl_exception():
     assert reconciler._last_result.success is False
     assert reconciler._last_run_at is not None
     assert reconciler._last_target_date == target.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# reconcile_day(today) — wykluczenie bieżącej godziny (force sync)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_today_excludes_current_and_future_hours(monkeypatch):
+    """Reconciling TODAY must not submit the current (in-progress) hour nor later.
+
+    The live tracker owns the current hour (flush at :05 past the hour).
+    Submitting a partial value would show garbage in the app until the
+    backend upsert corrects it an hour later.
+    """
+    from custom_components.volcast import reconciler as reconciler_mod
+    from custom_components.volcast.http_retry import RetryResult
+
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+
+    # Zamrożony czas lokalny: 2026-07-24 13:40 Europe/Warsaw (tz z FakeHass)
+    fixed_now = datetime(2026, 7, 24, 13, 40, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(reconciler_mod, "_now_local", lambda tz: fixed_now)
+    target = fixed_now.date()  # DZIŚ
+
+    # Statystyki raportują godziny 6..15 — 13 to bieżąca (partial LTS),
+    # 14-15 to szum. Godziny 6..10 już dostarczone przez live tracker.
+    stats = {h: 1.0 for h in range(6, 16)}
+    tracker._accepted = {target.isoformat(): list(range(6, 11))}
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 2, "rejected": 0, "rejections": []},
+        )
+        result = await reconciler.reconcile_day(target)
+
+    submitted_hours = [
+        r["hour"] for r in mock_http.call_args.kwargs["payload"]["readings"]
+    ]
+    assert submitted_hours == [11, 12], (
+        "only gap hours strictly before the current hour may be submitted"
+    )
+    assert result.submitted == 2
+
+
+@pytest.mark.asyncio
+async def test_reconcile_yesterday_still_submits_all_hours(monkeypatch):
+    """Wykluczenie bieżącej godziny dotyczy TYLKO dzisiejszego dnia —
+    wczorajszy dzień wysyła wszystkie luki niezależnie od pory."""
+    from custom_components.volcast import reconciler as reconciler_mod
+    from custom_components.volcast.http_retry import RetryResult
+
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+
+    fixed_now = datetime(2026, 7, 24, 13, 40, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(reconciler_mod, "_now_local", lambda tz: fixed_now)
+    target = fixed_now.date() - timedelta(days=1)  # WCZORAJ
+
+    stats = {h: 1.0 for h in range(6, 19)}  # 13 godzin, w tym >= 13
+    tracker._accepted = {}
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 13, "rejected": 0, "rejections": []},
+        )
+        result = await reconciler.reconcile_day(target)
+
+    submitted_hours = [
+        r["hour"] for r in mock_http.call_args.kwargs["payload"]["readings"]
+    ]
+    assert submitted_hours == list(range(6, 19))
+    assert result.submitted == 13
+
+
+# ---------------------------------------------------------------------------
+# reconcile_recent — wczoraj + dziś (force sync)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_recent_runs_yesterday_then_today(monkeypatch):
+    """reconcile_recent uzgadnia wczoraj, potem dziś — kolejność celowa,
+    żeby diagnostyka _last_target_date kończyła na dzisiejszym dniu."""
+    from custom_components.volcast import reconciler as reconciler_mod
+
+    fixed_now = datetime(2026, 7, 24, 13, 40, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(reconciler_mod, "_now_local", lambda tz: fixed_now)
+
+    reconciler = _make_reconciler()
+    calls: list[date] = []
+
+    async def fake_reconcile_day(target):
+        calls.append(target)
+        return ReconcileResult(success=True)
+
+    with patch.object(reconciler, "reconcile_day", side_effect=fake_reconcile_day):
+        results = await reconciler.reconcile_recent()
+
+    assert calls == [date(2026, 7, 23), date(2026, 7, 24)]
+    assert len(results) == 2
+    assert all(r.success for r in results)

@@ -165,6 +165,7 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
                 )
                 result.append({
                     "period_start": dt.isoformat(),
+                    "pv_estimate": e.power_w / 1000.0,  # kW — HAEO solcast_solar parser compatibility
                     "power_w": e.power_w,
                     "energy_wh": e.energy_wh,
                 })

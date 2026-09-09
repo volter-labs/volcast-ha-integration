@@ -6,12 +6,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, DEFAULT_UPDATE_INTERVAL
+from .const import (
+    DOMAIN,
+    DEFAULT_UPDATE_INTERVAL,
+    FORECAST_HISTORY_RETENTION_DAYS,
+    FORECAST_HISTORY_STORAGE_VERSION,
+)
 from .http_retry import http_with_retry
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,6 +84,7 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
         api_key: str,
         api_url: str,
         update_interval_minutes: int = DEFAULT_UPDATE_INTERVAL,
+        entry_id: str | None = None,
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -87,6 +95,79 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
         )
         self._api_key = api_key
         self._api_url = api_url
+        self._entry_id = entry_id
+
+        # Rolling history of forecast wh_hours, keyed by ISO timestamp, served to
+        # the HA Energy Dashboard so past days keep their forecast line. Persisted
+        # per-entry; in-memory only when no entry_id (e.g. unit tests).
+        self._forecast_history: dict[str, float | int] = {}
+        self._history_loaded = False
+        self._history_store: Store | None = (
+            Store(hass, FORECAST_HISTORY_STORAGE_VERSION,
+                  f"{DOMAIN}.forecast_history.{entry_id}")
+            if entry_id is not None
+            else None
+        )
+
+    async def async_load_forecast_history(self) -> None:
+        """Load persisted forecast history once (idempotent).
+
+        Loaded eagerly during setup so the Energy Dashboard still has past-day
+        forecasts after a restart even before (or if) the first poll fails.
+        """
+        if self._history_loaded:
+            return
+        self._history_loaded = True
+        if self._history_store is None:
+            return
+        try:
+            stored = await self._history_store.async_load()
+        except Exception:  # noqa: BLE001 — corrupt/missing store must not block setup
+            _LOGGER.warning("Failed to load forecast history store", exc_info=True)
+            stored = None
+        if isinstance(stored, dict):
+            wh = stored.get("wh_hours", {})
+            if isinstance(wh, dict):
+                self._forecast_history = dict(wh)
+        self._prune_history()
+
+    def get_solar_forecast_wh_hours(self) -> dict[str, float | int] | None:
+        """Return merged forecast (past history + current poll) for the Energy
+        Dashboard, or None if we have nothing to show."""
+        return self._forecast_history or None
+
+    def _prune_history(self) -> None:
+        """Drop history entries older than the retention window."""
+        try:
+            tz = ZoneInfo(self.hass.config.time_zone)
+        except Exception:  # noqa: BLE001
+            tz = timezone.utc
+        cutoff = datetime.now(tz) - timedelta(days=FORECAST_HISTORY_RETENTION_DAYS)
+        for ts in list(self._forecast_history):
+            try:
+                if datetime.fromisoformat(ts) < cutoff:
+                    del self._forecast_history[ts]
+            except (ValueError, TypeError):
+                # Unparseable key — drop it rather than let it linger forever.
+                del self._forecast_history[ts]
+
+    async def _async_merge_forecast_history(
+        self, wh_hours: dict[str, float | int]
+    ) -> None:
+        """Merge a fresh poll's wh_hours into the retained history (newest wins),
+        prune, and persist. Past days the API no longer returns stay frozen at
+        their last-known forecast value."""
+        await self.async_load_forecast_history()
+        if wh_hours:
+            self._forecast_history.update(wh_hours)
+        self._prune_history()
+        if self._history_store is not None:
+            try:
+                await self._history_store.async_save(
+                    {"wh_hours": self._forecast_history}
+                )
+            except Exception:  # noqa: BLE001 — persistence is best-effort
+                _LOGGER.warning("Failed to save forecast history store", exc_info=True)
 
     async def _async_update_data(self) -> VolcastData:
         """Fetch data from Volcast API with retry (5/15/45s) on transient errors."""
@@ -101,7 +182,9 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
         )
 
         if result.success:
-            return _parse_response(result.data, self.hass)
+            data = _parse_response(result.data, self.hass)
+            await self._async_merge_forecast_history(data.wh_hours)
+            return data
 
         # Mapowanie statusów po wyczerpaniu retries — zachowujemy istniejącą semantykę
         if result.status == 401:

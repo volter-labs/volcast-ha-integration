@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import logging
 
 try:
@@ -11,11 +11,13 @@ except ImportError:
     IssueSeverity = None
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STARTED, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
+    ATTR_DATE,
     CONF_API_URL,
     CONF_BATTERY_CHARGE_POWER_ENTITY,
     CONF_BATTERY_SOC_ENTITY,
@@ -26,6 +28,7 @@ from .const import (
     DEFAULT_SUBMIT_URL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
+    SERVICE_SYNC_PRODUCTION,
 )
 from .coordinator import VolcastCoordinator
 from .production import VolcastProductionTracker
@@ -33,7 +36,57 @@ from .reconciler import DailyReconciler
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
+
+
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Zarejestruj domain-level serwis volcast.sync_production (idempotentnie).
+
+    Bez `date` → reconcile_recent() (wczoraj + dziś) na wszystkich entries.
+    Z `date` (YYYY-MM-DD lub datetime.date z selectora) → reconcile_day(date);
+    daty poza oknem odbija istniejący gate `out_of_window` w reconcile_day.
+    """
+    if hass.services.has_service(DOMAIN, SERVICE_SYNC_PRODUCTION):
+        return
+
+    async def _handle_sync_production(call: ServiceCall) -> None:
+        raw_date = call.data.get(ATTR_DATE)
+        target: date | None = None
+        if raw_date is not None:
+            if isinstance(raw_date, datetime):
+                # datetime dziedziczy po date — sprowadź do czystej daty,
+                # inaczej date - datetime rzuci TypeError w reconcile_day
+                # (połknięty w success=False = cichy no-op zamiast błędu).
+                target = raw_date.date()
+            elif isinstance(raw_date, date):
+                target = raw_date
+            else:
+                try:
+                    target = date.fromisoformat(str(raw_date))
+                except ValueError as err:
+                    raise ServiceValidationError(
+                        f"Invalid date {raw_date!r} — expected YYYY-MM-DD"
+                    ) from err
+
+        reconcilers = [
+            entry_data["reconciler"]
+            for entry_data in hass.data.get(DOMAIN, {}).values()
+            if entry_data.get("reconciler") is not None
+        ]
+        if not reconcilers:
+            raise ServiceValidationError(
+                "No Volcast entry has production tracking configured "
+                "(an energy sensor is required for sync)"
+            )
+        for reconciler in reconcilers:
+            if target is not None:
+                await reconciler.reconcile_day(target)
+            else:
+                await reconciler.reconcile_recent()
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_SYNC_PRODUCTION, _handle_sync_production
+    )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -42,7 +95,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_url = entry.data.get(CONF_API_URL, DEFAULT_API_URL)
     update_interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
 
-    coordinator = VolcastCoordinator(hass, api_key, api_url, update_interval)
+    coordinator = VolcastCoordinator(
+        hass, api_key, api_url, update_interval, entry_id=entry.entry_id
+    )
+    # Load retained past-day forecast history before the first poll so the Energy
+    # Dashboard keeps showing previous days even if that first refresh fails.
+    await coordinator.async_load_forecast_history()
     await coordinator.async_config_entry_first_refresh()
 
     # Production tracker — opcjonalny (wymaga skonfigurowanych sensorów)
@@ -109,6 +167,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "Reconciler not started — energy_entity not configured (or tracker missing)"
         )
 
+    _async_register_services(hass)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -152,15 +212,12 @@ def _setup_reconciler(
         )
     )
 
-    # Na startupie HA — uzgodnij D-1 (wczoraj). Idempotentne: już-zaakceptowane
-    # godziny pomijane przez reconcile_day.
-    #
-    # Wcześniejsza wersja iterowała też D-2, ale backend 36h window i tak zawsze
-    # rzuca D-2 jako `out_of_window` → no-op cleanup, plus nadpisywał
-    # `_last_target_date` zostawiając mniej-użyteczne info w diagnostic sensor.
+    # Na startupie HA — uzgodnij wczoraj + dziś. Restart HA to dokładnie
+    # moment, w którym powstają luki (update systemu = restart). Idempotentne:
+    # godziny już dostarczone i bieżąca godzina (własność live trackera) są
+    # pomijane wewnątrz reconcile_recent/reconcile_day.
     async def _on_started(_event=None):
-        today = datetime.now(reconciler._tz).date()
-        await reconciler.reconcile_day(today - timedelta(days=1))
+        await reconciler.reconcile_recent()
 
     if hass.is_running:
         hass.async_create_task(_on_started())
@@ -197,6 +254,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         tracker = entry_data.get("tracker")
         if tracker is not None:
             await tracker.async_stop()
+        if not hass.data[DOMAIN]:
+            hass.services.async_remove(DOMAIN, SERVICE_SYNC_PRODUCTION)
     return unload_ok
 
 

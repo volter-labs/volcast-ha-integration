@@ -15,15 +15,22 @@ async def async_get_solar_forecast(
 
     Called by HA Energy Dashboard to display solar production forecast.
     Returns {"wh_hours": {"ISO_TIMESTAMP": wh_value, ...}} or None.
+
+    We return the coordinator's *merged* history (retained past days + current
+    poll), not just the latest response. The Volcast API only returns today +
+    future days, so serving the raw response would make the forecast line vanish
+    the moment you navigate to a previous day. Retaining past days mirrors how
+    Solcast keeps its forecast visible historically.
     """
     entry_data = hass.data.get(DOMAIN, {}).get(config_entry_id, {})
     coordinator: VolcastCoordinator | None = (
         entry_data.get("coordinator") if isinstance(entry_data, dict) else None
     )
-    if coordinator is None or coordinator.data is None:
+    if coordinator is None:
         return None
 
-    if not coordinator.data.wh_hours:
+    wh_hours = coordinator.get_solar_forecast_wh_hours()
+    if not wh_hours:
         return None
 
-    return {"wh_hours": coordinator.data.wh_hours}
+    return {"wh_hours": wh_hours}

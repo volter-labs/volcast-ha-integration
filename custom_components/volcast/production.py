@@ -23,11 +23,48 @@ STORAGE_KEY = "volcast_production_queue"
 STORAGE_VERSION = 1
 MAX_QUEUE_SIZE = 48
 
+# Backend odrzuca zadania z wieksza liczba odczytow kodem HTTP 400
+# (submit-production/index.ts: "Maximum 24 readings per request"), a 400 NIE jest
+# w RETRIABLE_STATUSES. Bez tego ograniczenia kolejka, ktora raz przekroczyla 24
+# wpisy, zakleszczala sie na stale: kazdy POST dostawal 400, sciezka porazki
+# zapisywala te same wpisy z powrotem, a stan przezywal restart HA i naprawe
+# backendu. Odblokowanie wymagalo recznego usuniecia pliku Store u uzytkownika.
+MAX_READINGS_PER_REQUEST = 24
+
 # Accepted-hours store — pamięć "co już udało się dostarczyć", używana przez
 # reconciler żeby nie reposyłał tych samych godzin w nieskończoność.
 ACCEPTED_STORAGE_KEY = "volcast_accepted_hours"
 ACCEPTED_STORAGE_VERSION = 1
 ACCEPTED_RETENTION_DAYS = 7
+
+# Baseline licznika energii na POCZATKU biezacej godziny.
+#
+# Bez tego restart HA (albo przeladowanie integracji) w srodku godziny kasuje
+# _previous_bucket, przez co `energy_start` ustawia sie na pierwszy odczyt PO
+# restarcie i cala energia od poczatku godziny przepada BEZ SLADU. Nie jest to
+# przesuniecie do sasiedniej godziny — godzina NASTEPNA po restarcie jest
+# normalna, wiec energia jest tracona, nie przesuwana.
+#
+# Pomiar kohortowy 2026-08-25, czyste godziny (cloud < 25), 30 dni.
+# Restart wykrywany po SKOKU offsetu flusha > 20 s utrzymanym w kolejnej
+# godzinie — timer jest zakotwiczony w momencie startu trackera, wiec sekundy
+# created_at sa stale dopoki tracker zyje:
+#
+#   bez restartu        6082 h / 80 kont   0.810 kWh na kW peaku    5.9% zanizen
+#   PRAWDZIWY restart    114 h / 43 konta  0.455 kWh na kW peaku   50.9% zanizen
+#
+# Czyli restart kosztuje srednio ~44% energii tej godziny. Zgadza sie to z
+# teoria: przy restartach rozlozonych rownomiernie w godzinie oczekiwana strata
+# to ~50%.
+#
+# UWAGA na detektor: liczenie KAZDEJ zmiany kotwicy (bez progu 20 s) lapie
+# jitter submitu i rozwadnia efekt — pierwsza wersja tego pomiaru dala przez to
+# 692 "restarty" i pozorne 0.755 vs 0.814. Prog jest konieczny.
+#
+# Zgloszenie zrodlowe (2026-08-20): godzina 13 zapisana jako 3.7 kWh zamiast
+# 7.7, godzina 9 jako dokladne 0.0000 zamiast ~2.2.
+BASELINE_STORAGE_KEY = "volcast_energy_baseline"
+BASELINE_STORAGE_VERSION = 1
 
 # Powody odrzucenia readinga przez backend, których NIE warto retry'ować:
 # semantycznie permanentne — kolejne wysyłanie zawsze da ten sam rezultat.
@@ -107,6 +144,11 @@ class VolcastProductionTracker:
         self._accepted: dict[str, list[int]] = {}
         self._accepted_loaded: bool = False
 
+        # Baseline licznika na poczatku biezacej godziny — przezywa restart.
+        self._baseline_store = Store(hass, BASELINE_STORAGE_VERSION, BASELINE_STORAGE_KEY)
+        self._baseline: dict[str, Any] | None = None
+        self._baseline_loaded: bool = False
+
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
         self.calibration: dict[str, Any] | None = None
         self.last_submission_time: datetime | None = None
@@ -181,6 +223,67 @@ class VolcastProductionTracker:
         except Exception:
             _LOGGER.warning("Failed to persist accepted-hours store", exc_info=True)
 
+    async def _load_baseline(self) -> dict[str, Any] | None:
+        """Wczytaj baseline licznika z persystentnego Store (lazy, raz).
+
+        MUSI byc wywolane przed pierwszym state changem — inaczej odzyskanie
+        po restarcie nie zadziala, bo _async_state_changed jest synchroniczne
+        i nie moze czekac na I/O.
+        """
+        if self._baseline_loaded:
+            return self._baseline
+        try:
+            data = await self._baseline_store.async_load()
+            if isinstance(data, dict) and "value" in data:
+                self._baseline = data
+        except Exception:
+            _LOGGER.warning("Failed to load energy baseline from storage", exc_info=True)
+        self._baseline_loaded = True
+        return self._baseline
+
+    async def _persist_baseline(self, now: datetime) -> None:
+        """Utrwal stan licznika z poczatku biezacej godziny.
+
+        Wolane z kazdego ticku (co 5 min), wiec okno ekspozycji na restart to
+        maksymalnie 5 minut zamiast pelnej godziny. Zapis tylko gdy rekord sie
+        zmienil — bez tego pisalibysmy na dysk 12 razy na godzine bez powodu.
+        """
+        bucket = self._current_bucket
+        if bucket is None or bucket.energy_start is None:
+            return
+        # Kubelek nieaktualny (brak state changow przez ponad godzine) — jego
+        # energy_start nie jest baseline'em biezacej godziny. Nie zapisujemy.
+        if bucket.hour != now.hour:
+            return
+        record = {
+            "date": now.strftime("%Y-%m-%d"),
+            "hour": bucket.hour,
+            "value": bucket.energy_start,
+        }
+        if record == self._baseline:
+            return
+        self._baseline = record
+        try:
+            await self._baseline_store.async_save(record)
+        except Exception:
+            _LOGGER.warning("Failed to persist energy baseline", exc_info=True)
+
+    def _baseline_for_hour(self, hour: int, now: datetime) -> float | None:
+        """Zwroc utrwalony baseline, jesli dotyczy DOKLADNIE tej godziny i doby.
+
+        Dopasowanie po (date, hour) jest celowo scisle. Baseline ze starszej
+        godziny bylby gorszy niz brak: HA moglo byc wylaczone przez cala godzine,
+        a wtedy delta objelaby takze godziny, ktorych nigdy nie zaraportowano.
+        Taki przypadek zostawiamy reconcilerowi, ktory czyta statystyki HA.
+        """
+        b = self._baseline
+        if not isinstance(b, dict):
+            return None
+        if b.get("hour") != hour or b.get("date") != now.strftime("%Y-%m-%d"):
+            return None
+        value = b.get("value")
+        return float(value) if isinstance(value, (int, float)) else None
+
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""
         try:
@@ -205,6 +308,10 @@ class VolcastProductionTracker:
         if not entities:
             _LOGGER.warning("No production entities configured — tracker idle")
             return
+
+        # PRZED rejestracja listenerow: _async_state_changed jest synchroniczne
+        # i czyta self._baseline z pamieci, wiec musi juz byc wczytany.
+        await self._load_baseline()
 
         self._unsub_state = async_track_state_change_event(
             self._hass, entities, self._async_state_changed
@@ -260,6 +367,17 @@ class VolcastProductionTracker:
             # (eliminuje lukę między ostatnim odczytem starej godziny a pierwszym nowej)
             if self._previous_bucket is not None and self._previous_bucket.energy_latest is not None:
                 self._current_bucket.energy_start = self._previous_bucket.energy_latest
+            else:
+                # Brak poprzedniego bucketa = restart HA albo przeładowanie integracji.
+                # Bez tej gałęzi energy_start ustawiłby się na pierwszy odczyt PO
+                # restarcie i energia od początku godziny przepadłaby bezpowrotnie.
+                recovered = self._baseline_for_hour(current_hour, now)
+                if recovered is not None:
+                    self._current_bucket.energy_start = recovered
+                    _LOGGER.debug(
+                        "Odzyskano baseline licznika dla godziny %s po restarcie: %s",
+                        current_hour, recovered,
+                    )
 
         bucket = self._current_bucket
 
@@ -289,6 +407,10 @@ class VolcastProductionTracker:
         """Co 5 minut sprawdź, czy trzeba wysłać dane z poprzedniej godziny."""
         now = self._get_local_now()
         current_hour = now.hour
+
+        # Utrwal baseline PRZED wszystkimi wczesnymi returnami — inaczej zapis
+        # dzialby sie raz na godzinę i okno ekspozycji na restart wracaloby do 60 min.
+        await self._persist_baseline(now)
 
         # Flush raz na godzinę po :05 — flag-based (odporny na timer drift)
         if now.minute < 5:
@@ -412,12 +534,27 @@ class VolcastProductionTracker:
                 all_readings.append(r)
                 seen.add(key)
 
+        # Paczka nie moze przekroczyc limitu backendu. Wysylamy NAJNOWSZE odczyty —
+        # sa najbardziej wartosciowe (kalibracja i nowcast dzialaja na dzisiejszych
+        # godzinach), a starsze i tak wpadaja w backendowy prog "older_than_24h".
+        # Nadmiar czeka w kolejce na kolejny flush zamiast blokowac wszystko.
+        if len(all_readings) > MAX_READINGS_PER_REQUEST:
+            deferred = all_readings[:-MAX_READINGS_PER_REQUEST]
+            batch = all_readings[-MAX_READINGS_PER_REQUEST:]
+            _LOGGER.debug(
+                "Batch capped at %d readings; %d deferred to next flush",
+                len(batch), len(deferred),
+            )
+        else:
+            deferred = []
+            batch = all_readings
+
         session = async_get_clientsession(self._hass)
         result = await http_with_retry(
             session,
             method="POST",
             url=self._submit_url,
-            payload={"readings": all_readings},
+            payload={"readings": batch},
             headers={
                 "X-API-Key": self._api_key,
                 "Content-Type": "application/json",
@@ -449,7 +586,10 @@ class VolcastProductionTracker:
                 if reason is None or reason in PERMANENT_SKIP_REASONS:
                     await self._mark_accepted(r["date"], r["hour"])
 
-            self._queue = []
+            # Sukces czysci tylko to, co faktycznie poszlo. Nadmiar ponad limit
+            # paczki czeka na kolejny flush — wyczyszczenie calej kolejki gubiloby
+            # odczyty, ktorych backend nigdy nie widzial.
+            self._queue = deferred
             await self._async_save_queue()
             self._last_submit_status = "ok"
             if result.attempts > 1:
@@ -469,7 +609,7 @@ class VolcastProductionTracker:
             return True
 
         # Failure path — zapisz wszystkie readingi do kolejki retry (FIFO cap)
-        self._queue = all_readings[-MAX_QUEUE_SIZE:]
+        self._queue = (deferred + batch)[-MAX_QUEUE_SIZE:]
         await self._async_save_queue()
         self._last_submit_status = result.last_error or f"HTTP {result.status}"
         _LOGGER.warning(

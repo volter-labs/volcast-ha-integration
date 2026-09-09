@@ -602,3 +602,80 @@ class TestIntegrationHealthyBinarySensor:
         assert attrs["submit_ok"] is True
         assert attrs["reconcile_ok"] is True
         assert "last_check" in attrs
+
+
+# ---------------------------------------------------------------------------
+# NEW: pv_estimate field on detailedForecast — HAEO Solcast-extractor compat
+# ---------------------------------------------------------------------------
+
+
+class TestDetailedForecastPvEstimate:
+    """Tests for the pv_estimate field (kW) added to each detailedForecast
+    entry so HAEO's solcast_solar extractor recognises Volcast sensors.
+
+    See docs/plans/2026-05-30-haeo-compatibility-design.md.
+    """
+
+    @patch("custom_components.volcast.sensor.datetime")
+    def test_detailed_forecast_entries_have_pv_estimate(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 3, 20, 12, 0, tzinfo=TZ)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        data = make_sample_data(include_detailed=True)
+        sensor = _make_sensor(VolcastEnergyTodaySensor, data)
+        attrs = sensor.extra_state_attributes
+
+        assert "detailedForecast" in attrs
+        df = attrs["detailedForecast"]
+        assert isinstance(df, list)
+        assert len(df) > 0
+
+        for entry in df:
+            assert "pv_estimate" in entry, f"missing pv_estimate in {entry!r}"
+            assert isinstance(entry["pv_estimate"], float)
+
+    @patch("custom_components.volcast.sensor.datetime")
+    def test_pv_estimate_equals_power_w_div_1000(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 3, 20, 12, 0, tzinfo=TZ)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        data = make_sample_data(include_detailed=True)
+        sensor = _make_sensor(VolcastEnergyTodaySensor, data)
+        df = sensor.extra_state_attributes["detailedForecast"]
+
+        for entry in df:
+            assert entry["pv_estimate"] == pytest.approx(
+                entry["power_w"] / 1000.0, rel=1e-6
+            ), f"pv_estimate {entry['pv_estimate']} != power_w/1000 for {entry!r}"
+
+    @patch("custom_components.volcast.sensor.datetime")
+    def test_existing_keys_still_present_regression(self, mock_dt):
+        """Adding pv_estimate must not remove existing keys (backward compat
+        for user automations / template sensors)."""
+        mock_dt.now.return_value = datetime(2026, 3, 20, 12, 0, tzinfo=TZ)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        data = make_sample_data(include_detailed=True)
+        sensor = _make_sensor(VolcastEnergyTodaySensor, data)
+        df = sensor.extra_state_attributes["detailedForecast"]
+
+        for entry in df:
+            assert "period_start" in entry
+            assert "power_w" in entry
+            assert "energy_wh" in entry
+
+    @patch("custom_components.volcast.sensor.datetime")
+    def test_tomorrow_sensor_omits_detailed_forecast_when_empty(self, mock_dt):
+        """Tomorrow sensor has no detailed entries in the default fixture, so
+        detailedForecast should be absent. pv_estimate symmetry across sensors
+        is guaranteed by code-path identity (both Today and Tomorrow sensors
+        call self._day_attributes() → self._detailed_forecast()), not by this test."""
+        mock_dt.now.return_value = datetime(2026, 3, 20, 12, 0, tzinfo=TZ)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        data = make_sample_data(include_detailed=True)
+        sensor = _make_sensor(VolcastEnergyTomorrowSensor, data)
+        attrs = sensor.extra_state_attributes
+        # Tomorrow has no detailed entries in fixture → detailedForecast
+        # should be absent (the code skips it when list is empty).
+        assert attrs.get("detailedForecast", []) == [] or "detailedForecast" not in attrs

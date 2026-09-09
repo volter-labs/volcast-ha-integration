@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Volcast",
-        "description": "Enter your Volcast API key. You can find it in the Volcast app under Settings > API Access.",
+        "description": "Enter your Volcast API key. You can find it in the Volcast app under Settings > API Key.",
         "data": {
           "api_key": "API Key",
           "api_url": "API URL (advanced)"
@@ -29,6 +29,8 @@
     "error": {
       "cannot_connect": "Unable to connect to Volcast API. Check your internet connection.",
       "invalid_auth": "Invalid API key or premium subscription required.",
+      "masked_key": "This looks like the shortened preview from the app (vk_xxxx...xxxx), not the full key. In the Volcast app open Settings > API Key and use the Copy or Share button, then paste the full 67-character key here.",
+      "invalid_key_format": "That is not a Volcast API key. A key starts with vk_ and is 67 characters long. Use the Copy or Share button in the Volcast app under Settings > API Key.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
@@ -60,6 +62,18 @@
     "production_tracking_available": {
       "title": "Improve forecast accuracy with production tracking",
       "description": "Volcast v1.5.0 can now track your actual PV production and use it to calibrate forecasts. Go to the integration options and select your inverter's energy or power sensor to enable this feature."
+    }
+  },
+  "services": {
+    "sync_production": {
+      "name": "Sync production",
+      "description": "Force-syncs hourly PV production to Volcast using Home Assistant recorder statistics. Fills gaps left by HA downtime (e.g. a system update). Without a date, syncs yesterday and today.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "Specific day to sync (must be within the last ~24-38 hours). Leave empty to sync yesterday and today."
+        }
+      }
     }
   },
   "entity": {
@@ -95,6 +109,11 @@
     "binary_sensor": {
       "peak_production": {
         "name": "Peak production"
+      }
+    },
+    "button": {
+      "sync_now": {
+        "name": "Sync production now"
       }
     }
   }

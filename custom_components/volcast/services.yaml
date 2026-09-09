@@ -1,0 +1,7 @@
+sync_production:
+  fields:
+    date:
+      required: false
+      example: "2026-07-23"
+      selector:
+        date:
