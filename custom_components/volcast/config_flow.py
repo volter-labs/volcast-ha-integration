@@ -18,6 +18,7 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
+from .key_format import check_api_key_format
 from .const import (
     CONF_API_URL,
     CONF_BATTERY_CHARGE_POWER_ENTITY,
@@ -83,6 +84,17 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             api_key = user_input[CONF_API_KEY].strip()
             api_url = user_input.get(CONF_API_URL, DEFAULT_API_URL).strip()
+
+            # Shape check before any network call: catches the app's shortened
+            # preview (vk_xxxx...xxxx) pasted instead of the full key.
+            format_error = check_api_key_format(api_key)
+            if format_error:
+                errors["base"] = format_error
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=STEP_USER_DATA_SCHEMA,
+                    errors=errors,
+                )
 
             try:
                 info = await _validate_api_key(api_key, api_url)
