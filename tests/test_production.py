@@ -725,3 +725,104 @@ class TestRestartEnergyBaseline:
         h13 = [r for batch in submitted for r in batch if r["hour"] == 13]
         assert h13, "godzina 13 powinna byc wyslana"
         assert h13[0]["actual_kwh"] == pytest.approx(7.7, abs=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Battery charge power: steady sensor value must carry over between hours
+# ---------------------------------------------------------------------------
+
+def _ev(entity_id: str, value: float):
+    st = MagicMock()
+    st.state = str(value)
+    ev = MagicMock()
+    ev.data = {"new_state": st, "entity_id": entity_id}
+    return ev
+
+
+def _make_battery_tracker(monkeypatch, clock: dict) -> tuple[VolcastProductionTracker, list]:
+    tracker = _make_tracker()
+    tracker._battery_soc_entity = "sensor.batt_soc"
+    tracker._battery_charge_power_entity = "sensor.batt_charge"
+    monkeypatch.setattr(tracker, "_get_local_now", lambda: clock["t"])
+    submitted: list[list[dict]] = []
+    tracker._async_submit = AsyncMock(side_effect=lambda r: submitted.append(r) or True)
+    return tracker, submitted
+
+
+class TestChargePowerCarryOver:
+    """HA emits state_changed only on change. A full battery sits at 0 W for
+    hours without a single event, so the hour that matters most for
+    curtailment detection would otherwise ship without charge power at all."""
+
+    @pytest.mark.asyncio
+    async def test_steady_zero_charge_power_carries_into_next_hour(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Berlin")
+        clock = {"t": datetime(2026, 9, 6, 12, 30, tzinfo=tz)}
+        tracker, submitted = _make_battery_tracker(monkeypatch, clock)
+        await tracker.async_start()
+
+        tracker._async_state_changed(_ev("sensor.pv_energy", 100.0))
+        tracker._async_state_changed(_ev("sensor.batt_soc", 100.0))
+        tracker._async_state_changed(_ev("sensor.batt_charge", 0.0))   # last event ever
+
+        clock["t"] = datetime(2026, 9, 6, 13, 0, 10, tzinfo=tz)
+        tracker._async_state_changed(_ev("sensor.pv_energy", 100.5))  # rollover -> 13
+        clock["t"] = datetime(2026, 9, 6, 13, 30, tzinfo=tz)
+        tracker._async_state_changed(_ev("sensor.pv_energy", 101.0))
+        tracker._async_state_changed(_ev("sensor.pv_power", 845.0))
+        clock["t"] = datetime(2026, 9, 6, 14, 0, 10, tzinfo=tz)
+        tracker._async_state_changed(_ev("sensor.pv_energy", 101.2))  # rollover -> 14
+        clock["t"] = datetime(2026, 9, 6, 14, 5, tzinfo=tz)
+        await tracker._async_check_flush(None)
+
+        assert submitted, "hour 13 should have been sent"
+        reading = submitted[-1][0]
+        assert reading["hour"] == 13
+        assert reading["battery_soc"] == 100.0
+        assert reading["battery_charge_power_avg"] == 0.0
+        assert reading["battery_charge_power_max"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_no_charge_event_ever_leaves_fields_absent(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Berlin")
+        clock = {"t": datetime(2026, 9, 6, 13, 30, tzinfo=tz)}
+        tracker, submitted = _make_battery_tracker(monkeypatch, clock)
+        await tracker.async_start()
+
+        tracker._async_state_changed(_ev("sensor.pv_energy", 100.0))
+        clock["t"] = datetime(2026, 9, 6, 14, 0, 10, tzinfo=tz)
+        tracker._async_state_changed(_ev("sensor.pv_energy", 101.0))
+        clock["t"] = datetime(2026, 9, 6, 14, 5, tzinfo=tz)
+        await tracker._async_check_flush(None)
+
+        reading = submitted[-1][0]
+        assert "battery_charge_power_avg" not in reading
+        assert "battery_charge_power_max" not in reading
+
+    @pytest.mark.asyncio
+    async def test_events_within_hour_take_precedence_over_carry_over(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Berlin")
+        clock = {"t": datetime(2026, 9, 6, 12, 30, tzinfo=tz)}
+        tracker, submitted = _make_battery_tracker(monkeypatch, clock)
+        await tracker.async_start()
+
+        tracker._async_state_changed(_ev("sensor.pv_energy", 100.0))
+        tracker._async_state_changed(_ev("sensor.batt_charge", 0.0))
+        clock["t"] = datetime(2026, 9, 6, 13, 0, 10, tzinfo=tz)
+        tracker._async_state_changed(_ev("sensor.pv_energy", 100.5))
+        tracker._async_state_changed(_ev("sensor.batt_charge", 800.0))
+        tracker._async_state_changed(_ev("sensor.batt_charge", 400.0))
+        clock["t"] = datetime(2026, 9, 6, 14, 0, 10, tzinfo=tz)
+        tracker._async_state_changed(_ev("sensor.pv_energy", 101.2))
+        clock["t"] = datetime(2026, 9, 6, 14, 5, tzinfo=tz)
+        await tracker._async_check_flush(None)
+
+        reading = submitted[-1][0]
+        assert reading["battery_charge_power_avg"] == 600.0
+        assert reading["battery_charge_power_max"] == 800.0

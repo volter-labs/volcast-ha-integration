@@ -126,6 +126,11 @@ class VolcastProductionTracker:
         self._battery_charge_power_entity = battery_charge_power_entity
         self._capacity_kwp = system_capacity_kwp
         self._last_known_soc: float | None = None
+        # Ostatnia znana moc ładowania. HA emituje state_changed tylko przy zmianie
+        # wartości — pełna bateria stoi na 0 W godzinami bez ani jednego eventu,
+        # więc bez tego fallbacku pole znikało z odczytu dokładnie w godzinach,
+        # w których backend potrzebuje go do detekcji curtailmentu.
+        self._last_known_charge_power: float | None = None
 
         self._current_bucket: HourBucket | None = None
         self._previous_bucket: HourBucket | None = None
@@ -402,6 +407,7 @@ class VolcastProductionTracker:
             bucket.charge_power_count += 1
             if bucket.charge_power_max is None or value > bucket.charge_power_max:
                 bucket.charge_power_max = value
+            self._last_known_charge_power = value
 
     async def _async_check_flush(self, _now: datetime) -> None:
         """Co 5 minut sprawdź, czy trzeba wysłać dane z poprzedniej godziny."""
@@ -468,12 +474,18 @@ class VolcastProductionTracker:
         if soc_value is not None:
             reading["battery_soc"] = round(soc_value, 1)
 
-        # Battery charge power — avg i max do detekcji curtailmentu
+        # Battery charge power — avg i max do detekcji curtailmentu.
+        # Brak eventów w tej godzinie = wartość się nie zmieniła, nie "brak danych":
+        # przenieś ostatnią znaną (analogicznie do SoC powyżej).
         if bucket.charge_power_count > 0:
             avg_power = bucket.charge_power_sum / bucket.charge_power_count
             reading["battery_charge_power_avg"] = round(avg_power, 1)
+        elif self._last_known_charge_power is not None:
+            reading["battery_charge_power_avg"] = round(self._last_known_charge_power, 1)
         if bucket.charge_power_max is not None:
             reading["battery_charge_power_max"] = round(bucket.charge_power_max, 1)
+        elif bucket.charge_power_count == 0 and self._last_known_charge_power is not None:
+            reading["battery_charge_power_max"] = round(self._last_known_charge_power, 1)
 
         await self._async_submit([reading])
 
