@@ -1,19 +1,25 @@
 """Klasyfikacja migawek rejestrów HA. Czyste funkcje, bez importów HA."""
 from __future__ import annotations
 
+import re
+
 from .known import (INVERTER_DOMAINS, INVERTER_MANUFACTURERS, LOAD_HINTS,
                     MAX_ENERGY_CANDIDATES, PRICE_PLATFORMS)
 from .models import (Classification, ConfigEntrySnap, DeviceSnap, EntitySnap,
                      InverterFinding, StateSnap)
 
+_TOKEN_RE = re.compile(r"[^a-z0-9]+")
+
 
 def _is_inverter_manufacturer(m: str | None) -> bool:
-    ml = (m or "").lower()
-    return any(k in ml for k in INVERTER_MANUFACTURERS)
+    if not m:
+        return False
+    tokens = {t for t in _TOKEN_RE.split(m.lower()) if t}
+    return not tokens.isdisjoint(INVERTER_MANUFACTURERS)
 
 
 def _energy_like(e: EntitySnap, states: dict[str, StateSnap]) -> bool:
-    if not e.entity_id.startswith("sensor."):
+    if e.disabled or not e.entity_id.startswith("sensor."):
         return False
     st = states.get(e.entity_id)
     dc = e.device_class or (st.attributes.get("device_class") if st else None)

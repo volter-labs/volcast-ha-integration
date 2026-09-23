@@ -62,3 +62,38 @@ def test_energy_candidate_uses_state_device_class_when_registry_empty():
               {"device_class": "energy", "unit_of_measurement": "kWh", "state_class": "total_increasing"})}
     c = classify([], ents, [], states)
     assert [e.entity_id for e in c.energy_candidates] == ["sensor.pv_today"]
+
+
+def test_manufacturer_substring_false_positives_rejected():
+    # "sma" is a real inverter manufacturer token, but must not match as a
+    # bare substring inside unrelated ZHA/Zigbee manufacturer names.
+    entries = [ConfigEntrySnap("z1", "zha", "ZHA", None)]
+    devs = [
+        _dev("d1", "SmartThings", entry="z1"),
+        _dev("d2", "Smartmi", entry="z1"),
+        _dev("d3", "Smappee", entry="z1"),
+        _dev("d4", "Smart Life", entry="z1"),
+    ]
+    c = classify(devs, [], entries, {})
+    assert c.inverters == []
+
+
+def test_manufacturer_whole_word_matches_accepted():
+    entries = [ConfigEntrySnap("z2", "zha", "ZHA", None)]
+    devs = [
+        _dev("d5", "SMA Solar Technology AG", entry="z2"),
+        _dev("d6", "Sunsynk Ltd", entry="z2"),
+        _dev("d7", "GoodWe", entry="z2"),
+    ]
+    c = classify(devs, [], entries, {})
+    assert len(c.inverters) == 3
+    assert all(inv.matched_by == "manufacturer" for inv in c.inverters)
+
+
+def test_energy_candidates_exclude_disabled():
+    e = EntitySnap(entity_id="sensor.disabled_energy", platform="template",
+                    unique_id="sensor.disabled_energy", device_id=None, config_entry_id=None,
+                    device_class="energy", unit="kWh", translation_key=None, original_name=None,
+                    disabled=True)
+    c = classify([], [e], [], {})
+    assert c.energy_candidates == []
