@@ -1,10 +1,18 @@
-"""Sonda rozgłoszeniowa dongli Wi-Fi (GoodWe, Solarman/LSW) na UDP 48899. Tylko odczyt."""
+"""Sonda rozgłoszeniowa dongli Wi-Fi (GoodWe, Solarman/LSW) na UDP 48899. Tylko odczyt.
+
+`target` musi być literałem IPv4 (np. adresem rozgłoszeniowym lub konkretnym IP) —
+przy nazwie hosta `sendto` wykonałby synchroniczne DNS w pętli zdarzeń HA.
+"""
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
 
 PROBE_MESSAGE = b"WIFIKIT-214028-READ"
+
+# Limity ochronne przed hałaśliwym/wrogim urządzeniem w sieci LAN.
+MAX_REPLIES = 32
+MAX_DATAGRAM_BYTES = 512
 
 
 @dataclass
@@ -24,6 +32,7 @@ class NetworkProbeResult:
 
 def parse_reply(raw: bytes) -> LoggerReply:
     text = raw.decode("ascii", errors="replace").strip()
+    text = "".join(c for c in text if c.isprintable())[:128]
     parts = [p.strip() for p in text.split(",")]
     if len(parts) >= 2 and parts[0].count(".") == 3:
         return LoggerReply(
@@ -38,15 +47,41 @@ def parse_reply(raw: bytes) -> LoggerReply:
 class _Collector(asyncio.DatagramProtocol):
     def __init__(self) -> None:
         self.raw: list[bytes] = []
+        self._seen: set[bytes] = set()
+        self.error: Exception | None = None
 
     def datagram_received(self, data: bytes, addr) -> None:
-        if data != PROBE_MESSAGE and data not in self.raw:
-            self.raw.append(data)
+        if data == PROBE_MESSAGE:
+            return  # echo własnej sondy — ignorujemy
+        if len(data) > MAX_DATAGRAM_BYTES:
+            return
+        if len(self.raw) >= MAX_REPLIES:
+            return
+        if data in self._seen:
+            return
+        self._seen.add(data)
+        self.raw.append(data)
+
+    def error_received(self, exc: Exception) -> None:
+        # Tu trafiają asynchroniczne błędy wysyłki (np. ENETUNREACH/EHOSTUNREACH/
+        # EACCES/ENOBUFS) — CPython łapie OSError w sendto i przekazuje go tutaj
+        # zamiast go rzucać, więc bez tego callbacku błąd wysyłki byłby niewidoczny.
+        if self.error is None:
+            self.error = exc
 
 
 async def probe_udp_48899(
     target: str = "255.255.255.255", port: int = 48899, timeout: float = 2.0
 ) -> NetworkProbeResult:
+    """Wyślij pojedynczą sondę na UDP 48899 i zbierz odpowiedzi.
+
+    Nigdy nie rzuca wyjątku — awarie trafiają do `NetworkProbeResult.error`.
+    `sent=True` oznacza wyłącznie, że wywołanie `sendto` zostało wykonane (transport
+    został utworzony i `sendto` nie rzuciło synchronicznie); nie gwarantuje dostarczenia
+    pakietu. Jeśli w trakcie oczekiwania na odpowiedzi transport zgłosił błąd wysyłki
+    (przez `error_received`), trafia on do `error`, a już zebrane odpowiedzi są mimo to
+    zwracane w `replies`.
+    """
     loop = asyncio.get_running_loop()
     try:
         transport, proto = await loop.create_datagram_endpoint(
@@ -57,7 +92,12 @@ async def probe_udp_48899(
     try:
         transport.sendto(PROBE_MESSAGE, (target, port))
         await asyncio.sleep(timeout)
-        return NetworkProbeResult(sent=True, replies=[parse_reply(r) for r in proto.raw])
+        error = f"{type(proto.error).__name__}: {proto.error}" if proto.error else None
+        return NetworkProbeResult(
+            sent=True,
+            replies=[parse_reply(r) for r in proto.raw],
+            error=error,
+        )
     except Exception as err:  # noqa: BLE001
         return NetworkProbeResult(sent=False, error=f"{type(err).__name__}: {err}")
     finally:
