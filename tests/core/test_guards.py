@@ -105,3 +105,35 @@ def test_i1_never_yields_discharge_below_reserve_even_with_discharge_neutral_mod
     assert r.write_allowed and r.invariant == "I-1"
     assert GW.mode_direction(r.params.mode) in ("neutral", "idle")
     assert r.params.power_w is None
+
+
+_NAN = float("nan")
+
+
+@pytest.mark.parametrize("age", [_NAN, -5.0, float("inf")])
+def test_i9_non_finite_or_negative_state_age_is_stale(age):
+    r = apply_guards(Params(mode="auto"), _ok(soc_age_s=age), GW)
+    assert (r.write_allowed, r.status, r.invariant) == (False, STATUS_DEGRADED, "I-9")
+
+
+@pytest.mark.parametrize("max_age", [_NAN, 0.0, -1.0])
+def test_i9_invalid_max_state_age_falls_back_to_default(max_age):
+    # Nieprawidłowy limit wieku nie może wyłączyć I-9 — domyślne 300 s jak w Boxie.
+    stale = apply_guards(Params(mode="auto"), _ok(soc_age_s=301.0, max_state_age_s=max_age), GW)
+    assert (stale.write_allowed, stale.invariant) == (False, "I-9")
+    fresh = apply_guards(Params(mode="auto"), _ok(soc_age_s=10.0, max_state_age_s=max_age), GW)
+    assert fresh.write_allowed
+
+
+@pytest.mark.parametrize("reserve", [_NAN, float("inf"), -1.0, 150.0])
+def test_invalid_soc_reserve_fails_closed(reserve):
+    r = apply_guards(Params(mode="auto"), _ok(soc_reserve=reserve), GW)
+    assert (r.write_allowed, r.status) == (False, STATUS_DEGRADED)
+    assert r.params == Params()
+
+
+def test_nan_reserve_does_not_allow_discharge_at_low_soc():
+    r = apply_guards(Params(mode="discharge_battery", power_w=1000.0),
+                     _ok(soc=5.0, soc_reserve=_NAN, action=Action.DISCHARGE), GW)
+    assert r.status != STATUS_OK
+    assert r.write_allowed is False

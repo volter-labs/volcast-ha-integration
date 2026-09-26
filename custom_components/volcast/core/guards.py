@@ -22,6 +22,7 @@ STATUS_DEGRADED = "degraded"
 MAX_POWER_W = 30000.0          # sanity-check I-10; twardą granicę nakłada I-3
 _SOC_RATE_PP_PER_MIN = 4.0     # I-9 tempo (warstwa HA)
 _SOC_JUMP_FLOOR_PP = 5.0
+_DEFAULT_MAX_STATE_AGE_S = 300.0  # jak Box: nieprawidłowy limit wieku nie wyłącza I-9
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,10 @@ def temperature_ok(temp_c: float | None, profile: Profile) -> bool:
 
 def _reject(invariant: str, note: str) -> GuardResult:
     return GuardResult(STATUS_DEGRADED, False, invariant, note, Params())
+
+
+def _finite(v: object) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
 def _pct_ok(v: float | None) -> bool:
@@ -97,15 +102,23 @@ def apply_guards(params: Params, ctx: GuardContext, profile: Profile) -> GuardRe
         if problem:
             return _reject("I-10", problem)
 
+    # Rezerwa spoza 0..100 (albo NaN) gasiłaby porównania I-1/I-7 bez śladu — fail-closed.
+    if ctx.soc_reserve is None or not _pct_ok(ctx.soc_reserve):
+        return _reject("I-10", f"rezerwa SoC={ctx.soc_reserve} poza 0..100 — odrzucam całą komendę")
+
     # ── I-9: świeżość i wiarygodność odczytu ──
+    max_age = ctx.max_state_age_s
+    if not (_finite(max_age) and max_age > 0):
+        max_age = _DEFAULT_MAX_STATE_AGE_S
     if ctx.soc is None:
         return _reject("I-9", "brak odczytu SoC — wstrzymuję zapisy")
-    if ctx.soc_age_s > ctx.max_state_age_s:
-        return _reject("I-9", f"odczyt starszy niż {ctx.max_state_age_s:.0f} s")
+    # Wiek NaN/ujemny to błąd zegara albo odczytu — traktujemy jak nieświeży.
+    if not _finite(ctx.soc_age_s) or ctx.soc_age_s < 0 or ctx.soc_age_s > max_age:
+        return _reject("I-9", f"odczyt nieświeży albo o nieznanym wieku (limit {max_age:.0f} s)")
     if not (0.0 <= ctx.soc <= 100.0):
         return _reject("I-9", f"SoC={ctx.soc} fizycznie niemożliwy")
     if ctx.previous_soc is not None and ctx.previous_soc_gap_s is not None \
-            and ctx.previous_soc_gap_s <= ctx.max_state_age_s:
+            and ctx.previous_soc_gap_s <= max_age:
         allowed = max(_SOC_JUMP_FLOOR_PP, _SOC_RATE_PP_PER_MIN * ctx.previous_soc_gap_s / 60.0)
         if abs(ctx.soc - ctx.previous_soc) > allowed:
             return _reject("I-9", "skok SoC szybszy niż fizycznie możliwy")
