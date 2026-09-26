@@ -7,8 +7,17 @@ sprzedaży przełączałaby tryb rozładowania i neutralny w każdym cyklu. Trzy
 3. minimalny odstęp między zwolnieniami (zamyka ścieżkę awaryjną).
 Wyraźne zejście pod rezerwę (`< rezerwa − deep_pp`) załącza natychmiast — ochrona
 nie czeka nigdy; czekać wolno tylko ze zwolnieniem. `now` = zegar monotoniczny.
+
+Zatrzask ma zawsze zakładać wołającego, który podał już przefiltrowany, świeży
+odczyt (jak w referencji — po I-9/I-10). Ten port jest wołany PRZED strażnikami,
+więc może dostać nieużywalny wsad (`None`/NaN/inf/spoza 0..100).
+Fail-open (zwolnienie zatrzasku na taki wsad) rozjeżdżałby zatrzask na kolejnych,
+poprawnych tikach — dlatego `engaged()` na nieużywalnym wejściu jest fail-closed:
+zwraca `True`, stanu NIE zmienia (ten tik i tak blokuje strażnik wyżej).
 """
 from __future__ import annotations
+
+import math
 
 BAND_PP = 3.0
 ENGAGED_MIN_S = 1800.0
@@ -34,7 +43,11 @@ class ReserveLatch:
     def is_engaged(self) -> bool:
         return self._engaged
 
-    def engaged(self, soc: float, reserve: float, now: float) -> bool:
+    def engaged(self, soc: float | None, reserve: float | None, now: float | None) -> bool:
+        if not self._usable(soc) or not self._usable(reserve) or not self._usable(now):
+            return True
+        if not (0.0 <= soc <= 100.0) or not (0.0 <= reserve <= 100.0):
+            return True
         new = self._decide(soc, reserve, now)
         if new != self._engaged:
             self._since = now
@@ -60,6 +73,10 @@ class ReserveLatch:
                 return False
             return True
         return False
+
+    @staticmethod
+    def _usable(value: float | None) -> bool:
+        return value is not None and math.isfinite(value)
 
     def copy(self) -> "ReserveLatch":
         c = ReserveLatch(self.band_pp, self.engaged_min_s, self.released_min_s, self.deep_pp)
