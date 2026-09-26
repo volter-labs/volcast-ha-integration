@@ -203,6 +203,23 @@ def _to_canonical(key: str, value: float, unit: str | None) -> float | None:
     return value * factor
 
 
+def canonical_value(key: str, state: str | None, unit: str | None) -> float | None:
+    """Stan encji → liczba w jednostce kanonicznej klucza (sufiks nazwy), bez profilu.
+
+    Ta sama zasada co `entity_value`: nieczytelne, nieskończone albo w niezgodnej
+    jednostce → None (brak odczytu, nigdy zero).
+    """
+    if state is None or state in _UNAVAILABLE:
+        return None
+    try:
+        value = float(state)
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return _to_canonical(key, value, unit)
+
+
 def _time_to_minutes(state: str) -> float | None:
     m = _TIME_RE.match(state)
     if m is None:

@@ -39,6 +39,9 @@ class GuardContext:
     backup_mode: bool = False
     previous_soc: float | None = None
     previous_soc_gap_s: float | None = None
+    # Stan zatrzasku rezerwy (warstwa wykonawcy). None = porównanie `soc <= rezerwa`
+    # jak w referencyjnym wykonawcy — złote wektory nie niosą tego pola.
+    reserve_engaged: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -134,8 +137,10 @@ def apply_guards(params: Params, ctx: GuardContext, profile: Profile) -> GuardRe
     out = params
     status, invariant, note = STATUS_OK, None, ""
 
-    # ── I-1: SoC <= rezerwa (nieostro) ──
-    if ctx.soc <= ctx.soc_reserve:
+    # ── I-1: SoC <= rezerwa (nieostro); zatrzask wykonawcy, gdy jest, ma pierwszeństwo ──
+    below_reserve = (ctx.reserve_engaged if ctx.reserve_engaged is not None
+                     else ctx.soc <= ctx.soc_reserve)
+    if below_reserve:
         changed = False
         wants_discharge = ctx.action is Action.DISCHARGE or (
             out.mode is not None and profile.mode_direction(out.mode) == "discharge")
@@ -152,7 +157,8 @@ def apply_guards(params: Params, ctx: GuardContext, profile: Profile) -> GuardRe
             changed = True
         if changed:
             status, invariant = STATUS_PARTIAL, "I-1"
-            note = f"SoC={ctx.soc:.1f}% <= rezerwa {ctx.soc_reserve:.1f}% — rozładowanie zdjęte"
+            cmp = "zatrzask rezerwy" if ctx.reserve_engaged is not None else "<= rezerwa"
+            note = f"SoC={ctx.soc:.1f}% {cmp} {ctx.soc_reserve:.1f}% — rozładowanie zdjęte"
 
     # ── I-1: program TOU jest podłogą, którą falownik utrzymuje samodzielnie
     # przez całą dobę — podnosimy ją do rezerwy niezależnie od bieżącego SoC.
