@@ -74,7 +74,7 @@ class DailyReconciler:
         self._submit_url = submit_url
 
         # Diagnostyka ostatniego przebiegu (dla LastReconciliationSensor /
-        # IntegrationHealthyBinarySensor — Task 20). Aktualizowane na każdej
+        # IntegrationHealthyBinarySensor). Aktualizowane na każdej
         # ścieżce wyjścia z reconcile_day, niezależnie czy skipped/success/fail.
         self._last_run_at: datetime | None = None
         self._last_result: ReconcileResult | None = None

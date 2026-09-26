@@ -122,7 +122,7 @@ class VolcastPeakProductionSensor(
 
 
 # =============================================================================
-# DIAGNOSTIC: Integration health (Task 20b)
+# DIAGNOSTIC: Integration health
 # =============================================================================
 
 

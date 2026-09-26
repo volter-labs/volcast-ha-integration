@@ -398,7 +398,7 @@ class TestPowerNowSensor:
 
 
 # ---------------------------------------------------------------------------
-# Diagnostic sensors (Task 20b): SubmitQueueDepth + LastReconciliation
+# Diagnostic sensors: SubmitQueueDepth + LastReconciliation
 # + IntegrationHealthy binary sensor
 # ---------------------------------------------------------------------------
 

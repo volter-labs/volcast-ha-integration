@@ -64,7 +64,7 @@ def test_mask_serials_ignores_short_tokens():
     assert mask_serials("abc_12_x", {"12"}) == "abc_12_x"
 
 
-# --- Fix round 1 (global masking constraint, reviews.md ## Task 5) ---
+# --- maskowanie w każdym polu raportu ---
 
 ALNUM_SN = "HV2150012345"
 
@@ -123,7 +123,7 @@ def test_serial_in_model_and_options_masked():
     assert SN not in json.dumps(r)
 
 
-# --- Fix round 2 (reviews.md "## Task 5 — re-review 1") ---
+# --- serial z separatorami, pola strukturalne, MAC ---
 
 SEP_SN = "7F123456-78"
 
@@ -147,7 +147,7 @@ def test_ip_and_wordy_identifier_do_not_corrupt_structural_fields():
     # neither should ever become a *serial* candidate (so they can't corrupt unrelated
     # fields via substring match), and structural fields (host/domain, not identifiers)
     # stay untouched. The identifier *value* itself is still masked field-by-field
-    # (fix round 3, N4) since it is emitted verbatim and may carry PII (e-mail, username).
+    # since it is emitted verbatim and may carry PII (e-mail, username).
     dev = DeviceSnap("d1", "Deye", "SUN-10K", f"Deye {SN}", "1.0", None, SN,
                      (("solarman", "192.168.1.50"), ("solarman", "solarman")), ("e1",))
     inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [], "domain")
@@ -201,10 +201,10 @@ def test_mask_value_handles_dict_keys_and_sets_directly():
     assert SN not in "".join(masked["opts"])
 
 
-# --- Fix round 3 (reviews.md "## Task 5 — re-review 2") ---
+# --- hostname, znane MAC-i, jednostki, identyfikatory, e-mail ---
 
 def test_hostname_with_serial_masked_in_report_and_compact_attributes():
-    # SMA's default hostname embeds the serial (N1).
+    # SMA's default hostname embeds the serial.
     dev = DeviceSnap("d1", "SMA", "SB5.0", f"SMA {SN}", "1.0", None, SN, (), ("e1",))
     inv = InverterFinding("sma", "e1", "SMA", f"SMA{SN}.local", [dev], [], "domain")
     r = _report(classification=Classification([inv], [], []))
@@ -213,7 +213,7 @@ def test_hostname_with_serial_masked_in_report_and_compact_attributes():
 
 
 def test_hostname_with_mac_masked():
-    # ESP-based loggers name themselves "<brand>-<mac>.local" (N1); device has no serial.
+    # ESP-based loggers name themselves "<brand>-<mac>.local"; device has no serial.
     dev = DeviceSnap("d1", "Deye", "SUN-10K", "Deye logger", "1.0", None, None, (), ("e1",))
     inv = InverterFinding("solarman", "e1", "Deye", "deye-aabbccddeeff.local", [dev], [], "domain")
     r = _report(classification=Classification([inv], [], []))
@@ -222,7 +222,7 @@ def test_hostname_with_mac_masked():
 
 def test_digit_only_parsed_mac_masked_via_exact_match():
     # A MAC made only of digits 0-9 is not caught by the letter/separator heuristic —
-    # it must still be masked because we know it's the parsed reply MAC (N2).
+    # it must still be masked because we know it's the parsed reply MAC.
     reply = LoggerReply("192.168.1.50,001122334455,LOGGER", "192.168.1.50", "001122334455", "LOGGER")
     ent = EntitySnap("sensor.001122334455_rssi", "solarman", "001122334455_rssi",
                      "d1", "e1", None, None, None, None, False)

@@ -458,7 +458,7 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
 
 
 # =============================================================================
-# DIAGNOSTIC: Submit queue depth (Task 20b)
+# DIAGNOSTIC: Submit queue depth
 # =============================================================================
 
 
@@ -510,7 +510,7 @@ class SubmitQueueDepthSensor(SensorEntity):
 
 
 # =============================================================================
-# DIAGNOSTIC: Last reconciliation (Task 20b)
+# DIAGNOSTIC: Last reconciliation
 # =============================================================================
 
 

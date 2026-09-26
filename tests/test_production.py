@@ -279,7 +279,7 @@ class TestRetryQueue:
 
 
 # ---------------------------------------------------------------------------
-# Accepted-hours store + _mark_accepted (Task 14)
+# Accepted-hours store + _mark_accepted
 # ---------------------------------------------------------------------------
 
 
@@ -358,7 +358,7 @@ class TestAcceptedHoursStore:
 
 
 # ---------------------------------------------------------------------------
-# _async_submit refactored to delegate to http_with_retry (Task 15)
+# _async_submit delegates to http_with_retry
 # ---------------------------------------------------------------------------
 
 
@@ -397,7 +397,7 @@ class TestSubmitWithHttpRetry:
         assert ok is True
         assert tracker._queue == []
         assert 12 in tracker._accepted.get("2026-05-10", [])
-        # Diagnostic state populated (consumed by Task 20 sensors)
+        # Diagnostic state populated (consumed by diagnostic sensors)
         assert tracker._last_submit_status == "ok"
         assert tracker._last_submit_attempts == 2
 
@@ -427,7 +427,7 @@ class TestSubmitWithHttpRetry:
         assert tracker._queue[0]["hour"] == 12
         # Hour should NOT be marked accepted on failure
         assert 12 not in tracker._accepted.get("2026-05-10", [])
-        # Diagnostic state populated even on failure (consumed by Task 20 sensors)
+        # Diagnostic state populated even on failure (consumed by diagnostic sensors)
         assert "502" in (tracker._last_submit_status or "")
         assert tracker._last_submit_attempts == 4
 

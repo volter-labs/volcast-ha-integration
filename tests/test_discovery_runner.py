@@ -173,7 +173,7 @@ async def test_legacy_three_element_identifier_serial_masked(make_hass):
     with _ok_probe():
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
     # każdy element po domenie to osobna para; wartość identyfikatora maskowana polowo
-    # niezależnie od cyfr (fix round 3, N4), więc "extra" też staje się "<SN>"
+    # niezależnie od cyfr, więc "extra" też staje się "<SN>"
     assert rep["inverters"][0]["devices"][0]["identifiers"] == [
         ["goodwe", "<SN>"], ["goodwe", "<SN>"]]
     assert "9010KETU000W0777" not in str(rep)
@@ -341,7 +341,7 @@ async def test_legacy_identifier_every_extra_element_is_masking_candidate(make_h
     hass = make_hass(devices=[dev], entities=[ent], entries=[entry], components={"recorder"})
     with _ok_probe():
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
-    # wartość identyfikatora maskowana polowo niezależnie od cyfr (fix round 3, N4),
+    # wartość identyfikatora maskowana polowo niezależnie od cyfr,
     # więc "gw-host" też staje się "<SN>"
     assert sorted(rep["inverters"][0]["devices"][0]["identifiers"]) == [
         ["goodwe", "<SN>"], ["goodwe", "<SN>"]]

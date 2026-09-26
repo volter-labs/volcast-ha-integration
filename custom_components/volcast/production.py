@@ -159,7 +159,7 @@ class VolcastProductionTracker:
         self.last_submission_time: datetime | None = None
         self.submissions_today: int = 0
         self._last_submission_date: str = ""
-        # Diagnostyka ostatniego POSTu (dla sensora, Task 20)
+        # Diagnostyka ostatniego POSTu (dla sensora)
         self._last_submit_status: str = ""
         self._last_submit_attempts: int = 0
 

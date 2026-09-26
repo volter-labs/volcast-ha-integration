@@ -17,7 +17,7 @@ from custom_components.volcast.reconciler import (
 
 
 # ---------------------------------------------------------------------------
-# ReconcileResult dataclass (Task 16)
+# ReconcileResult dataclass
 # ---------------------------------------------------------------------------
 
 
@@ -32,7 +32,7 @@ def test_reconcile_result_defaults():
 
 
 # ---------------------------------------------------------------------------
-# _fetch_ha_statistics — extended-window hourly delta extraction (Task 17)
+# _fetch_ha_statistics — extended-window hourly delta extraction
 # ---------------------------------------------------------------------------
 
 
@@ -195,7 +195,7 @@ async def test_fetch_ha_statistics_float_timestamps_modern_ha():
 
 
 # ---------------------------------------------------------------------------
-# reconcile_day — core logic with skip gates + POST + mark_accepted (Task 18)
+# reconcile_day — core logic with skip gates + POST + mark_accepted
 # ---------------------------------------------------------------------------
 
 
@@ -333,7 +333,7 @@ async def test_reconcile_day_zero_kwh_excluded():
 
 
 # ---------------------------------------------------------------------------
-# _setup_reconciler — trigger wiring (Task 19)
+# _setup_reconciler — trigger wiring
 # ---------------------------------------------------------------------------
 
 
@@ -554,7 +554,7 @@ async def test_setup_reconciler_startup_runs_reconcile_recent():
 
 
 # ---------------------------------------------------------------------------
-# _last_run_at / _last_result tracking — Task 20a
+# _last_run_at / _last_result tracking
 # ---------------------------------------------------------------------------
 
 

@@ -11,16 +11,15 @@ from .network import NetworkProbeResult
 REPORT_SCHEMA = 1
 # Krótsze tokeny (<6 znaków) maskowalibyśmy jako "serial" nawet gdy trafiają na zwykłe
 # słowa/skróty w nazwach encji (np. domeny, jednostki) — z tego powodu próg zostaje na 6,
-# mimo że odcina to teoretycznie krótsze numery seryjne (ruling: fałszywe maskowanie
-# zwykłych słów jest gorsze niż rzadki, krótki numer seryjny, który prześlizgnie się przez próg).
+# mimo że odcina to teoretycznie krótsze numery seryjne: fałszywe maskowanie zwykłych
+# słów jest gorsze niż rzadki, krótki numer seryjny, który prześlizgnie się przez próg.
 _MIN_SERIAL = 6
 
 # 12 cyfr szesnastkowych z opcjonalnymi separatorami ':' lub '-' co dwa znaki — łapie
 # adresy MAC nawet w nieparsowalnym surowym tekście odpowiedzi 48899. Granice liczone
 # lookaroundami, nie \b — '_' i litery są "znakami słowa", więc \b by ich nie zatrzymał
 # (np. unique_id "aabbccddeeff_rssi"). Sam ciąg 12 cyfr bez separatora i bez litery A-F
-# nie jest maskowany jako MAC — zbyt niepewne (fix round 2, reviews.md Task 5
-# re-review 1, R2).
+# nie jest maskowany jako MAC — zbyt niepewne.
 _MAC_RE = re.compile(
     r"(?i)(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}[:\-]?){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])"
 )
@@ -29,13 +28,12 @@ _IPV4_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
 
 # E-mail w dowolnym polu tekstowym (np. identyfikator konta w integracji chmurowej,
 # tytuł wpisu konfiguracji) — maskowany bezwarunkowo w ostatnim przebiegu.
-# Fix round 3, reviews.md Task 5 re-review 2, N4.
 _EMAIL_RE = re.compile(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}")
 
 # Klucze niosące słownik/kontrakt raportu (nasz własny kod, stałe słownictwo), nie dane
 # właściciela — maskowanie ich wartości byłoby fałszywym trafieniem (domena równa nazwie
-# producenta, wersja integracji). "host"/"ip" oraz "unit" zostały z listy USUNIĘTE w
-# fix round 3 (N1, N3): host bywa hostname'em niosącym serial/MAC (np. "SMA<serial>.local",
+# producenta, wersja integracji). "host"/"ip" oraz "unit" celowo NIE są na liście:
+# host bywa hostname'em niosącym serial/MAC (np. "SMA<serial>.local",
 # "deye-<mac>.local"), a jednostka bywa dowolnym tekstem ze stanu encji — oba muszą
 # przechodzić przez maskowanie.
 _STRUCTURAL_KEYS = frozenset({
@@ -60,7 +58,7 @@ def _looks_like_ip(s: str) -> bool:
 
 def _valid_serial(s: str | None) -> bool:
     """Kandydat na serial: min. długość, przynajmniej jedna cyfra, nie wygląda jak adres
-    IPv4 (fix round 2, R4) — inaczej host/adres dongla trafiałby do zbioru seriali."""
+    IPv4 — inaczej host/adres dongla trafiałby do zbioru seriali."""
     return bool(
         s and len(s) >= _MIN_SERIAL
         and any(ch.isdigit() for ch in s)
@@ -70,7 +68,7 @@ def _valid_serial(s: str | None) -> bool:
 
 def _serial_alt(s: str) -> str:
     """Wariant wzorca niewrażliwy na separatory: dzieli serial na kawałki alfanumeryczne
-    i łączy je wzorcem dopuszczającym dowolne separatory (fix round 2, R1) — tak by np.
+    i łączy je wzorcem dopuszczającym dowolne separatory — tak by np.
     serial "7F123456-78" złapał też slugifikowane "7f123456_78" w entity_id."""
     chunks = [c for c in re.split(r"[\W_]+", s) if c]
     if not chunks:
@@ -119,7 +117,7 @@ def _mac_alt(hex12: str) -> str:
     """Wariant niewrażliwy na separatory dla znanego (sparsowanego) MAC-a — w
     przeciwieństwie do `_MAC_RE` nie wymaga braku sąsiedztwa szesnastkowego, bo znamy
     dokładną wartość (łapie też MAC sklejony z innymi znakami hex, np.
-    "MACAABBCCDDEEFFSN…"). Fix round 3, N2."""
+    "MACAABBCCDDEEFFSN…")."""
     pairs = [hex12[i:i + 2] for i in range(0, 12, 2)]
     return r"[\W_]*".join(re.escape(p) for p in pairs)
 
@@ -135,9 +133,8 @@ def _mask_value(value, pattern: re.Pattern[str] | None, macs: set[str] = frozens
     """Ostateczny, rekurencyjny przebieg maskujący po zbudowaniu całego raportu — łapie
     serial/MAC/e-mail w każdym polu tekstowym (w tym entity_id, unique_id, errors, model,
     wersje, options, raw, host), a także wewnątrz list/krotek/zbiorów i kluczy słowników
-    (fix round 2, R3), omijając pola strukturalne (_STRUCTURAL_KEYS), których wartości
-    są słownikiem/kontraktem raportu, nie danymi właściciela (fix round 2, R4; zawężone
-    w fix round 3, N1/N3 — "host"/"ip"/"unit" nie są już pomijane)."""
+    omijając pola strukturalne (_STRUCTURAL_KEYS), których wartości są słownikiem/
+    kontraktem raportu, nie danymi właściciela ("host"/"ip"/"unit" nie są pomijane)."""
     if isinstance(value, str):
         masked = pattern.sub("<SN>", value) if pattern else value
         masked = _mask_known_macs(masked, macs) if macs else masked
@@ -167,10 +164,10 @@ def _mac(v: str | None) -> str | None:
     return None if not v else v[:6] + "*" * max(0, len(v) - 6)
 
 
-# Identyfikator urządzenia jest emitowany wprost (report.py:182 przed tym fixem) — bez
-# progu na cyfrę: klucz kontowy w integracji chmurowej może być e-mailem albo nazwą bez
-# cyfr ("abc:extra" ze starego formatu identyfikatorów, klucz Task 6). Maskujemy więc
-# wartość identyfikatora POLOWO, niezależnie od ogólnego zbioru seriali. Fix round 3, N4.
+# Identyfikator urządzenia jest emitowany wprost — bez progu na cyfrę: klucz kontowy w
+# integracji chmurowej może być e-mailem albo nazwą bez cyfr ("abc:extra" ze starego
+# formatu identyfikatorów). Maskujemy więc wartość identyfikatora POLOWO, niezależnie
+# od ogólnego zbioru seriali.
 _MIN_IDENTIFIER = 4
 
 
@@ -200,7 +197,7 @@ def _serials(c: Classification, net: NetworkProbeResult | None) -> set[str]:
 def _known_macs(net: NetworkProbeResult | None) -> set[str]:
     """Sparsowane MAC-i z odpowiedzi 48899 — maskowane dokładnie (exact-match), nawet gdy
     składają się z samych cyfr albo są sklejone z innym tekstem szesnastkowym, bo znamy
-    ich dokładną wartość. Fix round 3, N2."""
+    ich dokładną wartość."""
     out: set[str] = set()
     for r in (net.replies if net else []):
         h = _mac_hex(r.mac)

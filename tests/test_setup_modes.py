@@ -182,7 +182,7 @@ async def test_unload_still_cleans_up(setup_forecast_entry):
     assert "test_entry_id" not in hass.data[DOMAIN]
 
 
-# --- platformy tolerują wpis bez koordynatora (tryb tylko-rozpoznanie, Task 8) ---
+# --- platformy tolerują wpis bez koordynatora (tryb tylko-rozpoznanie) ---
 
 class _Entry:
     entry_id = "e1"
@@ -211,7 +211,6 @@ async def test_platforms_without_coordinator_add_only_discovery_entities():
 
 
 # --- wpis tylko-rozpoznanie (mode=discovery_only) — bez konta, bez prognozy ---
-# (Task 8, fix round 1 — Important #1: runtime setup/unload path był bez pokrycia.)
 
 async def test_discovery_only_forwards_only_sensor_and_button(setup_forecast_entry):
     await setup_forecast_entry(data={"mode": "discovery_only"})
@@ -282,7 +281,7 @@ async def test_discovery_only_unload_uses_discovery_only_platforms(setup_forecas
 
 async def test_discovery_only_unload_does_not_touch_unregistered_service(setup_forecast_entry):
     """Serwis sync_production nigdy nie jest rejestrowany dla wpisu tylko-rozpoznanie —
-    unload ostatniego takiego wpisu nie wolno próbować go usunąć (patrz Minor #4)."""
+    unload ostatniego takiego wpisu nie wolno próbować go usunąć."""
     await setup_forecast_entry(data={"mode": "discovery_only"})
     hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
 
