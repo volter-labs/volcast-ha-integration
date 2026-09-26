@@ -161,3 +161,44 @@ def test_upward_rounding_beyond_entity_max_is_unfit():
     assert unfit == ("soc_min",) and adjusted == () and p.soc_min == 99.2
     p, adjusted, _ = fit_params(Params(soc_min=20.5), plain, "goodwe", MAPPED, UNITS_KW, attrs)
     assert p.soc_min == 21.0 and adjusted == ("soc_min",)
+
+
+# --- obcięcie do zakresu encji w stronę niebezpieczną wstrzymuje klucz -------------------
+
+RANGE = {**KW01, "number.ems_power": {"min": 0.1, "max": 10, "step": 0.1},
+         "number.export_limit": {"min": 0.1, "max": 10, "step": 0.1},
+         "number.dod": {"min": 10, "max": 99, "step": 1},
+         "number.soc_upper": {"min": 10, "max": 95, "step": 1}}
+
+
+@pytest.mark.parametrize("params,key", [
+    (Params(soc_min=95.0), "soc_min"),            # DoD 5 < min 10 → próg spadłby do 90 %
+    (Params(power_w=50.0), "power_w"),            # 0.05 kW < min 0.1 → moc w górę
+    (Params(export_limit_w=50.0), "export_limit_w"),
+    (Params(soc_max=5.0), "soc_max"),             # górny próg w górę do 10 %
+])
+def test_unsafe_clip_is_unfit_and_value_kept(params, key):
+    p, adjusted, unfit = fit_params(params, GW, "goodwe", MAPPED, UNITS_KW, RANGE)
+    assert unfit == (key,) and adjusted == () and p == params
+
+
+@pytest.mark.parametrize("params,key,expected", [
+    (Params(soc_min=0.0), "soc_min", 1.0),        # DoD 100 > max 99 → próg w górę
+    (Params(power_w=12000.0), "power_w", 10000.0),
+    (Params(export_limit_w=12000.0), "export_limit_w", 10000.0),
+    (Params(soc_max=100.0), "soc_max", 95.0),
+])
+def test_safe_clip_is_adjusted(params, key, expected):
+    p, adjusted, unfit = _twice(params, attrs=RANGE)
+    assert getattr(p, key) == pytest.approx(expected) and adjusted == (key,) and unfit == ()
+
+
+def test_fit_number_clip_direction():
+    attrs = {"min": 1, "max": 9, "step": 1}
+    assert fit_number(0.5, attrs, rounding="down") is None       # obcięcie w górę
+    assert fit_number(9.5, attrs, rounding="up") is None         # obcięcie w dół
+    assert fit_number(9.5, attrs, rounding="down") == 9
+    assert fit_number(0.5, attrs, rounding="up") == 1
+    assert fit_number(0.5, attrs) == 1 and fit_number(9.5, attrs) == 9   # najbliższy: jak dotąd
+    assert fit_number(1 - 1e-12, attrs, rounding="down") == 1    # szum binarny na granicy
+    assert fit_number(9 + 1e-12, attrs, rounding="up") == 9

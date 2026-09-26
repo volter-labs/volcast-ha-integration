@@ -9,7 +9,9 @@ throttlingu. Encja bez poprawnego zakresu = niedopasowalna (nie zgadujemy).
 Dopasowanie działa PO strażnikach, więc krok zaokrąglamy zawsze w stronę bezpieczną
 dla klucza (moc i limit eksportu w dół, próg dolny SoC w górę, górny w dół) —
 najbliższy krok potrafiłby oddać pół kroku ponad limit ustalony przez strażnika.
-Gdy bezpieczny krok wypada poza zakres encji, klucz jest niedopasowalny.
+Gdy bezpieczny krok wypada poza zakres encji albo zakres wymusza obcięcie w stronę
+niebezpieczną (np. DoD min 10 → próg 95 % spadłby do 90 %), klucz jest niedopasowalny
+i sterowanie go wstrzymuje. Obcięcie w stronę bezpieczną to zwykłe dopasowanie.
 """
 from __future__ import annotations
 
@@ -38,7 +40,7 @@ def _num(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
-def _same(a: float, b: float) -> bool:
+def _close(a: float, b: float) -> bool:
     """Równość z tolerancją na szum binarny przeliczeń (W ↔ kW, krok 0.1)."""
     return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
 
@@ -58,14 +60,19 @@ def _steps(x: float, rounding: str) -> int:
 def fit_number(value: float, attrs: Mapping[str, Any], rounding: str = "nearest") -> float | None:
     """Wartość przycięta do [min, max] i dopasowana do kroku encji; brak zakresu → None.
 
-    `rounding`: "nearest" (domyślnie), "down" albo "up". Przy "up" krok ponad `max`
-    (krok nie dzieli zakresu) daje None — nie cofamy się w stronę niebezpieczną.
+    `rounding`: "nearest" (domyślnie), "down" albo "up". Kierunek jest bezpieczny, więc
+    ruch w przeciwną stronę daje None: obcięcie do zakresu pod prąd kierunku („down" przy
+    wartości pod `min`, „up" ponad `max`) i krok ponad `max` (krok nie dzieli zakresu).
     """
     if rounding not in _ROUNDING:
         raise ValueError(f"fit_number: nieznane zaokrąglenie {rounding!r}")
     lo, hi = _num(attrs.get("min")), _num(attrs.get("max"))
     if lo is None or hi is None or lo > hi or not math.isfinite(value):
         return None
+    if rounding == "down" and value < lo and not _close(value, lo):
+        return None           # obcięcie w górę = niebezpieczne
+    if rounding == "up" and value > hi and not _close(value, hi):
+        return None           # obcięcie w dół = niebezpieczne
     v = min(max(value, lo), hi)
     step = _num(attrs.get("step"))
     if step is not None and step > 0:
@@ -115,7 +122,7 @@ def fit_params(params: Params, profile, integration_domain: str, mapped: Mapping
         if fitted is None:
             unfit.append(w.key)
             continue
-        if _same(fitted, raw):
+        if _close(fitted, raw):
             continue
         # powrót do jednostki kanonicznej tą samą drogą co odczyt encji (jednostka, transformacja)
         back = entity_value(w.key, repr(fitted), profile, integration_domain, unit=units.get(w.key))
