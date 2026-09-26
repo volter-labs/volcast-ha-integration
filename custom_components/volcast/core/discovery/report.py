@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 
 from .known import INVERTER_DOMAINS
-from .models import Classification, EntitySnap, StateSnap
+from .models import Classification, DeviceSnap, EntitySnap, StateSnap
 from .network import NetworkProbeResult
 
 REPORT_SCHEMA = 1
@@ -176,17 +177,33 @@ def _mask_identifier_value(v: str) -> str:
     return "<SN>" if cleaned and len(cleaned) >= _MIN_IDENTIFIER else v
 
 
-def _serials(c: Classification, net: NetworkProbeResult | None) -> set[str]:
+def _device_serials(devices: Iterable[DeviceSnap], out: set[str]) -> None:
+    for d in devices:
+        s = _clean_serial(d.serial_number)
+        if _valid_serial(s):
+            out.add(s)
+        for _, v in d.identifiers:
+            cv = _clean_serial(v)
+            if _valid_serial(cv):
+                out.add(cv)
+
+
+def _reported_device_ids(c: Classification) -> set[str]:
+    """Urządzenia, których encje trafiają do raportu (falownik, ceny, czujniki energii)."""
+    ents = [e for inv in c.inverters for e in inv.entities]
+    ents += list(c.price_entities) + list(c.energy_candidates)
+    return {e.device_id for e in ents if e.device_id}
+
+
+def _serials(c: Classification, net: NetworkProbeResult | None,
+             devices: Iterable[DeviceSnap] = ()) -> set[str]:
+    """Kandydaci na serial: urządzenia znalezisk falownika, każde inne urządzenie, którego
+    encja jest w raporcie (np. czujnik energii z bramki spoza listy falowników niesie
+    serial w entity_id), oraz nazwy loggerów z odpowiedzi 48899."""
     out: set[str] = set()
-    for inv in c.inverters:
-        for d in inv.devices:
-            s = _clean_serial(d.serial_number)
-            if _valid_serial(s):
-                out.add(s)
-            for _, v in d.identifiers:
-                cv = _clean_serial(v)
-                if _valid_serial(cv):
-                    out.add(cv)
+    _device_serials((d for inv in c.inverters for d in inv.devices), out)
+    reported = _reported_device_ids(c)
+    _device_serials((d for d in devices if d.id in reported), out)
     for r in (net.replies if net else []):
         name = _clean_serial(r.name)
         if _valid_serial(name):
@@ -223,8 +240,11 @@ def _entity(e: EntitySnap, states: dict[str, StateSnap]) -> dict:
 
 
 def build_report(*, classification, states, history_days, network, errors,
-                 integration_version, ha_version, generated_at) -> dict:
-    sn = _serials(classification, network)
+                 integration_version, ha_version, generated_at,
+                 devices: Iterable[DeviceSnap] = ()) -> dict:
+    """`devices` — migawki wszystkich aktywnych urządzeń; seriale bierzemy tylko z tych,
+    których encje trafiają do raportu."""
+    sn = _serials(classification, network, devices)
     inverters = []
     for inv in classification.inverters:
         inverters.append({

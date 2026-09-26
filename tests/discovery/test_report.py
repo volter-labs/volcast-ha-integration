@@ -267,3 +267,42 @@ def test_email_masked_in_config_entry_title():
     title = r["inverters"][0]["config_entry_title"]
     assert "admin@example.com" not in title
     assert "<EMAIL>" in title
+
+
+# --- seriale urządzeń spoza znalezisk falownika ---
+
+SNE = "122012345678"
+
+
+def _envoy():
+    """Enphase Envoy: domena spoza listy falowników, serial w entity_id czujnika energii."""
+    dev = DeviceSnap("env", "Enphase", "Envoy", f"Envoy {SNE}", "7.0", None, SNE,
+                     (("enphase_envoy", SNE),), ("en1",))
+    ent = EntitySnap(f"sensor.envoy_{SNE}_lifetime_energy_production", "enphase_envoy",
+                     f"{SNE}_lifetime_energy_production", "env", "en1", "energy", "kWh",
+                     None, None, False)
+    return dev, ent
+
+
+def test_serial_of_energy_sensor_device_masked():
+    dev, ent = _envoy()
+    r = _report(classification=Classification([], [], [ent]), devices=[dev])
+    assert SNE not in json.dumps(r)
+    assert r["energy_sensors"][0]["entity_id"] == "sensor.envoy_<SN>_lifetime_energy_production"
+
+
+def test_serial_of_price_entity_device_masked():
+    dev = DeviceSnap("pd", "Tibber", "Pulse", "Home", None, None, "PULSE998877",
+                     (("tibber", "PULSE998877"),), ("t1",))
+    ent = EntitySnap("sensor.pulse998877_price", "tibber", "pulse998877_price", "pd", "t1",
+                     None, None, None, None, False)
+    r = _report(classification=Classification([], [ent], []), devices=[dev])
+    assert "pulse998877" not in json.dumps(r).lower()
+
+
+def test_device_not_behind_reported_entity_does_not_add_serials():
+    dev, ent = _envoy()
+    other = DeviceSnap("x", "Hue", "Bridge", "Bridge", None, None, "BRIDGE12345678", (), ("h1",))
+    r = _report(classification=Classification([], [], [ent]), devices=[dev, other],
+                errors=["note BRIDGE12345678"])
+    assert r["errors"] == ["note BRIDGE12345678"]

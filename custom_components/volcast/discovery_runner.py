@@ -179,7 +179,7 @@ class DiscoveryRunner:
             classification=classification, states=states, history_days=history_days,
             network=network, errors=errors,
             integration_version=self.integration_version, ha_version=HA_VERSION,
-            generated_at=dt_util.utcnow().isoformat())
+            generated_at=dt_util.utcnow().isoformat(), devices=devices)
 
     def _snap_devices(self) -> tuple[list[DeviceSnap], frozenset[str]]:
         """Migawki aktywnych urządzeń i identyfikatory pominiętych (wyłączonych).

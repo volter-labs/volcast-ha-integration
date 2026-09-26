@@ -347,3 +347,23 @@ async def test_legacy_identifier_every_extra_element_is_masking_candidate(make_h
         ["goodwe", "<SN>"], ["goodwe", "<SN>"]]
     assert rep["inverters"][0]["entities"][0]["entity_id"] == "sensor.goodwe_<SN>_power"
     assert "9010ketu000w0555" not in str(rep).lower()
+
+
+async def test_serial_of_non_inverter_energy_device_masked(make_hass):
+    # Bramka spoza listy falowników (Enphase Envoy): serial w entity_id czujnika energii.
+    sn = "122012345678"
+    entry = SimpleNamespace(entry_id="en1", domain="enphase_envoy", title="Envoy", data={})
+    dev = _device(id="env", manufacturer="Enphase", model="Envoy", name="Envoy",
+                  serial_number=sn, identifiers={("enphase_envoy", sn)}, config_entries={"en1"})
+    ent = _entity(entity_id=f"sensor.envoy_{sn}_lifetime_energy_production",
+                  platform="enphase_envoy", unique_id=f"{sn}_lifetime_energy_production",
+                  device_id="env", config_entry_id="en1", original_device_class="energy",
+                  unit_of_measurement="kWh")
+    hass = make_hass(devices=[dev], entities=[ent], entries=[entry],
+                     states={ent.entity_id: ("1234", {"state_class": "total_increasing"})})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert rep["inverters"] == []
+    assert [s["entity_id"] for s in rep["energy_sensors"]] == [
+        "sensor.envoy_<SN>_lifetime_energy_production"]
+    assert sn not in str(rep)
