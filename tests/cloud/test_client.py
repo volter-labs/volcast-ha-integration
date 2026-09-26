@@ -22,6 +22,8 @@ PAIR = f"{BASE}/functions/v1/pairing-session"
 # Kształty jak w chmurze: session_id to UUID v4, poll_token `vps_` + 64 hex.
 SID = "3f2b8c1e-6a4d-4e2f-9b7a-1c2d3e4f5a6b"
 POLL = "vps_" + "b" * 64
+USER = "0d9c2f4e-1b3a-4c5d-8e6f-7a8b9c0d1e2f"
+EVIL = "http://evil.example/steal"
 CONNECT = f"https://volcast.app/connect?s={SID}"
 SESSION = PairingSession(SID, POLL, CONNECT, "2026-09-27T10:10:00.000Z")
 BEGIN_OK = {"session_id": SID, "poll_token": POLL, "connect_url": CONNECT,
@@ -201,10 +203,10 @@ def test_begin_empty_name_falls_back():
     (200, ["x"], "error"),
     (200, {"status": "weird"}, "error"),
     (aiohttp.ClientError("down"), None, "error"),
-    (200, {"status": "confirmed", "user_id": "u1", "api_key": "bad", "backend": BACKEND}, "error"),
-    (200, {"status": "confirmed", "user_id": "u1", "api_key": "vk_" + "a" * 20, "backend": BACKEND}, "error"),
+    (200, {"status": "confirmed", "user_id": USER, "api_key": "bad", "backend": BACKEND}, "error"),
+    (200, {"status": "confirmed", "user_id": USER, "api_key": "vk_" + "a" * 20, "backend": BACKEND}, "error"),
     (200, {"status": "confirmed", "user_id": None, "api_key": KEY, "backend": BACKEND}, "error"),
-    (200, {"status": "confirmed", "user_id": "u1", "api_key": KEY,
+    (200, {"status": "confirmed", "user_id": USER, "api_key": KEY,
            "backend": {**BACKEND, "schedule": "http://x"}}, "error"),
 ])
 def test_poll_statuses(status, body, expected):
@@ -215,9 +217,9 @@ def test_poll_statuses(status, body, expected):
 
 def test_poll_confirmed_carries_credentials_and_consumed_choices():
     s = FakeSession()
-    s.add("POST", PAIR, 200, {"status": "confirmed", "user_id": "u1", "api_key": KEY, "backend": BACKEND})
+    s.add("POST", PAIR, 200, {"status": "confirmed", "user_id": USER, "api_key": KEY, "backend": BACKEND})
     r = run(PairingClient(s, PAIR).async_poll(SESSION))
-    assert (r.status, r.api_key, r.user_id, r.backend.schedule) == ("confirmed", KEY, "u1", BACKEND["schedule"])
+    assert (r.status, r.api_key, r.user_id, r.backend.schedule) == ("confirmed", KEY, USER, BACKEND["schedule"])
     assert s.calls[0]["json"] == {"action": "poll", "session_id": SID, "poll_token": POLL}
     s2 = FakeSession()
     s2.add("POST", PAIR, 200, {"status": "consumed", "choices": {"control_mode": "entities"}})
@@ -287,8 +289,123 @@ def test_secrets_never_logged(caplog):
     run(cloud.async_get_schedule())
     run(cloud.async_post_telemetry({}))
     run(PairingClient(s, PAIR).async_poll(SESSION))
-    s.routes[("POST", PAIR)] = [(200, {"status": "confirmed", "user_id": "u1", "api_key": "vk_bad",
-                                       "backend": BACKEND})]
+    del s.routes[("POST", PAIR)]
+    s.add("POST", PAIR, 200, {"status": "confirmed", "user_id": USER, "api_key": "vk_bad", "backend": BACKEND})
     run(PairingClient(s, PAIR).async_poll(SESSION))
     assert caplog.records                                   # coś zalogowano…
     assert KEY not in caplog.text and POLL not in caplog.text and "vk_bad" not in caplog.text
+
+
+# ------------------------------------------------ przekierowania i czasy (poprawki)
+
+def _all_calls_safe(s):
+    return all(c.get("allow_redirects") is False and c.get("timeout") is not None for c in s.calls)
+
+
+@pytest.mark.parametrize("code", [301, 302, 307, 308])
+def test_schedule_redirect_is_refused_and_key_stays_home(code):
+    s = FakeSession()
+    s.add("GET", BACKEND["schedule"], code, None, headers={"Location": EVIL})
+    s.add("GET", EVIL, 200, {"slots": []})
+    assert run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_get_schedule()) is None
+    assert [c["url"] for c in s.calls] == [BACKEND["schedule"] + "?contract=2"]
+    assert _all_calls_safe(s)
+
+
+@pytest.mark.parametrize("code", [302, 307, 308])
+def test_post_redirects_never_forward_key_or_body(code):
+    s = FakeSession()
+    for url in (BACKEND["telemetry"], BACKEND["history_import"], PAIR):
+        s.add("POST", url, code, None, headers={"Location": EVIL})
+    s.add("POST", EVIL, 200, {"ok": True})
+    cloud = VolcastCloud(s, KEY, Backend.from_dict(BACKEND))
+    assert run(cloud.async_post_telemetry({"timestamp": "t"})) is False
+    assert run(cloud.async_import_history([{"start": "x"}])) is None
+    client = PairingClient(s, PAIR)
+    assert run(client.async_poll(SESSION)).status == "error"
+    assert run(client.async_progress(SESSION, [])) is False
+    assert run(client.async_request_plan(SESSION)) is None
+    assert run(client.async_cancel(SESSION)) is None
+    with pytest.raises(PairingError):
+        begin(s)
+    assert not any(c["url"] == EVIL for c in s.calls)
+    assert _all_calls_safe(s)
+
+
+def test_request_plan_waits_longer_than_cloud_planner_budget():
+    s = FakeSession()
+    s.add("POST", PAIR, 200, {"success": True, "skipped": None, "slots_count": 24}, delay_s=30)
+    assert run(PairingClient(s, PAIR).async_request_plan(SESSION)) == {
+        "success": True, "skipped": None, "slots_count": 24}
+    assert s.calls[0]["timeout"].total >= 50           # chmura daje planerowi 45 s
+    s2 = FakeSession()
+    s2.add("POST", PAIR, 200, {"ok": True}, delay_s=30)
+    assert run(PairingClient(s2, PAIR).async_progress(SESSION, [])) is False   # reszta: krótki czas
+
+
+def test_history_import_gets_longer_timeout_than_telemetry():
+    s = FakeSession()
+    s.add("POST", BACKEND["history_import"], 200, {"accepted": 1}, delay_s=25)
+    s.add("POST", BACKEND["telemetry"], 200, {}, delay_s=25)
+    cloud = VolcastCloud(s, KEY, Backend.from_dict(BACKEND))
+    assert run(cloud.async_import_history([])) == {"accepted": 1}
+    assert run(cloud.async_post_telemetry({})) is False
+
+
+@pytest.mark.parametrize("bad", [
+    {"schedule": f"{BASE}/functions/v1/get-schedule?x=1"},
+    {"schedule": f"{BASE}/functions/v1/get-schedule#f"},
+    {"schedule": "https://u@staging.example.test/functions/v1/get-schedule"},
+    {"base_url": "https://u:p@staging.example.test"},
+    {"telemetry": "https://other.example/functions/v1/device-telemetry"},
+    {"telemetry": BASE + "evil.example/functions/v1/device-telemetry"},
+    {"schedule": BASE},
+])
+def test_backend_endpoints_must_be_plain_https_under_base(bad):
+    assert Backend.from_dict({**BACKEND, **bad}) is None
+
+
+def test_backend_base_with_path_prefix_is_fine():
+    base = "https://example.test/volcast"
+    raw = {k: (base if k == "base_url" else v.replace(BASE, base)) for k, v in BACKEND.items()}
+    assert Backend.from_dict(raw).telemetry == f"{base}/functions/v1/device-telemetry"
+
+
+@pytest.mark.parametrize("user_id", ["u1", "x" * 5000, 7], ids=["short", "huge", "int"])
+def test_poll_confirmed_requires_uuid_user(user_id):
+    s = FakeSession()
+    s.add("POST", PAIR, 200, {"status": "confirmed", "user_id": user_id, "api_key": KEY, "backend": BACKEND})
+    assert run(PairingClient(s, PAIR).async_poll(SESSION)).status == "error"
+
+
+@pytest.mark.parametrize("expires", ["t", "2026-09-27T10:10:00.000Z" + " " * 40, "", 5],
+                         ids=["word", "padded", "empty", "int"])
+def test_begin_requires_iso_expiry(expires):
+    s = FakeSession()
+    s.add("POST", PAIR, 201, {**BEGIN_OK, "expires_at": expires})
+    with pytest.raises(PairingError):
+        begin(s)
+
+
+def test_progress_detail_cut_by_utf16_units_like_cloud():
+    s = FakeSession()
+    s.add("POST", PAIR, 200, {"ok": True})
+    run(PairingClient(s, PAIR).async_progress(SESSION, [{"key": "inverter", "state": "done",
+                                                          "detail": "🔋" * 150}]))
+    detail = s.calls[0]["json"]["steps"][0]["detail"]
+    assert len(detail.encode("utf-16-le")) // 2 <= 200 and detail == "🔋" * 100
+
+
+def test_consumed_choices_keep_only_short_strings():
+    s = FakeSession()
+    s.add("POST", PAIR, 200, {"status": "consumed", "choices": {
+        "control_mode": "entities", "price_source": "x" * 65, "n": 3, "l": ["a"]}})
+    assert run(PairingClient(s, PAIR).async_poll(SESSION)).choices == {"control_mode": "entities"}
+
+
+def test_oversized_body_is_a_failure():
+    s = FakeSession()
+    s.add("GET", BACKEND["schedule"], 200, {"slots": []}, content_length=10_000_000)
+    assert run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_get_schedule()) is None
+    s.add("POST", PAIR, 200, {"status": "consumed", "choices": {}}, content_length=10_000_000)
+    assert run(PairingClient(s, PAIR).async_poll(SESSION)).status == "error"

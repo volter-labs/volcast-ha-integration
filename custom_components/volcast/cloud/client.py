@@ -19,7 +19,9 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import aiohttp
 
@@ -27,33 +29,75 @@ from ..key_format import API_KEY_PATTERN
 
 _LOGGER = logging.getLogger(__name__)
 _TIMEOUT = aiohttp.ClientTimeout(total=15)
+# Import historii bywa długi (wycena wielu godzin); chmura wstawia tylko brakujące godziny.
+_HISTORY_TIMEOUT = aiohttp.ClientTimeout(total=30)
+# Chmura czeka na planer do 45 s i odpowiada dopiero po nim — czekamy dłużej.
+_PLAN_TIMEOUT = aiohttp.ClientTimeout(total=60)
+# Odpowiedzi chmury są małe; większe ciało (zadeklarowane) = błąd, nie czytamy go.
+_MAX_BODY = 256 * 1024
 # ValueError obejmuje błędne JSON-y (json.JSONDecodeError).
 _NET_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError, ValueError)
 _BACKEND_KEYS = ("base_url", "forecast", "submit_production", "telemetry", "schedule",
                  "history_import", "pairing")
 _MAX_URL = 512
 
-# Kształty z chmury: id sesji to UUID, token odpytywania `vps_` + 64 hex.
-_SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+# Kształty z chmury: id sesji i konta to UUID, token odpytywania `vps_` + 64 hex.
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _POLL_TOKEN = re.compile(r"^vps_[0-9a-f]{64}$")
 # Limity pól opisowych po stronie chmury (dłuższe/ze znakami sterującymi = 400 albo null).
 _NAME_MAX = 64
 _VERSION_MAX = 32
-_DETAIL_MAX = 200
+_DETAIL_MAX = 200            # liczone w jednostkach UTF-16 (JS `length`)
+_CHOICE_MAX = 64
+_EXPIRES_MAX = 40
 _FALLBACK_NAME = "Home Assistant"
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]+")
 
 
-def _https(v: Any) -> bool:
-    """Adres https bez białych znaków i bez końcowego ukośnika."""
-    return (isinstance(v, str) and v.startswith("https://") and len(v) > len("https://")
-            and not v.endswith("/") and len(v) <= _MAX_URL and not any(c.isspace() for c in v))
+def _https(v: Any, *, allow_query: bool = False) -> bool:
+    """Adres https z hostem: bez danych logowania, fragmentu, białych znaków i końcowego
+    ukośnika; zapytanie tylko przy `allow_query` (adres strony parowania)."""
+    if (not isinstance(v, str) or len(v) > _MAX_URL or v.endswith("/") or "#" in v
+            or any(c.isspace() for c in v) or (not allow_query and "?" in v)):
+        return False
+    try:
+        parts = urlsplit(v)
+        host = parts.hostname
+    except ValueError:
+        return False
+    return parts.scheme == "https" and bool(host) and "@" not in parts.netloc
 
 
 def _clean(text: Any, limit: int) -> str:
     """Znaki sterujące → spacja, zwinięte białe znaki, obcięcie do limitu chmury."""
     s = _CONTROL_CHARS.sub(" ", str(text))
     return " ".join(s.split())[:limit].strip()
+
+
+def _cut_utf16(text: str, limit: int) -> str:
+    """Obcięcie do `limit` jednostek UTF-16 — tak liczy długość chmura (JS)."""
+    while len(text.encode("utf-16-le")) // 2 > limit:
+        text = text[:-1]
+    return text
+
+
+def _iso(v: Any) -> bool:
+    if not isinstance(v, str) or not v or len(v) > _EXPIRES_MAX:
+        return False
+    try:
+        datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+def _too_big(resp) -> bool:
+    length = getattr(resp, "content_length", None)
+    return isinstance(length, int) and length > _MAX_BODY
+
+
+def _redirect(status: int) -> bool:
+    return 300 <= status < 400
 
 
 @dataclass(frozen=True)
@@ -70,6 +114,10 @@ class Backend:
     def from_dict(cls, raw: Any) -> "Backend | None":
         if not isinstance(raw, dict) or not all(_https(raw.get(k)) for k in _BACKEND_KEYS):
             return None
+        # Klucz konta idzie na każdy z tych adresów — wszystkie muszą leżeć pod bazą.
+        prefix = raw["base_url"] + "/"
+        if not all(raw[k].startswith(prefix) for k in _BACKEND_KEYS if k != "base_url"):
+            return None
         return cls(**{k: raw[k] for k in _BACKEND_KEYS})
 
     def as_dict(self) -> dict[str, str]:
@@ -80,13 +128,21 @@ class CloudAuthError(Exception):
     """Klucz konta odrzucony (401)."""
 
 
-async def _post_json(session, url: str, body: dict, headers: dict | None, what: str) -> tuple[int, Any]:
-    """POST z JSON-em; (0, None) przy błędzie sieci, (status, None) przy złym ciele."""
-    kw: dict[str, Any] = {"json": body, "timeout": _TIMEOUT}
+async def _post_json(session, url: str, body: dict, headers: dict | None, what: str,
+                     timeout: aiohttp.ClientTimeout = _TIMEOUT) -> tuple[int, Any]:
+    """POST z JSON-em; (0, None) przy błędzie sieci, (status, None) przy złym ciele.
+
+    Bez podążania za przekierowaniem: aiohttp przenosi `X-API-Key` (i ciało przy
+    307/308) na inne źródło, także na http — 3xx to po prostu porażka.
+    """
+    kw: dict[str, Any] = {"json": body, "timeout": timeout, "allow_redirects": False}
     if headers is not None:
         kw["headers"] = headers
     try:
         async with session.post(url, **kw) as resp:
+            if _redirect(resp.status) or _too_big(resp):
+                _LOGGER.debug("%s refused: HTTP %s", what, resp.status)
+                return 0, None
             try:
                 data = await resp.json(content_type=None)
             except _NET_ERRORS:
@@ -113,10 +169,10 @@ class VolcastCloud:
     async def async_get_schedule(self) -> dict | None:
         try:
             async with self._s.get(f"{self._b.schedule}?contract=2", headers=self._headers(),
-                                   timeout=_TIMEOUT) as resp:
+                                   timeout=_TIMEOUT, allow_redirects=False) as resp:
                 if resp.status == 401:
                     raise CloudAuthError
-                if resp.status != 200:
+                if resp.status != 200 or _too_big(resp):
                     _LOGGER.debug("get-schedule HTTP %s", resp.status)
                     return None
                 data = await resp.json(content_type=None)
@@ -135,7 +191,7 @@ class VolcastCloud:
     async def async_import_history(self, hours: list[dict]) -> dict | None:
         status, data = await _post_json(self._s, self._b.history_import,
                                         {"source": "ha_recorder", "hours": hours},
-                                        self._headers(), "history import")
+                                        self._headers(), "history import", _HISTORY_TIMEOUT)
         return data if status == 200 and isinstance(data, dict) else None
 
 
@@ -172,9 +228,9 @@ class PairingClient:
         self._s = session
         self._url = url
 
-    async def _call(self, body: dict) -> tuple[int, Any]:
+    async def _call(self, body: dict, timeout: aiohttp.ClientTimeout = _TIMEOUT) -> tuple[int, Any]:
         # Bez nagłówka klucza: sesja ma własny token, klucza konta jeszcze nie ma.
-        return await _post_json(self._s, self._url, body, None, f"pairing {body.get('action')}")
+        return await _post_json(self._s, self._url, body, None, f"pairing {body.get('action')}", timeout)
 
     @staticmethod
     def _auth(s: PairingSession, action: str) -> dict:
@@ -196,14 +252,14 @@ class PairingClient:
             raise PairingError(f"begin HTTP {status}" + (f" ({code})" if isinstance(code, str) else ""))
         sid, token = data.get("session_id"), data.get("poll_token")
         url, expires = data.get("connect_url"), data.get("expires_at")
-        if not (isinstance(sid, str) and _SESSION_ID.match(sid)):
+        if not (isinstance(sid, str) and _UUID.match(sid)):
             raise PairingError("begin: malformed session id")
         if not (isinstance(token, str) and _POLL_TOKEN.match(token)):
             raise PairingError("begin: malformed poll token")
-        if not _https(url):
+        if not _https(url, allow_query=True):
             raise PairingError("begin: connect_url must be https")
-        if not isinstance(expires, str) or not expires:
-            raise PairingError("begin: missing expires_at")
+        if not _iso(expires):
+            raise PairingError("begin: malformed expires_at")
         return PairingSession(sid, token, url, expires)
 
     async def async_poll(self, s: PairingSession) -> PollResult:
@@ -224,13 +280,16 @@ class PairingClient:
             if not (isinstance(key, str) and API_KEY_PATTERN.match(key)):
                 _LOGGER.debug("pairing poll: malformed account key")
                 return PollResult("error")
-            if backend is None or not (isinstance(user_id, str) and user_id):
+            if backend is None or not (isinstance(user_id, str) and _UUID.match(user_id)):
                 _LOGGER.debug("pairing poll: malformed backend or account")
                 return PollResult("error")
             return PollResult("confirmed", api_key=key, user_id=user_id, backend=backend)
         if data.get("status") == "consumed":
-            choices = data.get("choices")
-            return PollResult("consumed", choices=dict(choices) if isinstance(choices, dict) else {})
+            raw = data.get("choices")
+            choices = {k: v for k, v in raw.items()
+                       if isinstance(k, str) and isinstance(v, str) and len(v) <= _CHOICE_MAX
+                       } if isinstance(raw, dict) else {}
+            return PollResult("consumed", choices=choices)
         return PollResult("error")
 
     async def async_progress(self, s: PairingSession, steps: list[dict]) -> bool:
@@ -239,13 +298,13 @@ class PairingClient:
         for step in steps:
             step = dict(step)
             if "detail" in step:
-                step["detail"] = _clean(step["detail"], _DETAIL_MAX)
+                step["detail"] = _cut_utf16(_clean(step["detail"], _DETAIL_MAX), _DETAIL_MAX).strip()
             payload.append(step)
         status, _ = await self._call({**self._auth(s, "progress"), "steps": payload})
         return status == 200
 
     async def async_request_plan(self, s: PairingSession) -> dict | None:
-        status, data = await self._call(self._auth(s, "request_plan"))
+        status, data = await self._call(self._auth(s, "request_plan"), _PLAN_TIMEOUT)
         if status == 429:            # plan zlecony przed chwilą — to nie błąd
             return {"skipped": "cooldown"}
         return data if status == 200 and isinstance(data, dict) else None
