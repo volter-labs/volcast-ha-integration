@@ -1,0 +1,41 @@
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from custom_components.volcast.core.engines.time_window import compress
+from custom_components.volcast.core.profile import load_builtin
+from custom_components.volcast.core.registers import RegisterImage, decode, encode_writes
+from custom_components.volcast.core.slot import parse_schedule
+
+DEYE = load_builtin("deye-sg")
+
+
+def test_draft_and_shape():
+    assert (DEYE.status, DEYE.control_model, DEYE.tou_programs, DEYE.time_step_min) == (
+        "draft", "time_window", 6, 5)
+    assert DEYE.intent("sell") is None and DEYE.intent("discharge_forced") is None
+    assert DEYE.raw["capabilities"]["sell_from_battery"] is False
+
+
+def test_lo_hi_word_order():
+    img = RegisterImage.from_blocks({16: [0x86A0, 0x0001]})
+    assert decode({"addr": 16, "type": "u32", "word_order": "lo_hi"}, img) == 100000
+
+
+def test_day_plan_encodes_into_program_registers():
+    day0 = datetime(2026, 9, 1, 22, tzinfo=timezone.utc)
+    slots = [{"from": (day0 + timedelta(hours=h)).isoformat(), "to": (day0 + timedelta(hours=h + 1)).isoformat(),
+              "mode": "charge" if h in (2, 3, 4) else "self_consume",
+              "charge_source": "grid" if h in (2, 3, 4) else None,
+              "power_w": 3000 if h in (2, 3, 4) else None, "soc_target": 90 if h in (2, 3, 4) else None,
+              "price_pln_kwh": 0.3 if h in (2, 3, 4) else 0.6} for h in range(24)]
+    r = compress(parse_schedule({"schedule_id": "t", "slots": slots}), day0, DEYE,
+                 soc_reserve=15.0, rated_power_w=8000.0, tz=ZoneInfo("Europe/Warsaw"))
+    cur = RegisterImage.from_blocks({172: [0] * 6})
+    ws = {w.key: w for w in encode_writes(r.params(), DEYE, current=cur)}
+    charge = [i for i, p in enumerate(r.programs, start=1) if p.grid_charge]
+    assert len(charge) == 1
+    i = charge[0]
+    assert (ws[f"tou.{i}.start"].value, ws[f"tou.{i}.soc"].value, ws[f"tou.{i}.power_w"].value) == (200, 90, 3000)
+    assert ws[f"tou.{i}.grid_charge"].addr == 172 + i - 1
+    assert {w.addr for w in ws.values()} <= set(range(148, 154)) | set(range(154, 160)) | \
+        set(range(166, 172)) | set(range(172, 178))

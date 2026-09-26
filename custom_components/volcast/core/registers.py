@@ -43,6 +43,8 @@ def decode(spec: Mapping[str, Any], image: RegisterImage) -> float | str:
         raw = b"".join(w.to_bytes(2, "big") for w in image.words(spec["addr"], spec["len"]))
         return raw.decode("latin-1").strip(" \x00")
     words = image.words(spec["addr"], _WORDS[typ])
+    if spec.get("word_order") == "lo_hi":
+        words = list(reversed(words))
     if typ == "f32":
         # `undef` dotyczy wyłącznie sum liczników PV (u32) — tak jak w Boksie, f32 go nie sprawdza.
         value: float = struct.unpack(">f", b"".join(w.to_bytes(2, "big") for w in words))[0]

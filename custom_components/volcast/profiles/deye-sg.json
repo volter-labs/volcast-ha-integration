@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "id": "deye-sg",
+  "label": "Deye SUN-xK-SG (hybrid, low/high voltage battery)",
+  "status": "draft",
+  "status_note": "Community register maps only; nothing verified on hardware. Not used for control until verified.",
+  "control_model": "time_window",
+  "sources": [
+    {"what": "register map", "ref": "ha-solarman inverter definitions (deye_sg04lp3, deye_sg01hp3), unverified"},
+    {"what": "time-of-use semantics", "ref": "Deye system work mode manual (program time/power/SOC/grid charge), unverified"}
+  ],
+  "unit_id": 1,
+  "transports": ["solarman_v5", "modbus_tcp", "modbus_rtu"],
+  "identify": {
+    "model_register": {"addr": 3, "type": "ascii", "len": 5},
+    "model_regex": ["."],
+    "registers": {
+      "device_type": {"addr": 0, "type": "u16"},
+      "rated_power_w": {"addr": 16, "type": "u32", "scale": 0.1, "word_order": "lo_hi"}
+    }
+  },
+  "read": {
+    "soc": {"addr": 184, "type": "u16"},
+    "battery_voltage_v": {"addr": 183, "type": "u16", "scale": 0.01},
+    "battery_current_a": {"addr": 191, "type": "i16", "scale": 0.01},
+    "battery_power_w": {"addr": 190, "type": "i16"},
+    "pv_power_w": {"sum": [{"addr": 186, "type": "u16"}, {"addr": 187, "type": "u16"}]},
+    "grid_power_w": {"addr": 169, "type": "i16"},
+    "load_power_w": {"addr": 178, "type": "i16"},
+    "pv_energy_total_kwh": {"addr": 96, "type": "u32", "scale": 0.1, "word_order": "lo_hi"}
+  },
+  "write": {
+    "tou_program": {
+      "count": 6,
+      "start": {"addr": 148, "encode": "hhmm"},
+      "power_w": {"addr": 154, "encode": "watts"},
+      "soc": {"addr": 166, "encode": "percent"},
+      "grid_charge": {"addr": 172, "bit": 0}
+    }
+  },
+  "intents": {
+    "charge_grid": {"grid_charge": true, "soc": "target_or_max", "power": "slot"},
+    "charge_pv": {"grid_charge": false, "soc": "reserve", "power": "max"},
+    "discharge_forced": null,
+    "sell": null,
+    "self_consume": {"grid_charge": false, "soc": "reserve", "power": "max"},
+    "standby": {"grid_charge": false, "soc": "hold", "power": "max"}
+  },
+  "tou": {"programs": 6, "time_step_min": 5, "soc_tolerance_pp": 5, "power_tolerance_w": 500,
+          "field_order": ["soc", "power_w", "grid_charge", "start"]},
+  "baseline": {"intent": "self_consume"},
+  "write_policy": {"order": ["tou"], "min_interval_s": 300, "nvm": true,
+                   "max_direction_changes_per_hour": 0, "max_state_age_s": 300},
+  "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
+  "ha": {"integrations": []},
+  "capabilities": {
+    "force_charge_from_grid": true, "sell_from_battery": false, "force_discharge": false,
+    "standby": true, "set_power_w": true, "limit_export": false, "set_soc_floor": true,
+    "set_soc_ceiling": true, "time_windows": 6
+  }
+}

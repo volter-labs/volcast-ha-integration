@@ -115,7 +115,7 @@ class _V:
 
 def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True) -> None:
     r = v.obj(raw, path, ("addr",) + (("type",) if need_type else ()),
-              ("type", "scale", "sign", "undef", "len"))
+              ("type", "scale", "sign", "undef", "len", "word_order"))
     if r is None:
         return
     v.int_(r.get("addr"), f"{path}.addr", 0, 65535)
@@ -130,6 +130,8 @@ def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True) -> None:
         v.err(f"{path}.sign", "tylko -1 albo 1")
     if "undef" in r:
         v.int_(r["undef"], f"{path}.undef", 0, 2**32 - 1)
+    if "word_order" in r:
+        v.enum(r["word_order"], f"{path}.word_order", ("hi_lo", "lo_hi"))
 
 
 def _read(v: _V, raw: Any) -> None:
