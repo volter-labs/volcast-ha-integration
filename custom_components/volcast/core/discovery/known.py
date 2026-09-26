@@ -1,4 +1,4 @@
-"""Znane integracje HA falowników i cen. Rozszerzane danymi (etap profili)."""
+"""Znane integracje HA falowników i cen. Rozszerzane danymi (profile marek)."""
 from __future__ import annotations
 
 # domena integracji HA -> marka (tylko podpowiedź w raporcie)

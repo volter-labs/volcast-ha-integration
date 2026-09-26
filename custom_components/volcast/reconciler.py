@@ -296,7 +296,7 @@ class DailyReconciler:
             raw_start = entry["start"]
             if isinstance(raw_start, (int, float)):
                 # Modern HA (>=2023.x): start is Unix epoch seconds (float).
-                # Confirmed on 2025.10.3 — see PLAN-040 beta3 bug report.
+                # Confirmed on HA 2025.10.3 (epoch-seconds start in statistics rows).
                 local_start = datetime.fromtimestamp(raw_start, tz=timezone.utc)
             else:
                 # Legacy HA: start is a datetime (with or without tzinfo).
