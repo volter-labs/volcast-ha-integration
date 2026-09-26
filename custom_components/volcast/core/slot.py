@@ -6,8 +6,9 @@ w energetyce groźniejszy niż odrzucony. Kierunek i pola opisowe muszą się zg
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -46,6 +47,7 @@ class Slot:
         return (self.end - self.start).total_seconds() / 3600.0
 
     def covers(self, moment: datetime) -> bool:
+        # moment musi mieć strefę — naive rzuci TypeError przy porównaniu.
         return self.start <= moment < self.end
 
 
@@ -77,7 +79,10 @@ class Schedule:
         return None
 
     def effective_slot(self, moment: datetime) -> tuple[Slot, bool]:
-        """Slot do wykonania i flaga „to fallback". Nigdy „zostaw ostatnią nastawę"."""
+        """Slot do wykonania i flaga „to fallback". Nigdy „zostaw ostatnią nastawę".
+
+        `moment` musi mieć strefę — naive rzuci TypeError przy porównaniu.
+        """
         s = self.slot_for(moment)
         if s is not None:
             return s, False
@@ -88,14 +93,20 @@ _SOURCES = ("pv", "grid")
 _PURPOSES = ("self", "sell")
 
 
+# Pełny znacznik czasu ISO-8601 ze strefą — bez niej godzina jest niejednoznaczna.
+# Odrzuca m.in. formę bez strefy, samą datę, zapis zbity i separator spacją.
+_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
+)
+
+
 def _dt(raw: Any, name: str) -> datetime:
-    if not isinstance(raw, str):
-        raise InvalidSchedule(name, f"oczekiwano czasu ISO, jest {raw!r}")
+    if not isinstance(raw, str) or not _TIMESTAMP_RE.match(raw):
+        raise InvalidSchedule(name, f"oczekiwano czasu ISO ze strefą, jest {raw!r}")
     try:
-        v = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as err:
         raise InvalidSchedule(name, f"zły czas {raw!r}") from err
-    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
 
 
 def _num(raw: dict[str, Any], key: str, where: str) -> float | None:
@@ -181,16 +192,30 @@ def parse_schedule(raw: Any) -> Schedule:
         if slots[i].start < slots[i - 1].end:
             # Sloty zachodzące na siebie to niejednoznaczny plan — całość odrzucona.
             raise InvalidSchedule(f"slots[{i}]", "sloty zachodzą na siebie")
-    fb_raw = raw.get("fallback") or {}
-    if not isinstance(fb_raw, dict):
+    fb_raw = raw.get("fallback")
+    if fb_raw is None:
+        fb_raw = {}
+    elif not isinstance(fb_raw, dict):
+        # Fallback to ostatnia linia obrony — zły kształt nie może cicho zniknąć.
         raise InvalidSchedule("fallback", "musi być obiektem")
     reserve = _num(fb_raw, "soc_reserve", "fallback")
     fallback = Fallback(action=_action(fb_raw, "fallback") if "mode" in fb_raw else Action.SELF_CONSUME,
                         soc_reserve=20.0 if reserve is None else reserve)
+    sid = raw.get("schedule_id")
+    if sid is None:
+        sid = ""
+    elif not isinstance(sid, str):
+        raise InvalidSchedule("schedule_id", f"musi być tekstem, jest {sid!r}")
     gen = raw.get("generated_at")
+    if gen is None or gen == "":
+        generated_at = None
+    elif not isinstance(gen, str):
+        raise InvalidSchedule("generated_at", f"musi być tekstem, jest {gen!r}")
+    else:
+        generated_at = _dt(gen, "generated_at")
     return Schedule(
-        schedule_id=str(raw.get("schedule_id") or ""),
-        generated_at=_dt(gen, "generated_at") if gen else None,
+        schedule_id=sid,
+        generated_at=generated_at,
         slots=tuple(slots),
         fallback=fallback,
         # Brak pola = False. Starsza chmura nie może dać prawa sterowania.

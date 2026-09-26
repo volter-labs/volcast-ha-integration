@@ -51,17 +51,50 @@ def test_missing_control_enabled_is_false():
     {"mode": "discharge", "charge_source": "grid"},
     {"charge_source": "pv", "discharge_purpose": "self"},
     {"export_limit_w": -1}, {"to": "2026-09-01T10:00:00Z"},
+    {"from": "2026-09-01T11:00:00"},                    # bez strefy
+    {"from": "2026-09-01"},                              # sama data
+    {"from": "20260901T110000Z"},                        # zapis zbity
+    {"from": "2026-09-01 11:00:00Z"},                    # separator spacją
 ])
 def test_one_bad_slot_rejects_whole_plan(bad):
-    with pytest.raises(InvalidSchedule):
+    with pytest.raises(InvalidSchedule) as ei:
         parse_schedule(_doc(_s(), _s(**{"from": "2026-09-01T11:00:00Z",
                                         "to": "2026-09-01T12:00:00Z", **bad})))
+    assert ei.value.field.startswith("slots[1]")
+
+
+def test_generated_at_without_timezone_is_rejected():
+    with pytest.raises(InvalidSchedule):
+        parse_schedule(_doc(_s(), generated_at="2026-09-01T09:00:00"))
 
 
 def test_overlapping_slots_are_rejected():
     with pytest.raises(InvalidSchedule):
         parse_schedule(_doc(_s(**{"from": "2026-09-01T10:00:00Z", "to": "2026-09-01T12:00:00Z"}),
                             _s(**{"from": "2026-09-01T11:00:00Z", "to": "2026-09-01T13:00:00Z"})))
+
+
+def test_adjacent_slots_are_accepted():
+    sch = parse_schedule(_doc(_s(**{"from": "2026-09-01T10:00:00Z", "to": "2026-09-01T11:00:00Z"}),
+                              _s(**{"from": "2026-09-01T11:00:00Z", "to": "2026-09-01T12:00:00Z"})))
+    assert len(sch.slots) == 2
+
+
+def test_top_level_fields_fail_closed():
+    with pytest.raises(InvalidSchedule):
+        parse_schedule(_doc(_s(), fallback=[]))
+    with pytest.raises(InvalidSchedule):
+        parse_schedule(_doc(_s(), fallback=0))
+    with pytest.raises(InvalidSchedule):
+        parse_schedule(_doc(_s(), fallback=False))
+    with pytest.raises(InvalidSchedule):
+        parse_schedule(_doc(_s(), schedule_id=123))
+    with pytest.raises(InvalidSchedule):
+        parse_schedule(_doc(_s(), generated_at=0))
+    with pytest.raises(InvalidSchedule):
+        parse_schedule(_doc(_s(), fallback={"mode": "x"}))
+    with pytest.raises(InvalidSchedule):
+        parse_schedule(_doc(_s(), fallback={"soc_reserve": "15"}))
 
 
 def test_slots_sorted_stably_by_start():
