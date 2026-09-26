@@ -53,7 +53,7 @@ def main(src: str, dst: str) -> None:
             })
     Path(dst).write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n")
     blob = Path(dst).read_text()
-    # F13: sam plik nie może już zawierać placeholdera <SN> po podstawieniu, a żaden
+    # Sam plik nie może już zawierać placeholdera <SN> po podstawieniu, a żaden
     # ciąg 8+ cyfr pod rząd (możliwy numer seryjny) nie mógł się prześlizgnąć.
     assert not re.search(r"\d{8,}", blob), "możliwy numer seryjny — sprawdź ręcznie"
 
