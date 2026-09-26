@@ -2,6 +2,14 @@
   "config": {
     "step": {
       "user": {
+        "title": "Set up Volcast",
+        "description": "Connect your Volcast account, or only run a read-only discovery of your installation (nothing is changed and nothing leaves Home Assistant until you share the diagnostics file).",
+        "menu_options": {
+          "api_key": "Connect with API key",
+          "discovery_only": "Discovery only (no account)"
+        }
+      },
+      "api_key": {
         "title": "Connect to Volcast",
         "description": "Enter your Volcast API key. You can find it in the Volcast app under Settings > API Key.",
         "data": {

@@ -26,6 +26,12 @@ CONF_PV_POWER_ENTITY = "pv_power_entity"
 CONF_BATTERY_SOC_ENTITY = "battery_soc_entity"
 CONF_BATTERY_CHARGE_POWER_ENTITY = "battery_charge_power_entity"
 
+# Tryb wpisu — brak `mode` w entry.data (wpisy sprzed tej funkcji, np. 1.7.2) to
+# klasyczny wpis prognozy z kluczem API; "discovery_only" to wpis bez konta,
+# tylko wykrywanie instalacji.
+CONF_MODE = "mode"
+MODE_DISCOVERY_ONLY = "discovery_only"
+
 SERVICE_SYNC_PRODUCTION = "sync_production"
 ATTR_DATE = "date"
 

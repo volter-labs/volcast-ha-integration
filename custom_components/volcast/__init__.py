@@ -26,6 +26,7 @@ from .const import (
     CONF_API_URL,
     CONF_BATTERY_CHARGE_POWER_ENTITY,
     CONF_BATTERY_SOC_ENTITY,
+    CONF_MODE,
     CONF_PV_ENERGY_ENTITY,
     CONF_PV_POWER_ENTITY,
     CONF_UPDATE_INTERVAL,
@@ -33,6 +34,7 @@ from .const import (
     DEFAULT_SUBMIT_URL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
+    MODE_DISCOVERY_ONLY,
     SERVICE_SYNC_PRODUCTION,
 )
 from .coordinator import VolcastCoordinator
@@ -43,6 +45,10 @@ from .reconciler import DailyReconciler
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
+
+# Wpis bez konta (tylko wykrywanie) — bez koordynatora/trackera/reconcilera,
+# więc tylko encje, które czytają raport wykrywania.
+DISCOVERY_ONLY_PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
 
 
 def _async_register_services(hass: HomeAssistant) -> None:
@@ -97,6 +103,9 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Volcast from a config entry."""
+    if entry.data.get(CONF_MODE) == MODE_DISCOVERY_ONLY:
+        return await _async_setup_discovery_only_entry(hass, entry)
+
     api_key = entry.data[CONF_API_KEY]
     api_url = entry.data.get(CONF_API_URL, DEFAULT_API_URL)
     update_interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
@@ -183,6 +192,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    _schedule_discovery(hass, entry, runner)
+
+    return True
+
+
+async def _async_setup_discovery_only_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up an account-less entry — only the read-only installation discovery.
+
+    Bez klucza API nie ma czego pytać o prognozę, więc pomijamy koordynator,
+    tracker produkcji, reconciler i repair issue prognozy — tylko `DiscoveryRunner`
+    i platformy, które wystawiają jego raport (sensor + przycisk ręcznego uruchomienia).
+    """
+    runner = DiscoveryRunner(hass, entry.entry_id, await _integration_version(hass))
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"discovery": runner}
+
+    await hass.config_entries.async_forward_entry_setups(entry, DISCOVERY_ONLY_PLATFORMS)
 
     _schedule_discovery(hass, entry, runner)
 
@@ -319,7 +345,12 @@ def _setup_reconciler(
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+    platforms = (
+        DISCOVERY_ONLY_PLATFORMS
+        if entry.data.get(CONF_MODE) == MODE_DISCOVERY_ONLY
+        else PLATFORMS
+    )
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, platforms):
         entry_data = hass.data[DOMAIN].pop(entry.entry_id)
         tracker = entry_data.get("tracker")
         if tracker is not None:

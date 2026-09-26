@@ -23,6 +23,12 @@ class _FakeConfigFlow:
     def async_show_form(self, *, step_id, data_schema=None, errors=None, **_):
         return {"type": "form", "step_id": step_id, "errors": errors or {}}
 
+    def async_show_menu(self, *, step_id, menu_options, **_):
+        return {"type": "menu", "step_id": step_id, "menu_options": menu_options}
+
+    def async_create_entry(self, *, title=None, data, options=None, **_):
+        return {"type": "create_entry", "title": title, "data": data}
+
     async def async_set_unique_id(self, _):
         return None
 
@@ -71,9 +77,9 @@ def _run(coro):
 def test_malformed_key_short_circuits_before_network(key, expected):
     flow = config_flow.VolcastConfigFlow()
     with patch.object(config_flow, "_validate_api_key", new=AsyncMock()) as validate:
-        result = _run(flow.async_step_user({"api_key": key}))
+        result = _run(flow.async_step_api_key({"api_key": key}))
     assert result["type"] == "form"
-    assert result["step_id"] == "user"
+    assert result["step_id"] == "api_key"
     assert result["errors"] == {"base": expected}
     validate.assert_not_awaited()
 
@@ -84,7 +90,7 @@ def test_well_formed_key_reaches_validation():
     with patch.object(
         config_flow, "_validate_api_key", new=AsyncMock(return_value={"title": "Volcast — X"})
     ) as validate, patch.object(flow, "async_step_production", new=AsyncMock(return_value={"type": "form", "step_id": "production"})):
-        result = _run(flow.async_step_user({"api_key": f"  {good} "}))
+        result = _run(flow.async_step_api_key({"api_key": f"  {good} "}))
     validate.assert_awaited_once()
     assert validate.await_args.args[0] == good  # stripped
     assert result["step_id"] == "production"
@@ -92,7 +98,9 @@ def test_well_formed_key_reaches_validation():
 
 @pytest.mark.parametrize("path", [STRINGS, TRANSLATIONS_EN])
 def test_error_codes_have_user_facing_strings(path):
-    errors = json.loads(path.read_text(encoding="utf-8"))["config"]["error"]
+    config = json.loads(path.read_text(encoding="utf-8"))["config"]
+    errors = config["error"]
     for code in ("masked_key", "invalid_key_format", "invalid_auth", "cannot_connect", "unknown"):
         assert code in errors, f"{path.name} missing config.error.{code}"
     assert "Copy or Share" in errors["masked_key"]
+    assert "api_key" in config["step"], f"{path.name} missing config.step.api_key"
