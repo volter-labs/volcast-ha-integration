@@ -251,7 +251,7 @@ def _ha(v: _V, raw: Any) -> None:
             v.enum(s.get("domain"), f"{ep}.domain", ("sensor", "number", "select", "switch", "time"))
             v.regex(s.get("unique_id_regex"), f"{ep}.unique_id_regex")
             if "transform" in s:
-                v.enum(s["transform"], f"{ep}.transform", ("invert_percent",))
+                v.enum(s["transform"], f"{ep}.transform", ("invert_percent", "negate"))
 
 
 def validate_profile(raw: object) -> list[str]:
@@ -352,12 +352,15 @@ def validate_profile(raw: object) -> list[str]:
 
     base = top.get("baseline")
     if model == "mode_setpoint":
-        b = v.obj(base, "$.baseline", ("mode", "export_limit_enabled"))
+        # Flaga eksportu w stanie bazowym jest opcjonalna: jej brak znaczy „ogranicznik
+        # eksportu zostaje, jak był" (np. limit narzucony przez operatora sieci).
+        b = v.obj(base, "$.baseline", ("mode",), ("export_limit_enabled",))
         if b is not None:
             bm = b.get("mode")
             if not isinstance(bm, str) or bm not in modes:
                 v.err("$.baseline.mode", "musi wskazywać tryb z modes")
-            v.bool_(b.get("export_limit_enabled"), "$.baseline.export_limit_enabled")
+            if "export_limit_enabled" in b:
+                v.bool_(b["export_limit_enabled"], "$.baseline.export_limit_enabled")
     elif model == "time_window":
         b = v.obj(base, "$.baseline", ("intent",))
         if b is not None:

@@ -106,3 +106,17 @@ def test_time_window_ignores_zero_direction_changes():
 
 def test_not_a_dict():
     assert validate_profile([]) == ["$: oczekiwano obiektu"]
+
+
+def test_baseline_export_flag_optional_and_negate_transform_allowed():
+    p = ms_profile()
+    p["baseline"] = {"mode": "auto"}
+    p["ha"]["integrations"][0]["entities"]["grid_power_w"] = {
+        "domain": "sensor", "unique_id_regex": "^x-", "transform": "negate"}
+    assert validate_profile(p) == []
+
+
+def test_baseline_export_flag_when_present_must_be_bool():
+    p = ms_profile()
+    p["baseline"]["export_limit_enabled"] = "yes"
+    assert "$.baseline.export_limit_enabled" in _errs(p)

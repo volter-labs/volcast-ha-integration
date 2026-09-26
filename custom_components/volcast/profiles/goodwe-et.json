@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "id": "goodwe-et",
+  "label": "GoodWe ET/EH/BT/BH (hybrid, ET protocol family)",
+  "status": "verified",
+  "status_note": "Registers and mode semantics measured on GW8KN-ET; HA entity keys pending confirmation.",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {"what": "register map", "ref": "goodwe python library (ET family), cross-checked with recorded frames"},
+    {"what": "mode semantics", "ref": "measurements on GW8KN-ET: standby honours Xset, sell_power covers house then exports Xset"},
+    {"what": "golden vectors", "ref": "tests/golden/goodwe_et"}
+  ],
+  "unit_id": 247,
+  "transports": ["goodwe_udp", "modbus_tcp", "modbus_rtu"],
+  "identify": {
+    "model_register": {"addr": 35011, "type": "ascii", "len": 5},
+    "model_regex": ["^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)"],
+    "registers": {
+      "rated_power_w": {"addr": 35001, "type": "u16"},
+      "serial": {"addr": 35003, "type": "ascii", "len": 8}
+    }
+  },
+  "read": {
+    "soc": {"addr": 37007, "type": "u16"},
+    "battery_temp_c": {"addr": 37003, "type": "i16", "scale": 0.1},
+    "battery_voltage_v": {"addr": 35180, "type": "u16", "scale": 0.1},
+    "battery_current_a": {"addr": 35181, "type": "i16", "scale": 0.1},
+    "battery_power_w": {"addr": 35182, "type": "i32"},
+    "pv_power_w": {"sum": [
+      {"addr": 35105, "type": "u32", "undef": 4294967295},
+      {"addr": 35109, "type": "u32", "undef": 4294967295},
+      {"addr": 35113, "type": "u32", "undef": 4294967295},
+      {"addr": 35117, "type": "u32", "undef": 4294967295}
+    ]},
+    "active_power_w": {"addr": 35140, "type": "i16"},
+    "load_power_w": {"sum": [{"ref": "pv_power_w"}, {"ref": "battery_power_w"}, {"ref": "active_power_w", "sign": -1}]},
+    "pv_energy_total_kwh": {"addr": 35191, "type": "u32", "scale": 0.1},
+    "grid_power_w": {"addr": 36008, "type": "i16", "sign": -1},
+    "grid_export_total_kwh": {"addr": 36015, "type": "f32", "scale": 0.001},
+    "grid_import_total_kwh": {"addr": 36017, "type": "f32", "scale": 0.001},
+    "export_limit_enabled": {"addr": 47509, "type": "u16"},
+    "export_limit_w": {"addr": 47510, "type": "u16"},
+    "mode_value": {"addr": 47511, "type": "u16"},
+    "power_w": {"addr": 47512, "type": "u16"},
+    "soc_min": {"addr": 45356, "type": "u16"}
+  },
+  "write": {
+    "soc_min": {"addr": 45356, "type": "u16", "encode": "percent"},
+    "soc_max": {"addr": 47760, "type": "u16", "encode": "percent"},
+    "power_w": {"addr": 47512, "type": "u16", "encode": "watts"},
+    "export_limit_w": {"addr": 47510, "type": "u16", "encode": "watts"},
+    "export_limit_enabled": {"addr": 47509, "type": "u16", "encode": "bool"},
+    "mode": {"addr": 47511, "type": "u16", "encode": "mode"}
+  },
+  "modes": {
+    "auto": {"value": 1, "direction": "neutral", "ha_option": "auto"},
+    "charge_pv": {"value": 2, "direction": "charge", "ha_option": "charge_pv"},
+    "battery_standby": {"value": 8, "direction": "idle", "ha_option": "battery_standby"},
+    "sell_power": {"value": 10, "direction": "discharge", "ha_option": "sell_power"},
+    "charge_battery": {"value": 11, "direction": "charge", "ha_option": "charge_battery"},
+    "discharge_battery": {"value": 12, "direction": "discharge", "ha_option": "discharge_battery"}
+  },
+  "neutral_mode": "auto",
+  "intents": {
+    "charge_grid": {"mode": "charge_battery", "power": "slot"},
+    "charge_pv": {"mode": "auto", "power": "none"},
+    "discharge_forced": {"mode": "discharge_battery", "power": "slot"},
+    "sell": {"mode": "sell_power", "power": "slot"},
+    "self_consume": {"mode": "auto", "power": "none"},
+    "standby": {"mode": "battery_standby", "power": "zero"}
+  },
+  "baseline": {"mode": "auto"},
+  "write_policy": {
+    "order": ["soc_min", "soc_max", "power_w", "export_limit_w", "export_limit_enabled", "mode"],
+    "min_interval_s": 60,
+    "nvm": true,
+    "max_direction_changes_per_hour": 4,
+    "max_state_age_s": 300
+  },
+  "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
+  "ha": {"integrations": [{
+    "domain": "goodwe",
+    "ems": true,
+    "status": "draft",
+    "entities": {
+      "soc": {"domain": "sensor", "unique_id_regex": "^goodwe-battery_soc-"},
+      "pv_power_w": {"domain": "sensor", "unique_id_regex": "^goodwe-ppv-"},
+      "battery_power_w": {"domain": "sensor", "unique_id_regex": "^goodwe-pbattery1-"},
+      "load_power_w": {"domain": "sensor", "unique_id_regex": "^goodwe-house_consumption-"},
+      "grid_power_w": {"domain": "sensor", "unique_id_regex": "^goodwe-active_power_total-", "transform": "negate"},
+      "battery_temp_c": {"domain": "sensor", "unique_id_regex": "^goodwe-battery_temperature-"},
+      "mode": {"domain": "select", "unique_id_regex": "^goodwe-ems_mode-"},
+      "power_w": {"domain": "number", "unique_id_regex": "^goodwe-ems_power_limit-"},
+      "soc_min": {"domain": "number", "unique_id_regex": "^goodwe-battery_discharge_depth-", "transform": "invert_percent"},
+      "soc_max": {"domain": "number", "unique_id_regex": "^goodwe-soc_upper_limit-"},
+      "export_limit_w": {"domain": "number", "unique_id_regex": "^goodwe-grid_export_limit-"},
+      "export_limit_enabled": {"domain": "switch", "unique_id_regex": "^goodwe-grid_export-"}
+    }
+  }]},
+  "capabilities": {
+    "force_charge_from_grid": true, "sell_from_battery": true, "force_discharge": true,
+    "standby": true, "set_power_w": true, "limit_export": true, "set_soc_floor": true,
+    "set_soc_ceiling": true, "time_windows": 0
+  }
+}
