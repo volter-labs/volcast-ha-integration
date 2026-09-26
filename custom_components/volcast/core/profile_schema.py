@@ -8,6 +8,7 @@ najpierw sprawdzane co do typu.
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -63,7 +64,9 @@ class _V:
         return True
 
     def num(self, v: Any, path: str) -> bool:
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
+        # `json.loads` domyślnie akceptuje literały NaN/Infinity — profil ich nie może
+        # przemycić, bo gasiłyby porównania (np. próg temperatury) bez żadnego błędu.
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
             self.err(path, "oczekiwano liczby")
             return False
         return True
@@ -128,6 +131,7 @@ def _read(v: _V, raw: Any) -> None:
             v.err(path, "nieznany klucz odczytu")
             continue
         if isinstance(spec, dict) and "sum" in spec:
+            v.obj(spec, path, ("sum",))
             terms = spec["sum"]
             if not isinstance(terms, list) or not terms:
                 v.err(f"{path}.sum", "oczekiwano niepustej listy")
@@ -246,7 +250,8 @@ def validate_profile(raw: object) -> list[str]:
     top = v.obj(raw, "$", _TOP_REQ, _TOP_OPT)
     if top is None:
         return v.errors
-    if top.get("schema_version") != 1:
+    sv = top.get("schema_version")
+    if isinstance(sv, bool) or sv != 1:
         v.err("$.schema_version", "obsługiwana wyłącznie wersja 1")
     if not isinstance(top.get("id"), str) or not _ID_RE.match(top["id"]):
         v.err("$.id", "oczekiwano kebab-case, np. goodwe-et")
@@ -283,9 +288,13 @@ def validate_profile(raw: object) -> list[str]:
         else:
             for i, r in enumerate(mr):
                 v.regex(r, f"$.identify.model_regex[{i}]")
-        ident_regs = ident.get("registers") or {}
-        for name, spec in ident_regs.items():
-            _reg(v, spec, f"$.identify.registers.{name}")
+        regs = ident.get("registers", {})
+        if not isinstance(regs, dict):
+            v.err("$.identify.registers", "oczekiwano obiektu")
+        else:
+            ident_regs = regs
+            for name, spec in ident_regs.items():
+                _reg(v, spec, f"$.identify.registers.{name}")
 
     _read(v, top.get("read"))
 
@@ -302,9 +311,10 @@ def validate_profile(raw: object) -> list[str]:
             o = v.obj(m, mp, ("value", "direction", "ha_option"))
             if o is None:
                 continue
-            if v.int_(o.get("value"), f"{mp}.value", 0, 65535) and o["value"] in values:
-                v.err(f"{mp}.value", "wartość trybu powtórzona")
-            values.add(o.get("value"))
+            if v.int_(o.get("value"), f"{mp}.value", 0, 65535):
+                if o["value"] in values:
+                    v.err(f"{mp}.value", "wartość trybu powtórzona")
+                values.add(o["value"])
             v.enum(o.get("direction"), f"{mp}.direction", ("charge", "discharge", "idle", "neutral"))
             v.str_(o.get("ha_option"), f"{mp}.ha_option")
         if "neutral_mode" in top:

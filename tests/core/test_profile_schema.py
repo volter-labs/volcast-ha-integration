@@ -39,14 +39,21 @@ def _errs(p):
     (lambda p: p["capabilities"].pop("standby"), "$.capabilities.standby"),
     (lambda p: p["capabilities"].update(time_windows=6), "$.capabilities.time_windows"),
     (lambda p: p["write"]["power_w"].update(encode="percent"), "$.write.power_w.encode"),
-    # F9: type errors must produce a path error, never crash with TypeError
+    # zły typ zamiast tekstu → błąd ze ścieżką, nigdy TypeError
     (lambda p: p["limits"].update(rated_power_register=["rated_power_w"]), "$.limits.rated_power_register"),
     (lambda p: p["intents"]["sell"].update(mode=["sell_power"]), "$.intents.sell.mode"),
     (lambda p: p.update(neutral_mode=["auto"]), "$.neutral_mode"),
+    (lambda p: p["baseline"].update(mode=["auto"]), "$.baseline.mode"),
     (lambda p: p["read"]["load_power_w"]["sum"].append({"ref": ["pv_power_w"]}),
      "$.read.load_power_w.sum[2].ref"),
     (lambda p: p["write_policy"].update(order=[1, 2, 3, 4, 5]), "$.write_policy.order"),
-    # F11: mode_setpoint requires max_direction_changes_per_hour >= 1
+    (lambda p: p["identify"].update(registers=["x"]), "$.identify.registers"),
+    (lambda p: p["modes"]["auto"].update(value=[1]), "$.modes.auto.value"),
+    (lambda p: p["read"]["pv_power_w"].update(scale=0.1), "$.read.pv_power_w.scale"),
+    # liczby niekończone (NaN/Infinity) nie mogą przejść walidacji
+    (lambda p: p["limits"]["battery_temp_c"].update(min=float("nan")), "$.limits.battery_temp_c.min"),
+    (lambda p: p["write_policy"].update(min_interval_s=float("inf")), "$.write_policy.min_interval_s"),
+    # mode_setpoint wymaga co najmniej 1 zmiany kierunku na godzinę
     (lambda p: p["write_policy"].update(max_direction_changes_per_hour=0),
      "$.write_policy.max_direction_changes_per_hour"),
 ])
@@ -64,8 +71,10 @@ def test_mode_setpoint_errors(mutate, needle):
     (lambda p: p["tou"].update(field_order=["soc", "soc", "power_w", "start"]), "$.tou.field_order"),
     (lambda p: p.pop("tou"), "$.tou"),
     (lambda p: p["write"]["tou_program"]["grid_charge"].pop("bit"), "grid_charge.bit"),
-    # F9: type errors must produce a path error, never crash with TypeError
+    # zły typ zamiast listy → błąd ze ścieżką, nigdy TypeError
     (lambda p: p["tou"].update(field_order="soc,power_w,grid_charge,start"), "$.tou.field_order"),
+    # liczby niekończone (NaN/Infinity) nie mogą przejść walidacji
+    (lambda p: p["tou"].update(soc_tolerance_pp=float("nan")), "$.tou.soc_tolerance_pp"),
 ])
 def test_time_window_errors(mutate, needle):
     p = tw_profile()
@@ -74,7 +83,7 @@ def test_time_window_errors(mutate, needle):
 
 
 def test_time_window_ignores_zero_direction_changes():
-    # F11: max_direction_changes_per_hour == 0 nie jest błędem dla time_window
+    # max_direction_changes_per_hour == 0 nie jest błędem dla time_window
     p = tw_profile()
     assert p["write_policy"]["max_direction_changes_per_hour"] == 0
     assert validate_profile(p) == []
