@@ -3,7 +3,7 @@
   "id": "goodwe-et",
   "label": "GoodWe ET/EH/BT/BH (hybrid, ET protocol family)",
   "status": "verified",
-  "status_note": "Registers and mode semantics measured on GW8KN-ET; HA entity keys pending confirmation.",
+  "status_note": "Registers and mode semantics measured on GW8KN-ET; HA entity keys confirmed on a real installation (core goodwe integration).",
   "control_model": "mode_setpoint",
   "sources": [
     {"what": "register map", "ref": "goodwe python library (ET family), cross-checked with recorded frames"},
@@ -81,7 +81,7 @@
   "ha": {"integrations": [{
     "domain": "goodwe",
     "ems": true,
-    "status": "draft",
+    "status": "verified",
     "entities": {
       "soc": {"domain": "sensor", "unique_id_regex": "^goodwe-battery_soc-"},
       "pv_power_w": {"domain": "sensor", "unique_id_regex": "^goodwe-ppv-"},
