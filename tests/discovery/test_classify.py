@@ -48,6 +48,12 @@ def test_price_entities_by_platform():
     assert [e.entity_id for e in c.price_entities] == ["sensor.nordpool_kwh_pl"]
 
 
+def test_price_entities_recognise_pstryk_aio():
+    ents = [_ent("sensor.pstryk_current_price", "pstryk_aio", entry="p1")]
+    c = classify([], ents, [], {})
+    assert [e.entity_id for e in c.price_entities] == ["sensor.pstryk_current_price"]
+
+
 def test_energy_candidates_prioritise_load_and_cap_at_30():
     ents = [_ent(f"sensor.e{i}", "template", device_class="energy", unit="kWh") for i in range(40)]
     ents.append(_ent("sensor.house_consumption", "template", device_class="energy", unit="kWh"))

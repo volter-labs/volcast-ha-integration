@@ -25,7 +25,7 @@ INVERTER_MANUFACTURERS: tuple[str, ...] = (
     "sigenergy",
 )
 PRICE_PLATFORMS: frozenset[str] = frozenset({
-    "nordpool", "entsoe", "tibber", "octopus_energy", "pstryk", "energyzero",
+    "nordpool", "entsoe", "tibber", "octopus_energy", "pstryk", "pstryk_aio", "energyzero",
     "easyenergy", "amber_electric", "epex_spot", "frank_energie",
 })
 # klucze wpisu konfiguracji, które mogą nieść adres dongla (wszystko inne ignorujemy)

@@ -18,4 +18,4 @@ def days_with_statistics(rows: list[dict], tz_name: str) -> int:
             if start.tzinfo is None:
                 start = start.replace(tzinfo=timezone.utc)
             days.add(start.astimezone(tz).date())
-    return len(days)
+    return min(len(days), HISTORY_WINDOW_DAYS)
