@@ -223,3 +223,81 @@ def test_tou_writes_use_time_service_and_profile_field_order():
         ("tou.1.start", "time", "set_value", {"time": "05:30:00"}),
     ]
     assert unmapped == ["tou.1.power_w"]
+
+
+# --- jednostki encji przy rozpoznaniu i zapisie ---
+# Integracja z HACS wystawia limit eksportu jako W albo % mocy znamionowej — zależnie od
+# falownika, pod TYM SAMYM unique_id. Zapis watów do encji w % otwierałby eksport.
+
+def _u(eid, key, unit):
+    return EntityCandidate(eid, "goodwe", f"goodwe-{key}-{SN}", unit)
+
+
+def test_percent_export_limit_is_incompatible_not_mapped():
+    r = resolve_entities(GW, "goodwe", [_u("number.gw_export_limit", "grid_export_limit", "%")])
+    assert "export_limit_w" not in r.mapped
+    assert r.incompatible["export_limit_w"] == ["number.gw_export_limit"]
+    assert "export_limit_w" not in r.missing
+
+
+def test_watt_export_limit_is_mapped():
+    r = resolve_entities(GW, "goodwe", [_u("number.gw_export_limit", "grid_export_limit", "W")])
+    assert r.mapped["export_limit_w"] == "number.gw_export_limit"
+    assert r.units["export_limit_w"] == "W" and not r.incompatible
+
+
+def test_kilowatt_number_is_mapped_and_write_converted():
+    r = resolve_entities(GW, "goodwe", [_u("number.gw_ems_power", "ems_power_limit", "kW")])
+    assert r.mapped["power_w"] == "number.gw_ems_power"
+    writes, _ = entity_writes(Params(power_w=1500.0), GW, "goodwe", r.mapped, units=r.units)
+    assert writes[0].data == {"value": pytest.approx(1.5)}
+
+
+def test_kilowatt_sensor_still_maps_for_reading():
+    r = resolve_entities(GW, "goodwe", [_u("sensor.gw_pv", "ppv", "kW")])
+    assert r.mapped["pv_power_w"] == "sensor.gw_pv"
+
+
+def test_percent_units_on_percent_keys_and_missing_unit_are_compatible():
+    r = resolve_entities(GW, "goodwe", [
+        _u("number.gw_dod", "battery_discharge_depth", "%"),
+        _u("sensor.gw_soc", "battery_soc", None),
+        _u("sensor.gw_temp", "battery_temperature", "°F"),
+    ])
+    assert set(r.mapped) == {"soc_min", "soc", "battery_temp_c"} and not r.incompatible
+
+
+@pytest.mark.parametrize("key,unit,profile_key", [
+    ("battery_discharge_depth", "W", "soc_min"),
+    ("battery_temperature", "W", "battery_temp_c"),
+    ("ems_mode", "W", "mode"),   # klucz bez wielkości fizycznej, a jednostka podana
+])
+def test_other_incompatible_units(key, unit, profile_key):
+    eid = ("select." if key == "ems_mode" else "number." if key != "battery_temperature"
+           else "sensor.") + "gw_x"
+    r = resolve_entities(GW, "goodwe", [_u(eid, key, unit)])
+    assert profile_key not in r.mapped and profile_key in r.incompatible
+
+
+def test_compatible_candidate_wins_over_incompatible_sibling():
+    r = resolve_entities(GW, "goodwe", [
+        _u("number.gw_export_pct", "grid_export_limit", "%"),
+        _u("number.gw_export_w", "grid_export_limit", "W"),
+    ])
+    assert r.mapped["export_limit_w"] == "number.gw_export_w" and not r.incompatible
+
+
+def test_write_with_incompatible_unit_is_unmapped():
+    writes, unmapped = entity_writes(Params(export_limit_w=500.0), GW, "goodwe",
+                                     {"export_limit_w": "number.x"}, units={"export_limit_w": "%"})
+    assert writes == [] and unmapped == ["export_limit_w"]
+
+
+def test_unknown_mode_is_unmapped_not_keyerror():
+    writes, unmapped = entity_writes(Params(mode="bogus"), GW, "goodwe", {"mode": "select.x"})
+    assert writes == [] and unmapped == ["mode"]
+
+
+def test_state_none_reads_as_none():
+    assert entity_value("soc", None, GW, "goodwe") is None
+    assert entity_value("export_limit_enabled", None, GW, "goodwe") is None

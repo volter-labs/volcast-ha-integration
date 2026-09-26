@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
 from .params import Params
@@ -41,6 +41,7 @@ class EntityCandidate:
     entity_id: str
     platform: str
     unique_id: str
+    unit: str | None = None   # `unit_of_measurement` z rejestru/stanu; None = nieznana
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,9 @@ class ResolveResult:
     mapped: dict[str, str]
     missing: list[str]
     ambiguous: dict[str, list[str]]
+    # pasują po unique_id, ale mają jednostkę, której klucz nie przyjmuje — NIE mapowane
+    incompatible: dict[str, list[str]] = field(default_factory=dict)
+    units: dict[str, str | None] = field(default_factory=dict)   # jednostka zmapowanych encji
 
 
 @dataclass(frozen=True)
@@ -73,22 +77,36 @@ def resolve_entities(profile, integration_domain: str,
     mapped: dict[str, str] = {}
     missing: list[str] = []
     ambiguous: dict[str, list[str]] = {}
+    incompatible: dict[str, list[str]] = {}
+    units: dict[str, str | None] = {}
     for key, spec in ents.items():
         rx = re.compile(spec["unique_id_regex"])
-        hits = sorted(c.entity_id for c in pool
-                      if c.entity_id.split(".", 1)[0] == spec["domain"] and rx.search(c.unique_id))
-        if len(hits) == 1:
-            mapped[key] = hits[0]
-        elif not hits:
-            missing.append(key)
+        hits = [c for c in pool
+                if c.entity_id.split(".", 1)[0] == spec["domain"] and rx.search(c.unique_id)]
+        ok = sorted((c for c in hits if _unit_factor(key, c.unit) is not None),
+                    key=lambda c: c.entity_id)
+        if len(ok) == 1:
+            mapped[key] = ok[0].entity_id
+            units[key] = ok[0].unit
+        elif len(ok) > 1:
+            ambiguous[key] = [c.entity_id for c in ok]
+        elif hits:
+            incompatible[key] = sorted(c.entity_id for c in hits)
         else:
-            ambiguous[key] = hits
-    return ResolveResult(mapped, missing, ambiguous)
+            missing.append(key)
+    return ResolveResult(mapped, missing, ambiguous, incompatible, units)
 
 
 def entity_writes(params: Params, profile, integration_domain: str, mapped: Mapping[str, str],
-                  keys: Iterable[str] | None = None) -> tuple[list[EntityWrite], list[str]]:
-    """Zapisy (w kolejności profilu) i klucze, dla których nie ma zmapowanej encji."""
+                  keys: Iterable[str] | None = None,
+                  units: Mapping[str, str | None] | None = None,
+                  ) -> tuple[list[EntityWrite], list[str]]:
+    """Zapisy (w kolejności profilu) i klucze, dla których nie ma zmapowanej encji.
+
+    `units` (z `ResolveResult.units`) przelicza wartość z jednostki kanonicznej klucza
+    na jednostkę encji (np. W → kW). Encja w jednostce, której nie da się dokładnie
+    przeliczyć (np. limit eksportu w % zamiast W), ląduje w kluczach bez encji.
+    """
     ents = _integration(profile, integration_domain)["entities"]
     wanted = None if keys is None else set(keys)
     writes: list[EntityWrite] = []
@@ -110,6 +128,9 @@ def entity_writes(params: Params, profile, integration_domain: str, mapped: Mapp
         else:
             raw = getattr(params, key)
         if domain == "select":
+            if raw not in profile.modes:
+                unmapped.append(key)   # tryb spoza profilu: nie zgadujemy opcji
+                continue
             writes.append(EntityWrite(key, eid, domain, "select_option",
                                       {"option": profile.modes[raw].ha_option}))
         elif domain == "switch":
@@ -119,10 +140,16 @@ def entity_writes(params: Params, profile, integration_domain: str, mapped: Mapp
             writes.append(EntityWrite(key, eid, domain, "set_value",
                                       {"time": f"{minutes // 60:02d}:{minutes % 60:02d}:00"}))
         else:
+            factor = _unit_factor(ha_key, (units or {}).get(ha_key))
+            if factor is None:
+                unmapped.append(key)
+                continue
             value = float(raw)
             if spec.get("transform") == "invert_percent":
                 # Encja GoodWe to GŁĘBOKOŚĆ rozładowania: próg 20 % = DoD 80 %.
                 value = round(100.0 - value, 1)
+            if factor != 1.0:
+                value = value / factor
             writes.append(EntityWrite(key, eid, domain, "set_value", {"value": value}))
     return writes, unmapped
 
@@ -144,6 +171,23 @@ def _quantity(key: str) -> str | None:
     return None
 
 
+def _unit_factor(key: str, unit: str | None) -> float | None:
+    """Mnożnik jednostka encji → jednostka kanoniczna klucza; None = niezgodna.
+
+    Brak jednostki (None/"") = kanoniczna. Klucz bez wielkości fizycznej (tryb,
+    przełącznik, czas) z podaną jednostką jest niezgodny. Temperatura nie jest
+    liniowa — dla niej 1.0 oznacza tylko „znana jednostka" (przelicza `_to_canonical`).
+    """
+    if not unit:
+        return 1.0
+    quantity = _quantity(key)
+    if quantity is None:
+        return None
+    if quantity == "temperature":
+        return 1.0 if unit in _TEMPERATURE else None
+    return _LINEAR_UNITS[quantity].get(unit)
+
+
 def _to_canonical(key: str, value: float, unit: str | None) -> float | None:
     """Przelicza na jednostkę kanoniczną klucza; nieznana/niezgodna jednostka → None.
 
@@ -151,14 +195,12 @@ def _to_canonical(key: str, value: float, unit: str | None) -> float | None:
     większość integracji. Jednostka podana, ale obca (np. „W" dla SoC) to błąd
     mapowania: lepiej nie mieć odczytu niż podać strażnikowi złą liczbę.
     """
-    quantity = _quantity(key)
-    if quantity is None or not unit:
-        return value
-    if quantity == "temperature":
-        conv = _TEMPERATURE.get(unit)
-        return None if conv is None else conv(value)
-    factor = _LINEAR_UNITS[quantity].get(unit)
-    return None if factor is None else value * factor
+    factor = _unit_factor(key, unit)
+    if factor is None:
+        return None
+    if unit and _quantity(key) == "temperature":
+        return _TEMPERATURE[unit](value)
+    return value * factor
 
 
 def _time_to_minutes(state: str) -> float | None:
@@ -171,7 +213,7 @@ def _time_to_minutes(state: str) -> float | None:
     return float(h * 60 + mi)
 
 
-def entity_value(key: str, state: str, profile, integration_domain: str,
+def entity_value(key: str, state: str | None, profile, integration_domain: str,
                  *, unit: str | None = None) -> float | str | None:
     """Stan encji HA → wartość w konwencji profilu (jak `Params.flatten`/odczyt rejestrów).
 
@@ -180,7 +222,7 @@ def entity_value(key: str, state: str, profile, integration_domain: str,
     trybu z profilu. Cokolwiek nieczytelnego → None (brak odczytu, nie zero).
     """
     spec = _integration(profile, integration_domain)["entities"][key]
-    if state in _UNAVAILABLE:
+    if state is None or state in _UNAVAILABLE:
         return None
     domain = spec["domain"]
     if domain == "select":

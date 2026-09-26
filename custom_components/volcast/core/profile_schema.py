@@ -228,6 +228,27 @@ def _intents(v: _V, raw: Any, model: str, modes: dict) -> None:
                 v.enum(s.get("power"), f"{path}.power", ("slot", "max"))
 
 
+_HA_TOU_DOMAIN = {"start": "time", "grid_charge": "switch", "power_w": "number", "soc": "number"}
+
+
+def _ha_entity_domain(key: str) -> str:
+    """Jedyna dopuszczalna domena encji HA dla klucza profilu.
+
+    Warstwa zapisu wybiera usługę po domenie (select_option / set_value / turn_on…),
+    więc klucz w złej domenie oznaczałby zapis wartości złego typu do falownika.
+    """
+    tou = _HA_TOU_KEY.match(key)
+    if tou:
+        return _HA_TOU_DOMAIN[tou.group(1)]
+    if key == "mode":
+        return "select"
+    if key == "export_limit_enabled":
+        return "switch"
+    if key in WRITE_PARAMS:
+        return "number"
+    return "sensor"
+
+
 def _ha(v: _V, raw: Any) -> None:
     h = v.obj(raw, "$.ha", ("integrations",))
     if h is None or not isinstance(h.get("integrations"), list):
@@ -254,7 +275,10 @@ def _ha(v: _V, raw: Any) -> None:
             s = v.obj(e, ep, ("domain", "unique_id_regex"), ("transform",))
             if s is None:
                 continue
-            v.enum(s.get("domain"), f"{ep}.domain", ("sensor", "number", "select", "switch", "time"))
+            if v.enum(s.get("domain"), f"{ep}.domain", ("sensor", "number", "select", "switch", "time")):
+                want = _ha_entity_domain(key)
+                if s["domain"] != want:
+                    v.err(f"{ep}.domain", f"klucz {key!r} wymaga domeny {want!r}")
             v.regex(s.get("unique_id_regex"), f"{ep}.unique_id_regex")
             if "transform" in s:
                 v.enum(s["transform"], f"{ep}.transform", ("invert_percent", "negate"))

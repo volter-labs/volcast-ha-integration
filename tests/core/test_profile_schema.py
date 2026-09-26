@@ -76,6 +76,25 @@ def _errs(p):
     (lambda p: p["intents"]["standby"].update(power="slot"), "$.intents.standby.power"),
     (lambda p: p["intents"]["self_consume"].update(power="slot"), "$.intents.self_consume.power"),
     (lambda p: p["intents"]["charge_pv"].update(power="slot"), "$.intents.charge_pv.power"),
+    # domena encji HA musi pasować do klucza — inaczej zapis trafia do złej usługi
+    (lambda p: p["ha"]["integrations"][0]["entities"].update(
+        mode={"domain": "number", "unique_id_regex": "x"}), "entities.mode.domain"),
+    (lambda p: p["ha"]["integrations"][0]["entities"].update(
+        power_w={"domain": "select", "unique_id_regex": "x"}), "entities.power_w.domain"),
+    (lambda p: p["ha"]["integrations"][0]["entities"]["soc_min"].update(domain="switch"),
+     "entities.soc_min.domain"),
+    (lambda p: p["ha"]["integrations"][0]["entities"].update(
+        export_limit_enabled={"domain": "number", "unique_id_regex": "x"}),
+     "entities.export_limit_enabled.domain"),
+    (lambda p: p["ha"]["integrations"][0]["entities"]["soc"].update(domain="number"),
+     "entities.soc.domain"),
+    (lambda p: p["ha"]["integrations"][0]["entities"].update(
+        tou_1_start={"domain": "number", "unique_id_regex": "x"}), "entities.tou_1_start.domain"),
+    (lambda p: p["ha"]["integrations"][0]["entities"].update(
+        tou_1_grid_charge={"domain": "select", "unique_id_regex": "x"}),
+     "entities.tou_1_grid_charge.domain"),
+    (lambda p: p["ha"]["integrations"][0]["entities"].update(
+        tou_1_soc={"domain": "time", "unique_id_regex": "x"}), "entities.tou_1_soc.domain"),
 ])
 def test_mode_setpoint_errors(mutate, needle):
     p = ms_profile()
