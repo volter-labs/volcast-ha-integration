@@ -3,7 +3,7 @@ import json
 import pytest
 
 from custom_components.volcast.core.profile import (
-    ProfileError, load_profile, profile_from_dict,
+    ProfileError, builtin_ids, load_builtin, load_profile, profile_from_dict,
 )
 from tests.core.profile_fixtures import ms_profile, tw_profile
 
@@ -47,3 +47,33 @@ def test_bad_json_is_profile_error(tmp_path):
     f.write_text("{", encoding="utf-8")
     with pytest.raises(ProfileError):
         load_profile(f)
+
+
+def test_duplicate_json_key_is_profile_error(tmp_path):
+    good = json.dumps(ms_profile())
+    # ten sam klucz dwa razy na najwyższym poziomie — „ostatni wygrywa" ukryłby błąd
+    dup = good[:-1] + ', "unit_id": 1}'
+    f = tmp_path / "test-ms.json"
+    f.write_text(dup)
+    with pytest.raises(ProfileError, match="unit_id"):
+        load_profile(f)
+
+
+def test_duplicate_nested_json_key_is_profile_error(tmp_path):
+    f = tmp_path / "test-ms.json"
+    f.write_text(json.dumps(ms_profile()).replace(
+        '"neutral_mode": "auto"', '"neutral_mode": "auto", "neutral_mode": "auto"', 1))
+    with pytest.raises(ProfileError, match="neutral_mode"):
+        load_profile(f)
+
+
+@pytest.mark.parametrize("bad", ["../profiles/goodwe-et", "goodwe-et/../goodwe-et", "/etc/passwd",
+                                 "GoodWe-ET", "goodwe_et", "", "goodwe-et.json"])
+def test_load_builtin_rejects_non_id(bad):
+    with pytest.raises(ProfileError, match=r"\$\.id"):
+        load_builtin(bad)
+
+
+def test_builtin_profiles_have_no_duplicate_keys():
+    for pid in builtin_ids():
+        assert load_builtin(pid).id == pid

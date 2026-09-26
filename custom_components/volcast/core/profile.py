@@ -6,6 +6,7 @@ wołać przez `hass.async_add_executor_job`.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -14,6 +15,7 @@ from typing import Any, Mapping
 from .profile_schema import validate_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
+_BUILTIN_ID_RE = re.compile(r"[a-z0-9-]+")
 
 
 class ProfileError(ValueError):
@@ -90,9 +92,20 @@ def profile_from_dict(raw: dict) -> Profile:
     )
 
 
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
+    # Domyślnie `json` bierze ostatnie wystąpienie klucza — w profilu marki to cicha
+    # podmiana nastawy, więc powtórzony klucz jest błędem pliku.
+    out: dict = {}
+    for k, val in pairs:
+        if k in out:
+            raise ValueError(f"powtórzony klucz {k!r}")
+        out[k] = val
+    return out
+
+
 def load_profile(path: Path) -> Profile:
     try:
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        raw = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
     except (OSError, ValueError) as err:
         raise ProfileError([f"{path}: nie da się wczytać ({err})"]) from err
     profile = profile_from_dict(raw)
@@ -106,4 +119,7 @@ def builtin_ids() -> tuple[str, ...]:
 
 
 def load_builtin(profile_id: str) -> Profile:
+    # Id trafia do ścieżki pliku — bez tej kontroli "../x" wyszłoby poza katalog profili.
+    if not isinstance(profile_id, str) or not _BUILTIN_ID_RE.fullmatch(profile_id):
+        raise ProfileError([f"$.id: niedozwolony identyfikator profilu {profile_id!r}"])
     return load_profile(PROFILES_DIR / f"{profile_id}.json")
