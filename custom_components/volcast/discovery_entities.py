@@ -39,7 +39,7 @@ class VolcastDiscoverySensor(SensorEntity):
     # Atrybuty raportu nie trafiają do rekordera — to migawka, nie historia.
     _unrecorded_attributes = frozenset({
         "inverters", "price_platforms", "max_history_days", "loggers", "errors",
-        "schema", "generated_at",
+        "schema", "generated_at", "truncated",
     })
 
     def __init__(self, runner, entry_id: str) -> None:

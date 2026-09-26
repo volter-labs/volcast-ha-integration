@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from custom_components.volcast.core.discovery.models import (
     Classification, DeviceSnap, EntitySnap, InverterFinding, StateSnap)
 from custom_components.volcast.core.discovery.network import LoggerReply, NetworkProbeResult
@@ -390,3 +392,44 @@ def test_ha_vocabulary_in_device_class_and_state_class_unchanged():
     e = r["inverters"][0]["entities"][0]
     assert (e["device_class"], e["state_class"]) == ("energy", "total_increasing")
     assert r["energy_sensors"][0]["state_class"] == "total_increasing"
+
+
+# --- atrybuty sensora zawsze <= 4096 bajtów ---
+
+def _big_report(n_inv=5, n_models=30, text=200, n_errors=5, n_prices=50):
+    devs = [{"model": f"M{j}-" + "x" * text} for j in range(n_models)]
+    inv = {"domain": "d" * text, "brand_hint": "b" * text, "host": "h" * text,
+           "devices": devs, "entities": [{}] * 3}
+    return {
+        "schema": 1, "generated_at": "g" * text, "inverters": [dict(inv) for _ in range(n_inv)],
+        "price_entities": [{"platform": f"p{i}" + "y" * text} for i in range(n_prices)],
+        "energy_sensors": [{"days_of_statistics": 7}],
+        "network": {"udp_48899": {"sent": True, "replies": []}},
+        "errors": ["e" * 2049] * n_errors,
+    }
+
+
+@pytest.mark.parametrize("kw", [
+    {}, {"text": 5000}, {"n_inv": 50, "n_models": 500}, {"n_errors": 500},
+    {"n_prices": 5000, "text": 2000}, {"text": 20000, "n_models": 100},
+])
+def test_compact_attributes_never_exceed_4096_bytes(kw):
+    attrs = compact_attributes(_big_report(**kw))
+    assert len(json.dumps(attrs).encode()) <= 4096
+    assert attrs["schema"] == 1
+
+
+def test_compact_attributes_caps_models_and_text():
+    attrs = compact_attributes(_big_report())
+    inv = attrs["inverters"][0]
+    assert len(inv["models"]) <= 5
+    assert all(len(m) <= 64 for m in inv["models"])
+    assert len(inv["host"]) <= 64 and len(inv["brand_hint"]) <= 64
+
+
+def test_compact_attributes_keep_everything_for_normal_report():
+    r = _report()
+    attrs = compact_attributes(r)
+    assert attrs["inverters"][0]["models"] == ["SUN-10K-SG04LP3-EU"]
+    assert attrs["inverters"][0]["host"] == "192.168.1.50"
+    assert "truncated" not in attrs

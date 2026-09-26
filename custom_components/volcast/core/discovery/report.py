@@ -327,17 +327,51 @@ def summarize(report: dict) -> str:
     return f"{inv} · {price}{hist}{net}"[:255]
 
 
+# Atrybuty stanu sensora: twardy limit rozmiaru (HA ostrzega o dużych atrybutach, a
+# każda zmiana stanu przenosi je przez szynę zdarzeń). Pełny raport jest w diagnostyce.
+_ATTR_LIMIT = 4096
+_ATTR_TEXT = 64
+_ATTR_ERROR_TEXT = 256
+_ATTR_INVERTERS = 5
+_ATTR_MODELS = 5
+_ATTR_PLATFORMS = 10
+
+
+def _cut(v, n: int = _ATTR_TEXT):
+    return v[:n] if isinstance(v, str) else v
+
+
+def _attr_size(out: dict) -> int:
+    # ensure_ascii (domyślne) zawyża rozmiar znaków spoza ASCII — bezpieczne oszacowanie
+    return len(json.dumps(out, default=str))
+
+
 def compact_attributes(report: dict) -> dict:
+    """Skrót raportu do atrybutów sensora — zawsze najwyżej `_ATTR_LIMIT` bajtów JSON."""
     out = {
-        "schema": report["schema"], "generated_at": report["generated_at"],
-        "inverters": [{"domain": i["domain"], "brand_hint": i["brand_hint"], "host": i["host"],
-                       "models": sorted({d["model"] for d in i["devices"] if d.get("model")}),
-                       "entity_count": len(i["entities"])} for i in report["inverters"]][:5],
-        "price_platforms": sorted({p["platform"] for p in report["price_entities"]}),
-        "max_history_days": max([s["days_of_statistics"] or 0 for s in report["energy_sensors"]] or [0]),
+        "schema": report.get("schema"), "generated_at": _cut(report.get("generated_at")),
+        "inverters": [{
+            "domain": _cut(i.get("domain")), "brand_hint": _cut(i.get("brand_hint")),
+            "host": _cut(i.get("host")),
+            "models": sorted({_cut(str(d["model"])) for d in i.get("devices") or []
+                              if d.get("model")})[:_ATTR_MODELS],
+            "entity_count": len(i.get("entities") or []),
+        } for i in (report.get("inverters") or [])[:_ATTR_INVERTERS]],
+        "price_platforms": sorted({_cut(str(p.get("platform")))
+                                   for p in report.get("price_entities") or []})[:_ATTR_PLATFORMS],
+        "max_history_days": max([s.get("days_of_statistics") or 0
+                                 for s in report.get("energy_sensors") or []] or [0]),
         "loggers": len(((report.get("network") or {}).get("udp_48899") or {}).get("replies") or []),
-        "errors": report["errors"][:5],
+        "errors": [_cut(str(e), _ATTR_ERROR_TEXT) for e in (report.get("errors") or [])[:5]],
     }
-    while len(json.dumps(out)) > 4096 and out["errors"]:
+    while _attr_size(out) > _ATTR_LIMIT and out["errors"]:
         out["errors"].pop()
+    if _attr_size(out) > _ATTR_LIMIT:
+        for inv in out["inverters"]:
+            inv.pop("models", None)
+    while _attr_size(out) > _ATTR_LIMIT and out["inverters"]:
+        out["inverters"].pop()
+    if _attr_size(out) > _ATTR_LIMIT:
+        out = {"schema": _cut(report.get("schema")),
+               "generated_at": _cut(report.get("generated_at")), "truncated": True}
     return out

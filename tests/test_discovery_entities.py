@@ -43,7 +43,7 @@ def test_sensor_identity_and_recorder_exclusions():
     assert s._attr_should_poll is False
     assert s._unrecorded_attributes == frozenset({
         "inverters", "price_platforms", "max_history_days", "loggers", "errors",
-        "schema", "generated_at"})
+        "schema", "generated_at", "truncated"})
     # ta sama karta urządzenia co encje prognozy
     assert s._attr_device_info["identifiers"] == {(DOMAIN, "e1")}
 
@@ -95,3 +95,14 @@ def test_entity_names_translated(path):
     entity = json.loads((base / path).read_text(encoding="utf-8"))["entity"]
     assert entity["sensor"]["discovery"]["name"] == "Installation discovery"
     assert entity["button"]["run_discovery"]["name"] == "Run discovery"
+
+
+def test_sensor_attributes_bounded_for_adversarial_report():
+    devs = [{"model": f"Model-{j}-" + "x" * 300} for j in range(30)]
+    inv = {"domain": "solarman", "brand_hint": "Deye", "host": "h" * 500,
+           "devices": devs, "entities": [{}] * 10}
+    report = dict(REPORT, inverters=[dict(inv) for _ in range(5)],
+                  errors=["e" * 2049] * 5)
+    s = VolcastDiscoverySensor(SimpleNamespace(report=report), "e1")
+    assert len(json.dumps(s.extra_state_attributes).encode()) <= 4096
+    assert set(s.extra_state_attributes) <= s._unrecorded_attributes
