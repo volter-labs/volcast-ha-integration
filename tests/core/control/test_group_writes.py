@@ -564,8 +564,176 @@ def test_ambiguous_restore_failure_is_not_trusted_without_reading():
     mem = ControlMemory.for_profile(GW)
     _, rep = tick(dev, mem, schedule(mode="idle"), 60.0)
     assert rep.restore_failed == ["power_w"] and dev.pair() == ("sell_power", 3000.0)
-    assert "power_w" not in mem.last_written
+    assert "power_w" in mem.uncertain
     dev.fail = {}
     d, _ = tick(dev, mem, schedule(mode="idle"), 400.0, hide=("mode", "power_w"))
     assert [w.key for w in d.writes] == ["power_w", "mode"]
     assert dev.pair() == ("battery_standby", 0.0)
+
+
+# ── Klucze niepewne po ERROR ──
+
+class Scripted(Device):
+    """Wynik zapisu z listy per klucz: 'ok', 'landed' (doszedł, ERROR), 'error', 'denied'."""
+
+    def __init__(self, *a, script=None, **k):
+        super().__init__(*a, **k)
+        self.script = {key: list(v) for key, v in (script or {}).items()}
+
+    def write(self, w):
+        step = self.script.get(w.key, []).pop(0) if self.script.get(w.key) else "ok"
+        if step == "error":
+            return ERROR
+        if step == "denied":
+            return DENIED
+        super().write(w)
+        return ERROR if step == "landed" else OK
+
+
+def test_stale_memory_never_restores_standby_with_power():
+    # sprzedaż 3000 (nasz zapis) → postój: moc 0 dochodzi z ERROR, potem tryb dochodzi
+    # z ERROR, a w cyklu bez odczytów tryb zostaje odrzucony.
+    dev = Scripted(script={"power_w": ["ok", "landed"], "mode": ["ok", "landed", "denied"]})
+    mem = ControlMemory.for_profile(GW)
+    sell, idle = schedule(mode="discharge", discharge_purpose="sell", power_w=3000), schedule(mode="idle")
+    tick(dev, mem, sell, 0.0)
+    assert dev.pair() == ("sell_power", 3000.0)
+    tick(dev, mem, idle, 60.0)
+    assert dev.pair() == ("sell_power", 0.0) and "power_w" in mem.uncertain
+    tick(dev, mem, idle, 120.0)
+    assert dev.pair() == ("battery_standby", 0.0) and "mode" in mem.uncertain
+    tick(dev, mem, idle, 180.0, hide=("mode", "power_w"))
+    assert not _standby_charging(dev)
+
+
+def test_reading_that_clears_doubt_is_the_previous_value():
+    # Po odczycie 0 W stary zapis 3000 W nie może ustawić kolejności „moc najpierw".
+    dev = Scripted(script={"power_w": ["ok", "landed"], "mode": ["ok", "ok", "denied"]})
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 0.0)
+    tick(dev, mem, schedule(mode="idle"), 60.0)                    # moc 0 doszła z ERROR
+    tick(dev, mem, schedule(mode="idle"), 120.0)                   # odczyt 0 W; tryb postoju OK
+    assert dev.pair() == ("battery_standby", 0.0) and "power_w" not in mem.uncertain
+    assert mem.last_written["power_w"] == 3000.0                   # zapis nasz, stan inny
+    d, _ = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=1000), 180.0,
+                hide=("power_w",))
+    assert [w.key for w in d.writes][-2:] == ["mode", "power_w"]  # moc rośnie z 0: tryb najpierw
+    assert not _standby_charging(dev)
+
+
+def test_landed_error_value_is_rewritten_without_reading():
+    # Moc 3000 dochodzi z ERROR; plan wraca do 2000, odczytów brak → 2000 jedzie ponownie.
+    dev = Scripted(script={"power_w": ["ok", "landed"]})
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=2000), 0.0)
+    assert dev.pair() == ("sell_power", 2000.0)
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 60.0)
+    assert dev.pair() == ("sell_power", 3000.0) and "power_w" in mem.uncertain
+    d, _ = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=2000), 120.0,
+                hide=("mode", "power_w"))
+    assert [w.key for w in d.writes] == ["power_w"] and dev.pair() == ("sell_power", 2000.0)
+    assert "power_w" not in mem.uncertain
+
+
+def test_uncertain_only_after_error_and_cleared_by_reading():
+    dev = Scripted(script={"power_w": ["denied"]})
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 0.0)
+    assert mem.uncertain == set()                                  # DENIED: na pewno nie doszło
+    dev.script = {"power_w": ["error"]}
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 400.0,
+         hide=("power_w",))
+    assert "power_w" in mem.uncertain
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 410.0)
+    assert "power_w" not in mem.uncertain                          # odczyt rozstrzyga
+
+
+def test_failed_restore_keeps_write_interval():
+    # moc 0 zapisana, tryb odrzucony, cofnięcie mocy ERROR — 5 s później plan się zmienia,
+    # urządzenie czytelne: moc nie jedzie ponownie przed upływem interwału I-6.
+    dev = Scripted(mode="sell_power", power=3000.0, script={"power_w": ["ok", "error"], "mode": ["denied"]})
+    mem = ControlMemory.for_profile(GW)
+    _, rep = tick(dev, mem, schedule(mode="idle"), 60.0)
+    assert rep.restore_failed == ["power_w"] and rep.ambiguous == ["mode", "power_w"][1:]
+    d, _ = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=2000), 65.0)
+    assert "power_w" not in [w.key for w in d.writes]
+
+
+def test_ambiguous_mode_and_mode_restore_count_for_direction_budget():
+    dev = Scripted(script={"mode": ["ok", "ok", "landed"], "power_w": ["ok", "denied"]})
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=1500), 0.0)
+    # sprzedaż 3000: tryb najpierw (OK), moc odrzucona, cofnięcie trybu dochodzi z ERROR
+    _, rep = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 60.0)
+    assert rep.restore_failed == ["mode"] and "mode" in rep.ambiguous
+    assert len(mem.limiter._changes) == 2                          # tam i (być może) z powrotem
+
+
+def test_async_twin_raise_is_ambiguous():
+    ws = [W("power_w", {"v": 0}), W("mode", {"v": "battery_standby"})]
+    write, calls = _writer({"mode": "raise"})
+
+    async def awrite(w):
+        return write(w)
+
+    rep = asyncio.run(async_run_group_writes(ws, awrite, restore={"power_w": W("power_w", {"v": 3000})}))
+    assert [c[0] for c in calls] == ["power_w", "mode"] and rep.restore_held == ["power_w"]
+    assert rep.ambiguous == ["mode"]
+
+
+def test_mode_first_round_trip_needs_budget_for_two_changes():
+    dev = Device(mode="charge_battery", power=1500.0)
+    mem = ControlMemory.for_profile(GW)
+    for i, direction in enumerate(["discharge", "charge", "discharge", "charge"]):
+        mem.limiter.record(direction, 10.0 * i)             # 3 zmiany w oknie, bieżące: ładowanie
+    assert len(mem.limiter._changes) == 3
+    sell = schedule(mode="discharge", discharge_purpose="sell", power_w=3000)
+    d, _ = tick(dev, mem, sell, 100.0)                       # tryb najpierw: możliwe tam i z powrotem
+    assert "I-8" in d.notes and dev.pair() == ("charge_battery", 1500.0)
+    d2, _ = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=1000), 100.0)
+    assert "I-8" not in d2.notes and dev.pair() == ("sell_power", 1000.0)   # moc najpierw: jedna zmiana
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_fuzz_landed_errors_keep_direction_budget(seed):
+    rng = random.Random(9000 + seed)
+    dev = Landing(rng=rng, fail_rate=0.1, landed_rate=0.2)
+    mem = ControlMemory.for_profile(GW)
+    t, sched, flips, last = 0.0, schedule(**SHAPES[0]), [], None
+    for _ in range(200):
+        t += rng.choice([5.0, 30.0, 60.0, 90.0])
+        if rng.random() < 0.3:
+            sched = schedule(**rng.choice(SHAPES))
+        hide = ("mode", "power_w") if rng.random() < 0.3 else ()
+        tick(dev, mem, sched, t, hide=hide)
+        assert not _standby_charging(dev), (seed, t, dev.pair())
+        direction = GW.modes[dev.state["mode"]].direction
+        if direction in ("charge", "discharge"):
+            if last is not None and direction != last:
+                flips.append(t)
+            last = direction
+        assert sum(1 for x in flips if t - 3600.0 < x <= t) <= 4, (seed, t, flips)
+
+
+def test_neutral_round_trip_leaves_direction_unknown():
+    # auto 1000 W → ładowanie 3000: tryb najpierw, moc odrzucona, powrót do auto.
+    # Ostatni kierunek na falowniku to znów ten sprzed próby — nie „ładowanie".
+    dev = Scripted(mode="auto", power=1000.0, script={"power_w": ["denied"]})
+    mem = ControlMemory.for_profile(GW)
+    mem.limiter.record("discharge", 0.0)
+    _, rep = tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=3000), 60.0)
+    assert rep.restored == ["mode"] and dev.pair() == ("auto", 1000.0)
+    changes = len(mem.limiter._changes)
+    mem.limiter.record("charge", 70.0)                       # prawdziwa zmiana z rozładowania
+    assert len(mem.limiter._changes) == changes + 1
+
+
+def test_ambiguous_mode_write_leaves_direction_unknown():
+    dev = Scripted(script={"mode": ["ok", "error"]})
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=2000), 0.0)
+    _, rep = tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=3000), 60.0)
+    assert rep.ambiguous == ["mode"] and dev.state["mode"] == "sell_power"
+    changes = len(mem.limiter._changes)
+    mem.limiter.record("charge", 70.0)                       # mogło już być ładowanie — liczy się
+    assert len(mem.limiter._changes) == changes + 1

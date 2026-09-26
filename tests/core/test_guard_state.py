@@ -35,11 +35,21 @@ def test_pending_is_changed_value_inside_interval():
     assert t.pending(changed, -5.0) == set()               # zegar cofnięty = interwał minął (jak filter)
 
 
-def test_forget_makes_key_writable_again():
+def test_mark_unknown_drops_value_but_keeps_interval():
     t = WriteThrottle(60)
     t.record(P, P.keys(), 0.0)
-    t.forget(["power_w", "unknown_key"])
-    assert t.filter(P, 1.0) == {"power_w"} and t.pending({**P, "power_w": 1.0}, 1.0) == set()
+    t.mark_unknown(["power_w"], 10.0)
+    assert t.filter(P, 30.0) == set() and t.pending(P, 30.0) == {"power_w"}   # I-6 od próby
+    assert t.filter(P, 70.0) == {"power_w"}                                    # niezmieniony? nie wiadomo
+
+
+def test_reconcile_adopts_reading_for_unknown_value():
+    t = WriteThrottle(60)
+    t.mark_unknown(["power_w", "mode"], 10.0)
+    assert t.reconcile({"power_w": 2000.0, "mode": "sell_power"}) == 0
+    plan = {"mode": "sell_power", "power_w": 2500.0}
+    assert t.filter(plan, 70.0) == {"power_w"}        # tryb zgodny z odczytem, moc nie
+    assert t.pending(plan, 30.0) == {"power_w"}       # interwał liczony od próby
 
 
 def test_failed_write_does_not_move_memory():
@@ -234,3 +244,23 @@ def test_unknown_direction_is_rejected(bad):
         d.allows(bad, 0.0)
     with pytest.raises(ValueError):
         d.record(bad, 0.0)
+
+
+def test_round_trip_needs_room_for_two_changes():
+    d = DirectionLimiter(4)
+    d.record("charge", 0.0)
+    for i, direction in enumerate(["discharge", "charge", "discharge"]):
+        d.record(direction, 10.0 * (i + 1))                 # 3 zmiany w oknie
+    assert d.allows("charge", 100.0) is True
+    assert d.allows("charge", 100.0, round_trip=True) is False
+    assert d.allows("discharge", 100.0, round_trip=True) is True    # ten sam kierunek: tylko powrót
+
+
+def test_unknown_direction_makes_any_next_change_count():
+    d = DirectionLimiter(4)
+    d.record("discharge", 0.0)
+    d.mark_unknown()
+    d.record("discharge", 10.0)                             # mogło być ładowanie — liczy się
+    d.mark_unknown()
+    d.record("charge", 20.0)
+    assert d.allows("discharge", 30.0) is True and len(d._changes) == 2

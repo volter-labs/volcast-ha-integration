@@ -13,6 +13,7 @@ from custom_components.volcast.core.control.cycle import (BLOCKED, DRY_RUN, ERRO
 from custom_components.volcast.core.profile import load_builtin, profile_from_dict
 from custom_components.volcast.core.slot import parse_schedule
 from custom_components.volcast.core.write_sequence import WriteReport
+from custom_components.volcast.core.control.group_writes import GroupReport
 
 from ..profile_fixtures import tw_profile
 
@@ -334,8 +335,14 @@ def test_commit_records_direction_only_when_mode_attempted():
     assert calls == [] and mem.last_written == {"power_w": 2000.0}
     commit(d, WriteReport(written=["power_w", "export_limit_enabled", "mode"]), mem, 1000.0)
     assert calls == ["discharge"]
-    commit(d, WriteReport(written=["power_w", "export_limit_enabled"], failed=["mode"]), mem, 1000.0)
-    assert calls == ["discharge"]                  # tryb nie doszedł — kierunek się nie zmienił
+    refused = GroupReport(written=["power_w", "export_limit_enabled"], failed=["mode"], ambiguous=[])
+    commit(d, refused, mem, 1000.0)
+    assert calls == ["discharge"]                  # tryb odrzucony na pewno — kierunek bez zmiany
+    maybe = GroupReport(written=["power_w", "export_limit_enabled"], failed=["mode"], ambiguous=["mode"])
+    commit(d, maybe, mem, 1000.0)
+    assert calls == ["discharge", "discharge"]     # ERROR: tryb mógł dojść — liczy się do I-8
+    commit(d, WriteReport(written=["power_w"], failed=["mode"]), mem, 1000.0)
+    assert calls == ["discharge"] * 3               # raport bez podziału wyników = niepewny
 
 
 def test_commit_ignores_non_write_decision():
@@ -490,7 +497,7 @@ def test_power_decrease_goes_power_first_with_restore_from_device():
     assert d.restore["mode"].data == {"option": "sell_power"}
 
 
-def test_restore_falls_back_to_last_written_without_reading():
+def test_restore_falls_back_to_memory_without_reading():
     d, mem = run()
     commit(d, _written(d), mem, 1000.0)
     d2, _ = run(mem, schedule=plan(slot("10:00", "11:00", **STANDBY)), now_mono=1100.0)

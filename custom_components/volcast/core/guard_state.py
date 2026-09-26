@@ -11,8 +11,11 @@ from typing import Iterable, Mapping
 
 _DIRECTIONAL = ("charge", "discharge")
 _DIRECTIONS = _DIRECTIONAL + ("idle", "neutral")
+_UNKNOWN_DIRECTION = "?"
 # Rejestry trzymają liczby całkowite: różnica mniejsza niż kwant jest nieobserwowalna.
 _REGISTER_QUANTUM = 1.0
+# Wartość po próbie zapisu o nieznanym skutku: różna od każdej nastawy.
+_UNKNOWN = object()
 
 
 class WriteThrottle:
@@ -66,15 +69,26 @@ class WriteThrottle:
                 self._value[key] = flat[key]
                 self._at[key] = now_s
 
-    def forget(self, keys: Iterable[str]) -> None:
-        """Kasuje pamięć kluczy o nieznanym stanie (zapis mógł dojść albo nie).
+    def known(self, key: str) -> float | str | None:
+        """Wartość, którą według pamięci ma falownik: nasz zapis albo przyjęty odczyt.
 
-        Pamięć nie może wtedy udawać, że falownik ma którąkolwiek wartość — bez odczytu
-        klucz musi zostać uznany za niezgodny i zapisany ponownie.
+        None, gdy pamięć jej nie zna (nigdy nie zapisano, rozjazd z odczytem skasował
+        wpis albo wynik zapisu jest nieznany).
+        """
+        value = self._value.get(key)
+        return None if value is _UNKNOWN else value
+
+    def mark_unknown(self, keys: Iterable[str], now_s: float) -> None:
+        """Wartość kluczy nieznana (zapis mógł dojść albo nie), odstęp I-6 zostaje.
+
+        Pamięć nie może udawać, że falownik ma którąkolwiek wartość: klucz nie jest
+        „niezmieniony", więc wróci do zapisu — ale nie wcześniej niż po interwale od
+        tej próby, bo mogła trafić do NVM. Odczyt z urządzenia (`reconcile`) przywraca
+        wartość, zachowując czas.
         """
         for key in keys:
-            self._value.pop(key, None)
-            self._at.pop(key, None)
+            self._value[key] = _UNKNOWN
+            self._at[key] = now_s
 
     def reconcile(self, actual: Mapping[str, float | str]) -> int:
         """Kasuje pamięć tam, gdzie falownik ma co innego (zmiana z zewnątrz).
@@ -94,6 +108,9 @@ class WriteThrottle:
             if key not in self._value:
                 continue
             mine = self._value[key]
+            if mine is _UNKNOWN:
+                self._value[key] = real          # odczyt rozstrzyga; czas próby zostaje
+                continue
             if isinstance(mine, str) != isinstance(real, str):
                 raise TypeError(
                     f"reconcile({key!r}): {type(real).__name__} zamiast "
@@ -148,14 +165,28 @@ class DirectionLimiter:
         # Pierwsze ustawienie nie jest ZMIANĄ — nie ma względem czego.
         return direction in _DIRECTIONAL and self._current is not None and self._current != direction
 
-    def allows(self, direction: str, now_s: float) -> bool:
+    def allows(self, direction: str, now_s: float, *, round_trip: bool = False) -> bool:
+        """Czy zmiana kierunku mieści się w budżecie.
+
+        `round_trip=True`: zapis może zakończyć się powrotem do obecnego kierunku
+        (cofnięcie trybu) — budżet musi pomieścić obie zmiany, tam i z powrotem.
+        """
         self._check(direction)
-        if not self._is_change(direction):
+        needed = (1 if self._is_change(direction) else 0) + (1 if round_trip else 0)
+        if needed == 0:
             return True
         boundary = now_s - self._window
         # Granica włącznie: wpis sprzed dokładnie `window_s` jeszcze się liczy.
         in_window = sum(1 for t in self._changes if boundary <= t <= now_s)
-        return in_window < self._max
+        return in_window + needed <= self._max
+
+    def mark_unknown(self) -> None:
+        """Kierunek na falowniku nieznany (zapis trybu mógł dojść albo nie).
+
+        Następny zapis kierunkowy liczy się wtedy jako zmiana, w którąkolwiek stronę —
+        inaczej zmiana, która naprawdę zaszła, mogłaby ominąć budżet.
+        """
+        self._current = _UNKNOWN_DIRECTION
 
     def record(self, direction: str, now_s: float) -> None:
         """Zapisuje kierunek wykonanego cyklu.

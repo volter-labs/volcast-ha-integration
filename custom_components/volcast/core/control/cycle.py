@@ -50,6 +50,7 @@ WRITE, DRY_RUN, IDLE, BLOCKED, ERROR = "write", "dry_run", "idle", "blocked", "e
 
 # Tryb i nastawa, która nadaje mu znaczenie — zapisywane razem albo wcale.
 _MODE_GROUP = frozenset({"mode", "power_w"})
+_DIRECTIONAL = ("charge", "discharge")
 _NO_READING = ("unavailable", "unknown", "")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
 _QUANTUM = 1.0
@@ -66,6 +67,9 @@ class ControlMemory:
     unsupported: set[str] = field(default_factory=set)
     paused_until: float | None = None
     last_written: dict[str, float | str] = field(default_factory=dict)
+    # klucze o nieznanym stanie po niejednoznacznym błędzie zapisu; znikają po udanym
+    # zapisie albo odczycie. Dla nich pamięć nie jest poprzednią wartością.
+    uncertain: set[str] = field(default_factory=set)
     # odwrót grupy tryb+moc po cofnięciu (zegar monotoniczny); 0 = brak odwrotu
     group_backoff_s: float = 0.0
     group_backoff_until: float | None = None
@@ -270,6 +274,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     # Zły typ odczytu rzuca TypeError po drodze (pamięć wcześniejszych kluczy mogła już
     # zniknąć) — cykl kończy się bez zapisów, następny też, więc to bezpieczne.
     memory.throttle.reconcile(device)
+    # Odczyt rozstrzyga niepewność — także kluczy spoza bieżącego planu.
+    memory.uncertain -= set(_device_view(ents.readings, dict.fromkeys(memory.uncertain), profile, ents))
     mode_now = device.get("mode")
     if isinstance(mode_now, str) and mode_now.startswith("?"):
         # Ktoś inny ustawił tryb, którego profil nie zna — nie walczymy i nie cofamy do
@@ -293,7 +299,15 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         allowed.discard("mode")
         notes.append("mode_held")
     direction = profile.mode_direction(params.mode) if params.mode is not None else None
-    if "mode" in allowed and direction is not None and not memory.limiter.allows(direction, now_mono):
+    prev_mode, prev_power = _previous(device, profile, memory)
+    # Tryb przed mocą może skończyć się cofnięciem trybu: wtedy budżet I-8 musi
+    # pomieścić dwie zmiany kierunku (tam i z powrotem), nie jedną.
+    round_trip = (direction in _DIRECTIONAL and "power_w" in need and params.power_w is not None
+                  and not power_first(params.power_w, prev_power) and prev_mode is not None
+                  and profile.mode_direction(prev_mode) in _DIRECTIONAL
+                  and profile.mode_direction(prev_mode) != direction)
+    if "mode" in allowed and direction is not None \
+            and not memory.limiter.allows(direction, now_mono, round_trip=round_trip):
         allowed.discard("mode")
         notes.append("I-8")
     # Odwrót dotyczy tylko zmiany OBU członków (tylko taka może skończyć się cofnięciem);
@@ -323,13 +337,29 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
                            if "mode" in restore_flat else None), **common)
 
 
+def _previous(device: Mapping[str, float | str], profile, memory: ControlMemory
+              ) -> tuple[str | None, float | None]:
+    """Poprzedni tryb i moc: odczyt, a bez odczytu — pamięć throttlingu (nasz zapis albo
+    przyjęty odczyt). `last_written` się nie nadaje — po odczycie, który rozstrzygnął
+    niepewność, zostaje przy naszym starym zapisie. Klucz niepewny nie ma poprzedniej wartości."""
+    def remembered(key: str):
+        return None if key in memory.uncertain else memory.throttle.known(key)
+
+    prev_power = device.get("power_w")
+    if not isinstance(prev_power, float):
+        prev_power = remembered("power_w")
+        prev_power = prev_power if isinstance(prev_power, float) else None
+    prev_mode = device.get("mode") if "mode" in device else remembered("mode")
+    return (prev_mode if prev_mode in profile.modes else None), prev_power
+
+
 def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str, float | str],
                   profile, ents: EntityContext, memory: ControlMemory
                   ) -> tuple[list[EntityWrite], dict[str, EntityWrite], dict[str, float | str],
                              tuple[str, ...]]:
     """Grupa na końcu, w bezpiecznej kolejności, i zapisy cofające do stanu z urządzenia.
 
-    Poprzednia wartość: odczyt z urządzenia, a bez żadnego odczytu — nasz ostatni zapis
+    Poprzednia wartość: odczyt z urządzenia, a bez żadnego odczytu — pamięć throttlingu
     (obcego trybu tu nie ma — cykl zatrzymał się wcześniej). Cofnięcie dopasowane do
     zakresu encji (niedopasowalne = brak cofnięcia); nigdy do trybu postoju przy mocy > 0
     — to odtworzyłoby ładowanie z sieci.
@@ -339,12 +369,7 @@ def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str
     ponad poprzednią moc: tryb (pierwszy) — gdy wracamy do trybu innego niż postój
     i ładowanie; moc (pierwsza) — gdy planowany tryb nie jest postojem ani ładowaniem.
     """
-    prev_power = device.get("power_w")
-    if not isinstance(prev_power, float):
-        prev_power = memory.last_written.get("power_w")
-        prev_power = prev_power if isinstance(prev_power, float) else None
-    prev_mode = device.get("mode") if "mode" in device else memory.last_written.get("mode")
-    prev_mode = prev_mode if prev_mode in profile.modes else None
+    prev_mode, prev_power = _previous(device, profile, memory)
     new_power = params.power_w
     first = power_first(new_power, prev_power) if new_power is not None else False
     ordered = order_group(writes, power_first=first)
@@ -409,22 +434,30 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
         for key in restored:
             if key in decision.restore_flat:
                 memory.last_written[key] = decision.restore_flat[key]
-    # Stan nieznany: klucz, którego zapis się nie powiódł (ERROR bywa zapisem, który
-    # doszedł), i klucz z nieudanym cofnięciem. Pamięć nie może go uznać za zgodny —
-    # następny cykl czyta urządzenie, a bez odczytu zapisuje go ponownie.
-    unknown = [*report.failed, *restore_failed]
-    memory.throttle.forget(unknown)
-    for key in restore_failed:
-        memory.last_written.pop(key, None)
+    # Stan nieznany: ERROR (także przy cofnięciu) bywa zapisem, który doszedł. Pamięć
+    # nie może uznać takiego klucza za zgodny ani za poprzednią wartość; odstęp I-6
+    # liczy się od próby. Raport bez podziału wyników — każda porażka jest niepewna.
+    ambiguous = getattr(report, "ambiguous", None)
+    ambiguous = list(report.failed) if ambiguous is None else list(ambiguous)
+    memory.uncertain -= {*report.written, *restored}
+    memory.uncertain |= set(ambiguous)
+    memory.throttle.mark_unknown(ambiguous, now_mono)
     # Tryb nieobsługiwany zapamiętujemy per opcja: inne tryby dalej działają.
     mode = decision.flat.get("mode")
     memory.unsupported |= {f"mode:{mode}" if key == "mode" and isinstance(mode, str) else key
                            for key in report.unsupported}
-    # I-8 liczy tylko tryb, który naprawdę doszedł do falownika (także na chwilę).
-    if decision.direction is not None and ("mode" in report.written or "mode" in restored):
+    # I-8 liczy tryb, który doszedł do falownika (także na chwilę) albo mógł dojść (ERROR);
+    # tak samo tryb cofający. Zapis odrzucony na pewno kierunku nie zmienia.
+    mode_maybe = "mode" in report.written or "mode" in restored or "mode" in ambiguous
+    if decision.direction is not None and mode_maybe:
         memory.limiter.record(decision.direction, now_mono)
-        if "mode" in restored and decision.restore_direction is not None:
+        back_maybe = "mode" in restored or ("mode" in restore_failed and "mode" in ambiguous)
+        if back_maybe and decision.restore_direction is not None:
             memory.limiter.record(decision.restore_direction, now_mono)
+        # Wynik niepewny albo powrót do trybu neutralnego: ostatni kierunek na falowniku
+        # jest nieznany — następna zmiana liczy się w każdą stronę.
+        if "mode" in ambiguous or (back_maybe and decision.restore_direction not in _DIRECTIONAL):
+            memory.limiter.mark_unknown()
     group = [w.key for w in decision.writes if w.key in _MODE_GROUP]
     if restored or restore_failed:
         step = (memory.backoff_base_s if memory.group_backoff_s <= 0.0

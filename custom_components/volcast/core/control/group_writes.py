@@ -14,12 +14,14 @@ falowniku zostaje wtedy stary tryb z nową mocą — standby honoruje ją jako n
    niejednoznaczny (zgubione potwierdzenie, przekroczony czas — zapis mógł dojść):
    wtedy cofamy tylko klucz z `ambiguous_safe`, czyli taki, którego powrót z KAŻDĄ
    wartością drugiego członka nie daje postoju z mocą > 0 ani ładowania ponad
-   poprzednią moc. Inaczej pierwszy zostaje (`restore_held`) — kolejność grupy
-   gwarantuje, że to pomniejszona wersja zamówionej komendy — a następny cykl
-   odczytuje urządzenie i poprawia sam brakujący klucz.
+   poprzednią moc. Inaczej pierwszy zostaje (`restore_held`) — przy znanej i aktualnej
+   poprzedniej mocy kolejność grupy daje wtedy pomniejszoną wersję zamówionej komendy;
+   przy mocy nieznanej (tryb pierwszy) nowy tryb pracuje na nieznanej, starej nastawie —
+   świadomy kompromis. Następny cykl odczytuje urządzenie i poprawia brakujący klucz.
 
-Po nieudanym cofnięciu zostaje najwyżej pomniejszona wersja zamówionej komendy
-(nowy tryb na mniejszej, starej mocy albo stary tryb na mniejszej, nowej mocy).
+Po nieudanym cofnięciu — przy znanej poprzedniej mocy — zostaje najwyżej pomniejszona
+wersja zamówionej komendy (nowy tryb na mniejszej, starej mocy albo stary tryb na
+mniejszej, nowej mocy). Klucze z niejednoznacznym wynikiem raport wymienia w `ambiguous`.
 Kolejność grupy układa cykl (`order_group`), bo on zna poprzednią moc; wykonawca
 pisze grupę w kolejności z listy. Raport (`GroupReport`) idzie do `cycle.commit`, który
 liczy rundę zapis→cofnięcie w I-6/I-8 i włącza odwrót grupy.
@@ -49,6 +51,8 @@ class GroupReport(WriteReport):
     restore_failed: list[str] = field(default_factory=list)
     # klucze zostawione bez cofnięcia, bo błąd drugiego członka był niejednoznaczny
     restore_held: list[str] = field(default_factory=list)
+    # klucze nieudane (także nieudane cofnięcie) z wynikiem ERROR — zapis mógł dojść
+    ambiguous: list[str] = field(default_factory=list)
     group_skipped: bool = False
 
     @property
@@ -129,6 +133,12 @@ def _plan(writes: Sequence, restore: Mapping[str, object], ambiguous_safe: Colle
     return rep
 
 
+def _with_ambiguous(rep: GroupReport, outcomes: Mapping[str, str]) -> GroupReport:
+    rep.ambiguous = [k for k in dict.fromkeys([*rep.failed, *rep.restore_failed])
+                     if outcomes.get(k) == ERROR]
+    return rep
+
+
 def run_group_writes(writes: Sequence[W], write: Callable[[W], str], *,
                      restore: Mapping[str, W] | None = None, ambiguous_safe: Collection[str] = (),
                      on_exception: OnException | None = None) -> GroupReport:
@@ -147,7 +157,7 @@ def run_group_writes(writes: Sequence[W], write: Callable[[W], str], *,
         while True:
             batch = plan.send(run_writes(batch, noted, on_exception=on_exception))
     except StopIteration as done:
-        return done.value
+        return _with_ambiguous(done.value, outcomes)
 
 
 async def async_run_group_writes(writes: Sequence[W], write: Callable[[W], Awaitable[str]], *,
@@ -168,4 +178,4 @@ async def async_run_group_writes(writes: Sequence[W], write: Callable[[W], Await
         while True:
             batch = plan.send(await async_run_writes(batch, noted, on_exception=on_exception))
     except StopIteration as done:
-        return done.value
+        return _with_ambiguous(done.value, outcomes)
