@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import struct
-from typing import Any, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Iterable, Mapping, Sequence
+
+from .params import Params
 
 _WORDS = {"u16": 1, "i16": 1, "u32": 2, "i32": 2, "f32": 2}
 
@@ -101,3 +104,80 @@ def read_values(read_map: Mapping[str, Any], image: RegisterImage) -> dict[str, 
         return out
 
     return {k: value(k) for k in read_map}
+
+
+@dataclass(frozen=True)
+class RegisterWrite:
+    key: str      # parametr płaski albo "tou.<i>.<pole>"
+    addr: int
+    value: int
+
+
+def _round_clamp(v: float, hi: int) -> int:
+    # Obcięcie do zakresu, potem zaokrąglenie do najbliższej liczby całkowitej.
+    if v < 0:
+        return 0
+    if v > hi:
+        return hi
+    return int(v + 0.5)
+
+
+def ordered_keys(params: Params, profile) -> list[str]:
+    """Klucze do zapisu, w kolejności profilu (`write_policy.order`)."""
+    flat = params.flatten()
+    out: list[str] = []
+    for group in profile.write_order:
+        if group == "tou":
+            for i in range(1, len(params.tou or ()) + 1):
+                out.extend(f"tou.{i}.{f}" for f in profile.tou_field_order if f"tou.{i}.{f}" in flat)
+        elif group in flat:
+            out.append(group)
+    return out
+
+
+def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
+                  current: RegisterImage | None = None) -> list[RegisterWrite]:
+    """Koduje parametry semantyczne na zapisy rejestrów, w kolejności profilu.
+
+    `keys` ogranicza zbiór (np. po przefiltrowaniu przez throttling/uzgadnianie),
+    ale nie zmienia kolejności. Pola bitowe (np. `grid_charge`) wymagają aktualnej
+    migawki rejestrów, bo zapisują pojedynczy bit bez ruszania reszty słowa.
+    """
+    wanted = None if keys is None else set(keys)
+    spec = profile.raw["write"]
+    out: list[RegisterWrite] = []
+    for key in ordered_keys(params, profile):
+        if wanted is not None and key not in wanted:
+            continue
+        if key.startswith("tou."):
+            _, idx, field = key.split(".")
+            prog = params.tou[int(idx) - 1]
+            fs = spec["tou_program"][field]
+            addr = fs["addr"] + int(idx) - 1
+            if field == "start":
+                value = (prog.start_min // 60) * 100 + prog.start_min % 60      # HHMM dziesiętnie
+            elif field == "power_w":
+                value = _round_clamp(prog.power_w, 65535)
+            elif field == "soc":
+                value = _round_clamp(prog.soc, 100)
+            else:
+                if current is None:
+                    raise RegisterError(f"{key}: pole bitowe wymaga odczytu rejestru {addr}")
+                word = current.words(addr, 1)[0]
+                mask = 1 << fs["bit"]
+                value = (word | mask) if prog.grid_charge else (word & ~mask & 0xFFFF)
+            out.append(RegisterWrite(key, addr, value))
+            continue
+        s = spec[key]
+        raw = getattr(params, key)
+        enc = s["encode"]
+        if enc == "mode":
+            value = profile.mode_value(raw)
+        elif enc == "bool":
+            value = 1 if raw else 0
+        elif enc == "percent":
+            value = _round_clamp(raw, 100)
+        else:
+            value = _round_clamp(raw, 65535)
+        out.append(RegisterWrite(key, s["addr"], value))
+    return out
