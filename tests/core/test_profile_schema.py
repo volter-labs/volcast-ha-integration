@@ -144,3 +144,19 @@ def test_baseline_export_flag_when_present_must_be_bool():
     p = ms_profile()
     p["baseline"]["export_limit_enabled"] = "yes"
     assert "$.baseline.export_limit_enabled" in _errs(p)
+
+
+@pytest.mark.parametrize("mode", ["discharge_battery", "sell_power", "charge_battery"])
+def test_neutral_mode_must_not_force_charge_or_discharge(mode):
+    # I-1 podmienia tryb rozładowania na neutralny — neutralny wymuszający ruch
+    # baterii zamieniłby blokadę w „rozładuj na starej nastawie".
+    p = ms_profile()
+    p["neutral_mode"] = mode
+    assert "$.neutral_mode" in _errs(p)
+
+
+@pytest.mark.parametrize("mode", ["auto", "battery_standby"])
+def test_neutral_mode_neutral_or_idle_is_valid(mode):
+    p = ms_profile()
+    p["neutral_mode"] = mode
+    assert validate_profile(p) == []

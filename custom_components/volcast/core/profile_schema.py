@@ -379,6 +379,10 @@ def validate_profile(raw: object) -> list[str]:
             nm = top["neutral_mode"]
             if not isinstance(nm, str) or nm not in modes:
                 v.err("$.neutral_mode", "musi wskazywać tryb z modes")
+            elif isinstance(modes[nm], dict) and modes[nm].get("direction") not in ("neutral", "idle"):
+                # I-1 podmienia rozładowanie na tryb neutralny — tryb wymuszający ruch
+                # baterii zamieniłby blokadę w rozładowanie na starej nastawie.
+                v.err("$.neutral_mode", "tryb neutralny musi mieć kierunek neutral/idle")
         if "tou" in top:
             v.err("$.tou", "tylko dla time_window")
     elif model == "time_window":

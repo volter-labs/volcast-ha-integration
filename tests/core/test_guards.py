@@ -1,10 +1,12 @@
+import json
+
 import pytest
 
 from custom_components.volcast.core.guards import (
     STATUS_DEGRADED, STATUS_OK, STATUS_PARTIAL, GuardContext, apply_guards, temperature_ok,
 )
 from custom_components.volcast.core.params import Params, TouProgram
-from custom_components.volcast.core.profile import load_builtin, profile_from_dict
+from custom_components.volcast.core.profile import ProfileError, load_builtin, profile_from_dict
 from custom_components.volcast.core.slot import Action
 from tests.core.golden import assert_params_equal, load_golden, params_from_golden
 from tests.core.profile_fixtures import tw_profile
@@ -89,3 +91,17 @@ def test_tou_i3_clips_power_and_i4_is_skipped_without_export_register():
 def test_tou_i10_rejects_whole_program(progs):
     r = apply_guards(_tou(*progs), _ok(), TW)
     assert (r.write_allowed, r.invariant) == (False, "I-10")
+
+
+def test_i1_never_yields_discharge_below_reserve_even_with_discharge_neutral_mode():
+    # Profil z trybem neutralnym = rozładowanie nie może przejść walidacji…
+    raw = json.loads(json.dumps(dict(GW.raw)))
+    raw["neutral_mode"] = "discharge_battery"
+    with pytest.raises(ProfileError, match=r"\$\.neutral_mode"):
+        profile_from_dict(raw)
+    # …a z profilem wbudowanym I-1 przy SoC pod rezerwą nie zostawia rozładowania.
+    r = apply_guards(Params(mode="sell_power", power_w=3000.0),
+                     _ok(soc=5.0, soc_reserve=10.0, action=Action.DISCHARGE), GW)
+    assert r.write_allowed and r.invariant == "I-1"
+    assert GW.mode_direction(r.params.mode) in ("neutral", "idle")
+    assert r.params.power_w is None
