@@ -53,6 +53,20 @@ _make_module("homeassistant.core", {
     "callback": _fake_callback,
     "ServiceCall": MagicMock(),
 })
+
+
+class _FakeContext:
+    """Atrapa homeassistant.core.Context — id, user_id, parent_id."""
+    _n = 0
+
+    def __init__(self, user_id=None, parent_id=None, id=None):
+        _FakeContext._n += 1
+        self.id = id or f"ctx{_FakeContext._n}"
+        self.user_id = user_id
+        self.parent_id = parent_id
+
+
+sys.modules["homeassistant.core"].Context = _FakeContext
 _make_module("homeassistant.const", {
     "CONF_API_KEY": "api_key",
     "Platform": MagicMock(),
@@ -74,6 +88,14 @@ _make_module("homeassistant.exceptions", {
     "ServiceValidationError": _FakeServiceValidationError,
     "HomeAssistantError": Exception,
 })
+
+
+class _FakeServiceNotFound(_FakeServiceValidationError):
+    """Atrapa homeassistant.exceptions.ServiceNotFound — w HA dziedziczy po
+    ServiceValidationError, więc kolejność `except` u pisarza ma znaczenie."""
+
+
+sys.modules["homeassistant.exceptions"].ServiceNotFound = _FakeServiceNotFound
 
 # --- homeassistant.config_entries ---
 class _FakeConfigEntry:
