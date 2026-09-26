@@ -30,6 +30,9 @@ class WriteReport:
     unsupported: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     mode_held: bool = False
+    # klucz → nazwa klasy wyjątku z callbacku; sama klasa, bez treści komunikatu
+    # (treść transportu bywa z adresem hosta, a raport trafia do diagnostyki)
+    errors: dict[str, str] = field(default_factory=dict)
 
 
 def run_writes(writes: Sequence[W], write: Callable[[W], str]) -> WriteReport:
@@ -46,8 +49,9 @@ def run_writes(writes: Sequence[W], write: Callable[[W], str]) -> WriteReport:
             continue
         try:
             outcome = write(w)
-        except Exception:
+        except Exception as err:  # noqa: BLE001 — każdy wyjątek to ERROR tego klucza
             outcome = ERROR
+            rep.errors[w.key] = type(err).__name__
         if outcome == OK:
             if w.key not in rep.written:
                 rep.written.append(w.key)

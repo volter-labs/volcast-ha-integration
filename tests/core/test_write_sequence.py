@@ -74,3 +74,30 @@ def test_writer_exception_on_mode_is_reported_failed():
     assert rep.written == ["soc_min", "soc_max", "power_w", "export_limit_w", "export_limit_enabled"]
     assert rep.failed == ["mode"]
     assert rep.mode_held is False
+
+
+def test_writer_exception_keeps_class_name_per_failed_key():
+    # Połknięty wyjątek musi zostawić ślad w raporcie — bez tego „failed" nie mówi,
+    # czy padł transport, czy odmówił falownik.
+    vec = VECTORS[0]
+    ws = encode_writes(params_from_golden(vec["params"], GW), GW)
+
+    class TransportTimeout(Exception):
+        pass
+
+    def flaky(w):
+        if w.key == "power_w":
+            raise TransportTimeout("10.0.0.5 did not answer")
+        if w.key == "soc_max":
+            return DENIED
+        return OK
+
+    rep = run_writes(ws, flaky)
+    assert rep.failed == ["soc_max", "power_w"]
+    assert rep.errors == {"power_w": "TransportTimeout"}   # klasa, bez treści (może mieć adres)
+
+
+def test_no_errors_recorded_without_exceptions():
+    vec = VECTORS[0]
+    rep = run_writes(encode_writes(params_from_golden(vec["params"], GW), GW), lambda w: ERROR)
+    assert rep.failed and rep.errors == {}
