@@ -28,8 +28,18 @@ _MAC_RE = re.compile(
 _IPV4_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
 
 # E-mail w dowolnym polu tekstowym (np. identyfikator konta w integracji chmurowej,
-# tytuł wpisu konfiguracji) — maskowany bezwarunkowo w ostatnim przebiegu.
-_EMAIL_RE = re.compile(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}")
+# tytuł wpisu konfiguracji) — maskowany bezwarunkowo w ostatnim przebiegu. Kwantyfikatory
+# są ograniczone (limity długości części adresu z RFC 5321/1035), a etykiety domeny nie
+# zawierają kropki — koszt dopasowania jest liniowy względem długości tekstu, bez
+# katastrofalnego nawracania (maskowanie biegnie synchronicznie w pętli zdarzeń).
+_EMAIL_RE = re.compile(
+    r"(?i)[A-Z0-9._%+-]{1,64}@[A-Z0-9-]{1,63}(?:\.[A-Z0-9-]{1,63}){0,8}\.[A-Z]{2,24}"
+)
+
+# Górna granica długości tekstu w raporcie. Dłuższe wartości (np. atrybut stanu z
+# całym dokumentem) są przycinane PRZED maskowaniem — ogranicza to czas przebiegu,
+# a diagnostyka nie potrzebuje pełnej treści.
+_MAX_TEXT = 2048
 
 # Klucze niosące słownik/kontrakt raportu (nasz własny kod, stałe słownictwo), nie dane
 # właściciela — maskowanie ich wartości byłoby fałszywym trafieniem (domena równa nazwie
@@ -39,8 +49,7 @@ _EMAIL_RE = re.compile(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}")
 # przechodzić przez maskowanie.
 _STRUCTURAL_KEYS = frozenset({
     "domain", "entity_domain", "platform", "brand_hint", "matched_by",
-    "schema", "generated_at", "integration_version", "ha_version", "device_class",
-    "state_class", "translation_key",
+    "schema", "generated_at", "integration_version", "ha_version", "translation_key",
 })
 
 
@@ -123,37 +132,44 @@ def _mac_alt(hex12: str) -> str:
     return r"[\W_]*".join(re.escape(p) for p in pairs)
 
 
-def _mask_known_macs(text: str, macs: set[str]) -> str:
-    for hex12 in macs:
-        pattern = re.compile(_mac_alt(hex12), re.IGNORECASE)
-        text = pattern.sub(hex12[:6] + "******", text)
-    return text
+def _known_mac_pattern(macs: set[str]) -> re.Pattern[str] | None:
+    """Jeden skompilowany wzorzec dla wszystkich znanych MAC-ów raportu."""
+    if not macs:
+        return None
+    return re.compile("|".join(_mac_alt(h) for h in sorted(macs)), re.IGNORECASE)
 
 
-def _mask_value(value, pattern: re.Pattern[str] | None, macs: set[str] = frozenset()):
+def _known_mac_repl(m: re.Match[str]) -> str:
+    return re.sub(r"[^0-9A-Fa-f]", "", m.group(0))[:6].upper() + "******"
+
+
+def _mask_value(value, pattern: re.Pattern[str] | None,
+                mac_pattern: re.Pattern[str] | None = None):
     """Ostateczny, rekurencyjny przebieg maskujący po zbudowaniu całego raportu — łapie
     serial/MAC/e-mail w każdym polu tekstowym (w tym entity_id, unique_id, errors, model,
     wersje, options, raw, host), a także wewnątrz list/krotek/zbiorów i kluczy słowników
     omijając pola strukturalne (_STRUCTURAL_KEYS), których wartości są słownikiem/
     kontraktem raportu, nie danymi właściciela ("host"/"ip"/"unit" nie są pomijane)."""
     if isinstance(value, str):
+        if len(value) > _MAX_TEXT:
+            value = value[:_MAX_TEXT] + "…"
         masked = pattern.sub("<SN>", value) if pattern else value
-        masked = _mask_known_macs(masked, macs) if macs else masked
+        masked = mac_pattern.sub(_known_mac_repl, masked) if mac_pattern else masked
         masked = _mask_mac_in_text(masked)
         return _EMAIL_RE.sub("<EMAIL>", masked)
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            new_k = _mask_value(k, pattern, macs) if isinstance(k, str) else k
+            new_k = _mask_value(k, pattern, mac_pattern) if isinstance(k, str) else k
             skip = isinstance(k, str) and k in _STRUCTURAL_KEYS
-            out[new_k] = v if skip else _mask_value(v, pattern, macs)
+            out[new_k] = v if skip else _mask_value(v, pattern, mac_pattern)
         return out
     if isinstance(value, list):
-        return [_mask_value(v, pattern, macs) for v in value]
+        return [_mask_value(v, pattern, mac_pattern) for v in value]
     if isinstance(value, tuple):
-        return tuple(_mask_value(v, pattern, macs) for v in value)
+        return tuple(_mask_value(v, pattern, mac_pattern) for v in value)
     if isinstance(value, (set, frozenset)):
-        return type(value)(_mask_value(v, pattern, macs) for v in value)
+        return type(value)(_mask_value(v, pattern, mac_pattern) for v in value)
     return value
 
 
@@ -287,8 +303,8 @@ def build_report(*, classification, states, history_days, network, errors,
     # inny 12-cyfrowy szesnastkowy MAC heurystycznie, i e-mail — także tam, gdzie 48899
     # nie sparsowało odpowiedzi na ip/mac/name i cały tekst trafił tylko do "raw".
     pattern = _serial_pattern(sn)
-    macs = _known_macs(network)
-    return _mask_value(report, pattern, macs)
+    mac_pattern = _known_mac_pattern(_known_macs(network))
+    return _mask_value(report, pattern, mac_pattern)
 
 
 def summarize(report: dict) -> str:

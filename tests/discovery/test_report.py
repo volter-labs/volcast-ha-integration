@@ -306,3 +306,87 @@ def test_device_not_behind_reported_entity_does_not_add_serials():
     r = _report(classification=Classification([], [], [ent]), devices=[dev, other],
                 errors=["note BRIDGE12345678"])
     assert r["errors"] == ["note BRIDGE12345678"]
+
+
+# --- ograniczony koszt maskowania ---
+
+import time  # noqa: E402
+
+ADVERSARIAL = [
+    "a" * 50_000,
+    "a@" + "a" * 50_000,
+    "a" * 25_000 + "@" + "a" * 25_000,
+    "a@a." * 12_500,
+    "-" * 50_000 + "@x.com",
+    ("ab:" * 17_000)[:50_000],
+]
+
+
+def test_masking_of_huge_strings_is_bounded_and_still_masks():
+    head = f"owner john.doe@example.com sn {SN} "
+    errors = [head + tail for tail in ADVERSARIAL]
+    t0 = time.perf_counter()
+    r = _report(errors=errors)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 0.1, elapsed
+    for e in r["errors"]:
+        assert len(e) <= 2049 and e.endswith("…")
+        assert "john.doe@example.com" not in e and "<EMAIL>" in e
+        assert SN not in e
+
+
+def test_short_strings_are_not_truncated():
+    r = _report(errors=["x" * 2048])
+    assert r["errors"] == ["x" * 2048]
+
+
+def test_email_with_long_parts_still_masked():
+    # część lokalna dłuższa niż 64 znaki: maskowane jest co najmniej ostatnie 64 + domena
+    local, host = "l" * 80, "h" * 60
+    r = _report(errors=[f"{local}@{host}.example.com"])
+    assert "@" not in r["errors"][0] and host not in r["errors"][0]
+
+
+def test_known_mac_masking_scales_to_many_macs_and_entities():
+    macs = [f"0011223344{i:02X}" for i in range(32)]
+    replies = [LoggerReply(f"192.168.1.{i},{m},LOGGER", f"192.168.1.{i}", m, "LOGGER")
+               for i, m in enumerate(macs)]
+    dev = DeviceSnap("d1", "Deye", "SUN-10K", "Deye logger", "1.0", None, None, (), ("e1",))
+    ents = [EntitySnap(f"sensor.logger_{macs[i % 32].lower()}_s{i}", "solarman",
+                       f"{macs[i % 32]}_s{i}", "d1", "e1", None, None, None, f"Sensor {i}", False)
+            for i in range(800)]
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], ents, "domain")
+    t0 = time.perf_counter()
+    r = _report(classification=Classification([inv], [], []),
+                network=NetworkProbeResult(True, replies))
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 0.2, elapsed
+    dumped = json.dumps(r).upper()
+    assert not any(m in dumped for m in macs)
+    assert r["inverters"][0]["entities"][0]["unique_id"] == "001122******_s0"
+
+
+def test_device_class_and_state_class_values_are_masked():
+    states = {"sensor.deye_energy": StateSnap("sensor.deye_energy", "1", {
+        "device_class": f"energy {SN}", "state_class": f"total {SN}"})}
+    ent = EntitySnap("sensor.deye_energy", "solarman", "solarman_energy", "d1", "e1",
+                     None, None, None, None, False)
+    dev = DeviceSnap("d1", "Deye", "SUN-10K", f"Deye {SN}", "1.0", None, SN, (), ("e1",))
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [ent], "domain")
+    r = _report(classification=Classification([inv], [], [ent]), states=states)
+    e = r["inverters"][0]["entities"][0]
+    assert SN not in e["device_class"] and SN not in e["state_class"]
+    assert SN not in r["energy_sensors"][0]["state_class"]
+
+
+def test_ha_vocabulary_in_device_class_and_state_class_unchanged():
+    states = {"sensor.deye_energy": StateSnap("sensor.deye_energy", "1", {
+        "device_class": "energy", "state_class": "total_increasing"})}
+    ent = EntitySnap("sensor.deye_energy", "solarman", "solarman_energy", "d1", "e1",
+                     None, None, None, None, False)
+    dev = DeviceSnap("d1", "Deye", "SUN-10K", f"Deye {SN}", "1.0", None, SN, (), ("e1",))
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [ent], "domain")
+    r = _report(classification=Classification([inv], [], [ent]), states=states)
+    e = r["inverters"][0]["entities"][0]
+    assert (e["device_class"], e["state_class"]) == ("energy", "total_increasing")
+    assert r["energy_sensors"][0]["state_class"] == "total_increasing"
