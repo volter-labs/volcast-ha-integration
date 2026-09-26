@@ -27,13 +27,21 @@ _MAC_RE = re.compile(
 
 _IPV4_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
 
-# Klucze niosące słownik/kontrakt raportu, nie dane właściciela — maskowanie ich wartości
-# byłoby fałszywym trafieniem (np. host/ip wyglądający na numeryczny ciąg, domena równa
-# nazwie producenta). Fix round 2, R4.
+# E-mail w dowolnym polu tekstowym (np. identyfikator konta w integracji chmurowej,
+# tytuł wpisu konfiguracji) — maskowany bezwarunkowo w ostatnim przebiegu.
+# Fix round 3, reviews.md Task 5 re-review 2, N4.
+_EMAIL_RE = re.compile(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}")
+
+# Klucze niosące słownik/kontrakt raportu (nasz własny kod, stałe słownictwo), nie dane
+# właściciela — maskowanie ich wartości byłoby fałszywym trafieniem (domena równa nazwie
+# producenta, wersja integracji). "host"/"ip" oraz "unit" zostały z listy USUNIĘTE w
+# fix round 3 (N1, N3): host bywa hostname'em niosącym serial/MAC (np. "SMA<serial>.local",
+# "deye-<mac>.local"), a jednostka bywa dowolnym tekstem ze stanu encji — oba muszą
+# przechodzić przez maskowanie.
 _STRUCTURAL_KEYS = frozenset({
-    "domain", "entity_domain", "platform", "brand_hint", "matched_by", "host", "ip",
+    "domain", "entity_domain", "platform", "brand_hint", "matched_by",
     "schema", "generated_at", "integration_version", "ha_version", "device_class",
-    "unit", "state_class", "translation_key",
+    "state_class", "translation_key",
 })
 
 
@@ -99,28 +107,55 @@ def _mask_mac_in_text(text: str) -> str:
     return _MAC_RE.sub(_mac_repl, text)
 
 
-def _mask_value(value, pattern: re.Pattern[str] | None):
+def _mac_hex(v: str | None) -> str | None:
+    """12 czystych cyfr szesnastkowych (bez separatorów, wielkie litery) albo None."""
+    if not v:
+        return None
+    hexonly = re.sub(r"[^0-9A-Fa-f]", "", v)
+    return hexonly.upper() if len(hexonly) == 12 else None
+
+
+def _mac_alt(hex12: str) -> str:
+    """Wariant niewrażliwy na separatory dla znanego (sparsowanego) MAC-a — w
+    przeciwieństwie do `_MAC_RE` nie wymaga braku sąsiedztwa szesnastkowego, bo znamy
+    dokładną wartość (łapie też MAC sklejony z innymi znakami hex, np.
+    "MACAABBCCDDEEFFSN…"). Fix round 3, N2."""
+    pairs = [hex12[i:i + 2] for i in range(0, 12, 2)]
+    return r"[\W_]*".join(re.escape(p) for p in pairs)
+
+
+def _mask_known_macs(text: str, macs: set[str]) -> str:
+    for hex12 in macs:
+        pattern = re.compile(_mac_alt(hex12), re.IGNORECASE)
+        text = pattern.sub(hex12[:6] + "******", text)
+    return text
+
+
+def _mask_value(value, pattern: re.Pattern[str] | None, macs: set[str] = frozenset()):
     """Ostateczny, rekurencyjny przebieg maskujący po zbudowaniu całego raportu — łapie
-    serial/MAC w każdym polu tekstowym (w tym entity_id, unique_id, errors, model,
-    wersje, options, raw), a także wewnątrz list/krotek/zbiorów i kluczy słowników
+    serial/MAC/e-mail w każdym polu tekstowym (w tym entity_id, unique_id, errors, model,
+    wersje, options, raw, host), a także wewnątrz list/krotek/zbiorów i kluczy słowników
     (fix round 2, R3), omijając pola strukturalne (_STRUCTURAL_KEYS), których wartości
-    są słownikiem/kontraktem raportu, nie danymi właściciela (fix round 2, R4)."""
+    są słownikiem/kontraktem raportu, nie danymi właściciela (fix round 2, R4; zawężone
+    w fix round 3, N1/N3 — "host"/"ip"/"unit" nie są już pomijane)."""
     if isinstance(value, str):
         masked = pattern.sub("<SN>", value) if pattern else value
-        return _mask_mac_in_text(masked)
+        masked = _mask_known_macs(masked, macs) if macs else masked
+        masked = _mask_mac_in_text(masked)
+        return _EMAIL_RE.sub("<EMAIL>", masked)
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            new_k = _mask_value(k, pattern) if isinstance(k, str) else k
+            new_k = _mask_value(k, pattern, macs) if isinstance(k, str) else k
             skip = isinstance(k, str) and k in _STRUCTURAL_KEYS
-            out[new_k] = v if skip else _mask_value(v, pattern)
+            out[new_k] = v if skip else _mask_value(v, pattern, macs)
         return out
     if isinstance(value, list):
-        return [_mask_value(v, pattern) for v in value]
+        return [_mask_value(v, pattern, macs) for v in value]
     if isinstance(value, tuple):
-        return tuple(_mask_value(v, pattern) for v in value)
+        return tuple(_mask_value(v, pattern, macs) for v in value)
     if isinstance(value, (set, frozenset)):
-        return type(value)(_mask_value(v, pattern) for v in value)
+        return type(value)(_mask_value(v, pattern, macs) for v in value)
     return value
 
 
@@ -130,6 +165,18 @@ def _tail(v: str | None) -> str | None:
 
 def _mac(v: str | None) -> str | None:
     return None if not v else v[:6] + "*" * max(0, len(v) - 6)
+
+
+# Identyfikator urządzenia jest emitowany wprost (report.py:182 przed tym fixem) — bez
+# progu na cyfrę: klucz kontowy w integracji chmurowej może być e-mailem albo nazwą bez
+# cyfr ("abc:extra" ze starego formatu identyfikatorów, klucz Task 6). Maskujemy więc
+# wartość identyfikatora POLOWO, niezależnie od ogólnego zbioru seriali. Fix round 3, N4.
+_MIN_IDENTIFIER = 4
+
+
+def _mask_identifier_value(v: str) -> str:
+    cleaned = _clean_serial(v)
+    return "<SN>" if cleaned and len(cleaned) >= _MIN_IDENTIFIER else v
 
 
 def _serials(c: Classification, net: NetworkProbeResult | None) -> set[str]:
@@ -147,6 +194,18 @@ def _serials(c: Classification, net: NetworkProbeResult | None) -> set[str]:
         name = _clean_serial(r.name)
         if _valid_serial(name):
             out.add(name)
+    return out
+
+
+def _known_macs(net: NetworkProbeResult | None) -> set[str]:
+    """Sparsowane MAC-i z odpowiedzi 48899 — maskowane dokładnie (exact-match), nawet gdy
+    składają się z samych cyfr albo są sklejone z innym tekstem szesnastkowym, bo znamy
+    ich dokładną wartość. Fix round 3, N2."""
+    out: set[str] = set()
+    for r in (net.replies if net else []):
+        h = _mac_hex(r.mac)
+        if h:
+            out.add(h)
     return out
 
 
@@ -179,7 +238,7 @@ def build_report(*, classification, states, history_days, network, errors,
                 "manufacturer": d.manufacturer, "model": d.model,
                 "name": d.name, "sw_version": d.sw_version,
                 "hw_version": d.hw_version, "serial": _tail(d.serial_number),
-                "identifiers": [[dom, v] for dom, v in d.identifiers],
+                "identifiers": [[dom, _mask_identifier_value(v)] for dom, v in d.identifiers],
             } for d in inv.devices],
             "entities": [_entity(e, states) for e in inv.entities],
         })
@@ -206,11 +265,13 @@ def build_report(*, classification, states, history_days, network, errors,
         "errors": list(errors),
     }
     # Ostatni przebieg: maskuje serial (case-insensitive, niewrażliwie na separatory,
-    # w każdym polu tekstowym/liście/krotce/zbiorze/kluczu) i każdy 12-cyfrowy szesnastkowy
-    # MAC w dowolnym miejscu — także tam, gdzie 48899 nie sparsowało odpowiedzi na
-    # ip/mac/name i cały tekst trafił tylko do "raw" — z pominięciem pól strukturalnych.
+    # w każdym polu tekstowym/liście/krotce/zbiorze/kluczu, W TYM "host"/"ip"/"unit"),
+    # sparsowane MAC-i dokładnie (nawet same cyfry albo sklejone z hex tekstem), każdy
+    # inny 12-cyfrowy szesnastkowy MAC heurystycznie, i e-mail — także tam, gdzie 48899
+    # nie sparsowało odpowiedzi na ip/mac/name i cały tekst trafił tylko do "raw".
     pattern = _serial_pattern(sn)
-    return _mask_value(report, pattern)
+    macs = _known_macs(network)
+    return _mask_value(report, pattern, macs)
 
 
 def summarize(report: dict) -> str:
