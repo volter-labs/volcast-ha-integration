@@ -5,6 +5,11 @@ warstwa zapisu, pamięć throttlingu trzyma wartość, której falownik nigdy ni
 i każdy cykl widzi „rozjazd" → zapis do NVM co minutę. Dlatego dopasowujemy
 w przestrzeni encji i wracamy do jednostek kanonicznych, zanim cokolwiek trafi do
 throttlingu. Encja bez poprawnego zakresu = niedopasowalna (nie zgadujemy).
+
+Dopasowanie działa PO strażnikach, więc krok zaokrąglamy zawsze w stronę bezpieczną
+dla klucza (moc i limit eksportu w dół, próg dolny SoC w górę, górny w dół) —
+najbliższy krok potrafiłby oddać pół kroku ponad limit ustalony przez strażnika.
+Gdy bezpieczny krok wypada poza zakres encji, klucz jest niedopasowalny.
 """
 from __future__ import annotations
 
@@ -16,6 +21,11 @@ from ..entity_map import EntityWrite, entity_value, entity_writes
 from ..params import Params
 
 _NUMERIC_KEYS = ("power_w", "soc_min", "soc_max", "export_limit_w")
+# kierunek bezpieczny w jednostkach kanonicznych: +1 = w górę, -1 = w dół
+_SAFE_DIRECTION = {"power_w": -1, "export_limit_w": -1, "soc_min": 1, "soc_max": -1}
+_ROUNDING = ("nearest", "down", "up")
+# transformacje profilu odwracające kierunek (kanoniczny ↔ encja)
+_FLIPPING_TRANSFORMS = ("invert_percent", "negate")
 
 
 def _num(v: Any) -> float | None:
@@ -33,20 +43,50 @@ def _same(a: float, b: float) -> bool:
     return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
 
 
-def fit_number(value: float, attrs: Mapping[str, Any]) -> float | None:
-    """Wartość przycięta do [min, max] i zaokrąglona do kroku encji; brak zakresu → None."""
+def _steps(x: float, rounding: str) -> int:
+    """Liczba kroków od `min`; wartość leżąca na kroku (z szumem binarnym) zostaje."""
+    nearest = round(x)
+    if math.isclose(x, nearest, rel_tol=1e-9, abs_tol=1e-9):
+        return int(nearest)
+    if rounding == "down":
+        return math.floor(x)
+    if rounding == "up":
+        return math.ceil(x)
+    return math.floor(x + 0.5)
+
+
+def fit_number(value: float, attrs: Mapping[str, Any], rounding: str = "nearest") -> float | None:
+    """Wartość przycięta do [min, max] i dopasowana do kroku encji; brak zakresu → None.
+
+    `rounding`: "nearest" (domyślnie), "down" albo "up". Przy "up" krok ponad `max`
+    (krok nie dzieli zakresu) daje None — nie cofamy się w stronę niebezpieczną.
+    """
+    if rounding not in _ROUNDING:
+        raise ValueError(f"fit_number: nieznane zaokrąglenie {rounding!r}")
     lo, hi = _num(attrs.get("min")), _num(attrs.get("max"))
     if lo is None or hi is None or lo > hi or not math.isfinite(value):
         return None
     v = min(max(value, lo), hi)
     step = _num(attrs.get("step"))
     if step is not None and step > 0:
-        n = math.floor((v - lo) / step + 0.5)
-        v = lo + n * step
+        v = lo + _steps((v - lo) / step, rounding) * step
         if v > hi + 1e-9:
+            if rounding == "up":
+                return None
             v -= step         # krok nigdy nie wychodzi poza max
         v = round(v, 6)
     return v
+
+
+def _entity_rounding(key: str, profile, integration_domain: str) -> str:
+    """Bezpieczny kierunek klucza przełożony na przestrzeń encji (transformacja profilu)."""
+    direction = _SAFE_DIRECTION[key]
+    for integ in profile.raw["ha"]["integrations"]:
+        if integ["domain"] == integration_domain:
+            if integ["entities"][key].get("transform") in _FLIPPING_TRANSFORMS:
+                direction = -direction
+            break
+    return "up" if direction > 0 else "down"
 
 
 def control_writes(params: Params, profile, integration_domain: str, mapped: Mapping[str, str], *,
@@ -70,7 +110,8 @@ def fit_params(params: Params, profile, integration_domain: str, mapped: Mapping
         if w.domain != "number" or w.key not in _NUMERIC_KEYS:
             continue
         raw = float(w.data["value"])
-        fitted = fit_number(raw, attrs_by_entity.get(w.entity_id) or {})
+        fitted = fit_number(raw, attrs_by_entity.get(w.entity_id) or {},
+                            _entity_rounding(w.key, profile, integration_domain))
         if fitted is None:
             unfit.append(w.key)
             continue

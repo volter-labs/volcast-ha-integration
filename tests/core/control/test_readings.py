@@ -36,6 +36,7 @@ def test_manual_reading_units_and_negate():
     assert manual_reading("grid_power_w", RawState("300", "W"), negate=True) == -300.0
     assert manual_reading("soc", RawState("unknown", "%")) is None
 
+
 def test_manual_reading_fahrenheit_and_incompatible_unit():
     assert manual_reading("battery_temp_c", RawState("82.4", "°F")) == pytest.approx(28.0)
     assert manual_reading("soc", RawState("55", "W")) is None      # obca jednostka = brak odczytu
