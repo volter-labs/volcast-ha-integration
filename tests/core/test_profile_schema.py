@@ -160,3 +160,29 @@ def test_neutral_mode_neutral_or_idle_is_valid(mode):
     p = ms_profile()
     p["neutral_mode"] = mode
     assert validate_profile(p) == []
+
+
+def test_ref_cycle_two_keys_is_rejected():
+    p = ms_profile()
+    p["read"]["pv_power_w"]["sum"].append({"ref": "load_power_w"})
+    errs = _errs(p)
+    assert "cykl odwołań" in errs
+    assert "$.read.load_power_w.sum" in errs or "$.read.pv_power_w.sum" in errs
+
+
+def test_ref_cycle_longer_chain_is_rejected():
+    p = ms_profile()
+    p["read"]["battery_power_w"] = {"sum": [{"ref": "grid_power_w"}]}
+    p["read"]["grid_power_w"] = {"sum": [{"ref": "load_power_w"}]}
+    p["read"]["pv_power_w"]["sum"].append({"ref": "battery_power_w"})
+    errs = validate_profile(p)
+    cyc = [e for e in errs if "cykl odwołań" in e]
+    assert len(cyc) == 1, errs
+    for k in ("pv_power_w", "battery_power_w", "grid_power_w", "load_power_w"):
+        assert k in cyc[0]
+
+
+def test_ref_chain_without_cycle_is_valid():
+    p = ms_profile()
+    p["read"]["grid_power_w"] = {"sum": [{"ref": "load_power_w"}]}
+    assert validate_profile(p) == []

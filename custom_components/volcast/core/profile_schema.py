@@ -145,6 +145,7 @@ def _read(v: _V, raw: Any) -> None:
     if not isinstance(raw, dict):
         v.err("$.read", "oczekiwano obiektu")
         return
+    edges: dict[str, list[str]] = {}
     for key, spec in raw.items():
         path = f"$.read.{key}"
         if key not in READ_KEYS:
@@ -165,12 +166,37 @@ def _read(v: _V, raw: Any) -> None:
                         v.err(f"{tp}.ref", "oczekiwano tekstu")
                     elif ref not in raw or ref == key:
                         v.err(f"{tp}.ref", f"odwołanie do nieistniejącego klucza {ref!r}")
+                    else:
+                        edges.setdefault(key, []).append(ref)
                     if "sign" in t and t["sign"] not in (-1, 1):
                         v.err(f"{tp}.sign", "tylko -1 albo 1")
                 else:
                     _reg(v, t, tp)
         else:
             _reg(v, spec, path)
+    _ref_cycles(v, edges)
+
+
+def _ref_cycles(v: _V, edges: dict[str, list[str]]) -> None:
+    """Cykl odwołań (A→B→A) przeszedłby walidację, a odczyt padałby przy każdym cyklu."""
+    state: dict[str, int] = {}          # 1 = na stosie, 2 = przetworzony
+    stack: list[str] = []
+
+    def visit(node: str) -> None:
+        state[node] = 1
+        stack.append(node)
+        for nxt in edges.get(node, ()):
+            if state.get(nxt) == 1:
+                cycle = stack[stack.index(nxt):] + [nxt]
+                v.err(f"$.read.{nxt}.sum", "cykl odwołań: " + " → ".join(cycle))
+            elif nxt not in state:
+                visit(nxt)
+        stack.pop()
+        state[node] = 2
+
+    for key in edges:
+        if key not in state:
+            visit(key)
 
 
 def _write(v: _V, raw: Any, model: str, tou: dict | None) -> set[str]:
