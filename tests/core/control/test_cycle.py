@@ -334,6 +334,8 @@ def test_commit_records_direction_only_when_mode_attempted():
     assert calls == [] and mem.last_written == {"power_w": 2000.0}
     commit(d, WriteReport(written=["power_w", "export_limit_enabled", "mode"]), mem, 1000.0)
     assert calls == ["discharge"]
+    commit(d, WriteReport(written=["power_w", "export_limit_enabled"], failed=["mode"]), mem, 1000.0)
+    assert calls == ["discharge"]                  # tryb nie doszedł — kierunek się nie zmienił
 
 
 def test_commit_ignores_non_write_decision():
@@ -456,12 +458,20 @@ def test_mode_option_missing_on_entity_blocks_before_any_write():
     assert d2.status == WRITE
 
 
-def test_unknown_device_option_reasserts_mode():
+def test_unknown_device_option_blocks_and_signals_takeover():
     d, mem = run()
     commit(d, _written(d), mem, 1000.0)
     dev = {"mode": "export_ac", "power_w": 2000.0, "export_limit_enabled": 0.0}
     d2, _ = run(mem, readings=dev, now_mono=1100.0)
-    assert d2.status == WRITE and [w.key for w in d2.writes] == ["mode"]
+    assert (d2.status, d2.reason, d2.writes, d2.takeover) == (BLOCKED, "foreign_mode", [], True)
+    assert d2.summary()["takeover"] is True
+
+
+def test_unreadable_mode_is_not_a_takeover():
+    d, mem = run()
+    commit(d, _written(d), mem, 1000.0)
+    d2, _ = run(mem, readings={"mode": "unavailable"}, now_mono=1100.0)
+    assert d2.takeover is False and d2.reason == "nothing_to_write"
 
 
 def test_bool_reading_is_a_flag():
@@ -488,13 +498,40 @@ def test_restore_falls_back_to_last_written_without_reading():
     assert d2.restore["power_w"].data == {"value": 2000.0}
 
 
-def test_foreign_option_has_no_mode_restore():
-    dev = {"mode": "export_ac", "power_w": 0.0, "export_limit_enabled": 0.0}
-    d, _ = run(readings=dev)
+def test_foreign_option_with_our_mode_in_memory_writes_nothing():
+    # Pamięć zna nasz postój; obcy tryb na urządzeniu nie może dać powrotu do postoju.
+    d, mem = run(schedule=plan(slot("10:00", "11:00", **STANDBY)))
+    commit(d, _written(d), mem, 1000.0)
+    dev = {"mode": "export_ac", "power_w": 1000.0, "export_limit_enabled": 0.0}
+    d2, _ = run(mem, schedule=plan(slot("10:00", "11:00", mode="charge", charge_source="grid",
+                                        power_w=3000)), readings=dev, now_mono=2000.0)
+    assert (d2.status, d2.writes, d2.restore, d2.takeover) == (BLOCKED, [], {}, True)
+
+
+def test_no_mode_restore_into_idle_mode_with_power():
+    dev = {"mode": "battery_standby", "power_w": 1000.0, "export_limit_enabled": 0.0}
+    d, _ = run(schedule=plan(slot("10:00", "11:00", mode="charge", charge_source="grid", power_w=3000)),
+               readings=dev)
     assert [w.key for w in d.writes] == ["mode", "power_w"] and "mode" not in d.restore
+
+
+def test_restore_value_is_fitted_to_entity_range():
+    dev = {"mode": "sell_power", "power_w": 12000.0, "export_limit_enabled": 0.0}
+    d, _ = run(schedule=plan(slot("10:00", "11:00", **STANDBY)), readings=dev)
+    assert [w.key for w in d.writes] == ["power_w", "mode"]
+    assert d.restore["power_w"].data == {"value": 10000.0} and d.restore_flat["power_w"] == 10000.0
 
 
 def test_single_group_member_has_no_restore():
     dev = {"mode": "sell_power", "power_w": 2000.0, "export_limit_enabled": 0.0}
     d, _ = run(schedule=sched(power_w=2600), readings=dev)
     assert [w.key for w in d.writes] == ["power_w"] and d.restore == {}
+
+
+def test_unfittable_restore_value_is_dropped():
+    attrs = {**ATTRS, "number.ems_power": {"min": 100, "max": 10000, "step": 1}}
+    dev = {"mode": "sell_power", "power_w": 50.0, "export_limit_enabled": 0.0}
+    d, _ = run(schedule=plan(slot("10:00", "11:00", mode="charge", charge_source="grid", power_w=3000)),
+               readings=dev, attrs=attrs)
+    assert [w.key for w in d.writes] == ["mode", "power_w"]
+    assert "power_w" not in d.restore and d.restore["mode"].data == {"option": "sell_power"}

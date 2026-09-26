@@ -237,9 +237,11 @@ def test_power_failure_after_mode_restores_mode():
     d, rep = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 60.0)
     assert [w.key for w in d.writes] == ["mode", "power_w"]
     assert rep.restored == ["mode"] and dev.pair() == ("battery_standby", 0.0)
-    # Następny cykl próbuje całej grupy od nowa (nic nie zapamiętane jako zapisane).
+    # Grupa odczekuje odwrót, potem próbuje całości od nowa.
     dev.fail = {}
     tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 120.0)
+    assert dev.pair() == ("battery_standby", 0.0)
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 361.0)
     assert dev.pair() == ("sell_power", 3000.0)
 
 
@@ -291,3 +293,101 @@ def test_fuzz_many_ticks_never_standby_with_power(seed):
             planned = (d.flat["mode"] if "mode" in written else before[0],
                        d.flat["power_w"] if "power_w" in written else before[1])
             _check_pair(before, dev.pair(), planned, rep)
+
+
+# ── Obcy tryb i odwrót po cofnięciu ──
+
+def test_foreign_mode_is_never_overwritten_by_restore():
+    dev = Device()
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="idle"), 0.0)                  # nasz postój/0 W w pamięci
+    dev.state.update({"mode": "export_ac", "power_w": 1000.0})  # zmiana z zewnątrz, czytelna
+    dev.fail = {"power_w": ERROR}
+    for t in (60.0, 120.0, 180.0):
+        d, rep = tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=3000), t)
+        assert d.takeover is True and rep is None
+        assert dev.pair() == ("export_ac", 1000.0)
+
+
+class Counting(Device):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.nvm = {"mode": 0, "power_w": 0}
+        self.flips = 0
+
+    def write(self, w):
+        before = GW.modes[self.state["mode"]].direction if self.state["mode"] in GW.modes else None
+        o = super().write(w)
+        if o == OK and w.key in self.nvm:
+            self.nvm[w.key] += 1
+            after = GW.modes[self.state["mode"]].direction
+            if {before, after} == {"charge", "discharge"}:
+                self.flips += 1
+        return o
+
+
+def _soak(dev, start_slot, slot, seconds=3600.0, step=60.0):
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(**start_slot), 0.0)                # stan wyjściowy zapisany przez nas
+    dev.nvm = {k: 0 for k in dev.nvm}
+    dev.flips = 0
+    t, errors = 0.0, 0
+    while t < seconds:
+        t += step
+        _, rep = tick(dev, mem, schedule(**slot), t)
+        errors += bool(rep is not None and rep.error)
+        assert not _standby_charging(dev)
+    return mem, errors
+
+
+def test_soak_failing_power_mode_first_stays_in_budget():
+    dev = Counting()
+    charge = dict(mode="charge", charge_source="grid", power_w=1500)
+    sell = dict(mode="discharge", discharge_purpose="sell", power_w=3000)
+    dev.fail = {}
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(**charge), 0.0)
+    dev.fail = {"power_w": ERROR}
+    dev.nvm, dev.flips = {"mode": 0, "power_w": 0}, 0
+    t, round_trips = 0.0, 0
+    while t < 3600.0:
+        t += 60.0
+        _, rep = tick(dev, mem, schedule(**sell), t)
+        round_trips += bool(rep is not None and rep.restored)
+    # budżet I-8: 4 zmiany kierunku na godzinę; każda próba to dwie (tam i z powrotem)
+    assert dev.flips <= 4 and dev.nvm["mode"] <= 4 and round_trips <= 2
+    assert dev.pair() == ("charge_battery", 1500.0)
+
+
+def test_soak_failing_mode_power_first_backs_off():
+    dev = Counting(mode="sell_power", power=3000.0, fail={"mode": ERROR})
+    mem, errors = _soak(dev, dict(mode="discharge", discharge_purpose="sell", power_w=3000),
+                        dict(mode="idle"))
+    # odwrót 300 → 600 → 1200 → 2400 s: najwyżej 4 próby w godzinie, 2 zapisy mocy na próbę
+    assert errors <= 4 and dev.nvm["power_w"] <= 8 and dev.flips == 0
+    assert dev.pair() == ("sell_power", 3000.0) and mem.group_backoff_s >= 1200.0
+
+
+def test_backoff_resets_after_full_group_write():
+    dev = Device(mode="sell_power", power=3000.0, fail={"mode": ERROR})
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="idle"), 60.0)
+    assert mem.group_backoff_s == 300.0 and mem.group_backoff_until == 360.0
+    d, _ = tick(dev, mem, schedule(mode="idle"), 120.0)
+    assert "group_backoff" in d.notes and not any(w.key in ("mode", "power_w") for w in d.writes)
+    dev.fail = {}
+    tick(dev, mem, schedule(mode="idle"), 361.0)
+    assert dev.pair() == ("battery_standby", 0.0)
+    assert mem.group_backoff_s == 0.0 and mem.group_backoff_until is None
+
+
+def test_round_trip_counts_in_throttle_and_limiter():
+    dev = Device()
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=1500), 0.0)
+    dev.fail = {"power_w": ERROR}
+    d, rep = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 60.0)
+    assert rep.restored == ["mode"]
+    assert mem.last_written["mode"] == "charge_battery"
+    assert mem.limiter._changes and len(mem.limiter._changes) == 2      # tam i z powrotem
+    assert mem.throttle.pending({"mode": "sell_power"}, 90.0) == {"mode"}

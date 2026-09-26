@@ -15,7 +15,12 @@ falowniku zostaje wtedy stary tryb z nową mocą — standby honoruje ją jako n
 Po nieudanym cofnięciu zostaje najwyżej pomniejszona wersja zamówionej komendy
 (nowy tryb na mniejszej, starej mocy albo stary tryb na mniejszej, nowej mocy).
 Kolejność grupy układa cykl (`order_group`), bo on zna poprzednią moc; wykonawca
-pisze grupę w kolejności z listy.
+pisze grupę w kolejności z listy. Raport (`GroupReport`) idzie do `cycle.commit`, który
+liczy rundę zapis→cofnięcie w I-6/I-8 i włącza odwrót grupy.
+
+Dla wykonawcy HA: KAŻDY zapis trybu i mocy — cykl, ale też powrót do stanu bazowego
+po utracie zgody (`_restore`) — idzie przez `run_group_writes`/`async_run_group_writes`
+z grupą ułożoną przez `order_group(power_first(...))`, nigdy wprost przez `run_writes`.
 """
 from __future__ import annotations
 

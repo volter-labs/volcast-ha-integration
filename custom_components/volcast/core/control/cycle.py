@@ -17,6 +17,10 @@ trybie ładuje z sieci). Zasady, które trzymają grupę:
 * parametr niedopasowalny do zakresu encji blokuje cały cykl.
 Awaria zapisu w trakcie cyklu to już sprawa wykonawcy grupowego (`group_writes`):
 cykl układa grupę w bezpiecznej kolejności i podaje zapisy cofające (`restore`).
+Po każdym cofnięciu grupa czeka (odwrót: max(min_interval_s, 300 s), podwajany do
+1 h, kasowany pełnym udanym zapisem grupy), a obie połowy rundy liczą się w I-6/I-8.
+Obcy tryb na urządzeniu (czytelna opcja spoza profilu) = żadnych zapisów i sygnał
+przejęcia (`takeover`) — nie nadpisujemy i nie cofamy cudzego trybu.
 
 Zatrzask rezerwy dostaje WYŁĄCZNIE odczyt, który przeszedł sanityzację i świeżość
 strażników (I-10, I-9) — strażnicy liczą najpierw próbę z założonym zatrzaskiem;
@@ -49,6 +53,9 @@ _MODE_GROUP = frozenset({"mode", "power_w"})
 _NO_READING = ("unavailable", "unknown", "")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
 _QUANTUM = 1.0
+# Odwrót grupy po cofnięciu: start nie krótszy niż 5 min, podwajany do 1 h.
+_BACKOFF_MIN_S = 300.0
+_BACKOFF_MAX_S = 3600.0
 
 
 @dataclass
@@ -59,11 +66,21 @@ class ControlMemory:
     unsupported: set[str] = field(default_factory=set)
     paused_until: float | None = None
     last_written: dict[str, float | str] = field(default_factory=dict)
+    # odwrót grupy tryb+moc po cofnięciu (zegar monotoniczny); 0 = brak odwrotu
+    group_backoff_s: float = 0.0
+    group_backoff_until: float | None = None
+    backoff_base_s: float = _BACKOFF_MIN_S
 
     @classmethod
     def for_profile(cls, profile) -> "ControlMemory":
         return cls(WriteThrottle(profile.min_interval_s),
-                   DirectionLimiter(max(1, profile.max_direction_changes_per_hour)), ReserveLatch())
+                   DirectionLimiter(max(1, profile.max_direction_changes_per_hour)), ReserveLatch(),
+                   backoff_base_s=max(float(profile.min_interval_s), _BACKOFF_MIN_S))
+
+    def in_backoff(self, now_mono: float) -> bool:
+        """Czy grupa czeka; zegar cofnięty poza okno = odwrót minął (jak throttling)."""
+        until = self.group_backoff_until
+        return until is not None and until - self.group_backoff_s <= now_mono < until
 
 
 @dataclass(frozen=True)
@@ -115,6 +132,11 @@ class CycleDecision:
     notes: tuple[str, ...] = ()
     # klucz grupy → zapis przywracający poprzednią wartość (dla wykonawcy grupowego)
     restore: dict[str, EntityWrite] = field(default_factory=dict)
+    # te same wartości w postaci `Params.flatten()` i kierunek trybu cofającego (dla I-6/I-8)
+    restore_flat: dict[str, float | str] = field(default_factory=dict)
+    restore_direction: str | None = None
+    # urządzenie ma czytelny tryb spoza profilu — zmiana z zewnątrz, nie nadpisujemy
+    takeover: bool = False
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -125,7 +147,7 @@ class CycleDecision:
                                                       "invariant": self.guard.invariant},
             "would_write": [w.key for w in self.writes], "adjusted": list(self.adjusted),
             "unmapped": list(self.unmapped), "dropped_unsupported": list(self.dropped_unsupported),
-            "notes": list(self.notes),
+            "notes": list(self.notes), "takeover": self.takeover,
         }
 
 
@@ -246,6 +268,11 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     # Zły typ odczytu rzuca TypeError po drodze (pamięć wcześniejszych kluczy mogła już
     # zniknąć) — cykl kończy się bez zapisów, następny też, więc to bezpieczne.
     memory.throttle.reconcile(device)
+    mode_now = device.get("mode")
+    if isinstance(mode_now, str) and mode_now.startswith("?"):
+        # Ktoś inny ustawił tryb, którego profil nie zna — nie walczymy i nie cofamy do
+        # naszego; wstrzymanie i powiadomienie należą do reguły przejęcia.
+        return CycleDecision(BLOCKED, "foreign_mode", flat=flat, takeover=True, **common)
     # To, co falownik już ma, nie jedzie wcale — także po restarcie, gdy pamięć
     # throttlingu jest pusta (inaczej każdy reload = zapis wszystkich nastaw do NVM).
     settled = {k for k in flat if k in device and same_value(device[k], flat[k])}
@@ -267,13 +294,16 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     if "mode" in allowed and direction is not None and not memory.limiter.allows(direction, now_mono):
         allowed.discard("mode")
         notes.append("I-8")
+    if _MODE_GROUP & allowed and memory.in_backoff(now_mono):
+        allowed -= _MODE_GROUP                  # po cofnięciu grupa odczekuje
+        notes.append("group_backoff")
     # Grupa: członek, który musi się zmienić, a nie pójdzie → nie idzie żaden.
     if _MODE_GROUP & (need - allowed) and _MODE_GROUP & allowed:
         allowed -= _MODE_GROUP
         notes.append("group_held")
     writes, unmapped = control_writes(params, profile, ents.domain, ents.mapped,
                                       keys=allowed, units=ents.units)
-    writes, restore = _group_layout(writes, params, device, profile, ents, memory)
+    writes, restore, restore_flat = _group_layout(writes, params, device, profile, ents, memory)
     reason = _gate_reason(gates, memory, now_mono)
     status = WRITE if reason is None else DRY_RUN
     if status == WRITE and not writes:
@@ -283,34 +313,42 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         direction=direction if any(w.key == "mode" for w in writes) else None,
         adjusted=adjusted, unmapped=tuple(dict.fromkeys([*held_by, *unmapped])),
         dropped_unsupported=tuple(sorted(memory.unsupported & set(flat))), notes=tuple(notes),
-        restore=restore, **common)
+        restore=restore, restore_flat=restore_flat,
+        restore_direction=(profile.mode_direction(restore_flat["mode"])
+                           if "mode" in restore_flat else None), **common)
 
 
 def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str, float | str],
                   profile, ents: EntityContext, memory: ControlMemory
-                  ) -> tuple[list[EntityWrite], dict[str, EntityWrite]]:
+                  ) -> tuple[list[EntityWrite], dict[str, EntityWrite], dict[str, float | str]]:
     """Grupa na końcu, w bezpiecznej kolejności, i zapisy cofające do stanu z urządzenia.
 
-    Poprzednia wartość: odczyt z urządzenia, a bez odczytu — nasz ostatni zapis. Tryb
-    spoza profilu (znacznik `?opcja`) nie ma zapisu cofającego — nie odtwarzamy obcego trybu.
+    Poprzednia wartość: odczyt z urządzenia, a bez żadnego odczytu — nasz ostatni zapis
+    (obcego trybu tu nie ma — cykl zatrzymał się wcześniej). Cofnięcie dopasowane do
+    zakresu encji (niedopasowalne = brak cofnięcia); nigdy do trybu postoju przy mocy > 0
+    — to odtworzyłoby ładowanie z sieci.
     """
     prev_power = device.get("power_w")
     if not isinstance(prev_power, float):
         prev_power = memory.last_written.get("power_w")
         prev_power = prev_power if isinstance(prev_power, float) else None
-    prev_mode = device.get("mode")
-    if prev_mode not in profile.modes:
-        prev_mode = memory.last_written.get("mode")
-        prev_mode = prev_mode if prev_mode in profile.modes else None
+    prev_mode = device.get("mode") if "mode" in device else memory.last_written.get("mode")
+    prev_mode = prev_mode if prev_mode in profile.modes else None
     new_power = params.power_w
     first = power_first(new_power, prev_power) if new_power is not None else False
     ordered = order_group(writes, power_first=first)
     keys = {w.key for w in ordered}
     if not {"mode", "power_w"} <= keys:
-        return ordered, {}
-    back, _ = control_writes(Params(mode=prev_mode, power_w=prev_power), profile, ents.domain,
-                             ents.mapped, keys=None, units=ents.units)
-    return ordered, {w.key: w for w in back}
+        return ordered, {}, {}
+    if prev_mode is not None and profile.mode_direction(prev_mode) == "idle" \
+            and (prev_power is None or prev_power > 0.0):
+        prev_mode = None
+    back_params, _, unfit = fit_params(Params(mode=prev_mode, power_w=prev_power), profile, ents.domain,
+                                       ents.mapped, ents.units, ents.attrs)
+    back, _ = control_writes(back_params, profile, ents.domain, ents.mapped, keys=None, units=ents.units)
+    back_flat = back_params.flatten()
+    restore = {w.key: w for w in back if w.key not in unfit}
+    return ordered, restore, {k: back_flat[k] for k in restore}
 
 
 def _unsupported_group(flat: Mapping[str, float | str], profile, ents: EntityContext,
@@ -336,16 +374,38 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     """Pamięć po wykonaniu: throttling tylko dla zapisów udanych, I-8 tylko gdy tryb poszedł.
 
     Decyzja inna niż WRITE niczego nie wykonała — nie zostawia śladu w pamięci.
+    Runda „zapis → cofnięcie" (raport wykonawcy grupowego) liczy się w obu budżetach:
+    throttling pamięta wartość cofniętą z chwilą cofnięcia (I-6), ogranicznik kierunku
+    dostaje oba kierunki (I-8), a grupa wchodzi w odwrót.
     """
     if decision.status != WRITE:
         return
+    restored = list(getattr(report, "restored", ()))
+    restore_failed = list(getattr(report, "restore_failed", ()))
     memory.throttle.record(decision.flat, report.written, now_mono)
     for key in report.written:
         if key in decision.flat:
             memory.last_written[key] = decision.flat[key]
+    if restored:
+        memory.throttle.record(decision.restore_flat, restored, now_mono)
+        for key in restored:
+            if key in decision.restore_flat:
+                memory.last_written[key] = decision.restore_flat[key]
     # Tryb nieobsługiwany zapamiętujemy per opcja: inne tryby dalej działają.
     mode = decision.flat.get("mode")
     memory.unsupported |= {f"mode:{mode}" if key == "mode" and isinstance(mode, str) else key
                            for key in report.unsupported}
-    if decision.direction is not None and not report.mode_held:
+    # I-8 liczy tylko tryb, który naprawdę doszedł do falownika (także na chwilę).
+    if decision.direction is not None and ("mode" in report.written or "mode" in restored):
         memory.limiter.record(decision.direction, now_mono)
+        if "mode" in restored and decision.restore_direction is not None:
+            memory.limiter.record(decision.restore_direction, now_mono)
+    group = [w.key for w in decision.writes if w.key in _MODE_GROUP]
+    if restored or restore_failed:
+        step = (memory.backoff_base_s if memory.group_backoff_s <= 0.0
+                else min(memory.group_backoff_s * 2.0, _BACKOFF_MAX_S))
+        memory.group_backoff_s = step
+        memory.group_backoff_until = now_mono + step
+    elif group and all(k in report.written for k in group):
+        memory.group_backoff_s = 0.0
+        memory.group_backoff_until = None
