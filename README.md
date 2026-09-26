@@ -27,9 +27,11 @@ Discovery adds two entities to the Volcast device:
 
 The full discovery result stays in Home Assistant only. It is visible in your diagnostics file, where serial numbers, MAC addresses and e-mails are masked (IP addresses are kept). **Nothing is sent to Volcast.**
 
+The diagnostics file still lists entity names and local IP addresses, so review it before sharing it with anyone.
+
 ### New: Discovery-Only Setup
 
-A new setup option "**Discovery only (no account)**" is for people without a Volcast account. It enables discovery in Home Assistant with no forecast, no cloud connection, and no Volcast API key required.
+A new setup option "**Discovery only (no account)**" is for people without a Volcast account. It enables discovery in Home Assistant with no forecast, no cloud connection, and no Volcast API key required. It is available only when Volcast is not set up yet, because forecast setups already include discovery.
 
 ### Sharing Your Setup
 
