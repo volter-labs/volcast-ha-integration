@@ -7,18 +7,46 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 
 ## Beta: Installation Discovery (v2.0.0b1)
 
-This version introduces **optional** read-only installation discovery — explore your HA sensors and inverter setup without a Volcast account. Existing forecast users are not affected.
+This version adds **optional** read-only installation discovery. Existing forecast users are not affected — all forecast sensors, production tracking and the Energy dashboard work exactly as in v1.7.2.
 
-- **New setup option**: "Discovery only (no account)" scans your HA Recorder and local sensors
-- **What it does**: gathers sensor names and daily energy stats to understand your installation
-- **What it doesn't do**: no data sent to Volcast, no forecast generated
-- **For whom**: anyone curious to inspect their HA energy schema before purchasing
+### What Discovery Does
 
-If you're currently using forecasts, nothing changes — update normally and keep using your API key. To learn more, see [v2.0.0-beta1 release notes](docs/release-notes/v2.0.0-beta1.md).
+Discovery runs automatically once after Home Assistant starts and again after each integration reload. It scans:
+
+- Your installed inverter and price integrations (device and entity registries)
+- Entity names, units, and options from those integrations
+- The inverter's host address from its settings (no passwords, nothing else)
+- How many days of long-term statistics your energy sensors have
+- Sends one UDP broadcast on port 48899 to find Wi-Fi data loggers on your local network
+
+Discovery adds two entities to the Volcast device:
+- **Installation discovery** sensor — a summary of what was found
+- **Run discovery** button — manually re-scan anytime
+
+### Privacy & Data
+
+The full discovery result stays in Home Assistant only. It is visible in your diagnostics file, where serial numbers, MAC addresses and e-mails are masked (IP addresses are kept). **Nothing is sent to Volcast.**
+
+### New: Discovery-Only Setup
+
+A new setup option "**Discovery only (no account)**" is for people without a Volcast account. It enables discovery in Home Assistant with no forecast, no cloud connection, and no Volcast API key required.
+
+### Sharing Your Setup
+
+To share your installation details with support:
+
+1. Go to **Settings** → **Devices & Services**
+2. Click **Volcast**
+3. Tap the **⋮** (three dots) menu → **Download diagnostics**
 
 ### Going Back to v1.7.2
 
-If you'd prefer to skip this beta: in HACS, click the 3-dot menu on **Volcast Solar Forecast** > **Redownload** and pick version **1.7.2**.
+If you'd prefer to skip this beta:
+
+1. **Delete** any "Discovery only (no account)" Volcast entry — v1.7.2 cannot load it
+2. In HACS, click **Volcast Solar Forecast** → **⋮** → **Redownload**
+3. Select version **1.7.2**
+4. Restart Home Assistant
 
 ## Features
 
