@@ -172,8 +172,10 @@ async def test_legacy_three_element_identifier_does_not_break_report(make_hass):
     hass = make_hass(devices=[dev], entries=[entry], components={"recorder"})
     with _ok_probe():
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
-    # wartość sklejona z nadmiarowych części (i tak maskowana jako potencjalny serial)
-    assert rep["inverters"][0]["devices"][0]["identifiers"] == [["goodwe", "<SN>"]]
+    # para (domena, wartość sklejona z nadmiarowych części); sama wartość zależy od
+    # polityki maskowania w report.py, więc sprawdzamy tylko kształt
+    (ident,) = rep["inverters"][0]["devices"][0]["identifiers"]
+    assert len(ident) == 2 and ident[0] == "goodwe" and ident[1] in ("abc:extra", "<SN>")
     assert rep["errors"] == []
 
 
@@ -236,3 +238,25 @@ async def test_unexpected_failure_still_returns_report(make_hass):
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
     assert any("runner: RuntimeError: bad" in e for e in rep["errors"])
     assert rep["inverters"] == []
+
+
+async def test_ignored_config_entry_is_not_an_inverter(make_hass):
+    ignored = SimpleNamespace(entry_id="g9", domain="goodwe", title="GoodWe 9010KETU000W0777",
+                              source="ignore", disabled_by=None, data={})
+    hass = make_hass(entries=[ignored], components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert rep["inverters"] == []
+    assert "9010KETU000W0777" not in str(rep)
+
+
+async def test_disabled_config_entry_is_not_an_inverter(make_hass):
+    disabled = SimpleNamespace(entry_id="g8", domain="goodwe", title="GoodWe 9010KETU000W0888",
+                               source="user", disabled_by="user", data={"host": "10.0.0.8"})
+    active = SimpleNamespace(entry_id="g1", domain="goodwe", title="GoodWe",
+                             source="user", disabled_by=None, data={"host": "10.0.0.1"})
+    hass = make_hass(entries=[disabled, active], components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert [i["host"] for i in rep["inverters"]] == ["10.0.0.1"]
+    assert "9010KETU000W0888" not in str(rep) and "10.0.0.8" not in str(rep)

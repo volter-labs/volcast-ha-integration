@@ -204,10 +204,16 @@ class DiscoveryRunner:
         ]
 
     def _snap_entries(self) -> list[ConfigEntrySnap]:
+        # async_entries() domyślnie zwraca też wpisy zignorowane (source "ignore",
+        # przycisk „Ignoruj" przy wykrytym urządzeniu) i wyłączone — to nie są działające
+        # integracje falownika, a ich tytuł (często nazwa urządzenia z numerem seryjnym)
+        # trafiłby do raportu bez maskowania. Filtr po atrybutach działa w każdej wersji HA.
         return [
             ConfigEntrySnap(entry_id=c.entry_id, domain=c.domain, title=c.title,
                             host=_host(getattr(c, "data", None)))
             for c in self.hass.config_entries.async_entries()
+            if getattr(c, "source", None) != "ignore"
+            and not getattr(c, "disabled_by", None)
         ]
 
     def _snap_states(self, c: Classification) -> dict[str, StateSnap]:
