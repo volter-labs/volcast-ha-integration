@@ -94,7 +94,7 @@
       "soc_min": {"domain": "number", "unique_id_regex": "^goodwe-battery_discharge_depth-", "transform": "invert_percent"},
       "soc_max": {"domain": "number", "unique_id_regex": "^goodwe-soc_upper_limit-"},
       "export_limit_w": {"domain": "number", "unique_id_regex": "^goodwe-grid_export_limit-"},
-      "export_limit_enabled": {"domain": "switch", "unique_id_regex": "^goodwe-grid_export-"}
+      "export_limit_enabled": {"domain": "switch", "unique_id_regex": "^grid_export_limit_switch-"}
     }
   }]},
   "capabilities": {
