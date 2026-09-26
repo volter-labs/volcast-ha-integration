@@ -1,5 +1,8 @@
+import json
+
 import pytest
 
+from custom_components.volcast.core.profile import ProfileError, load_profile
 from custom_components.volcast.core.profile_schema import validate_profile
 from tests.core.profile_fixtures import ms_profile, tw_profile
 
@@ -7,6 +10,18 @@ from tests.core.profile_fixtures import ms_profile, tw_profile
 def test_fixtures_are_valid():
     assert validate_profile(ms_profile()) == []
     assert validate_profile(tw_profile()) == []
+
+
+def test_oversized_int_is_profile_error_not_overflow(tmp_path):
+    # `json.loads` przyjmuje int dowolnej długości; walidator nie może rzucić
+    # OverflowError próbując go zamienić na float (np. w math.isfinite).
+    raw = ms_profile()
+    raw["write_policy"]["min_interval_s"] = int("1" + "0" * 400)
+    f = tmp_path / f"{raw['id']}.json"
+    f.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ProfileError) as ei:
+        load_profile(f)
+    assert any("$.write_policy.min_interval_s" in e for e in ei.value.errors)
 
 
 def _errs(p):

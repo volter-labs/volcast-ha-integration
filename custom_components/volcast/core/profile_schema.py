@@ -66,7 +66,16 @@ class _V:
     def num(self, v: Any, path: str) -> bool:
         # `json.loads` domyślnie akceptuje literały NaN/Infinity — profil ich nie może
         # przemycić, bo gasiłyby porównania (np. próg temperatury) bez żadnego błędu.
-        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            self.err(path, "oczekiwano liczby")
+            return False
+        try:
+            finite = math.isfinite(v)
+        except OverflowError:
+            # `json.loads` przyjmuje też int dowolnej wielkości (np. z pliku profilu);
+            # konwersja na float w `isfinite` na takiej wartości rzuca OverflowError.
+            finite = False
+        if not finite:
             self.err(path, "oczekiwano liczby")
             return False
         return True
