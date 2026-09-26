@@ -81,7 +81,7 @@
   "ha": {"integrations": [{
     "domain": "goodwe",
     "ems": true,
-    "status": "verified",
+    "status": "draft",
     "entities": {
       "soc": {"domain": "sensor", "unique_id_regex": "^goodwe-battery_soc-"},
       "pv_power_w": {"domain": "sensor", "unique_id_regex": "^goodwe-ppv-"},

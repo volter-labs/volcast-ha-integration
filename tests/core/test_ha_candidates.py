@@ -32,11 +32,18 @@ def test_profile_resolves_real_installation(profile_id, folder, required):
     assert required <= set(r.mapped)
 
 
-def test_goodwe_profile_ha_status_is_verified():
-    # Wszystkie klucze zapisu rozpoznane na rzeczywistej instalacji → status "verified"
-    # (rozpoznanie encji, nie próba zapisu na żywym falowniku — patrz status_note).
+def test_goodwe_entities_recognised_status_draft():
+    # Wszystkie klucze zapisu rozpoznane na rzeczywistej instalacji, ale status zostaje
+    # "draft": "verified" dopiero po próbie zapisu przez HA na żywym falowniku
+    # (rozpoznanie encji to nie próba zapisu — patrz status_note).
     p = load_builtin("goodwe-et")
-    assert p.raw["ha"]["integrations"][0]["status"] == "verified"
+    integ = p.raw["ha"]["integrations"][0]
+    assert integ["status"] == "draft"
+    raw = json.loads((G / "goodwe_et" / "ha_candidates.json").read_text())
+    cands = [EntityCandidate(c["entity_id"], c["platform"], c["unique_id"]) for c in raw]
+    r = resolve_entities(p, integ["domain"], cands)
+    assert not r.ambiguous
+    assert set(p.write_order) <= set(r.mapped)
 
 
 # Encje wystawiane przez rdzenną integrację `goodwe` w HA (bez dodatku HACS): tylko
