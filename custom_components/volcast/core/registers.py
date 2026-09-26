@@ -40,6 +40,7 @@ def decode(spec: Mapping[str, Any], image: RegisterImage) -> float | str:
         return raw.decode("latin-1").strip(" \x00")
     words = image.words(spec["addr"], _WORDS[typ])
     if typ == "f32":
+        # `undef` dotyczy wyłącznie sum liczników PV (u32) — tak jak w Boksie, f32 go nie sprawdza.
         value: float = struct.unpack(">f", b"".join(w.to_bytes(2, "big") for w in words))[0]
     else:
         raw_int = words[0] if len(words) == 1 else (words[0] << 16) | words[1]
@@ -59,29 +60,43 @@ def decode(spec: Mapping[str, Any], image: RegisterImage) -> float | str:
 
 
 def read_values(read_map: Mapping[str, Any], image: RegisterImage) -> dict[str, float | str | None]:
-    """Wszystkie klucze mapy `read`. Brakujący rejestr → None (nie wyjątek)."""
+    """Wszystkie klucze mapy `read`. Brakujący rejestr → None (nie wyjątek).
+
+    Cykl w `ref` (A odwołuje się do B, B do A) to błąd profilu, nie brakujący odczyt —
+    zgłaszamy go głośno zamiast cicho zwracać None dla obu kluczy.
+    """
     cache: dict[str, float | str | None] = {}
 
-    def value(key: str, depth: int = 0) -> float | str | None:
+    def value(key: str, visiting: frozenset[str] = frozenset()) -> float | str | None:
         if key in cache:
             return cache[key]
-        if depth > 8:
+        if key in visiting:
             raise RegisterError(f"cykl odwołań przy {key}")
+        visiting = visiting | {key}
         spec = read_map[key]
-        try:
-            if "sum" in spec:
-                total = 0.0
-                for term in spec["sum"]:
-                    part = value(term["ref"], depth + 1) if "ref" in term else decode(term, image)
-                    if part is None or isinstance(part, str):
-                        cache[key] = None
-                        return None
-                    total += part * term.get("sign", 1)
-                out: float | str | None = int(total) if float(total).is_integer() else round(total, 6)
-            else:
+        if "sum" in spec:
+            total = 0.0
+            for term in spec["sum"]:
+                if "ref" in term:
+                    part = value(term["ref"], visiting)
+                    if part is not None and not isinstance(part, str):
+                        part = part * term.get("sign", 1)
+                else:
+                    # Znak rejestru jest już policzony w `decode` — tu się go nie dubluje.
+                    try:
+                        part = decode(term, image)
+                    except RegisterError:
+                        part = None
+                if part is None or isinstance(part, str):
+                    cache[key] = None
+                    return None
+                total += part
+            out: float | str | None = int(total) if float(total).is_integer() else round(total, 6)
+        else:
+            try:
                 out = decode(spec, image)
-        except RegisterError:
-            out = None
+            except RegisterError:
+                out = None
         cache[key] = out
         return out
 

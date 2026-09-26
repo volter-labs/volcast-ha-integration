@@ -31,3 +31,24 @@ def test_read_values_sum_ref_and_missing():
             "soc": {"addr": 999, "type": "u16"}}
     v = read_values(rmap, img)
     assert (v["pv_power_w"], v["active_power_w"], v["load_power_w"], v["soc"]) == (150, -32, 182, None)
+
+
+def test_sum_register_term_applies_sign_once():
+    # 0xFFE0 jako i16 to -32; z odwróconym znakiem oczekujemy +32, nie -32 (podwójne odwrócenie).
+    img = RegisterImage.from_blocks({12: [0xFFE0]})
+    rmap = {"g": {"sum": [{"addr": 12, "type": "i16", "sign": -1}]}}
+    assert read_values(rmap, img)["g"] == 32
+
+
+def test_ref_cycle_raises():
+    img = RegisterImage.from_blocks({})
+    rmap = {"a": {"sum": [{"ref": "b"}]}, "b": {"sum": [{"ref": "a"}]}}
+    with pytest.raises(RegisterError):
+        read_values(rmap, img)
+
+
+def test_undef_ignored_on_f32():
+    # Wzorzec bitowy 1.0f32 potraktowany jako liczba całkowita akurat równa "undef" —
+    # dla f32 to nie ma znaczenia, undef dotyczy tylko sum liczników PV (u32).
+    img = RegisterImage.from_blocks({105: [0x3F80, 0x0000]})
+    assert decode({"addr": 105, "type": "f32", "undef": 0x3F800000}, img) == 1.0
