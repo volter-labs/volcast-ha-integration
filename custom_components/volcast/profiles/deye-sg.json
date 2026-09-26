@@ -1,33 +1,33 @@
 {
   "schema_version": 1,
   "id": "deye-sg",
-  "label": "Deye SUN-xK-SG (hybrid, low/high voltage battery)",
+  "label": "Deye SUN-xK-SG (three-phase hybrid, low/high voltage battery)",
   "status": "draft",
-  "status_note": "Community register maps only; nothing verified on hardware. Not used for control until verified.",
+  "status_note": "Community register maps only; nothing verified on hardware. Three-phase register map (SG0xLP3/SG0xHP3 family) chosen to match the addresses cited in `sources`; single-phase units need a different read block. Battery voltage scale (0.01) is confirmed for the low-voltage variant only, the high-voltage variant may use 0.1 — unconfirmed. Live-test checklist addition: verify phase/voltage variant (device_type code) and the whole read block against the real unit before any register here is trusted. Not used for control until verified.",
   "control_model": "time_window",
   "sources": [
-    {"what": "register map", "ref": "ha-solarman inverter definitions (deye_sg04lp3, deye_sg01hp3), unverified"},
+    {"what": "register map (three-phase battery/PV/grid/load block)", "ref": "kellerza/sunsynk three_phase_lv.py and three_phase_common.py sensor definitions, unverified"},
+    {"what": "device identification (register 0 device-type codes)", "ref": "kellerza/sunsynk identity.py DEVICE_TYPES table, unverified"},
     {"what": "time-of-use semantics", "ref": "Deye system work mode manual (program time/power/SOC/grid charge), unverified"}
   ],
   "unit_id": 1,
   "transports": ["solarman_v5", "modbus_tcp", "modbus_rtu"],
   "identify": {
-    "model_register": {"addr": 3, "type": "ascii", "len": 5},
-    "model_regex": ["."],
     "registers": {
-      "device_type": {"addr": 0, "type": "u16"},
-      "rated_power_w": {"addr": 16, "type": "u32", "scale": 0.1, "word_order": "lo_hi"}
+      "device_type": {"addr": 0, "type": "u16",
+                       "expect": [5, 6, 1280, 1537, 1538]},
+      "rated_power_w": {"addr": 20, "type": "u32", "scale": 0.1, "word_order": "lo_hi"}
     }
   },
   "read": {
-    "soc": {"addr": 184, "type": "u16"},
-    "battery_voltage_v": {"addr": 183, "type": "u16", "scale": 0.01},
-    "battery_current_a": {"addr": 191, "type": "i16", "scale": 0.01},
-    "battery_power_w": {"addr": 190, "type": "i16"},
-    "pv_power_w": {"sum": [{"addr": 186, "type": "u16"}, {"addr": 187, "type": "u16"}]},
-    "grid_power_w": {"addr": 169, "type": "i16"},
-    "load_power_w": {"addr": 178, "type": "i16"},
-    "pv_energy_total_kwh": {"addr": 96, "type": "u32", "scale": 0.1, "word_order": "lo_hi"}
+    "soc": {"addr": 588, "type": "u16"},
+    "battery_voltage_v": {"addr": 587, "type": "u16", "scale": 0.01},
+    "battery_current_a": {"addr": 591, "type": "i16", "scale": 0.01},
+    "battery_power_w": {"addr": 590, "type": "i16"},
+    "pv_power_w": {"sum": [{"addr": 672, "type": "i16"}, {"addr": 673, "type": "i16"}]},
+    "grid_power_w": {"addr": 625, "type": "i16"},
+    "load_power_w": {"addr": 653, "type": "i16"},
+    "pv_energy_total_kwh": {"addr": 534, "type": "u32", "scale": 0.1, "word_order": "lo_hi"}
   },
   "write": {
     "tou_program": {

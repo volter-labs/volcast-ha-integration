@@ -16,6 +16,18 @@ def test_draft_and_shape():
     assert DEYE.raw["capabilities"]["sell_from_battery"] is False
 
 
+def test_identify_never_reads_serial():
+    # Rejestry 3-7 to numer seryjny (10 znaków ASCII), nie model — identyfikacja nie może
+    # po niego sięgać, nawet pośrednio przez zakres jakiegoś innego rejestru.
+    ident = DEYE.raw["identify"]
+    assert "model_register" not in ident
+    assert "model_regex" not in ident
+    for name, spec in ident["registers"].items():
+        addr = spec["addr"]
+        words = 2 if spec["type"] in ("u32", "i32", "f32") else 1
+        assert addr + words <= 3 or addr > 7, f"{name} nachodzi na numer seryjny (3-7)"
+
+
 def test_lo_hi_word_order():
     img = RegisterImage.from_blocks({16: [0x86A0, 0x0001]})
     assert decode({"addr": 16, "type": "u32", "word_order": "lo_hi"}, img) == 100000

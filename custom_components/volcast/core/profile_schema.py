@@ -115,7 +115,7 @@ class _V:
 
 def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True) -> None:
     r = v.obj(raw, path, ("addr",) + (("type",) if need_type else ()),
-              ("type", "scale", "sign", "undef", "len", "word_order"))
+              ("type", "scale", "sign", "undef", "len", "word_order", "expect"))
     if r is None:
         return
     v.int_(r.get("addr"), f"{path}.addr", 0, 65535)
@@ -132,6 +132,13 @@ def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True) -> None:
         v.int_(r["undef"], f"{path}.undef", 0, 2**32 - 1)
     if "word_order" in r:
         v.enum(r["word_order"], f"{path}.word_order", ("hi_lo", "lo_hi"))
+    if "expect" in r:
+        # Wykrywanie po wartości numerycznej (np. typ urządzenia) zamiast po napisie ASCII —
+        # dla marek bez rejestru modelu w ASCII (patrz walidacja `$.identify` niżej).
+        exp = r["expect"]
+        if not isinstance(exp, list) or not exp or not all(
+                isinstance(x, int) and not isinstance(x, bool) for x in exp):
+            v.err(f"{path}.expect", "oczekiwano niepustej listy liczb całkowitych")
 
 
 def _read(v: _V, raw: Any) -> None:
@@ -317,18 +324,14 @@ def validate_profile(raw: object) -> list[str]:
         for i, t in enumerate(tr):
             v.enum(t, f"$.transports[{i}]", TRANSPORTS)
 
-    ident = v.obj(top.get("identify"), "$.identify", ("model_register", "model_regex"), ("registers",))
+    # Model po tekście ASCII (`model_register`+`model_regex`) i model po wartości liczbowej
+    # (`registers.<klucz>.expect`) to dwa wykluczające się sposoby identyfikacji — część marek
+    # (np. Deye) nie ma w ogóle rejestru modelu w ASCII, tylko kod liczbowy typu urządzenia,
+    # więc wymuszanie ASCII zmuszałoby do podstawienia pod "model" czegoś innego (np. numeru
+    # seryjnego), co nie jest modelem i nie powinno być tak czytane.
+    ident = v.obj(top.get("identify"), "$.identify", (), ("model_register", "model_regex", "registers"))
     ident_regs: dict = {}
     if ident is not None:
-        _reg(v, ident.get("model_register"), "$.identify.model_register")
-        if isinstance(ident.get("model_register"), dict) and ident["model_register"].get("type") != "ascii":
-            v.err("$.identify.model_register.type", "wymagane ascii")
-        mr = ident.get("model_regex")
-        if not isinstance(mr, list) or not mr:
-            v.err("$.identify.model_regex", "oczekiwano niepustej listy")
-        else:
-            for i, r in enumerate(mr):
-                v.regex(r, f"$.identify.model_regex[{i}]")
         regs = ident.get("registers", {})
         if not isinstance(regs, dict):
             v.err("$.identify.registers", "oczekiwano obiektu")
@@ -336,6 +339,20 @@ def validate_profile(raw: object) -> list[str]:
             ident_regs = regs
             for name, spec in ident_regs.items():
                 _reg(v, spec, f"$.identify.registers.{name}")
+        has_expect = any(isinstance(s, dict) and "expect" in s for s in ident_regs.values())
+        has_model = "model_register" in ident or "model_regex" in ident
+        if has_model:
+            _reg(v, ident.get("model_register"), "$.identify.model_register")
+            if isinstance(ident.get("model_register"), dict) and ident["model_register"].get("type") != "ascii":
+                v.err("$.identify.model_register.type", "wymagane ascii")
+            mr = ident.get("model_regex")
+            if not isinstance(mr, list) or not mr:
+                v.err("$.identify.model_regex", "oczekiwano niepustej listy")
+            else:
+                for i, r in enumerate(mr):
+                    v.regex(r, f"$.identify.model_regex[{i}]")
+        elif not has_expect:
+            v.err("$.identify", "wymagane model_register+model_regex albo registers.<klucz>.expect")
 
     _read(v, top.get("read"))
 
