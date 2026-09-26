@@ -40,7 +40,8 @@
       "unknown": "An unexpected error occurred."
     },
     "abort": {
-      "already_configured": "This API key is already configured."
+      "already_configured": "This API key is already configured.",
+      "single_instance_allowed": "Discovery-only mode is already set up."
     }
   },
   "options": {

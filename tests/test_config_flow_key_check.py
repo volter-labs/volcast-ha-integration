@@ -32,14 +32,27 @@ class _FakeConfigFlow:
     async def async_set_unique_id(self, _):
         return None
 
-    def _abort_if_unique_id_configured(self):
+    def _abort_if_unique_id_configured(self, *args, **kwargs):
         return None
+
+
+class _FakeOptionsFlow:
+    """Records async_create_entry instead of writing options; stores config_entry."""
+
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+
+    def async_create_entry(self, *, data, **_):
+        return {"type": "create_entry", "data": data}
+
+    def async_show_form(self, *, step_id, data_schema=None, errors=None, **_):
+        return {"type": "form", "step_id": step_id, "errors": errors or {}}
 
 
 for name, val in {
     "ConfigFlow": _FakeConfigFlow,
     "ConfigFlowResult": dict,
-    "OptionsFlowWithConfigEntry": type("OptionsFlowWithConfigEntry", (), {}),
+    "OptionsFlowWithConfigEntry": _FakeOptionsFlow,
 }.items():
     if not hasattr(_ce, name):
         setattr(_ce, name, val)

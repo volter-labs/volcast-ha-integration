@@ -138,7 +138,9 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Create an account-less entry — only read-only installation discovery."""
         await self.async_set_unique_id(MODE_DISCOVERY_ONLY)
-        self._abort_if_unique_id_configured()
+        # Distinct abort reason: "already_configured" talks about an API key,
+        # which this entry doesn't have.
+        self._abort_if_unique_id_configured(error="single_instance_allowed")
 
         return self.async_create_entry(
             title="Volcast — discovery",

@@ -208,3 +208,87 @@ async def test_platforms_without_coordinator_add_only_discovery_entities():
     assert await _setup_platform("sensor", entry_data) == {"e1_discovery"}
     assert await _setup_platform("button", entry_data) == {"e1_run_discovery"}
     assert await _setup_platform("binary_sensor", entry_data) == set()
+
+
+# --- wpis tylko-rozpoznanie (mode=discovery_only) — bez konta, bez prognozy ---
+# (Task 8, fix round 1 — Important #1: runtime setup/unload path był bez pokrycia.)
+
+async def test_discovery_only_forwards_only_sensor_and_button(setup_forecast_entry):
+    await setup_forecast_entry(data={"mode": "discovery_only"})
+    hass = setup_forecast_entry.hass
+    assert hass.config_entries.forwarded == ["sensor", "button"]
+
+
+async def test_discovery_only_entry_data_has_only_discovery_runner(setup_forecast_entry):
+    from custom_components.volcast.discovery_runner import DiscoveryRunner
+
+    await setup_forecast_entry(data={"mode": "discovery_only"})
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    # Żadnego koordynatora/trackera/reconcilera — tylko wykrywanie.
+    assert set(entry_data) == {"discovery"}
+    assert isinstance(entry_data["discovery"], DiscoveryRunner)
+
+
+async def test_discovery_only_never_creates_coordinator(monkeypatch):
+    """Dowód „brak wywołania chmury Volcast": VolcastCoordinator w ogóle nie powstaje."""
+    import custom_components.volcast as integ
+    from custom_components.volcast import discovery_runner
+    from tests.setup_harness import FakeEntry, SetupHass
+
+    monkeypatch.setattr(discovery_runner, "probe_udp_48899", AsyncMock(return_value=None))
+
+    class _BoomCoordinator:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError(
+                "VolcastCoordinator nie powinien powstać dla wpisu tylko-rozpoznanie"
+            )
+
+    monkeypatch.setattr(integ, "VolcastCoordinator", _BoomCoordinator)
+
+    hass = SetupHass(is_running=True)
+    entry = FakeEntry(data={"mode": "discovery_only"})
+    assert await integ.async_setup_entry(hass, entry) is True
+
+
+async def test_discovery_only_creates_no_production_repair_issue(setup_forecast_entry, monkeypatch):
+    import custom_components.volcast as integ
+
+    spy = MagicMock()
+    monkeypatch.setattr(integ.ir, "async_create_issue", spy)
+    await setup_forecast_entry(data={"mode": "discovery_only"})
+    spy.assert_not_called()
+
+
+async def test_discovery_only_unload_uses_discovery_only_platforms(setup_forecast_entry, monkeypatch):
+    from custom_components.volcast import DISCOVERY_ONLY_PLATFORMS, async_unload_entry
+
+    await setup_forecast_entry(data={"mode": "discovery_only"})
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+
+    captured: dict = {}
+    orig_unload = hass.config_entries.async_unload_platforms
+
+    async def _spy(entry_, platforms):
+        captured["platforms"] = platforms
+        return await orig_unload(entry_, platforms)
+
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", _spy)
+
+    assert await async_unload_entry(hass, entry) is True
+    assert captured["platforms"] == DISCOVERY_ONLY_PLATFORMS
+    assert entry.entry_id not in hass.data[DOMAIN]
+
+
+async def test_discovery_only_unload_does_not_touch_unregistered_service(setup_forecast_entry):
+    """Serwis sync_production nigdy nie jest rejestrowany dla wpisu tylko-rozpoznanie —
+    unload ostatniego takiego wpisu nie wolno próbować go usunąć (patrz Minor #4)."""
+    await setup_forecast_entry(data={"mode": "discovery_only"})
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+
+    from custom_components.volcast import async_unload_entry
+    from custom_components.volcast.const import SERVICE_SYNC_PRODUCTION
+
+    assert not hass.services.has_service(DOMAIN, SERVICE_SYNC_PRODUCTION)
+    assert await async_unload_entry(hass, entry) is True
+    assert not hass.services.has_service(DOMAIN, SERVICE_SYNC_PRODUCTION)

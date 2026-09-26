@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
-from types import ModuleType
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -34,14 +36,27 @@ class _FakeConfigFlow:
     async def async_set_unique_id(self, _):
         return None
 
-    def _abort_if_unique_id_configured(self):
+    def _abort_if_unique_id_configured(self, *args, **kwargs):
         return None
+
+
+class _FakeOptionsFlow:
+    """Records async_create_entry instead of writing options; stores config_entry."""
+
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+
+    def async_create_entry(self, *, data, **_):
+        return {"type": "create_entry", "data": data}
+
+    def async_show_form(self, *, step_id, data_schema=None, errors=None, **_):
+        return {"type": "form", "step_id": step_id, "errors": errors or {}}
 
 
 for name, val in {
     "ConfigFlow": _FakeConfigFlow,
     "ConfigFlowResult": dict,
-    "OptionsFlowWithConfigEntry": type("OptionsFlowWithConfigEntry", (), {}),
+    "OptionsFlowWithConfigEntry": _FakeOptionsFlow,
 }.items():
     if not hasattr(_ce, name):
         setattr(_ce, name, val)
@@ -82,6 +97,41 @@ def test_discovery_only_creates_entry_without_api_key():
 def test_second_discovery_only_entry_aborts(monkeypatch):
     flow = config_flow.VolcastConfigFlow()
     monkeypatch.setattr(flow, "_abort_if_unique_id_configured",
-                        lambda: (_ for _ in ()).throw(AbortFlowStub("already_configured")))
+                        lambda **_: (_ for _ in ()).throw(AbortFlowStub("already_configured")))
     with pytest.raises(AbortFlowStub):
         _run(flow.async_step_discovery_only())
+
+
+def test_second_discovery_only_entry_aborts_with_distinct_reason(monkeypatch):
+    """"already_configured" talks about an API key — wrong for an account-less entry."""
+    flow = config_flow.VolcastConfigFlow()
+    captured: dict[str, Any] = {}
+
+    def _fake_abort(*, error="already_configured"):
+        captured["error"] = error
+        raise AbortFlowStub(error)
+
+    monkeypatch.setattr(flow, "_abort_if_unique_id_configured", _fake_abort)
+    with pytest.raises(AbortFlowStub):
+        _run(flow.async_step_discovery_only())
+    assert captured["error"] == "single_instance_allowed"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        Path(__file__).parent.parent / "custom_components" / "volcast" / "strings.json",
+        Path(__file__).parent.parent / "custom_components" / "volcast" / "translations" / "en.json",
+    ],
+)
+def test_single_instance_allowed_abort_has_user_facing_string(path):
+    abort = json.loads(path.read_text(encoding="utf-8"))["config"]["abort"]
+    assert "single_instance_allowed" in abort, f"{path.name} missing config.abort.single_instance_allowed"
+    assert abort["single_instance_allowed"] != abort.get("already_configured")
+
+
+def test_options_flow_for_discovery_only_entry_has_no_options():
+    entry = SimpleNamespace(data={"mode": "discovery_only"}, options={})
+    flow = config_flow.VolcastOptionsFlow(entry)
+    res = _run(flow.async_step_init())
+    assert res == {"type": "create_entry", "data": {}}

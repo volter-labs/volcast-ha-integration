@@ -355,7 +355,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         tracker = entry_data.get("tracker")
         if tracker is not None:
             await tracker.async_stop()
-        if not hass.data[DOMAIN]:
+        if not hass.data[DOMAIN] and hass.services.has_service(
+            DOMAIN, SERVICE_SYNC_PRODUCTION
+        ):
+            # Wpisy tylko-rozpoznanie nigdy nie rejestrują tego serwisu — bez
+            # strażnika HA loguje ostrzeżenie o usuwaniu nieznanego serwisu.
             hass.services.async_remove(DOMAIN, SERVICE_SYNC_PRODUCTION)
     return unload_ok
 

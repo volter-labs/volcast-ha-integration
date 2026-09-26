@@ -11,11 +11,10 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import CONF_MODE, DOMAIN
 
-# Klucz i wartość domyślna trybu wpisu; stałe CONF_MODE/MODE_* dochodzą z trybem
-# „tylko rozpoznanie" (wpis bez `mode` = klasyczny wpis prognozy z kluczem API).
-_MODE_KEY = "mode"
+# Wpis bez `mode` (sprzed trybu „tylko rozpoznanie") to klasyczny wpis prognozy
+# z kluczem API.
 _MODE_FORECAST = "forecast"
 
 
@@ -24,7 +23,7 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     entry_data = (getattr(hass, "data", None) or {}).get(DOMAIN, {}).get(entry.entry_id) or {}
     runner = entry_data.get("discovery")
-    mode = entry.data.get(_MODE_KEY) if hasattr(entry.data, "get") else None
+    mode = entry.data.get(CONF_MODE) if hasattr(entry.data, "get") else None
     return {
         "entry": {
             "mode": mode if isinstance(mode, str) else _MODE_FORECAST,
