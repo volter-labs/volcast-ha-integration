@@ -1,4 +1,6 @@
 """Guardy ze stanem — port testów I-6/I-8 i uzgadniania referencyjnego wykonawcy."""
+import pytest
+
 from custom_components.volcast.core.guard_state import DirectionLimiter, WriteThrottle
 
 P = {"mode": "sell_power", "power_w": 2500.0, "soc_min": 20.0, "export_limit_enabled": 1.0}
@@ -77,10 +79,32 @@ def test_reconcile_on_agreement_changes_nothing():
     assert t.filter(P, 5000.0) == set()
 
 
-def test_reconcile_mixed_types_is_a_mismatch():
+def test_reconcile_mode_as_number_is_a_caller_error():
+    # Odczyt musi mieć postać `Params.flatten()` (nazwa trybu). Surowa wartość
+    # rejestru kasowałaby pamięć w każdym cyklu i przepisywała tryb do NVM.
     t = WriteThrottle(60)
     t.record(P, P.keys(), 0.0)
-    assert t.reconcile({"mode": 3.0}) == 1
+    with pytest.raises(TypeError):
+        t.reconcile({"mode": 3.0})
+    with pytest.raises(TypeError):
+        t.reconcile({"power_w": "2500"})
+
+
+def test_reconcile_accepts_bool_as_number():
+    t = WriteThrottle(60)
+    t.record(P, P.keys(), 0.0)
+    assert t.reconcile({"export_limit_enabled": True}) == 0
+    assert t.reconcile({"export_limit_enabled": False}) == 1
+
+
+def test_clock_step_backwards_does_not_silence_changed_value():
+    # Zegar cofnięty (np. korekta NTP) nie może wyciszyć zmiany na godzinę —
+    # błąd idzie w stronę ponownej synchronizacji, nie ciszy.
+    t = WriteThrottle(60)
+    t.record(P, P.keys(), 10_000.0)
+    changed = {**P, "power_w": 3000.0}
+    assert t.filter(changed, 6_400.0) == {"power_w"}
+    assert t.filter(P, 6_400.0) == set()       # niezmienione dalej nie jedzie
 
 
 def test_reconcile_ignores_unknown_keys():
@@ -144,13 +168,53 @@ def test_neutral_and_idle_never_consume_budget():
     assert d.allows("discharge", 20.0)
 
 
-def test_history_is_bounded_and_drops_oldest():
-    # Historia ma stałą pojemność (jak bufor referencyjny): przy przepełnieniu
-    # wypada najstarszy wpis. W praktyce pojemność > budżet, więc nie wpływa na wynik.
-    d = DirectionLimiter(4, history=3)
+def test_budget_larger_than_history_is_still_enforced():
+    # Budżet pochodzi z profilu (do 60/h) i może przekraczać domyślną historię (16).
+    d = DirectionLimiter(20)
     d.record("charge", 0.0)
-    direction = "discharge"
-    for t in (1.0, 2.0, 3.0, 4.0, 5.0):
+    direction, t = "discharge", 1.0
+    for _ in range(20):
+        assert d.allows(direction, t)
         d.record(direction, t)
         direction = "charge" if direction == "discharge" else "discharge"
-    assert d.allows(direction, 6.0)            # pamiętane tylko 3 zmiany < budżet 4
+        t += 1.0
+    assert not d.allows(direction, t), "21. zmiana w godzinie musi zostać zablokowana"
+
+
+def test_window_edge_is_inclusive():
+    d = DirectionLimiter(1)
+    d.record("charge", 0.0)
+    d.record("discharge", 100.0)
+    assert not d.allows("charge", 3700.0)      # wpis sprzed dokładnie okna jeszcze się liczy
+    assert d.allows("charge", 3700.001)
+
+
+def test_old_changes_are_pruned_on_record():
+    # Pamięć ograniczona oknem: po godzinie stare zmiany znikają przy zapisie.
+    d = DirectionLimiter(20)
+    d.record("charge", 0.0)
+    direction = "discharge"
+    for t in range(1, 21):
+        d.record(direction, float(t))
+        direction = "charge" if direction == "discharge" else "discharge"
+    assert len(d._changes) == 20
+    d.record(direction, 4000.0)
+    assert len(d._changes) == 1
+
+
+def test_clock_step_backwards_does_not_block_for_an_hour():
+    d = DirectionLimiter(1)
+    d.record("charge", 10_000.0)
+    d.record("discharge", 10_010.0)
+    assert not d.allows("charge", 10_020.0)
+    # Zegar cofnął się o godzinę: wpisy „z przyszłości" są niewiarygodne i wypadają.
+    assert d.allows("charge", 6_420.0)
+
+
+@pytest.mark.parametrize("bad", ["charging", "", "auto", None])
+def test_unknown_direction_is_rejected(bad):
+    d = DirectionLimiter(4)
+    with pytest.raises(ValueError):
+        d.allows(bad, 0.0)
+    with pytest.raises(ValueError):
+        d.record(bad, 0.0)
