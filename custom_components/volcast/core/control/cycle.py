@@ -5,10 +5,15 @@ Czysta decyzja; wywołania usług robi warstwa HA. Każdy wyjątek = cykl bez za
 skracają obliczeń — decyzja jest liczona zawsze, żeby „próba na sucho" pokazywała,
 co by poszło; zapis wykonuje się tylko przy statusie WRITE.
 
-Zasady, które trzymają tryb (nigdy nie zapisujemy trybu bez jego warunków):
+Tryb i jego nastawa mocy to JEDNA GRUPA: idą razem albo wcale (zmierzone: standby
+honoruje Xset jako nastawę ładowania, więc tryb na starej mocy albo moc w starym
+trybie ładuje z sieci). Zasady, które trzymają grupę:
 * każdy klucz zapisu profilu musi mieć encję — inaczej sterowania nie ma wcale;
-* parametr, którego nie da się zapisać w tym cyklu (jednostka encji się zmieniła),
-  wstrzymuje tryb razem z jego nastawą mocy;
+* zmieniony parametr, który w tym cyklu nie pójdzie (interwał I-6, jednostka encji
+  się zmieniła), wstrzymuje zmianę trybu, a z nią moc;
+* zmiana trybu wstrzymana (I-6, I-8) wstrzymuje moc — chyba że falownik już ma tryb
+  z planu, wtedy sama moc jest zwykłą korektą nastawy;
+* tryb albo moc, których falownik nie obsługuje, wyłączają intencję na całą sesję;
 * parametr niedopasowalny do zakresu encji blokuje cały cykl.
 
 Zatrzask rezerwy dostaje WYŁĄCZNIE odczyt, który przeszedł sanityzację i świeżość
@@ -35,6 +40,9 @@ from .latch import ReserveLatch
 
 WRITE, DRY_RUN, IDLE, BLOCKED, ERROR = "write", "dry_run", "idle", "blocked", "error"
 
+# Tryb i nastawa, która nadaje mu znaczenie — zapisywane razem albo wcale.
+_MODE_GROUP = frozenset({"mode", "power_w"})
+_NO_READING = ("unavailable", "unknown", "")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
 _QUANTUM = 1.0
 
@@ -141,7 +149,8 @@ def _device_view(readings: Mapping[str, Any], flat: Mapping[str, float | str], p
     Wykonawca podaje odczyty już znormalizowane; surowy stan encji (`unavailable`,
     `on`/`off`, opcja wyboru, liczba jako tekst) przechodzi przez ten sam przekład co
     odczyt encji. Liczba tam, gdzie tryb jest nazwą, zostaje — uzgadnianie odrzuci ją
-    jako błąd wołającego (cykl bez zapisów).
+    jako błąd wołającego (cykl bez zapisów). Czytelna opcja spoza profilu to odczyt
+    RÓŻNY od każdego trybu (znacznik `?opcja`), nie brak odczytu — nasz tryb wraca.
     """
     out: dict[str, float | str] = {}
     for key in flat:
@@ -162,7 +171,9 @@ def _device_view(readings: Mapping[str, Any], flat: Mapping[str, float | str], p
             except (KeyError, ValueError, TypeError):
                 value = None
             if value is None:
-                continue
+                if key != "mode" or readings[key] in _NO_READING:
+                    continue
+                value = "?" + readings[key]
         out[key] = value
     return out
 
@@ -219,27 +230,41 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
         return CycleDecision(BLOCKED, "entity_range_unknown", unmapped=unfit, **common)
     flat = params.flatten()
+    unsupported = _unsupported_group(flat, profile, ents, memory)
+    if unsupported:
+        reason = "mode_unsupported" if unsupported[0].startswith("mode:") else "power_unsupported"
+        return CycleDecision(BLOCKED, reason, flat=flat,
+                             dropped_unsupported=unsupported, **common)
     device = _device_view(ents.readings, flat, profile, ents)
     # Uzgodnienie z tym, co falownik naprawdę ma (tylko klucze planu, tylko czytelne).
+    # Zły typ odczytu rzuca TypeError po drodze (pamięć wcześniejszych kluczy mogła już
+    # zniknąć) — cykl kończy się bez zapisów, następny też, więc to bezpieczne.
     memory.throttle.reconcile(device)
-    allowed = memory.throttle.filter(flat, now_mono) - memory.unsupported
     # To, co falownik już ma, nie jedzie wcale — także po restarcie, gdy pamięć
     # throttlingu jest pusta (inaczej każdy reload = zapis wszystkich nastaw do NVM).
-    allowed -= {k for k in allowed if k in device and same_value(device[k], flat[k])}
-
-    notes: list[str] = []
+    settled = {k for k in flat if k in device and same_value(device[k], flat[k])}
+    due = memory.throttle.filter(flat, now_mono) - settled
+    # Do zmiany na falowniku: to, co pójdzie teraz, i to, co czeka w interwale I-6.
+    need = due | (memory.throttle.pending(flat, now_mono) - settled)
     _, runtime_unmapped = control_writes(params, profile, ents.domain, ents.mapped,
                                          keys=None, units=ents.units)
+    allowed = due - memory.unsupported - set(runtime_unmapped)
+
+    notes: list[str] = []
     held_by = [k for k in runtime_unmapped if k != "mode"]
-    if held_by:
-        # Parametr bez zapisu w tym cyklu = tryb bez warunku. Moc należy do trybu.
-        if "mode" in allowed:
-            allowed -= {"mode", "power_w"}
+    # Zmieniony warunek, który w tym cyklu nie dojdzie („nieobsługiwany" nie dojdzie nigdy).
+    unsettled = (need - allowed - memory.unsupported) - {"mode"}
+    if held_by or ("mode" in need and unsettled):
+        allowed.discard("mode")
         notes.append("mode_held")
     direction = profile.mode_direction(params.mode) if params.mode is not None else None
     if "mode" in allowed and direction is not None and not memory.limiter.allows(direction, now_mono):
-        allowed -= {"mode", "power_w"}          # moc należy do trybu, którego nie wolno włączyć
+        allowed.discard("mode")
         notes.append("I-8")
+    # Grupa: członek, który musi się zmienić, a nie pójdzie → nie idzie żaden.
+    if _MODE_GROUP & (need - allowed) and _MODE_GROUP & allowed:
+        allowed -= _MODE_GROUP
+        notes.append("group_held")
     writes, unmapped = control_writes(params, profile, ents.domain, ents.mapped,
                                       keys=allowed, units=ents.units)
     reason = _gate_reason(gates, memory, now_mono)
@@ -254,6 +279,25 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         **common)
 
 
+def _unsupported_group(flat: Mapping[str, float | str], profile, ents: EntityContext,
+                       memory: ControlMemory) -> tuple[str, ...]:
+    """Członkowie grupy, których falownik nie obsługuje: tryb per opcja, moc per klucz.
+
+    Opcję trybu sprawdzamy też z góry na liście `options` encji — inaczej pierwszy cykl
+    zapisałby moc przed trybem, którego falownik i tak nie przyjmie.
+    """
+    out: list[str] = []
+    mode = flat.get("mode")
+    if isinstance(mode, str):
+        options = (ents.attrs.get(ents.mapped.get("mode", "")) or {}).get("options")
+        known = not isinstance(options, (list, tuple)) or profile.modes[mode].ha_option in options
+        if f"mode:{mode}" in memory.unsupported or not known:
+            out.append(f"mode:{mode}")
+    if "power_w" in flat and "power_w" in memory.unsupported:
+        out.append("power_w")
+    return tuple(out)
+
+
 def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, now_mono: float) -> None:
     """Pamięć po wykonaniu: throttling tylko dla zapisów udanych, I-8 tylko gdy tryb poszedł.
 
@@ -265,6 +309,9 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     for key in report.written:
         if key in decision.flat:
             memory.last_written[key] = decision.flat[key]
-    memory.unsupported |= set(report.unsupported)
+    # Tryb nieobsługiwany zapamiętujemy per opcja: inne tryby dalej działają.
+    mode = decision.flat.get("mode")
+    memory.unsupported |= {f"mode:{mode}" if key == "mode" and isinstance(mode, str) else key
+                           for key in report.unsupported}
     if decision.direction is not None and not report.mode_held:
         memory.limiter.record(decision.direction, now_mono)

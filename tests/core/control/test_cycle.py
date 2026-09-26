@@ -38,6 +38,24 @@ def sched(**slot_over):
                            "control_enabled": True})
 
 
+SELL = {"mode": "discharge", "discharge_purpose": "sell", "price_pln_kwh": 0.8}
+STANDBY = {"mode": "idle", "price_pln_kwh": 0.8}
+
+
+def at(hms):
+    return datetime.fromisoformat(f"2026-09-27T{hms}+00:00")
+
+
+def slot(frm, to, **kw):
+    return {"from": f"2026-09-27T{frm}:00Z", "to": f"2026-09-27T{to}:00Z", **kw}
+
+
+def plan(*slots):
+    return parse_schedule({"schedule_id": "s2", "slots": list(slots),
+                           "fallback": {"mode": "self_consume", "soc_reserve": 10},
+                           "control_enabled": True})
+
+
 def run(memory=None, *, schedule="default", gates=OPEN, soc=60.0, age=10.0, temp=25.0, mapped=MAPPED,
         units=UNITS, attrs=ATTRS, readings=None, now_mono=1000.0, now_utc=NOW, profile=GW):
     memory = memory or ControlMemory.for_profile(profile)
@@ -77,11 +95,6 @@ def test_no_mode_chosen_is_idle_and_does_not_touch_latch():
 def test_gates_make_dry_run_with_visible_writes(gates, reason):
     d, _ = run(gates=gates)
     assert (d.status, d.reason) == (DRY_RUN, reason) and d.writes
-
-
-def test_unverified_is_dry_run():
-    d, _ = run(gates=replace(OPEN, verified=False))
-    assert d.status == DRY_RUN
 
 
 def test_paused_is_dry_run():
@@ -346,3 +359,111 @@ def test_summary_of_bare_decision():
                                       ("2000", 2000.0, False), (1.0, "on", False)])
 def test_same_value(a, b, same):
     assert same_value(a, b) is same
+
+
+# ── Tryb i jego nastawa to jedna grupa ──
+
+def _group_keys(d):
+    return [w.key for w in d.writes if w.key in ("mode", "power_w")]
+
+
+def test_standby_never_written_over_pending_power():
+    # t=0 sprzedaż 2000 W; t=240 poprawiony plan 2500 W; t=299.9 slot postoju.
+    d, mem = run(schedule=plan(slot("10:00", "11:00", power_w=2000, **SELL)), now_mono=0.0)
+    commit(d, _written(d), mem, 0.0)
+    p2 = plan(slot("10:00", "10:35", power_w=2500, **SELL), slot("10:35", "11:00", **STANDBY))
+    d2, _ = run(mem, schedule=p2, now_utc=at("10:34:00"), now_mono=240.0)
+    assert [w.key for w in d2.writes] == ["power_w"]          # tryb już ten sam — sama nastawa
+    commit(d2, _written(d2), mem, 240.0)
+    d3, _ = run(mem, schedule=p2, now_utc=at("10:35:30"), now_mono=299.9)
+    assert d3.intent == "standby" and _group_keys(d3) == [] and "mode_held" in d3.notes
+    d4, _ = run(mem, schedule=p2, now_utc=at("10:36:00"), now_mono=300.5)
+    assert [(w.key, w.data) for w in d4.writes] == [("power_w", {"value": 0.0}),
+                                                     ("mode", {"option": "battery_standby"})]
+
+
+def test_power_never_written_into_pending_standby():
+    d, mem = run(now_mono=1000.0)
+    commit(d, _written(d), mem, 1000.0)
+    dev = {"power_w": 0.0, "export_limit_enabled": 0.0, "mode": "sell_power"}
+    d2, _ = run(mem, schedule=plan(slot("10:00", "11:00", **STANDBY)), readings=dev, now_mono=1070.0)
+    assert [w.key for w in d2.writes] == ["mode"]             # 0 W falownik już ma
+    commit(d2, _written(d2), mem, 1070.0)
+    dev2 = {**dev, "mode": "battery_standby"}
+    d3, _ = run(mem, schedule=sched(power_w=2000), readings=dev2, now_mono=1100.0)
+    assert _group_keys(d3) == [] and d3.status == IDLE
+    d4, _ = run(mem, schedule=sched(power_w=2000), readings=dev2, now_mono=1130.5)
+    assert _group_keys(d4) == ["power_w", "mode"]
+
+
+@pytest.mark.parametrize("gap", [5.0, 30.0, 59.9])
+def test_mode_change_with_pending_condition_param_holds_group(gap):
+    # Warunek trybu (blokada eksportu) czeka w interwale → tryb i moc też czekają.
+    d, mem = run(schedule=sched(export_allowed=False), now_mono=1000.0)
+    commit(d, _written(d), mem, 1000.0)
+    d1, _ = run(mem, now_mono=1070.0)                              # eksport znów dozwolony
+    assert [w.key for w in d1.writes] == ["export_limit_enabled"]
+    commit(d1, _written(d1), mem, 1070.0)
+    blocked = plan(slot("10:00", "11:00", export_allowed=False, **STANDBY))
+    d2, _ = run(mem, schedule=blocked, now_mono=1070.0 + gap)
+    assert d2.writes == [] and "mode_held" in d2.notes
+    d3, _ = run(mem, schedule=blocked, now_mono=1130.5)
+    assert [w.key for w in d3.writes] == ["power_w", "export_limit_enabled", "mode"]
+
+
+def test_power_alone_goes_when_device_has_planned_mode():
+    d, mem = run(now_mono=1000.0)
+    commit(d, _written(d), mem, 1000.0)
+    dev = {"mode": "sell_power", "power_w": 2000.0, "export_limit_enabled": 0.0}
+    d2, _ = run(mem, schedule=sched(power_w=2600), readings=dev, now_mono=1070.0)
+    assert [w.key for w in d2.writes] == ["power_w"]
+
+
+def test_runtime_unmapped_param_does_not_stop_power_in_confirmed_mode():
+    dev = {"mode": "sell_power", "power_w": 2000.0, "export_limit_enabled": 1.0}
+    d, _ = run(schedule=sched(power_w=2600, export_allowed=False), units={**UNITS, "export_limit_w": "%"},
+               readings=dev)
+    assert [w.key for w in d.writes] == ["power_w"] and "mode_held" in d.notes
+
+
+def test_unsupported_mode_option_blocks_intent_for_session():
+    d, mem = run()
+    commit(d, WriteReport(written=["power_w", "export_limit_enabled"], unsupported=["mode"]), mem, 1000.0)
+    dev = {"mode": "battery_standby", "power_w": 2000.0, "export_limit_enabled": 0.0}
+    d2, _ = run(mem, schedule=sched(power_w=3000), readings=dev, now_mono=2000.0)
+    assert (d2.status, d2.reason, d2.writes) == (BLOCKED, "mode_unsupported", [])
+    assert d2.dropped_unsupported == ("mode:sell_power",)
+    # Inna intencja (postój) jest nadal sterowalna.
+    d3, _ = run(mem, schedule=plan(slot("10:00", "11:00", **STANDBY)), readings=dev, now_mono=2100.0)
+    assert d3.status == WRITE and [w.key for w in d3.writes] == ["power_w"]
+
+
+def test_unsupported_power_blocks_powered_intents_for_session():
+    d, mem = run()
+    commit(d, WriteReport(written=["export_limit_enabled", "mode"], unsupported=["power_w"]), mem, 1000.0)
+    d2, _ = run(mem, schedule=plan(slot("10:00", "11:00", **STANDBY)), now_mono=2000.0)
+    assert (d2.status, d2.reason, d2.writes) == (BLOCKED, "power_unsupported", [])
+    d3, _ = run(mem, schedule=plan(slot("10:00", "11:00", mode="self_consume")), now_mono=2100.0)
+    assert d3.status == WRITE and d3.writes[-1].data == {"option": "auto"}
+
+
+def test_mode_option_missing_on_entity_blocks_before_any_write():
+    attrs = {**ATTRS, "select.ems_mode": {"options": ["auto", "battery_standby"]}}
+    d, _ = run(attrs=attrs)
+    assert (d.status, d.reason, d.writes) == (BLOCKED, "mode_unsupported", [])
+    d2, _ = run(attrs=attrs, schedule=plan(slot("10:00", "11:00", **STANDBY)))
+    assert d2.status == WRITE
+
+
+def test_unknown_device_option_reasserts_mode():
+    d, mem = run()
+    commit(d, _written(d), mem, 1000.0)
+    dev = {"mode": "export_ac", "power_w": 2000.0, "export_limit_enabled": 0.0}
+    d2, _ = run(mem, readings=dev, now_mono=1100.0)
+    assert d2.status == WRITE and [w.key for w in d2.writes] == ["mode"]
+
+
+def test_bool_reading_is_a_flag():
+    readings = {"power_w": 2000.0, "export_limit_enabled": False, "mode": "sell_power"}
+    d, _ = run(readings=readings)
+    assert (d.status, d.reason, d.writes) == (IDLE, "nothing_to_write", [])

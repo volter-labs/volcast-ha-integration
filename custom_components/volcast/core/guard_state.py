@@ -45,6 +45,20 @@ class WriteThrottle:
             out.add(key)
         return out
 
+    def pending(self, flat: Mapping[str, float | str], now_s: float) -> set[str]:
+        """Klucze zmienione względem pamięci, które interwał jeszcze wstrzymuje.
+
+        Dopełnienie `filter` po stronie zmian: wołający, który zapisuje grupę kluczy
+        razem (tryb i jego nastawa), musi wiedzieć, że członek grupy czeka.
+        """
+        out: set[str] = set()
+        for key, value in flat.items():
+            if key in self._value and self._value[key] != value:
+                at = self._at[key]
+                if at <= now_s and now_s - at < self._min:
+                    out.add(key)
+        return out
+
     def record(self, flat: Mapping[str, float | str], written: Iterable[str], now_s: float) -> None:
         """Zapamiętuje TYLKO klucze faktycznie zapisane (lista udanych zapisów)."""
         for key in written:

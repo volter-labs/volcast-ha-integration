@@ -26,6 +26,15 @@ def test_changed_value_waits_for_interval():
     assert t.filter(changed, 60.0) == {"power_w"}
 
 
+def test_pending_is_changed_value_inside_interval():
+    t = WriteThrottle(60)
+    t.record(P, P.keys(), 0.0)
+    changed = {**P, "power_w": 3000.0, "soc_max": 90.0}
+    assert t.pending(changed, 30.0) == {"power_w"}        # nowy klucz nie czeka, niezmieniony też nie
+    assert t.pending(changed, 60.0) == set()
+    assert t.pending(changed, -5.0) == set()               # zegar cofnięty = interwał minął (jak filter)
+
+
 def test_failed_write_does_not_move_memory():
     t = WriteThrottle(60)
     t.record(P, ["mode"], 0.0)                 # tylko tryb się zapisał
