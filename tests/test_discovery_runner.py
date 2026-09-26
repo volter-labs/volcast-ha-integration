@@ -8,6 +8,7 @@ import pytest
 from custom_components.volcast import discovery_runner as dr_mod
 from custom_components.volcast.discovery_runner import DiscoveryRunner
 from custom_components.volcast.core.discovery.network import NetworkProbeResult
+from custom_components.volcast.core.discovery.report import summarize
 
 pytestmark = pytest.mark.asyncio
 
@@ -58,6 +59,7 @@ async def test_timeout_yields_report_with_timeout_error(make_hass, monkeypatch):
     with patch.object(dr_mod, "probe_udp_48899", side_effect=slow):
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
     assert rep["errors"] == ["timeout"] and rep["inverters"] == []
+    assert summarize(rep) == "Discovery failed: timeout"
 
 
 async def test_signal_sent_after_run(make_hass):
@@ -252,6 +254,7 @@ async def test_unexpected_failure_still_returns_report(make_hass):
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
     assert any("runner: RuntimeError: bad" in e for e in rep["errors"])
     assert rep["inverters"] == []
+    assert summarize(rep) == "Discovery failed — see diagnostics"
 
 
 async def test_ignored_config_entry_is_not_an_inverter(make_hass):

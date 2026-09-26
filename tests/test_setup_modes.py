@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from custom_components.volcast.const import DOMAIN
+from tests.setup_harness import drain
 
 pytestmark = pytest.mark.asyncio
 
@@ -87,6 +88,8 @@ async def test_discovery_exception_after_start_event_is_swallowed(setup_forecast
     (event_type, listener), = [l for l in hass.bus.listeners]
     assert event_type == "homeassistant_started"
     await listener(None)  # nie rzuca
+    await drain(hass)
+    assert hass.task_errors == []
 
 
 async def test_discovery_is_scheduled_after_platforms_and_never_awaited(
@@ -113,7 +116,8 @@ async def test_discovery_is_scheduled_after_platforms_and_never_awaited(
     ok = await asyncio.wait_for(async_setup_entry(hass, FakeEntry(options={})), 1)
     assert ok is True
     assert hass.events.index("forward") < len(hass.events) - 1
-    assert hass.events[-1] == "task"  # zadanie wykrywania powstało PO platformach
+    # zadanie wykrywania powstało PO platformach
+    assert hass.events[-1] == "background:volcast_discovery"
     await asyncio.sleep(0)
     assert calls == ["run"]
     release.set()
@@ -131,6 +135,7 @@ async def test_before_start_waits_for_started_event(setup_forecast_entry, monkey
     run.assert_not_awaited()
     (_, listener), = hass.bus.listeners
     await listener(None)
+    await drain(hass)
     run.assert_awaited_once()
 
 
@@ -291,3 +296,39 @@ async def test_discovery_only_unload_does_not_touch_unregistered_service(setup_f
     assert not hass.services.has_service(DOMAIN, SERVICE_SYNC_PRODUCTION)
     assert await async_unload_entry(hass, entry) is True
     assert not hass.services.has_service(DOMAIN, SERVICE_SYNC_PRODUCTION)
+
+
+# --- wykrywanie jako zadanie w tle wpisu (anulowane przy unload/reload) ---
+
+MODES = [pytest.param({}, id="forecast"), pytest.param({"mode": "discovery_only"}, id="discovery_only")]
+
+
+def _setup_kwargs(data):
+    return {"options": {}} if not data else {"data": data}
+
+
+@pytest.mark.parametrize("data", MODES)
+async def test_discovery_scheduled_as_entry_background_task_when_running(
+        setup_forecast_entry, data):
+    await setup_forecast_entry(**_setup_kwargs(data))
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    assert hass.events.count("background:volcast_discovery") == 1
+    assert "task" not in hass.events
+    assert hass.data[DOMAIN][entry.entry_id]["discovery"].report is not None
+    assert hass.task_errors == []
+
+
+@pytest.mark.parametrize("data", MODES)
+async def test_discovery_scheduled_as_entry_background_task_after_start(
+        setup_forecast_entry, data):
+    await setup_forecast_entry(**_setup_kwargs(data), is_running=False)
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    assert "background:volcast_discovery" not in hass.events
+    (event_type, listener), = hass.bus.listeners
+    assert event_type == "homeassistant_started"
+    await listener(None)
+    assert hass.events.count("background:volcast_discovery") == 1
+    assert "task" not in hass.events
+    await drain(hass)
+    assert hass.data[DOMAIN][entry.entry_id]["discovery"].report is not None
+    assert hass.task_errors == []

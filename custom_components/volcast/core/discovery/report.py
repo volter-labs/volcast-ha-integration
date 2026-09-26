@@ -307,7 +307,18 @@ def build_report(*, classification, states, history_days, network, errors,
     return _mask_value(report, pattern, mac_pattern)
 
 
+# Błędy całego przebiegu (nie pojedynczego kroku): raport jest wtedy pusty, więc
+# podsumowanie mówi o niepowodzeniu, a nie o braku falownika.
+ERROR_TIMEOUT = "timeout"
+ERROR_RUNNER_PREFIX = "runner:"
+
+
 def summarize(report: dict) -> str:
+    errors = [e for e in report.get("errors") or [] if isinstance(e, str)]
+    if ERROR_TIMEOUT in errors:
+        return "Discovery failed: timeout"
+    if any(e.startswith(ERROR_RUNNER_PREFIX) for e in errors):
+        return "Discovery failed — see diagnostics"
     invs = report.get("inverters") or []
     if invs:
         first = invs[0]

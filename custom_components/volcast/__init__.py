@@ -228,6 +228,9 @@ async def _integration_version(hass: HomeAssistant) -> str:
         return "unknown"
 
 
+DISCOVERY_TASK_NAME = "volcast_discovery"
+
+
 async def _run_discovery_safely(runner: DiscoveryRunner) -> None:
     # async_run z założenia nie rzuca; ta osłona to druga linia obrony,
     # żeby wykrywanie nigdy nie zostawiło nieobsłużonego wyjątku w zadaniu.
@@ -243,11 +246,19 @@ def _schedule_discovery(
     """Uruchom wykrywanie w tle: od razu (HA działa) albo po starcie HA.
 
     Wołane PO `async_forward_entry_setups` i nigdy nie awaitowane w setupie —
-    błąd wykrywania nie może wpłynąć na wpis prognozy.
+    błąd wykrywania nie może wpłynąć na wpis prognozy. Zadanie w tle wpisu:
+    start HA na nie nie czeka, a unload/reload wpisu je anuluje (stary i nowy
+    przebieg nie nakładają się). Argumenty pozycyjne, bez `eager_start` —
+    zgodność z HA 2024.1.
     """
+
+    def _start() -> None:
+        entry.async_create_background_task(
+            hass, _run_discovery_safely(runner), DISCOVERY_TASK_NAME)
+
     try:
         if hass.is_running:
-            hass.async_create_task(_run_discovery_safely(runner))
+            _start()
             return
 
         # Ta sama osłona flagą co w _setup_reconciler: listener async_listen_once
@@ -257,7 +268,10 @@ def _schedule_discovery(
         async def _on_started(_event=None) -> None:
             nonlocal listener_fired
             listener_fired = True
-            await _run_discovery_safely(runner)
+            try:
+                _start()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Volcast discovery could not be scheduled")
 
         remove_listener = hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_STARTED, _on_started

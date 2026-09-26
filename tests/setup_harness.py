@@ -3,7 +3,8 @@
 Przepuszcza wpis przez prawdziwy `async_setup_entry` (koordynator, tracker
 i reconciler podmienione na atrapy bez sieci), prawdziwe `async_forward_entry_setups`
 do platform `sensor`/`binary_sensor`/`button` i zbiera dodane encje. Zadania
-tworzone przez integrację (`hass.async_create_task`) naprawdę się wykonują —
+tworzone przez integrację (`hass.async_create_task` i
+`entry.async_create_background_task`) naprawdę się wykonują —
 `run_setup` czeka na nie i odkłada ich wyjątki w `hass.task_errors`.
 
 Plik nie zależy od kodu wykrywania, więc ten sam przebieg da się puścić na
@@ -40,6 +41,14 @@ class FakeEntry:
 
     def async_on_unload(self, func) -> None:
         self.unload_callbacks.append(func)
+
+    def async_create_background_task(self, hass, target, name, /):
+        """Jak `ConfigEntry.async_create_background_task` (HA 2024.1+): argumenty
+        wyłącznie pozycyjne — bez `eager_start`, którego starsze wersje nie znają."""
+        hass.events.append(f"background:{name}")
+        task = asyncio.get_running_loop().create_task(target)
+        hass.tasks.append(task)
+        return task
 
 
 class _Bus:

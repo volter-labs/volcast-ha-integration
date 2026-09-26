@@ -433,3 +433,25 @@ def test_compact_attributes_keep_everything_for_normal_report():
     assert attrs["inverters"][0]["models"] == ["SUN-10K-SG04LP3-EU"]
     assert attrs["inverters"][0]["host"] == "192.168.1.50"
     assert "truncated" not in attrs
+
+
+# --- podsumowanie przy nieudanym przebiegu ---
+
+def _empty(errors):
+    return _report(classification=Classification([], [], []), states={}, network=None,
+                   errors=errors)
+
+
+def test_summary_reports_timeout_as_failure():
+    assert summarize(_empty(["timeout"])) == "Discovery failed: timeout"
+
+
+def test_summary_reports_runner_failure():
+    s = summarize(_empty(["runner: RuntimeError: boom"]))
+    assert s == "Discovery failed — see diagnostics"
+    assert summarize(_empty(["runner: report build failed"])) == s
+
+
+def test_summary_step_errors_do_not_hide_findings():
+    r = _report(errors=["history: recorder not loaded"])
+    assert summarize(r).startswith("solarman (SUN-10K-SG04LP3-EU)")

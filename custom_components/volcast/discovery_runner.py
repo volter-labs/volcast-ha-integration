@@ -28,7 +28,7 @@ from .core.discovery import (Classification, ConfigEntrySnap, DeviceSnap,
 from .core.discovery.history import HISTORY_WINDOW_DAYS, days_with_statistics
 from .core.discovery.known import HOST_KEYS
 from .core.discovery.network import NetworkProbeResult, probe_udp_48899
-from .core.discovery.report import REPORT_SCHEMA, build_report
+from .core.discovery.report import ERROR_TIMEOUT, REPORT_SCHEMA, build_report
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class DiscoveryRunner:
             return await asyncio.wait_for(self._collect(), DISCOVERY_TIMEOUT_S)
         except TimeoutError:
             _LOGGER.warning("Volcast discovery timed out after %ss", DISCOVERY_TIMEOUT_S)
-            return self._empty_report(["timeout"])
+            return self._empty_report([ERROR_TIMEOUT])
         except Exception as err:  # noqa: BLE001 — async_run nigdy nie rzuca
             _LOGGER.exception("Volcast discovery failed")
             return self._empty_report([_err("runner", err)])
