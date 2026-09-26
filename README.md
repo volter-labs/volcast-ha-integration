@@ -5,6 +5,21 @@
 
 Home Assistant integration for [Volcast](https://volcast.app) — solar PV production forecasts powered by multi-model weather ensemble, Kalman filter calibration, and real-time nowcasting.
 
+## Beta: Installation Discovery (v2.0.0b1)
+
+This version introduces **optional** read-only installation discovery — explore your HA sensors and inverter setup without a Volcast account. Existing forecast users are not affected.
+
+- **New setup option**: "Discovery only (no account)" scans your HA Recorder and local sensors
+- **What it does**: gathers sensor names and daily energy stats to understand your installation
+- **What it doesn't do**: no data sent to Volcast, no forecast generated
+- **For whom**: anyone curious to inspect their HA energy schema before purchasing
+
+If you're currently using forecasts, nothing changes — update normally and keep using your API key. To learn more, see [v2.0.0-beta1 release notes](docs/release-notes/v2.0.0-beta1.md).
+
+### Going Back to v1.7.2
+
+If you'd prefer to skip this beta: in HACS, click the 3-dot menu on **Volcast Solar Forecast** > **Redownload** and pick version **1.7.2**.
+
 ## Features
 
 - **Energy Dashboard integration** — appears as a solar forecast source in the HA Energy Dashboard
