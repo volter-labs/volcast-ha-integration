@@ -16,6 +16,11 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_change
 
+try:
+    from homeassistant.loader import async_get_integration
+except ImportError:  # atrapy w testach nie mają loadera
+    async_get_integration = None
+
 from .const import (
     ATTR_DATE,
     CONF_API_URL,
@@ -31,6 +36,7 @@ from .const import (
     SERVICE_SYNC_PRODUCTION,
 )
 from .coordinator import VolcastCoordinator
+from .discovery_runner import DiscoveryRunner
 from .production import VolcastProductionTracker
 from .reconciler import DailyReconciler
 
@@ -167,13 +173,77 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "Reconciler not started — energy_entity not configured (or tracker missing)"
         )
 
+    # Wykrywanie instalacji (tylko odczyt) — runner musi istnieć przed platformami,
+    # bo dają mu encje; sam przebieg startuje dopiero po ich załadowaniu.
+    runner = DiscoveryRunner(hass, entry.entry_id, await _integration_version(hass))
+    hass.data[DOMAIN][entry.entry_id]["discovery"] = runner
+
     _async_register_services(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
+    _schedule_discovery(hass, entry, runner)
+
     return True
+
+
+async def _integration_version(hass: HomeAssistant) -> str:
+    """Wersja z manifest.json przez loader HA (już wczytany — bez I/O). Nigdy nie rzuca."""
+    try:
+        if async_get_integration is None:
+            return "unknown"
+        integration = await async_get_integration(hass, DOMAIN)
+        version = getattr(integration, "version", None)
+        return str(version) if version else "unknown"
+    except Exception:  # noqa: BLE001 — wersja jest informacyjna, setup idzie dalej
+        _LOGGER.debug("Volcast: integration version unavailable", exc_info=True)
+        return "unknown"
+
+
+async def _run_discovery_safely(runner: DiscoveryRunner) -> None:
+    # async_run z założenia nie rzuca; ta osłona to druga linia obrony,
+    # żeby wykrywanie nigdy nie zostawiło nieobsłużonego wyjątku w zadaniu.
+    try:
+        await runner.async_run()
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Volcast discovery failed")
+
+
+def _schedule_discovery(
+    hass: HomeAssistant, entry: ConfigEntry, runner: DiscoveryRunner
+) -> None:
+    """Uruchom wykrywanie w tle: od razu (HA działa) albo po starcie HA.
+
+    Wołane PO `async_forward_entry_setups` i nigdy nie awaitowane w setupie —
+    błąd wykrywania nie może wpłynąć na wpis prognozy.
+    """
+    try:
+        if hass.is_running:
+            hass.async_create_task(_run_discovery_safely(runner))
+            return
+
+        # Ta sama osłona flagą co w _setup_reconciler: listener async_listen_once
+        # sam się wyrejestrowuje, więc remove tylko gdy unload przed startem HA.
+        listener_fired = False
+
+        async def _on_started(_event=None) -> None:
+            nonlocal listener_fired
+            listener_fired = True
+            await _run_discovery_safely(runner)
+
+        remove_listener = hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STARTED, _on_started
+        )
+
+        def _safe_remove() -> None:
+            if not listener_fired:
+                remove_listener()
+
+        entry.async_on_unload(_safe_remove)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Volcast discovery could not be scheduled")
 
 
 def _setup_reconciler(

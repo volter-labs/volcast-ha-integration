@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import VolcastCoordinator, VolcastData
+from .discovery_entities import VolcastDiscoverySensor
 
 
 async def async_setup_entry(
@@ -28,26 +29,35 @@ async def async_setup_entry(
 ) -> None:
     """Set up Volcast sensors from a config entry."""
     entry_data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: VolcastCoordinator = entry_data["coordinator"]
+    coordinator: VolcastCoordinator | None = entry_data.get("coordinator")
     tracker = entry_data.get("tracker")
     reconciler = entry_data.get("reconciler")
+    runner = entry_data.get("discovery")
 
-    entities: list[SensorEntity] = [
-        VolcastEnergyTodaySensor(coordinator, entry),
-        VolcastEnergyTomorrowSensor(coordinator, entry),
-        VolcastPowerNowSensor(coordinator, entry),
-        VolcastApiStatusSensor(coordinator, entry),
-    ]
+    entities: list[SensorEntity] = []
 
-    # Day 3-7 forecast sensors
-    for day_num in range(3, 8):
-        entities.append(VolcastEnergyDaySensor(coordinator, entry, day_num))
+    # Sensory prognozy — tylko wpis z kluczem API (jest koordynator).
+    if coordinator is not None:
+        entities.extend([
+            VolcastEnergyTodaySensor(coordinator, entry),
+            VolcastEnergyTomorrowSensor(coordinator, entry),
+            VolcastPowerNowSensor(coordinator, entry),
+            VolcastApiStatusSensor(coordinator, entry),
+        ])
+
+        # Day 3-7 forecast sensors
+        for day_num in range(3, 8):
+            entities.append(VolcastEnergyDaySensor(coordinator, entry, day_num))
 
     # Diagnostyczne — tylko jeśli odpowiedni subsystem aktywny
     if tracker is not None:
         entities.append(SubmitQueueDepthSensor(tracker, entry_id=entry.entry_id))
     if reconciler is not None:
         entities.append(LastReconciliationSensor(reconciler, entry_id=entry.entry_id))
+
+    # Wykrywanie instalacji — w każdym trybie wpisu.
+    if runner is not None:
+        entities.append(VolcastDiscoverySensor(runner, entry.entry_id))
 
     async_add_entities(entities)
 

@@ -94,6 +94,9 @@
       },
       "api_status": {
         "name": "API status"
+      },
+      "discovery": {
+        "name": "Installation discovery"
       }
     },
     "binary_sensor": {
@@ -104,6 +107,9 @@
     "button": {
       "sync_now": {
         "name": "Sync production now"
+      },
+      "run_discovery": {
+        "name": "Run discovery"
       }
     }
   }

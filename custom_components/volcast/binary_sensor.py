@@ -26,7 +26,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up Volcast binary sensors from a config entry."""
     entry_data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: VolcastCoordinator = entry_data["coordinator"]
+    coordinator: VolcastCoordinator | None = entry_data.get("coordinator")
+    if coordinator is None:
+        # Wpis bez prognozy (tylko rozpoznanie) — brak sensorów binarnych.
+        return
     tracker = entry_data.get("tracker")
     reconciler = entry_data.get("reconciler")
     peak_threshold = entry.options.get(CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD)

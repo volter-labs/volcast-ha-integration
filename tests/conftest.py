@@ -506,3 +506,32 @@ def make_hass():
         return hass
 
     return _factory
+
+
+# ---------------------------------------------------------------------------
+# Pełny setup wpisu (uprząż z tests/setup_harness.py)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def setup_forecast_entry(monkeypatch):
+    """Zwraca `await setup(options=..., data=..., is_running=...) -> set[unique_id]`.
+
+    Po wywołaniu `setup.hass` / `setup.entry` wskazują ostatni przebieg. Sonda
+    UDP wykrywania jest podmieniona (testy nie wysyłają nic w sieć).
+    """
+    from unittest.mock import AsyncMock
+
+    from custom_components.volcast import discovery_runner
+    from tests.setup_harness import run_setup, unique_ids
+
+    monkeypatch.setattr(discovery_runner, "probe_udp_48899", AsyncMock(return_value=None))
+
+    async def _setup(*, options=None, data=None, is_running=True):
+        hass, entry, ok = await run_setup(
+            monkeypatch.setattr, options=options, data=data, is_running=is_running)
+        assert ok is True
+        _setup.hass, _setup.entry = hass, entry
+        return unique_ids(hass.entities)
+
+    _setup.hass = _setup.entry = None
+    return _setup

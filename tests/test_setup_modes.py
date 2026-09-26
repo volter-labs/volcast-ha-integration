@@ -1,0 +1,210 @@
+"""Setup wpisu z kluczem API: prognoza bez zmian względem 1.7.2 + wykrywanie obok.
+
+Listy `unique_id` poniżej są ZAMROŻONE — wygenerowane przebiegiem tej samej
+uprzęży (`tests/setup_harness.py`) na kodzie `origin/main` (Release 1.7.2,
+354b625). Zmiana którejkolwiek z nich = regresja dla płacących użytkowników.
+"""
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from custom_components.volcast.const import DOMAIN
+
+pytestmark = pytest.mark.asyncio
+
+# Wpis z czujnikiem energii (tracker + reconciler) — przebieg na 1.7.2.
+IDS_172_WITH_ENERGY = {f"test_entry_id_{k}" for k in (
+    "energy_today", "energy_tomorrow", "power_now", "api_status",
+    "energy_day_3", "energy_day_4", "energy_day_5", "energy_day_6", "energy_day_7",
+    "submit_queue_depth", "last_reconciliation", "peak_production",
+    "integration_healthy", "sync_now")}
+
+# Wpis bez opcji (sama prognoza) — przebieg na 1.7.2.
+IDS_172_NO_OPTIONS = {f"test_entry_id_{k}" for k in (
+    "energy_today", "energy_tomorrow", "power_now", "api_status",
+    "energy_day_3", "energy_day_4", "energy_day_5", "energy_day_6", "energy_day_7",
+    "peak_production", "integration_healthy")}
+
+DISCOVERY_IDS = {"test_entry_id_discovery", "test_entry_id_run_discovery"}
+
+
+async def test_forecast_entry_unique_ids_identical_to_1_7_2(setup_forecast_entry):
+    ids = await setup_forecast_entry(options={"pv_energy_entity": "sensor.pv_today"})
+    assert IDS_172_WITH_ENERGY <= ids
+    assert ids - IDS_172_WITH_ENERGY == DISCOVERY_IDS
+
+
+async def test_forecast_entry_without_options_identical_to_1_7_2(setup_forecast_entry):
+    ids = await setup_forecast_entry(options={})
+    assert IDS_172_NO_OPTIONS <= ids
+    assert ids - IDS_172_NO_OPTIONS == DISCOVERY_IDS
+
+
+async def test_forecast_entry_data_unchanged_plus_runner(setup_forecast_entry):
+    from custom_components.volcast.discovery_runner import DiscoveryRunner
+
+    await setup_forecast_entry(options={"pv_energy_entity": "sensor.pv_today"})
+    entry_data = setup_forecast_entry.hass.data[DOMAIN]["test_entry_id"]
+    assert {"coordinator", "tracker", "reconciler"} <= set(entry_data)
+    assert isinstance(entry_data["discovery"], DiscoveryRunner)
+    assert entry_data["discovery"].entry_id == "test_entry_id"
+
+
+async def test_discovery_runs_after_setup_and_stores_report(setup_forecast_entry):
+    await setup_forecast_entry(options={})
+    hass = setup_forecast_entry.hass
+    runner = hass.data[DOMAIN]["test_entry_id"]["discovery"]
+    assert runner.report is not None and runner.report["schema"] == 1
+    assert hass.task_errors == []
+
+
+async def test_discovery_exception_does_not_break_forecast_setup(setup_forecast_entry, monkeypatch):
+    from custom_components.volcast import discovery_runner
+
+    async def boom(self):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(discovery_runner.DiscoveryRunner, "async_run", boom)
+    ids = await setup_forecast_entry(options={})
+    assert "test_entry_id_energy_today" in ids
+    # Wyjątek wykrywania nie wycieka nawet z zadania w tle.
+    assert setup_forecast_entry.hass.task_errors == []
+
+
+async def test_discovery_exception_after_start_event_is_swallowed(setup_forecast_entry, monkeypatch):
+    from custom_components.volcast import discovery_runner
+
+    async def boom(self):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(discovery_runner.DiscoveryRunner, "async_run", boom)
+    await setup_forecast_entry(options={}, is_running=False)
+    hass = setup_forecast_entry.hass
+    (event_type, listener), = [l for l in hass.bus.listeners]
+    assert event_type == "homeassistant_started"
+    await listener(None)  # nie rzuca
+
+
+async def test_discovery_is_scheduled_after_platforms_and_never_awaited(
+        setup_forecast_entry, monkeypatch):
+    from custom_components.volcast import discovery_runner
+
+    release = asyncio.Event()
+    calls: list[str] = []
+
+    async def slow_run(self):
+        calls.append("run")
+        await release.wait()
+        return {}
+
+    monkeypatch.setattr(discovery_runner.DiscoveryRunner, "async_run", slow_run)
+
+    from custom_components.volcast import async_setup_entry
+    from tests.setup_harness import FakeCoordinator, FakeEntry, SetupHass
+    import custom_components.volcast as integ
+
+    monkeypatch.setattr(integ, "VolcastCoordinator", FakeCoordinator)
+    hass = SetupHass(is_running=True)
+    # Setup kończy się, choć wykrywanie wisi (nie jest awaitowane w setupie).
+    ok = await asyncio.wait_for(async_setup_entry(hass, FakeEntry(options={})), 1)
+    assert ok is True
+    assert hass.events.index("forward") < len(hass.events) - 1
+    assert hass.events[-1] == "task"  # zadanie wykrywania powstało PO platformach
+    await asyncio.sleep(0)
+    assert calls == ["run"]
+    release.set()
+    await asyncio.gather(*hass.tasks)
+
+
+async def test_before_start_waits_for_started_event(setup_forecast_entry, monkeypatch):
+    from custom_components.volcast import discovery_runner
+
+    run = AsyncMock(return_value={})
+    monkeypatch.setattr(discovery_runner.DiscoveryRunner, "async_run", run)
+    await setup_forecast_entry(options={}, is_running=False)
+    hass = setup_forecast_entry.hass
+    assert hass.events == ["forward", "listen:homeassistant_started"]
+    run.assert_not_awaited()
+    (_, listener), = hass.bus.listeners
+    await listener(None)
+    run.assert_awaited_once()
+
+
+async def test_unload_after_start_event_does_not_remove_fired_listener(setup_forecast_entry):
+    await setup_forecast_entry(options={}, is_running=False)
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    (_, listener), = hass.bus.listeners
+    await listener(None)
+    for cb in entry.unload_callbacks:
+        cb()
+    assert hass.bus.removed == []
+
+
+async def test_unload_before_start_event_removes_listener(setup_forecast_entry):
+    await setup_forecast_entry(options={}, is_running=False)
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    (_, listener), = hass.bus.listeners
+    for cb in entry.unload_callbacks:
+        cb()
+    assert hass.bus.removed == [listener]
+
+
+async def test_integration_version_from_loader(setup_forecast_entry, monkeypatch):
+    import custom_components.volcast as integ
+
+    monkeypatch.setattr(integ, "async_get_integration",
+                        AsyncMock(return_value=SimpleNamespace(version="1.7.2")), raising=False)
+    await setup_forecast_entry(options={})
+    runner = setup_forecast_entry.hass.data[DOMAIN]["test_entry_id"]["discovery"]
+    assert runner.integration_version == "1.7.2"
+
+
+async def test_integration_version_unknown_when_loader_fails(setup_forecast_entry, monkeypatch):
+    import custom_components.volcast as integ
+
+    monkeypatch.setattr(integ, "async_get_integration",
+                        AsyncMock(side_effect=RuntimeError("no loader")), raising=False)
+    await setup_forecast_entry(options={})
+    runner = setup_forecast_entry.hass.data[DOMAIN]["test_entry_id"]["discovery"]
+    assert runner.integration_version == "unknown"
+
+
+async def test_unload_still_cleans_up(setup_forecast_entry):
+    from custom_components.volcast import async_unload_entry
+
+    await setup_forecast_entry(options={"pv_energy_entity": "sensor.pv_today"})
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    assert await async_unload_entry(hass, entry) is True
+    assert "test_entry_id" not in hass.data[DOMAIN]
+
+
+# --- platformy tolerują wpis bez koordynatora (tryb tylko-rozpoznanie, Task 8) ---
+
+class _Entry:
+    entry_id = "e1"
+    options: dict = {}
+
+
+def _hass(entry_data):
+    return SimpleNamespace(data={DOMAIN: {"e1": entry_data}})
+
+
+async def _setup_platform(module_name, entry_data):
+    import importlib
+
+    module = importlib.import_module(f"custom_components.volcast.{module_name}")
+    added: list = []
+    await module.async_setup_entry(_hass(entry_data), _Entry(), lambda ents, *a, **k: added.extend(ents))
+    return {e._attr_unique_id for e in added}
+
+
+async def test_platforms_without_coordinator_add_only_discovery_entities():
+    runner = MagicMock(report=None)
+    entry_data = {"discovery": runner}
+    assert await _setup_platform("sensor", entry_data) == {"e1_discovery"}
+    assert await _setup_platform("button", entry_data) == {"e1_run_discovery"}
+    assert await _setup_platform("binary_sensor", entry_data) == set()

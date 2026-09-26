@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
+from .discovery_entities import VolcastDiscoveryButton
 from .reconciler import DailyReconciler
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,10 +24,16 @@ async def async_setup_entry(
     """Set up Volcast buttons from a config entry."""
     entry_data = hass.data[DOMAIN][entry.entry_id]
     reconciler: DailyReconciler | None = entry_data.get("reconciler")
-    if reconciler is None:
-        # Bez energy_entity nie ma czego synchronizować — nie dodawaj buttona.
-        return
-    async_add_entities([VolcastSyncButton(reconciler, entry.entry_id)])
+    runner = entry_data.get("discovery")
+    entities: list[ButtonEntity] = []
+    # Bez energy_entity nie ma czego synchronizować — bez przycisku sync.
+    if reconciler is not None:
+        entities.append(VolcastSyncButton(reconciler, entry.entry_id))
+    # Wykrywanie instalacji — w każdym trybie wpisu.
+    if runner is not None:
+        entities.append(VolcastDiscoveryButton(runner, entry.entry_id))
+    if entities:
+        async_add_entities(entities)
 
 
 class VolcastSyncButton(ButtonEntity):
