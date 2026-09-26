@@ -62,3 +62,62 @@ def test_summary_when_nothing_found():
 
 def test_mask_serials_ignores_short_tokens():
     assert mask_serials("abc_12_x", {"12"}) == "abc_12_x"
+
+
+# --- Fix round 1 (global masking constraint, reviews.md ## Task 5) ---
+
+ALNUM_SN = "HV2150012345"
+
+
+def _cls_lowercase_entity_id():
+    """Realistyczna migawka: HA slugifikuje serial do entity_id/unique_id małymi literami
+    (np. integracje SMA/Deye), a klasyfikacja niesie serial w oryginalnej wielkości liter."""
+    dev = DeviceSnap("d1", "SMA", "SB5.0", f"SMA {ALNUM_SN}", "1.0", None, ALNUM_SN,
+                     (("sma", ALNUM_SN),), ("e1",))
+    ent = EntitySnap(f"sensor.sn_{ALNUM_SN.lower()}_power", "sma",
+                     f"sn_{ALNUM_SN.lower()}_power", "d1", "e1", None, None, None, None, False)
+    inv = InverterFinding("sma", "e1", "SMA", "192.168.1.60", [dev], [ent], "domain")
+    return Classification([inv], [], [])
+
+
+def test_lowercase_entity_id_and_unique_id_masked():
+    r = _report(classification=_cls_lowercase_entity_id())
+    ent = r["inverters"][0]["entities"][0]
+    assert ALNUM_SN.lower() not in ent["entity_id"]
+    assert ALNUM_SN.lower() not in ent["unique_id"]
+    assert ALNUM_SN.lower() not in json.dumps(r).lower()
+
+
+def test_unparsed_raw_reply_serial_and_mac_masked():
+    unparsed = LoggerReply(f"SN={SN};MAC=AABBCCDDEEFF", None, None, None)
+    r = _report(network=NetworkProbeResult(True, [unparsed]))
+    raw = r["network"]["udp_48899"]["replies"][0]["raw"]
+    assert SN not in raw
+    assert "AABBCCDDEEFF" not in raw
+    assert "DDEEFF" not in json.dumps(r)
+
+
+def test_error_string_masked_in_report_and_compact_attributes():
+    r = _report(errors=[f"ha-ingestion: KeyError: sensor.deye_{SN}_power missing"])
+    assert SN not in r["errors"][0]
+    assert SN not in json.dumps(compact_attributes(r))
+
+
+def test_padded_serial_masked():
+    padded = "  SN123456\x00"
+    dev = DeviceSnap("d1", "Deye", "SUN-10K", "Deye SN123456", "1.0", None, padded,
+                     (), ("e1",))
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [], "domain")
+    r = _report(classification=Classification([inv], [], []))
+    assert "SN123456" not in json.dumps(r)
+
+
+def test_serial_in_model_and_options_masked():
+    dev = DeviceSnap("d1", "Deye", f"SUN-10K-{SN}", f"Deye {SN}", "1.0", None, SN, (), ("e1",))
+    ent = EntitySnap("select.deye_mode", "solarman", "solarman_mode", "d1", "e1",
+                     None, None, None, None, False)
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [ent], "domain")
+    states = {"select.deye_mode": StateSnap("select.deye_mode", "auto",
+              {"options": [f"Mode {SN}", "Zero Export"]})}
+    r = _report(classification=Classification([inv], [], []), states=states)
+    assert SN not in json.dumps(r)
