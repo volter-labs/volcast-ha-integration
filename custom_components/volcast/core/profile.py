@@ -1,0 +1,109 @@
+"""Profil marki: ładowanie, walidacja i wygodny dostęp.
+
+UWAGA dla warstwy HA: `load_profile` czyta plik synchronicznie — w HA
+wołać przez `hass.async_add_executor_job`.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Mapping
+
+from .profile_schema import validate_profile
+
+PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
+
+
+class ProfileError(ValueError):
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__("; ".join(errors))
+        self.errors = errors
+
+
+@dataclass(frozen=True)
+class ModeDef:
+    name: str
+    value: int
+    direction: str
+    ha_option: str
+
+
+@dataclass(frozen=True)
+class Profile:
+    raw: Mapping[str, Any]
+    id: str
+    status: str
+    control_model: str
+    unit_id: int
+    modes: Mapping[str, ModeDef]
+    neutral_mode: str | None
+    write_order: tuple[str, ...]
+    min_interval_s: float
+    max_direction_changes_per_hour: int
+    max_state_age_s: float
+    temp_min_c: float
+    temp_max_c: float
+    tou_programs: int
+    time_step_min: int
+    soc_tolerance_pp: float
+    power_tolerance_w: float
+    tou_field_order: tuple[str, ...]
+
+    def intent(self, name: str) -> Mapping[str, Any] | None:
+        return self.raw["intents"][name]
+
+    def mode_value(self, name: str) -> int:
+        return self.modes[name].value
+
+    def mode_by_value(self, value: int) -> ModeDef | None:
+        for m in self.modes.values():
+            if m.value == value:
+                return m
+        return None
+
+    def mode_direction(self, name: str) -> str:
+        return self.modes[name].direction
+
+
+def profile_from_dict(raw: dict) -> Profile:
+    errors = validate_profile(raw)
+    if errors:
+        raise ProfileError(errors)
+    wp, lim, tou = raw["write_policy"], raw["limits"], raw.get("tou") or {}
+    modes = {n: ModeDef(n, m["value"], m["direction"], m["ha_option"])
+             for n, m in (raw.get("modes") or {}).items()}
+    return Profile(
+        raw=MappingProxyType(json.loads(json.dumps(raw))),   # własna, głęboka kopia
+        id=raw["id"], status=raw["status"], control_model=raw["control_model"],
+        unit_id=raw["unit_id"], modes=MappingProxyType(modes),
+        neutral_mode=raw.get("neutral_mode"),
+        write_order=tuple(wp["order"]), min_interval_s=float(wp["min_interval_s"]),
+        max_direction_changes_per_hour=wp["max_direction_changes_per_hour"],
+        max_state_age_s=float(wp["max_state_age_s"]),
+        temp_min_c=float(lim["battery_temp_c"]["min"]), temp_max_c=float(lim["battery_temp_c"]["max"]),
+        tou_programs=int(tou.get("programs", 0)), time_step_min=int(tou.get("time_step_min", 60)),
+        soc_tolerance_pp=float(tou.get("soc_tolerance_pp", 0)),
+        power_tolerance_w=float(tou.get("power_tolerance_w", 0)),
+        tou_field_order=tuple(tou.get("field_order", ())),
+    )
+
+
+def load_profile(path: Path) -> Profile:
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        raise ProfileError([f"{path}: nie da się wczytać ({err})"]) from err
+    profile = profile_from_dict(raw)
+    if Path(path).stem != profile.id:
+        raise ProfileError([f"{path}: nazwa pliku musi być równa id {profile.id!r}"])
+    return profile
+
+
+def builtin_ids() -> tuple[str, ...]:
+    return tuple(sorted(p.stem for p in PROFILES_DIR.glob("*.json")))
+
+
+def load_builtin(profile_id: str) -> Profile:
+    return load_profile(PROFILES_DIR / f"{profile_id}.json")
