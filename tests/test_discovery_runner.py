@@ -172,7 +172,9 @@ async def test_legacy_three_element_identifier_serial_masked(make_hass):
     hass = make_hass(devices=[dev], entries=[entry], components={"recorder"})
     with _ok_probe():
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
-    assert rep["inverters"][0]["devices"][0]["identifiers"] == [["goodwe", "<SN>"]]
+    # każdy element po domenie to osobna para; serial zamaskowany, "extra" zostaje
+    assert rep["inverters"][0]["devices"][0]["identifiers"] == [
+        ["goodwe", "<SN>"], ["goodwe", "extra"]]
     assert "9010KETU000W0777" not in str(rep)
     assert rep["errors"] == []
 
@@ -293,3 +295,52 @@ async def test_disabled_device_dropped_active_device_kept(make_hass):
     with _ok_probe():
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
     assert [d["model"] for d in rep["inverters"][0]["devices"]] == ["GW10K-ET"]
+
+
+async def test_entities_of_disabled_device_dropped_serial_never_leaks(make_hass):
+    # drugi falownik wyłączony przez użytkownika na AKTYWNYM wpisie: jego encje
+    # (disabled_by="device") nie mogą dołączyć do znaleziska przez config_entry_id
+    entry = SimpleNamespace(entry_id="g1", domain="goodwe", title="GoodWe", data={})
+    active = _device(id="d1")
+    off = _device(id="d2", serial_number="9010KETU000W0002",
+                  identifiers={("goodwe", "9010KETU000W0002")}, disabled_by="user")
+    ent_off = _entity(entity_id="sensor.goodwe_9010ketu000w0002_power",
+                      unique_id="9010KETU000W0002-power", device_id="d2",
+                      original_device_class="power", unit_of_measurement="W",
+                      disabled_by="device")
+    hass = make_hass(devices=[active, off], entities=[_entity(), ent_off], entries=[entry],
+                     components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    ids = [e["entity_id"] for e in rep["inverters"][0]["entities"]]
+    assert ids == ["sensor.battery_state_of_charge"]
+    assert "9010ketu000w0002" not in str(rep).lower()
+
+
+async def test_entity_of_disabled_device_dropped_even_if_entity_itself_enabled(make_hass):
+    entry = SimpleNamespace(entry_id="g1", domain="goodwe", title="GoodWe", data={})
+    off = _device(id="d2", serial_number="9010KETU000W0002",
+                  identifiers={("goodwe", "9010KETU000W0002")}, disabled_by="user")
+    ent_off = _entity(entity_id="sensor.goodwe_9010ketu000w0002_energy",
+                      unique_id="9010KETU000W0002-energy", device_id="d2",
+                      original_device_class="energy", unit_of_measurement="kWh")
+    hass = make_hass(devices=[off], entities=[ent_off], entries=[entry], components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert rep["inverters"][0]["entities"] == [] and rep["energy_sensors"] == []
+    assert "9010ketu000w0002" not in str(rep).lower()
+
+
+async def test_legacy_identifier_every_extra_element_is_masking_candidate(make_hass):
+    # (domena, host/model, serial) — serial na 3. pozycji też musi być maskowany
+    entry = SimpleNamespace(entry_id="g1", domain="goodwe", title="GoodWe", data={})
+    dev = _device(identifiers={("goodwe", "gw-host", "9010KETU000W0555")}, serial_number=None)
+    ent = _entity(entity_id="sensor.goodwe_9010ketu000w0555_power", unique_id="p-1",
+                  original_device_class="power", unit_of_measurement="W")
+    hass = make_hass(devices=[dev], entities=[ent], entries=[entry], components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert sorted(rep["inverters"][0]["devices"][0]["identifiers"]) == [
+        ["goodwe", "<SN>"], ["goodwe", "gw-host"]]
+    assert rep["inverters"][0]["entities"][0]["entity_id"] == "sensor.goodwe_<SN>_power"
+    assert "9010ketu000w0555" not in str(rep).lower()

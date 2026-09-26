@@ -42,16 +42,15 @@ def _err(step: str, err: BaseException) -> str:
 def _identifiers(raw: Any) -> tuple[tuple[str, str], ...]:
     """Identyfikatory urządzenia jako pary (domena, wartość).
 
-    Stare integracje potrafią zapisać krotki dłuższe niż 2 — zostawiamy drugi element
-    (to on niesie numer seryjny), nadmiarowe odrzucamy. Dzięki temu goły serial trafia
-    do zbioru maskowanego i jest zamaskowany także w entity_id/unique_id, a raport
+    Stare integracje potrafią zapisać krotki dłuższe niż 2 — każdy element po domenie
+    staje się osobną parą (domena, wartość). Serial bywa na dowolnej pozycji, więc każda
+    wartość trafia do zbioru kandydatów maskowania (także w entity_id/unique_id), a raport
     (rozpakowujący pary) się nie wywraca.
     """
     out: set[tuple[str, str]] = set()
     for ident in raw or ():
         parts = [str(p) for p in ident] if isinstance(ident, (tuple, list)) else [str(ident)]
-        if len(parts) >= 2:
-            out.add((parts[0], parts[1]))
+        out.update((parts[0], value) for value in parts[1:])
     return tuple(sorted(out))
 
 
@@ -159,8 +158,10 @@ class DiscoveryRunner:
 
     async def _collect(self) -> dict:
         errors: list[str] = []
-        devices = self._step("devices", errors, self._snap_devices, [])
-        entities = self._step("entities", errors, self._snap_entities, [])
+        devices, skipped_devices = self._step(
+            "devices", errors, self._snap_devices, ([], frozenset()))
+        entities = self._step(
+            "entities", errors, lambda: self._snap_entities(skipped_devices), [])
         entries = self._step("config_entries", errors, self._snap_entries, [])
         classification = self._step(
             "classify", errors, lambda: classify(devices, entities, entries, {}),
@@ -180,7 +181,17 @@ class DiscoveryRunner:
             integration_version=self.integration_version, ha_version=HA_VERSION,
             generated_at=dt_util.utcnow().isoformat())
 
-    def _snap_devices(self) -> list[DeviceSnap]:
+    def _snap_devices(self) -> tuple[list[DeviceSnap], frozenset[str]]:
+        """Migawki aktywnych urządzeń i identyfikatory pominiętych (wyłączonych).
+
+        Wyłączone urządzenia (także te po wyłączonym wpisie, disabled_by=config_entry)
+        nie są działającą instalacją — bez nich nie wracają ścieżką producenta. Ich
+        identyfikatory zwracamy, bo encje takich urządzeń też trzeba pominąć.
+        """
+        registry = dr.async_get(self.hass)
+        active = [d for d in registry.devices.values() if not getattr(d, "disabled_by", None)]
+        skipped = frozenset(
+            d.id for d in registry.devices.values() if getattr(d, "disabled_by", None))
         return [
             DeviceSnap(
                 id=d.id, manufacturer=d.manufacturer, model=d.model, name=d.name,
@@ -189,13 +200,13 @@ class DiscoveryRunner:
                 identifiers=_identifiers(d.identifiers),
                 config_entry_ids=_config_entry_ids(d),
             )
-            for d in dr.async_get(self.hass).devices.values()
-            # wyłączone urządzenia (także te po wyłączonym wpisie, disabled_by=config_entry)
-            # nie są działającą instalacją — bez nich nie wracają ścieżką producenta
-            if not getattr(d, "disabled_by", None)
-        ]
+            for d in active
+        ], skipped
 
-    def _snap_entities(self) -> list[EntitySnap]:
+    def _snap_entities(self, skipped_devices: frozenset[str]) -> list[EntitySnap]:
+        # Encje pominiętego urządzenia pomijamy: jego serial nie trafia do zbioru
+        # maskowanego, a encje dołączyłyby do znaleziska po config_entry_id i
+        # wyniosły serial z entity_id/unique_id w jawnej postaci.
         return [
             EntitySnap(
                 entity_id=e.entity_id, platform=e.platform, unique_id=str(e.unique_id),
@@ -206,6 +217,7 @@ class DiscoveryRunner:
                 original_name=e.original_name, disabled=e.disabled_by is not None,
             )
             for e in er.async_get(self.hass).entities.values()
+            if e.device_id not in skipped_devices
         ]
 
     def _snap_entries(self) -> list[ConfigEntrySnap]:
