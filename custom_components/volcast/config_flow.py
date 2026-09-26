@@ -137,6 +137,10 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Create an account-less entry — only read-only installation discovery."""
+        # Any existing Volcast entry already runs discovery (forecast entries
+        # included), so a separate discovery-only entry would only duplicate it.
+        if self._async_current_entries():
+            return self.async_abort(reason="single_instance_allowed")
         await self.async_set_unique_id(MODE_DISCOVERY_ONLY)
         # Distinct abort reason: "already_configured" talks about an API key,
         # which this entry doesn't have.

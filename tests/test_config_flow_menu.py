@@ -39,6 +39,12 @@ class _FakeConfigFlow:
     def _abort_if_unique_id_configured(self, *args, **kwargs):
         return None
 
+    def _async_current_entries(self, include_ignore=None):
+        return []
+
+    def async_abort(self, *, reason, **_):
+        return {"type": "abort", "reason": reason}
+
 
 class _FakeOptionsFlow:
     """Records async_create_entry instead of writing options; stores config_entry."""
@@ -115,6 +121,21 @@ def test_second_discovery_only_entry_aborts_with_distinct_reason(monkeypatch):
     with pytest.raises(AbortFlowStub):
         _run(flow.async_step_discovery_only())
     assert captured["error"] == "single_instance_allowed"
+
+
+def test_discovery_only_aborts_when_forecast_entry_exists(monkeypatch):
+    """A forecast entry already runs discovery — a second runner would duplicate it."""
+    flow = config_flow.VolcastConfigFlow()
+    monkeypatch.setattr(flow, "_async_current_entries",
+                        lambda include_ignore=None: [SimpleNamespace(data={"api_key": "k"})])
+    res = _run(flow.async_step_discovery_only())
+    assert res == {"type": "abort", "reason": "single_instance_allowed"}
+
+
+def test_discovery_only_created_when_no_entry_exists(monkeypatch):
+    flow = config_flow.VolcastConfigFlow()
+    monkeypatch.setattr(flow, "_async_current_entries", lambda include_ignore=None: [])
+    assert _run(flow.async_step_discovery_only())["type"] == "create_entry"
 
 
 @pytest.mark.parametrize(

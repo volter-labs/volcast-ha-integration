@@ -43,7 +43,7 @@
     },
     "abort": {
       "already_configured": "This API key is already configured.",
-      "single_instance_allowed": "Discovery-only mode is already set up."
+      "single_instance_allowed": "Volcast is already set up here, and installation discovery already runs as part of it."
     }
   },
   "options": {

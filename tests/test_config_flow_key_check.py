@@ -35,6 +35,12 @@ class _FakeConfigFlow:
     def _abort_if_unique_id_configured(self, *args, **kwargs):
         return None
 
+    def _async_current_entries(self, include_ignore=None):
+        return []
+
+    def async_abort(self, *, reason, **_):
+        return {"type": "abort", "reason": reason}
+
 
 class _FakeOptionsFlow:
     """Records async_create_entry instead of writing options; stores config_entry."""
