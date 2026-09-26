@@ -7,7 +7,7 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 
 ## Beta: Installation Discovery (v2.0.0b1)
 
-This version adds **optional** read-only installation discovery. Existing forecast users are not affected — all forecast sensors, production tracking and the Energy dashboard work exactly as in v1.7.2.
+This version adds read-only installation discovery. Existing forecast setups keep working exactly as in 1.7.2; after updating, they also get the 'Installation discovery' sensor and 'Run discovery' button, and discovery runs automatically after each Home Assistant start.
 
 ### What Discovery Does
 
