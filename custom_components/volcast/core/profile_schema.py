@@ -22,6 +22,8 @@ READ_KEYS = frozenset({
     "mode_value", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled",
 })
 INTENTS = ("charge_grid", "charge_pv", "discharge_forced", "sell", "self_consume", "standby")
+# Tylko te intencje wychodzą z rozstrzygania slotu z gwarantowaną mocą (silnik tryb+nastawa).
+POWERED_INTENTS = ("charge_grid", "sell", "discharge_forced")
 CAPABILITY_KEYS = ("force_charge_from_grid", "sell_from_battery", "force_discharge", "standby",
                    "set_power_w", "limit_export", "set_soc_floor", "set_soc_ceiling")
 REG_TYPES = ("u16", "i16", "u32", "i32", "f32", "ascii")
@@ -209,7 +211,11 @@ def _intents(v: _V, raw: Any, model: str, modes: dict) -> None:
                 mode = s.get("mode")
                 if not isinstance(mode, str) or mode not in modes:
                     v.err(f"{path}.mode", f"tryb {mode!r} nie istnieje w modes")
-                v.enum(s.get("power"), f"{path}.power", ("slot", "zero", "none"))
+                power = s.get("power")
+                if v.enum(power, f"{path}.power", ("slot", "zero", "none")):
+                    if power == "slot" and name not in POWERED_INTENTS:
+                        v.err(f"{path}.power",
+                              f"'slot' dozwolone tylko dla {list(POWERED_INTENTS)}")
         else:
             if spec is None:
                 if name == "self_consume":

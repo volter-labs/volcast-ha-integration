@@ -71,6 +71,11 @@ def _errs(p):
     # mode_setpoint wymaga co najmniej 1 zmiany kierunku na godzinę
     (lambda p: p["write_policy"].update(max_direction_changes_per_hour=0),
      "$.write_policy.max_direction_changes_per_hour"),
+    # "slot" (moc gwarantowana przez slot) na intencji, która tej gwarancji nie ma,
+    # crashowałoby silnik przy float(None) — walidator musi to zatrzymać na wejściu
+    (lambda p: p["intents"]["standby"].update(power="slot"), "$.intents.standby.power"),
+    (lambda p: p["intents"]["self_consume"].update(power="slot"), "$.intents.self_consume.power"),
+    (lambda p: p["intents"]["charge_pv"].update(power="slot"), "$.intents.charge_pv.power"),
 ])
 def test_mode_setpoint_errors(mutate, needle):
     p = ms_profile()

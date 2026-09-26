@@ -43,3 +43,4 @@ def assert_params_equal(actual: Params, expected: Params) -> None:
         assert (a is None) == (e is None), f"{f}: {a} vs {e}"
         if e is not None:
             assert a == pytest.approx(e, abs=1e-3), f
+    assert actual.tou == expected.tou, "tou"

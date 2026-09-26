@@ -66,7 +66,13 @@ def map_slot(slot: Slot, profile: Profile, rated_power_w: float) -> MappedSlot:
     spec = profile.intent(intent)
     power: float | None = None
     if spec["power"] == "slot":
-        power = _clip_power(float(slot.power_w), rated_power_w)   # intencja gwarantuje moc
+        # Intencja gwarantuje moc; walidator profilu (POWERED_INTENTS) odrzuca `slot`
+        # na intencjach, które tej gwarancji nie dają. Tor zapisu i tak jej nie ufa ślepo:
+        # brak liczby jest błędem danych, nie zerem, więc kończymy jawnym wyjątkiem
+        # zamiast TypeError z `float(None)`.
+        if slot.power_w is None:
+            raise ValueError(f"intencja {intent!r} wymaga power_w, slot go nie niesie")
+        power = _clip_power(float(slot.power_w), rated_power_w)
     elif spec["power"] == "zero":
         power = 0.0
 
