@@ -42,14 +42,16 @@ def _err(step: str, err: BaseException) -> str:
 def _identifiers(raw: Any) -> tuple[tuple[str, str], ...]:
     """Identyfikatory urządzenia jako pary (domena, wartość).
 
-    Stare integracje potrafią zapisać krotki dłuższe niż 2 — nadmiarowe części
-    doklejamy do wartości, żeby raport (rozpakowujący pary) się nie wywrócił.
+    Stare integracje potrafią zapisać krotki dłuższe niż 2 — zostawiamy drugi element
+    (to on niesie numer seryjny), nadmiarowe odrzucamy. Dzięki temu goły serial trafia
+    do zbioru maskowanego i jest zamaskowany także w entity_id/unique_id, a raport
+    (rozpakowujący pary) się nie wywraca.
     """
-    out: list[tuple[str, str]] = []
+    out: set[tuple[str, str]] = set()
     for ident in raw or ():
         parts = [str(p) for p in ident] if isinstance(ident, (tuple, list)) else [str(ident)]
         if len(parts) >= 2:
-            out.append((parts[0], ":".join(parts[1:])))
+            out.add((parts[0], parts[1]))
     return tuple(sorted(out))
 
 
@@ -188,6 +190,9 @@ class DiscoveryRunner:
                 config_entry_ids=_config_entry_ids(d),
             )
             for d in dr.async_get(self.hass).devices.values()
+            # wyłączone urządzenia (także te po wyłączonym wpisie, disabled_by=config_entry)
+            # nie są działającą instalacją — bez nich nie wracają ścieżką producenta
+            if not getattr(d, "disabled_by", None)
         ]
 
     def _snap_entities(self) -> list[EntitySnap]:

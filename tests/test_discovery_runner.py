@@ -166,17 +166,28 @@ async def test_no_candidates_skips_recorder_query(make_hass):
     assert rep["errors"] == []
 
 
-async def test_legacy_three_element_identifier_does_not_break_report(make_hass):
+async def test_legacy_three_element_identifier_serial_masked(make_hass):
     entry = SimpleNamespace(entry_id="g1", domain="goodwe", title="GoodWe", data={})
-    dev = _device(identifiers={("goodwe", "abc", "extra")}, serial_number=None)
+    dev = _device(identifiers={("goodwe", "9010KETU000W0777", "extra")}, serial_number=None)
     hass = make_hass(devices=[dev], entries=[entry], components={"recorder"})
     with _ok_probe():
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
-    # para (domena, wartość sklejona z nadmiarowych części); sama wartość zależy od
-    # polityki maskowania w report.py, więc sprawdzamy tylko kształt
-    (ident,) = rep["inverters"][0]["devices"][0]["identifiers"]
-    assert len(ident) == 2 and ident[0] == "goodwe" and ident[1] in ("abc:extra", "<SN>")
+    assert rep["inverters"][0]["devices"][0]["identifiers"] == [["goodwe", "<SN>"]]
+    assert "9010KETU000W0777" not in str(rep)
     assert rep["errors"] == []
+
+
+async def test_legacy_identifier_serial_masked_in_entity_id(make_hass):
+    # wartość = drugi element krotki (sam serial), więc maskuje się też w entity_id
+    entry = SimpleNamespace(entry_id="g1", domain="goodwe", title="GoodWe", data={})
+    dev = _device(identifiers={("goodwe", "9010KETU000W0777", "extra")}, serial_number=None)
+    ent = _entity(entity_id="sensor.goodwe_9010ketu000w0777_power",
+                  unique_id="power-1", original_device_class="power", unit_of_measurement="W")
+    hass = make_hass(devices=[dev], entities=[ent], entries=[entry], components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert rep["inverters"][0]["entities"][0]["entity_id"] == "sensor.goodwe_<SN>_power"
+    assert "9010ketu000w0777" not in str(rep).lower()
 
 
 async def test_concurrent_run_does_not_start_second_pass(make_hass):
@@ -260,3 +271,25 @@ async def test_disabled_config_entry_is_not_an_inverter(make_hass):
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
     assert [i["host"] for i in rep["inverters"]] == ["10.0.0.1"]
     assert "9010KETU000W0888" not in str(rep) and "10.0.0.8" not in str(rep)
+
+
+async def test_disabled_devices_skipped(make_hass):
+    # wyłączony wpis zostawia urządzenia w rejestrze (disabled_by=config_entry) —
+    # nie mogą wrócić do raportu ścieżką producenta
+    disabled = SimpleNamespace(entry_id="g8", domain="goodwe", title="GoodWe",
+                               source="user", disabled_by="user", data={})
+    dev = _device(id="d8", config_entries={"g8"}, disabled_by="config_entry")
+    hass = make_hass(devices=[dev], entries=[disabled], components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert rep["inverters"] == []
+
+
+async def test_disabled_device_dropped_active_device_kept(make_hass):
+    entry = SimpleNamespace(entry_id="g1", domain="goodwe", title="GoodWe", data={})
+    active = _device(id="d1", disabled_by=None)
+    off = _device(id="d2", model="GW5K-DT", disabled_by="user")
+    hass = make_hass(devices=[active, off], entries=[entry], components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert [d["model"] for d in rep["inverters"][0]["devices"]] == ["GW10K-ET"]
