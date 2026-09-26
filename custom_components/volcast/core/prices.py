@@ -47,14 +47,37 @@ DOMYSLNY_INTERVAL_MIN = 60
 #: bo dzisiaj+jutro w dobie zmiany czasu daje legalne 49 godzin.
 MAX_MINUT_SERII = 60 * 24 * 2
 
-#: Przedrostki jednostek oznaczające setne części waluty (centy, grosze).
-#: Nie przeliczamy ich na jednostkę główną, więc taka encja nie daje waluty
-#: WCALE — podstawienie fallbacku wysłałoby ceny 100x za duże.
-_JEDNOSTKI_CENTOWE = ("CT", "C", "GR")
+#: Przedrostki jednostek oznaczające setne części waluty (centy, grosze), po
+#: normalizacji `_znormalizuj` (wielkie litery, Ø/Ö sprowadzone do O). Licznik
+#: w tej postaci NIE jest kodem waluty (samo "CT" nic nie mówi o PLN czy EUR)
+#: — ale wartość PRZELICZAMY dokładnie (÷100), bo to jednoznaczna konwersja,
+#: nie zgadywanie.
+_JEDNOSTKI_CENTOWE = frozenset({
+    "CT", "C", "GR", "CENT", "CENTS", "¢", "ORE", "GROSZ", "GROSZE",
+})
 
-#: Mianownik jednostki, który kontrakt uznaje za cenę energii. `PLN/MWh` to ta
-#: sama klasa pomyłki co centy — rząd wielkości, tyle że w drugą stronę.
-_MIANOWNIK_CENY = "KWH"
+#: Litery skandynawskie w symbolach centowych (`Øre` DKK/NOK, `Öre` SEK) —
+#: sprowadzamy je do zwykłego O, żeby porównanie z `_JEDNOSTKI_CENTOWE`
+#: działało bez względu na diakrytyk.
+_DIAKRYTYKI = str.maketrans({"Ø": "O", "ø": "o", "Ö": "O", "ö": "o"})
+
+
+def _znormalizuj(tekst: str) -> str:
+    """Wielkie litery, bez Ø/Ö — postać do porównań z `_JEDNOSTKI_CENTOWE`."""
+    return tekst.translate(_DIAKRYTYKI).strip().upper()
+
+
+def _jest_centowy(licznik: str) -> bool:
+    return _znormalizuj(licznik) in _JEDNOSTKI_CENTOWE
+
+
+#: Mianowniki jednostki, które kontrakt rozpoznaje jako cenę energii, razem z
+#: DZIELNIKIEM do ceny „za kWh" — CAŁKOWITYM, żeby dzielenie było dokładne
+#: (mnożenie przez 0.001/0.01 nie jest, bo te ułamki nie mają skończonego
+#: rozwinięcia binarnego). `MWh` przeliczamy dokładnie (÷1000) — to
+#: jednoznaczna konwersja, nie zgadywanie. Każdy inny mianownik (np. `Wh`)
+#: odrzuca encję CAŁKOWICIE.
+_DZIELNIKI_MIANOWNIKA: dict[str, int] = {"KWH": 1, "MWH": 1000}
 
 #: Kod waluty kontraktu: dokładnie trzy litery ASCII (ISO 4217). „zł", „euro"
 #: czy „PL" walutą w rozumieniu chmury nie są.
@@ -67,6 +90,48 @@ def _kod_waluty(tekst: Any) -> str | None:
         return None
     kod = tekst.strip().upper()
     return kod if kod.isascii() and _KOD_WALUTY.match(kod) else None
+
+
+def _rozbierz_jednostke(attrs: Mapping[str, Any]) -> tuple[float, bool, str | None] | None:
+    """`unit_of_measurement` (+ `price_in_cents`) → (dzielnik, czy centowa, kod z licznika).
+
+    None oznacza, że jednostka jest OBECNA i JEDNOZNACZNIE nie jest ceną
+    energii kontraktu — encja jest wtedy odrzucana CAŁKOWICIE, bez względu na
+    to, co mówi atrybut `currency`. Dwa takie przypadki:
+    - mianownik inny niż kWh/MWh (np. `Wh`);
+    - atrybut `price_in_cents` PRZECZY jednostce — jawne `True` przy liczniku,
+      który jest kodem waluty (`EUR/kWh` nie może być jednocześnie "w euro"
+      i "w centach"), albo jawne `False` przy liczniku centowym (`ct/kWh`).
+
+    Brak jednostki albo jednostka bez ukośnika nie niesie informacji o
+    mianowniku (nie ma z czym uzgadniać sprzeczności), ale `price_in_cents`
+    nadal jest HONOROWANY jako jedyne źródło skali — waluta i tak przychodzi
+    skądinąd (`currency` albo fallback), więc sama flaga niczego nie blokuje.
+    """
+    jednostka = attrs.get("unit_of_measurement")
+    if not isinstance(jednostka, str) or "/" not in jednostka:
+        centowy_bez_ukosnika = attrs.get("price_in_cents") is True
+        return (100.0 if centowy_bez_ukosnika else 1.0), centowy_bez_ukosnika, None
+
+    licznik, _, mianownik = jednostka.partition("/")
+    dzielnik_mianownika = _DZIELNIKI_MIANOWNIKA.get(mianownik.strip().upper())
+    if dzielnik_mianownika is None:
+        return None
+
+    licznik = licznik.strip()
+    centowy = _jest_centowy(licznik)
+    kod_z_jednostki = None if centowy else _kod_waluty(licznik)
+
+    centy_flaga = attrs.get("price_in_cents")
+    centy_flaga = centy_flaga if isinstance(centy_flaga, bool) else None
+    if centy_flaga is True:
+        if kod_z_jednostki is not None:
+            return None
+        centowy = True
+    elif centy_flaga is False and centowy:
+        return None
+
+    return float(dzielnik_mianownika * (100 if centowy else 1)), centowy, kod_z_jednostki
 
 
 # ── Pomocnicze parsery ──────────────────────────────────────────────────────
@@ -218,12 +283,31 @@ def _z_list_liczb(
     return _ciagla(wynik)
 
 
+def _przeskaluj(
+    przedzialy: list[_Przedzial] | None, dzielnik: float
+) -> list[_Przedzial] | None:
+    """Podziel ceny przez dzielnik jednostki (za MWh ÷1000, centy ÷100 — albo oba naraz)."""
+    if przedzialy is None or dzielnik == 1.0:
+        return przedzialy
+    return [(start, cena / dzielnik, minuty) for start, cena, minuty in przedzialy]
+
+
 def _przedzialy(
     attrs: Mapping[str, Any] | None, tz: tzinfo, now: datetime | None
 ) -> list[_Przedzial] | None:
-    """Znormalizuj atrybuty jednej encji. None = dane niespójne."""
+    """Znormalizuj atrybuty jednej encji. None = dane niespójne.
+
+    Jednostka jest walidowana tu tak samo jak w `currency_from_attributes`
+    (przez ten sam `_rozbierz_jednostke`) — inny mianownik niż kWh/MWh (albo
+    sprzeczny `price_in_cents`) odrzuca CAŁĄ serię, a za MWh/w centach
+    wartości są przeliczane dokładnie.
+    """
     if not isinstance(attrs, Mapping):
         return None
+    rozbior = _rozbierz_jednostke(attrs)
+    if rozbior is None:
+        return None
+    dzielnik, _centowy, _kod_z_jednostki = rozbior
     raw_today = attrs.get("raw_today")
     if isinstance(raw_today, (list, tuple)) and raw_today:
         seria = _z_raw(list(raw_today))
@@ -236,8 +320,8 @@ def _przedzialy(
             if jutro is None:
                 return None
             seria += jutro
-        return _ciagla(seria)
-    return _z_list_liczb(attrs, tz, now)
+        return _przeskaluj(_ciagla(seria), dzielnik)
+    return _przeskaluj(_z_list_liczb(attrs, tz, now), dzielnik)
 
 
 # ── API publiczne ───────────────────────────────────────────────────────────
@@ -246,26 +330,45 @@ def _przedzialy(
 def currency_from_attributes(attrs: Mapping[str, Any] | None, fallback: str | None) -> str | None:
     """Waluta z atrybutów encji: `currency`, potem `unit_of_measurement`.
 
-    Jednostki centowe (`ct/kWh`, `c/kWh`, `gr/kWh`) świadomie schodzą do
-    `fallback` — nie przeliczamy setnych na jednostkę główną, bo z samej
-    jednostki nie wynika, o którą walutę chodzi.
+    Jednostka jest walidowana ZAWSZE, niezależnie od tego, czy atrybut
+    `currency` jest obecny — jawny atrybut nie omija sprawdzenia jednostki,
+    tylko jest z nią uzgadniany:
+    - inny mianownik niż kWh/MWh (np. `Wh`) odrzuca encję CAŁKOWICIE;
+    - jednostka centowa (`ct/kWh`, `gr/kWh`, `Øre/kWh`, ...) albo jawny
+      atrybut `price_in_cents` sama nie niesie kodu waluty (licznik to nie
+      ISO 4217) — waluta musi wtedy przyjść z `currency`;
+    - jeśli licznik jednostki I atrybut `currency` są oba rozpoznawalne, ale
+      się przeczą, to dane niespójne → None, „atrybut wygrywa" nie istnieje.
+
+    Przeliczenie samej WARTOŚCI ceny (za MWh ÷1000, w centach ÷100) robi
+    `intervals_from_attributes` — ta funkcja tylko ustala walutę.
 
     None oznacza „nie wiem" — wołający pomija wtedy blok `prices`.
     """
     if isinstance(attrs, Mapping):
+        rozbior = _rozbierz_jednostke(attrs)
+        if rozbior is None:
+            return None
+        _dzielnik, _centowy, kod_z_jednostki = rozbior
+        jednostka = attrs.get("unit_of_measurement")
+        ma_ukosnik = isinstance(jednostka, str) and "/" in jednostka
+
         jawna = attrs.get("currency")
         if isinstance(jawna, str) and jawna.strip():
             # Atrybut OBECNY i niezrozumiały nie schodzi do fallbacku: encja coś
             # deklaruje, a my nie mamy prawa podstawić za nią czegoś innego.
-            return _kod_waluty(jawna)
-        jednostka = attrs.get("unit_of_measurement")
-        if isinstance(jednostka, str) and "/" in jednostka:
-            licznik, _, mianownik = jednostka.partition("/")
-            if mianownik.strip().upper() != _MIANOWNIK_CENY:
+            kod_jawny = _kod_waluty(jawna)
+            if kod_jawny is None:
                 return None
-            if licznik.strip().upper() in _JEDNOSTKI_CENTOWE:
+            if kod_z_jednostki is not None and kod_z_jednostki != kod_jawny:
                 return None
-            return _kod_waluty(licznik)
+            return kod_jawny
+        if kod_z_jednostki is not None:
+            return kod_z_jednostki
+        if ma_ukosnik:
+            # Jednostka centowa (albo licznik nierozpoznany jako kod waluty)
+            # bez jawnego atrybutu `currency` — nie zgadujemy.
+            return None
     # Fallback z opcji integracji wchodzi TYLKO wtedy, gdy encja nie mówi nic.
     return _kod_waluty(fallback)
 
@@ -280,9 +383,9 @@ def intervals_from_attributes(
     """Zamień atrybuty encji cenowych na listę przedziałów kontraktu.
 
     `attrs_sell` jest opcjonalne (rynki bez wykupu nadwyżek) — bez niego każdy
-    przedział ma `sell=None`. Zepsute atrybuty SPRZEDAŻY degradują samo `sell`
-    do None, bo brak ceny sprzedaży planner obsługuje; zepsute atrybuty ZAKUPU
-    kasują cały wynik.
+    przedział ma `sell=None`. Zepsute atrybuty SPRZEDAŻY (w tym waluta INNA niż
+    kupna) degradują samo `sell` do None, bo brak ceny sprzedaży planner
+    obsługuje; zepsute atrybuty ZAKUPU kasują cały wynik.
 
     Zwraca listę posortowaną chronologicznie, bez duplikatów `startAt` (zostaje
     pierwszy napotkany wpis), albo pustą listę, gdy danych nie da się zaufać.
@@ -297,7 +400,11 @@ def intervals_from_attributes(
         return []
 
     sprzedaz: dict[datetime, float] = {}
-    if attrs_sell is not None:
+    # Waluta sprzedaży musi zgadzać się z walutą bloku (kupna) — encja sprzedaży
+    # bez ŻADNEJ deklaracji waluty (None) jest przyjmowana bez zastrzeżeń, ale
+    # jawnie INNA waluta to dane niespójne, więc cała sprzedaż degraduje do None.
+    waluta_sprzedazy = currency_from_attributes(attrs_sell, None) if attrs_sell is not None else None
+    if attrs_sell is not None and (waluta_sprzedazy is None or waluta_sprzedazy == waluta):
         for start, cena, _minuty in _przedzialy(attrs_sell, tz, now) or []:
             # Klucz JAWNIE w UTC — kupno i sprzedaż bywają zapisane innym
             # offsetem tej samej chwili (+02:00 kontra Z).
@@ -316,6 +423,37 @@ def intervals_from_attributes(
             "currency": waluta,
         }
     return [wynik[chwila] for chwila in sorted(wynik)]
+
+
+def has_usable_prices_now(
+    attrs_buy: Mapping[str, Any] | None,
+    fallback_currency: str | None,
+    tz: tzinfo = timezone.utc,
+    now: datetime | None = None,
+) -> bool:
+    """Czy encja (samo `buy`) daje pełną, zaufaną serię cen JUŻ TERAZ.
+
+    Do onboardingu (wybór encji ceny): oferujemy encję jako źródło cen tylko
+    wtedy, gdy jej bieżące atrybuty naprawdę dają się zamienić na przedziały —
+    nie „może kiedyś", jeśli użytkownik uzupełni `interval_min` albo zmieni
+    jednostkę. Krok „prices" onboardingu nie wolno oznaczać jako zrobiony na
+    podstawie samego wyboru encji, tylko na podstawie tego wyniku.
+
+    „Pełna seria JUŻ TERAZ" oznacza konkretnie: seria pokrywa bieżącą godzinę
+    (`now`) i sięga co najmniej 6 h w przód — samo „jakieś dwie godziny
+    `today`" albo seria sprzed miesiąca (encja martwa) to nie jest gotowość.
+    """
+    waluta = currency_from_attributes(attrs_buy, fallback_currency)
+    if waluta is None:
+        return False
+    przedzialy = intervals_from_attributes(attrs_buy, None, waluta, tz, now)
+    if not przedzialy:
+        return False
+    chwila = (now or datetime.now(tz)).astimezone(timezone.utc)
+    pierwszy = datetime.fromisoformat(przedzialy[0]["startAt"].replace("Z", "+00:00"))
+    ostatni = datetime.fromisoformat(przedzialy[-1]["startAt"].replace("Z", "+00:00"))
+    koniec_serii = ostatni + timedelta(minutes=przedzialy[-1]["minutes"])
+    return pierwszy <= chwila < koniec_serii and koniec_serii >= chwila + timedelta(hours=6)
 
 
 def fingerprint(intervals: Sequence[Mapping[str, Any]]) -> str:

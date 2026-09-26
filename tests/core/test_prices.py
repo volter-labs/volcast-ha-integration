@@ -21,6 +21,7 @@ import pytest
 from custom_components.volcast.core.prices import (
     currency_from_attributes,
     fingerprint,
+    has_usable_prices_now,
     intervals_from_attributes,
 )
 
@@ -441,23 +442,71 @@ def test_currency_z_atrybutu_currency_wielkimi_literami():
     assert currency_from_attributes({"currency": "eur"}, None) == "EUR"
 
 
-def test_currency_atrybut_ma_pierwszenstwo_nad_jednostka():
+def test_currency_atrybut_sprzeczny_z_jednostka_daje_none():
+    """Atrybut `currency` NIE bije jednostki — jeśli się przeczą, to dane
+    niespójne, a nie „atrybut wygrywa"."""
     attrs = {"currency": "eur", "unit_of_measurement": "PLN/kWh"}
-    assert currency_from_attributes(attrs, "PLN") == "EUR"
+    assert currency_from_attributes(attrs, "PLN") is None
 
 
-@pytest.mark.parametrize("jednostka", ["ct/kWh", "c/kWh", "gr/kWh", "CT/KWH"])
+@pytest.mark.parametrize(
+    "jednostka",
+    [
+        "ct/kWh", "c/kWh", "gr/kWh", "CT/KWH",
+        "Cent/kWh", "cents/kWh", "¢/kWh",
+        "Øre/kWh", "Öre/kWh", "ore/kWh",
+        "Grosz/kWh", "grosze/kWh",
+    ],
+)
 def test_currency_centy_daja_none_niezaleznie_od_fallbacku(jednostka):
     """Jednostka centowa to NIE jest brak informacji — to informacja, że wartości
-    są w setnych. Podstawienie fallbacku wysłałoby ceny 100x za duże."""
+    są w setnych. Podstawienie fallbacku wysłałoby ceny 100x za duże. Zbiór
+    liczników centowych jest niewrażliwy na wielkość liter i diakrytyki
+    skandynawskie (Øre, Öre)."""
     assert currency_from_attributes({"unit_of_measurement": jednostka}, "EUR") is None
     assert currency_from_attributes({"unit_of_measurement": jednostka}, None) is None
 
 
-@pytest.mark.parametrize("jednostka", ["PLN/MWh", "EUR/MWh", "PLN/Wh"])
-def test_currency_inny_mianownik_niz_kwh_daje_none(jednostka):
-    """Ceny kontraktu są za kWh. Za MWh to ta sama pomyłka rzędu wielkości."""
-    assert currency_from_attributes({"unit_of_measurement": jednostka}, "PLN") is None
+def test_currency_price_in_cents_bez_ukosnika_nie_blokuje_fallbacku():
+    """Bez ukośnika `price_in_cents` niesie tylko informację o SKALI wartości —
+    waluta nadal przychodzi z fallbacku, jak dla dowolnej innej jednostki bez
+    ukośnika (`kWh` sama w sobie nie mówi nic o walucie)."""
+    attrs = {"unit_of_measurement": "kWh", "price_in_cents": True}
+    assert currency_from_attributes(attrs, "EUR") == "EUR"
+
+
+def test_currency_price_in_cents_true_z_kodem_waluty_w_liczniku_jest_sprzeczne():
+    """`EUR/kWh` + `price_in_cents=True` się wykluczają — sensor nie może być
+    jednocześnie "w euro" i "w centach euro" na tym samym liczniku."""
+    attrs = {"currency": "EUR", "unit_of_measurement": "EUR/kWh", "price_in_cents": True}
+    assert currency_from_attributes(attrs, None) is None
+
+
+def test_currency_price_in_cents_false_z_licznikiem_centowym_jest_sprzeczne():
+    attrs = {"currency": "PLN", "unit_of_measurement": "gr/kWh", "price_in_cents": False}
+    assert currency_from_attributes(attrs, None) is None
+
+
+@pytest.mark.parametrize(
+    ("waluta", "jednostka"),
+    [("NOK", "Øre/kWh"), ("SEK", "Öre/kWh")],
+)
+def test_currency_price_in_cents_true_z_jawna_waluta_dziala(waluta, jednostka):
+    """Wzorzec custom Nord Pool: `currency` + jednostka centowa (skandynawska) +
+    `price_in_cents=True` — waluta z atrybutu, wartość przeliczona w centach."""
+    attrs = {"currency": waluta, "unit_of_measurement": jednostka, "price_in_cents": True}
+    assert currency_from_attributes(attrs, None) == waluta
+
+
+def test_currency_mianownik_wh_daje_none():
+    """`Wh` nie jest dozwolonym przelicznikiem (ani kWh, ani MWh) — odrzucamy."""
+    assert currency_from_attributes({"unit_of_measurement": "PLN/Wh"}, "PLN") is None
+
+
+@pytest.mark.parametrize(("jednostka", "kod"), [("PLN/MWh", "PLN"), ("EUR/MWh", "EUR")])
+def test_currency_mianownik_mwh_jest_dozwolony(jednostka, kod):
+    """Za MWh JEST dozwolony przelicznik (dokładne ÷1000) — waluta z licznika."""
+    assert currency_from_attributes({"unit_of_measurement": jednostka}, None) == kod
 
 
 def test_currency_mianownik_kwh_bez_wzgledu_na_wielkosc_liter():
@@ -465,10 +514,11 @@ def test_currency_mianownik_kwh_bez_wzgledu_na_wielkosc_liter():
 
 
 def test_currency_fallback_tylko_gdy_encja_nic_nie_mowi():
-    """Jednostka OBECNA i nierozpoznana bije fallback — encja coś deklaruje,
-    tylko my tego nie umiemy bezpiecznie zinterpretować."""
+    """Jednostka centowa jest rozpoznana jako cena energii (przeliczalna), ale
+    sama nie niesie kodu waluty — bez atrybutu `currency` fallback i tak nie
+    wchodzi, bo licznik jednostki to nie ISO 4217, więc dane pozostają
+    niespójne, a nie „nierozpoznane, więc zgadnij"."""
     assert currency_from_attributes({"unit_of_measurement": "ct/kWh"}, "PLN") is None
-    assert currency_from_attributes({"unit_of_measurement": "PLN/MWh"}, "PLN") is None
     # Brak jednostki albo jednostka bez ukośnika — fallback wchodzi.
     assert currency_from_attributes({}, "PLN") == "PLN"
     assert currency_from_attributes({"unit_of_measurement": "kWh"}, "PLN") == "PLN"
@@ -517,6 +567,113 @@ def test_brak_waluty_daje_pusto():
     assert intervals_from_attributes(attrs, None, None, _WAW) == []
 
 
+# ── przeliczenia jednostek (za MWh, w centach) ──────────────────────────────
+
+
+def test_mwh_przelicza_wartosci_dokladnie_przez_1000():
+    attrs = {
+        "unit_of_measurement": "PLN/MWh",
+        "raw_today": _raw(_polnoc(), 2, 60, wartosc=25.5),
+    }
+
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+
+    # Dzielenie przez CAŁKOWITY 1000 jest dokładne — mnożenie przez 0.001 by nie było
+    # (25.5 * 0.001 == 0.025500000000000002, a 25.5 / 1000 == 0.0255 bit w bit).
+    assert [w["buy"] for w in out] == [0.0255, 0.0255]
+
+
+@pytest.mark.parametrize("jednostka", ["ct/kWh", "c/kWh", "gr/kWh", "CT/KWH", "Cent/kWh", "¢/kWh"])
+def test_centy_przelicza_wartosci_dokladnie_przez_100(jednostka):
+    attrs = {
+        "unit_of_measurement": jednostka,
+        "raw_today": _raw(_polnoc(), 2, 60, wartosc=123.45),
+    }
+
+    out = intervals_from_attributes(attrs, None, "EUR", _WAW)
+
+    assert [w["buy"] for w in out] == [1.2345, 1.2345]
+
+
+def test_grosze_za_mwh_dzieli_przez_iloczyn_dokladnie():
+    """Mianownik i licznik centowy naraz — jeden dzielnik (1000 * 100), nie dwa
+    kolejne mnożenia przez ułamki dziesiętne."""
+    attrs = {
+        "unit_of_measurement": "gr/MWh",
+        "raw_today": _raw(_polnoc(), 2, 60, wartosc=123.45),
+    }
+
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+
+    assert [w["buy"] for w in out] == [0.0012345, 0.0012345]
+
+
+def test_price_in_cents_true_z_kodem_waluty_w_liczniku_odrzuca_cala_serie():
+    """`NOK/kWh` + `price_in_cents=True` się wykluczają (licznik już deklaruje
+    walutę główną, nie centy) — dane niespójne, cała seria odrzucona."""
+    attrs = {
+        "unit_of_measurement": "NOK/kWh",
+        "price_in_cents": True,
+        "raw_today": _raw(_polnoc(), 2, 60, wartosc=123.45),
+    }
+
+    assert intervals_from_attributes(attrs, None, "NOK", _WAW) == []
+
+
+def test_price_in_cents_true_z_jednostka_skandynawska_przelicza_przez_100():
+    """Wzorzec custom Nord Pool: licznik to symbol centowy (`Øre`), waluta z
+    atrybutu `currency`, `price_in_cents=True` potwierdza skalę."""
+    attrs = {
+        "currency": "NOK",
+        "unit_of_measurement": "Øre/kWh",
+        "price_in_cents": True,
+        "raw_today": _raw(_polnoc(), 2, 60, wartosc=123.45),
+    }
+
+    out = intervals_from_attributes(attrs, None, "NOK", _WAW)
+
+    assert [w["buy"] for w in out] == [1.2345, 1.2345]
+
+
+def test_sell_w_centach_przelicza_niezaleznie_od_buy():
+    buy = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"unit_of_measurement": "ct/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=50.0)}
+
+    out = intervals_from_attributes(buy, sell, "EUR", _WAW)
+
+    assert [w["sell"] for w in out] == [pytest.approx(0.5), pytest.approx(0.5)]
+
+
+def test_inny_mianownik_niz_kwh_mwh_odrzuca_cala_serie():
+    attrs = {
+        "unit_of_measurement": "PLN/Wh",
+        "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0),
+    }
+
+    assert intervals_from_attributes(attrs, None, "PLN", _WAW) == []
+
+
+def test_sell_z_nieprawidlowym_mianownikiem_degraduje_do_none():
+    buy = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"unit_of_measurement": "PLN/Wh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [None, None]
+
+
+def test_sell_z_inna_waluta_niz_blok_degraduje_do_none():
+    """Sprzedaż deklaruje jawnie INNĄ walutę niż blok (kupno) — dane niespójne,
+    degradujemy tylko `sell`, `buy` zostaje nietknięte."""
+    buy = {"unit_of_measurement": "PLN/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"currency": "EUR", "unit_of_measurement": "EUR/MWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=123.45)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["buy"] for w in out] == [1.0, 1.0]
+    assert [w["sell"] for w in out] == [None, None]
+
+
 # ── odcisk ──────────────────────────────────────────────────────────────────
 
 
@@ -553,3 +710,50 @@ def test_startat_nie_niesie_mikrosekund():
     out = intervals_from_attributes({"raw_today": wpisy}, None, "PLN", _WAW)
 
     assert out[0]["startAt"] == "2026-09-14T22:00:00Z"
+
+
+# ── gotowość dla onboardingu ─────────────────────────────────────────────────
+
+
+def test_has_usable_prices_now_prawda_dla_pelnej_serii():
+    attrs = {"raw_today": _raw(_polnoc(), 24, 60)}
+
+    # `now` = początek doby: pokrywa bieżącą godzinę i sięga 24 h w przód (≥ 6 h).
+    assert has_usable_prices_now(attrs, "PLN", _WAW, _polnoc()) is True
+
+
+def test_has_usable_prices_now_falsz_gdy_brak_serii():
+    assert has_usable_prices_now({}, "PLN", _WAW) is False
+
+
+def test_has_usable_prices_now_falsz_gdy_brak_waluty():
+    attrs = {"raw_today": _raw(_polnoc(), 24, 60)}
+
+    assert has_usable_prices_now(attrs, None, _WAW) is False
+
+
+def test_has_usable_prices_now_falsz_dla_platformy_bez_wspieranych_atrybutow():
+    """Encja istnieje i ma cenę bieżącą, ale nie żadną z dwóch wspieranych list
+    (`raw_today`/`raw_tomorrow` albo `today`/`tomorrow`) — pokazujemy „jeszcze
+    nieobsługiwana", nie fałszywie „gotowa"."""
+    attrs = {"state": "0.42", "prices_today": [{"time": "00:00", "price": 0.42}]}
+
+    assert has_usable_prices_now(attrs, "PLN", _WAW) is False
+
+
+def test_has_usable_prices_now_falsz_dla_okrojonej_serii():
+    """Dwie godziny `today` (doba obcięta, brak jutra) nie sięgają 6 h w przód
+    od `now` — seria kompletna formalnie, ale bezużyteczna dla plannera już
+    teraz."""
+    attrs = {"currency": "PLN", "raw_today": _raw(_polnoc(), 2, 60)}
+
+    assert has_usable_prices_now(attrs, None, _WAW, _polnoc()) is False
+
+
+def test_has_usable_prices_now_falsz_dla_nieaktualnej_serii():
+    """Seria jest kompletna (24 h), ale `now` jest miesiąc PO niej — encja
+    martwa, seria nieaktualna, nie pokrywa bieżącej godziny."""
+    attrs = {"raw_today": _raw(_polnoc(), 24, 60)}
+    poza_seria = _polnoc() + timedelta(days=30)
+
+    assert has_usable_prices_now(attrs, "PLN", _WAW, poza_seria) is False
