@@ -62,6 +62,7 @@ _make_module("homeassistant.const", {
     "STATE_UNAVAILABLE": "unavailable",
     "STATE_UNKNOWN": "unknown",
     "EVENT_HOMEASSISTANT_STARTED": "homeassistant_started",
+    "__version__": "2026.9.0",
 })
 
 # --- homeassistant.exceptions ---
@@ -119,6 +120,35 @@ _make_module("homeassistant.helpers.aiohttp_client", {
 _make_module("homeassistant.helpers.issue_registry", {
     "async_create_issue": MagicMock(),
     "async_delete_issue": MagicMock(),
+})
+
+
+# --- rejestry urządzeń i encji (wykrywanie instalacji) ---
+# Prawdziwe HA trzyma rejestry w hass.data; atrapa czyta je z pól ustawionych
+# przez fabrykę `make_hass` (obiekt z `.devices` / `.entities`, jak w HA).
+def _fake_device_registry_get(hass):
+    return hass.data["device_registry"]
+
+
+def _fake_entity_registry_get(hass):
+    return hass.data["entity_registry"]
+
+
+_helpers_mod = sys.modules["homeassistant.helpers"]
+_helpers_mod.device_registry = _make_module(
+    "homeassistant.helpers.device_registry", {"async_get": _fake_device_registry_get})
+_helpers_mod.entity_registry = _make_module(
+    "homeassistant.helpers.entity_registry", {"async_get": _fake_entity_registry_get})
+_helpers_mod.dispatcher = _make_module("homeassistant.helpers.dispatcher", {
+    "async_dispatcher_send": MagicMock(),
+    "async_dispatcher_connect": MagicMock(return_value=MagicMock()),
+})
+
+# --- homeassistant.util.dt ---
+FAKE_UTCNOW = datetime(2026, 9, 23, 10, 0, tzinfo=timezone.utc)
+_util_mod = _make_module("homeassistant.util")
+_util_mod.dt = _make_module("homeassistant.util.dt", {
+    "utcnow": lambda: FAKE_UTCNOW,
 })
 
 
@@ -420,3 +450,59 @@ class FakeHass:
 @pytest.fixture
 def fake_hass() -> FakeHass:
     return FakeHass()
+
+
+# ---------------------------------------------------------------------------
+# Fabryka hass dla wykrywania instalacji (rejestry, stany, wpisy, komponenty)
+# ---------------------------------------------------------------------------
+
+class _FakeStates:
+    """Atrapa hass.states — `get(entity_id)` zwraca obiekt ze `state`/`attributes`."""
+
+    def __init__(self, states: dict[str, Any]):
+        self._states: dict[str, Any] = {}
+        for eid, value in (states or {}).items():
+            if isinstance(value, tuple):
+                state, attrs = value
+                value = types.SimpleNamespace(state=state, attributes=dict(attrs))
+            self._states[eid] = value
+        self.requested: list[str] = []
+
+    def get(self, entity_id: str):
+        self.requested.append(entity_id)
+        return self._states.get(entity_id)
+
+
+class _FakeConfigEntries:
+    def __init__(self, entries: list[Any]):
+        self._entries = list(entries or [])
+
+    def async_entries(self, domain: str | None = None):
+        if domain is None:
+            return list(self._entries)
+        return [e for e in self._entries if e.domain == domain]
+
+
+@pytest.fixture
+def make_hass():
+    """Zwraca fabrykę `make_hass(devices, entities, entries, states, components)`.
+
+    `states`: dict entity_id -> (state, attributes) albo obiekt ze `state`/`attributes`.
+    """
+
+    def _factory(*, devices=(), entities=(), entries=(), states=None,
+                 components=(), time_zone: str = "Europe/Warsaw"):
+        hass = types.SimpleNamespace()
+        hass.data = {
+            "device_registry": types.SimpleNamespace(
+                devices={d.id: d for d in devices}),
+            "entity_registry": types.SimpleNamespace(
+                entities={e.entity_id: e for e in entities}),
+        }
+        hass.config = types.SimpleNamespace(
+            components=set(components), time_zone=time_zone)
+        hass.states = _FakeStates(states or {})
+        hass.config_entries = _FakeConfigEntries(list(entries))
+        return hass
+
+    return _factory

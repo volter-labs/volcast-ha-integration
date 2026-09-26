@@ -28,3 +28,7 @@ CONF_BATTERY_CHARGE_POWER_ENTITY = "battery_charge_power_entity"
 
 SERVICE_SYNC_PRODUCTION = "sync_production"
 ATTR_DATE = "date"
+
+# Wykrywanie instalacji (tylko odczyt) — sygnał po nowym raporcie i limit czasu przebiegu
+SIGNAL_DISCOVERY_UPDATED = "volcast_discovery_updated_{entry_id}"
+DISCOVERY_TIMEOUT_S = 30
