@@ -1,0 +1,7376 @@
+{
+"source": "reference firmware eafa5d9 (vb_mapper.c)",
+"vectors": [
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "charge",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 12,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "discharge",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "self",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": null,
+"discharge_purpose": "sell",
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 10,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "pv",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": null,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 1,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": null,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 2
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 1000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": null,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 20.0,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "self_consume",
+"charge_source": "grid",
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 11,
+"soc_min": null,
+"soc_max": 90.0,
+"power_w": 8000.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "idle",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": null,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 0
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 1000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": null,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": null,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 20.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 20.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": false,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 0.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": 5000.0
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": 5000.0,
+"export_limit_enabled": true
+},
+"note": 1
+},
+{
+"slot": {
+"mode": "hold",
+"charge_source": null,
+"discharge_purpose": null,
+"power_w": 99000.0,
+"soc_target": 90.0,
+"export_allowed": true,
+"export_limit_w": null
+},
+"rated_power_w": 8000,
+"params": {
+"mode": 8,
+"soc_min": 90.0,
+"soc_max": null,
+"power_w": 0.0,
+"export_limit_w": null,
+"export_limit_enabled": false
+},
+"note": 1
+}
+]
+}
