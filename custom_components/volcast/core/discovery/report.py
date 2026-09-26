@@ -14,12 +14,27 @@ REPORT_SCHEMA = 1
 # mimo że odcina to teoretycznie krótsze numery seryjne (ruling: fałszywe maskowanie
 # zwykłych słów jest gorsze niż rzadki, krótki numer seryjny, który prześlizgnie się przez próg).
 _MIN_SERIAL = 6
+
 # 12 cyfr szesnastkowych z opcjonalnymi separatorami ':' lub '-' co dwa znaki — łapie
-# adresy MAC nawet w nieparsowalnym surowym tekście odpowiedzi 48899 (Task 5 fix round 1).
+# adresy MAC nawet w nieparsowalnym surowym tekście odpowiedzi 48899. Granice liczone
+# lookaroundami, nie \b — '_' i litery są "znakami słowa", więc \b by ich nie zatrzymał
+# (np. unique_id "aabbccddeeff_rssi"). Sam ciąg 12 cyfr bez separatora i bez litery A-F
+# nie jest maskowany jako MAC — zbyt niepewne (fix round 2, reviews.md Task 5
+# re-review 1, R2).
 _MAC_RE = re.compile(
-    r"(?i)\b([0-9a-f]{2})[:\-]?([0-9a-f]{2})[:\-]?([0-9a-f]{2})"
-    r"[:\-]?([0-9a-f]{2})[:\-]?([0-9a-f]{2})[:\-]?([0-9a-f]{2})\b"
+    r"(?i)(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}[:\-]?){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])"
 )
+
+_IPV4_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
+
+# Klucze niosące słownik/kontrakt raportu, nie dane właściciela — maskowanie ich wartości
+# byłoby fałszywym trafieniem (np. host/ip wyglądający na numeryczny ciąg, domena równa
+# nazwie producenta). Fix round 2, R4.
+_STRUCTURAL_KEYS = frozenset({
+    "domain", "entity_domain", "platform", "brand_hint", "matched_by", "host", "ip",
+    "schema", "generated_at", "integration_version", "ha_version", "device_class",
+    "unit", "state_class", "translation_key",
+})
 
 
 def _clean_serial(v: str | None) -> str | None:
@@ -30,12 +45,37 @@ def _clean_serial(v: str | None) -> str | None:
     return v or None
 
 
-def _serial_pattern(serials: set[str]) -> re.Pattern[str] | None:
-    escaped = sorted(
-        (re.escape(s) for s in serials if s and len(s) >= _MIN_SERIAL),
-        key=len, reverse=True,
+def _looks_like_ip(s: str) -> bool:
+    m = _IPV4_RE.match(s)
+    return bool(m) and all(0 <= int(g) <= 255 for g in m.groups())
+
+
+def _valid_serial(s: str | None) -> bool:
+    """Kandydat na serial: min. długość, przynajmniej jedna cyfra, nie wygląda jak adres
+    IPv4 (fix round 2, R4) — inaczej host/adres dongla trafiałby do zbioru seriali."""
+    return bool(
+        s and len(s) >= _MIN_SERIAL
+        and any(ch.isdigit() for ch in s)
+        and not _looks_like_ip(s)
     )
-    return re.compile("|".join(escaped), re.IGNORECASE) if escaped else None
+
+
+def _serial_alt(s: str) -> str:
+    """Wariant wzorca niewrażliwy na separatory: dzieli serial na kawałki alfanumeryczne
+    i łączy je wzorcem dopuszczającym dowolne separatory (fix round 2, R1) — tak by np.
+    serial "7F123456-78" złapał też slugifikowane "7f123456_78" w entity_id."""
+    chunks = [c for c in re.split(r"[\W_]+", s) if c]
+    if not chunks:
+        return re.escape(s)
+    return r"[\W_]*".join(re.escape(c) for c in chunks)
+
+
+def _serial_pattern(serials: set[str]) -> re.Pattern[str] | None:
+    valid = [s for s in serials if s and len(s) >= _MIN_SERIAL]
+    if not valid:
+        return None
+    alts = sorted((_serial_alt(s) for s in valid), key=len, reverse=True)
+    return re.compile("|".join(alts), re.IGNORECASE)
 
 
 def mask_serials(text, serials: set[str]):
@@ -45,24 +85,42 @@ def mask_serials(text, serials: set[str]):
     return pattern.sub("<SN>", text) if pattern else text
 
 
+def _mac_repl(m: re.Match[str]) -> str:
+    raw = m.group(0)
+    has_letter = any(ch in "abcdefABCDEF" for ch in raw)
+    has_sep = any(ch in ":-" for ch in raw)
+    if not (has_letter or has_sep):
+        return raw  # sam ciąg 12 cyfr — zbyt niepewne, żeby traktować jak MAC
+    hexdigits = raw.replace(":", "").replace("-", "")
+    return hexdigits[:6].upper() + "******"
+
+
 def _mask_mac_in_text(text: str) -> str:
-    def _repl(m: re.Match[str]) -> str:
-        return (m.group(1) + m.group(2) + m.group(3)).upper() + "******"
-    return _MAC_RE.sub(_repl, text)
+    return _MAC_RE.sub(_mac_repl, text)
 
 
 def _mask_value(value, pattern: re.Pattern[str] | None):
-    """Ostateczny, rekurencyjny przebieg maskujący po zbudowaniu całego raportu —
-    łapie serial/MAC w KAŻDYM polu tekstowym (w tym entity_id, unique_id, errors,
-    model, wersje, options, raw), niezależnie od tego, czy konkretne pole zostało
-    już zamaskowane punktowo przy budowie."""
+    """Ostateczny, rekurencyjny przebieg maskujący po zbudowaniu całego raportu — łapie
+    serial/MAC w każdym polu tekstowym (w tym entity_id, unique_id, errors, model,
+    wersje, options, raw), a także wewnątrz list/krotek/zbiorów i kluczy słowników
+    (fix round 2, R3), omijając pola strukturalne (_STRUCTURAL_KEYS), których wartości
+    są słownikiem/kontraktem raportu, nie danymi właściciela (fix round 2, R4)."""
     if isinstance(value, str):
         masked = pattern.sub("<SN>", value) if pattern else value
         return _mask_mac_in_text(masked)
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            new_k = _mask_value(k, pattern) if isinstance(k, str) else k
+            skip = isinstance(k, str) and k in _STRUCTURAL_KEYS
+            out[new_k] = v if skip else _mask_value(v, pattern)
+        return out
     if isinstance(value, list):
         return [_mask_value(v, pattern) for v in value]
-    if isinstance(value, dict):
-        return {k: _mask_value(v, pattern) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_mask_value(v, pattern) for v in value)
+    if isinstance(value, (set, frozenset)):
+        return type(value)(_mask_value(v, pattern) for v in value)
     return value
 
 
@@ -79,15 +137,15 @@ def _serials(c: Classification, net: NetworkProbeResult | None) -> set[str]:
     for inv in c.inverters:
         for d in inv.devices:
             s = _clean_serial(d.serial_number)
-            if s and len(s) >= _MIN_SERIAL:
+            if _valid_serial(s):
                 out.add(s)
-            out.update(
-                cv for _, v in d.identifiers
-                if (cv := _clean_serial(v)) and len(cv) >= _MIN_SERIAL
-            )
+            for _, v in d.identifiers:
+                cv = _clean_serial(v)
+                if _valid_serial(cv):
+                    out.add(cv)
     for r in (net.replies if net else []):
         name = _clean_serial(r.name)
-        if name and len(name) >= _MIN_SERIAL and any(ch.isdigit() for ch in name):
+        if _valid_serial(name):
             out.add(name)
     return out
 
@@ -147,9 +205,10 @@ def build_report(*, classification, states, history_days, network, errors,
                          "raw": r.raw} for r in network.replies]}},
         "errors": list(errors),
     }
-    # Ostatni przebieg: maskuje serial (case-insensitive, każde pole tekstowe) i każdy
-    # 12-cyfrowy szesnastkowy MAC w dowolnym miejscu — także tam, gdzie 48899 nie
-    # sparsowało odpowiedzi na ip/mac/name i cały tekst trafił tylko do "raw".
+    # Ostatni przebieg: maskuje serial (case-insensitive, niewrażliwie na separatory,
+    # w każdym polu tekstowym/liście/krotce/zbiorze/kluczu) i każdy 12-cyfrowy szesnastkowy
+    # MAC w dowolnym miejscu — także tam, gdzie 48899 nie sparsowało odpowiedzi na
+    # ip/mac/name i cały tekst trafił tylko do "raw" — z pominięciem pól strukturalnych.
     pattern = _serial_pattern(sn)
     return _mask_value(report, pattern)
 

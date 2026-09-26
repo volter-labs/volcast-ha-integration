@@ -121,3 +121,79 @@ def test_serial_in_model_and_options_masked():
               {"options": [f"Mode {SN}", "Zero Export"]})}
     r = _report(classification=Classification([inv], [], []), states=states)
     assert SN not in json.dumps(r)
+
+
+# --- Fix round 2 (reviews.md "## Task 5 — re-review 1") ---
+
+SEP_SN = "7F123456-78"
+
+
+def test_separator_insensitive_serial_masks_slugified_entity_id():
+    # HA slugify turns '-' into '_' and lowercases — the raw serial has a hyphen.
+    dev = DeviceSnap("d1", "SolarEdge", "SE5000", f"SolarEdge {SEP_SN}", "1.0", None, SEP_SN,
+                     (("solaredge_modbus_multi", SEP_SN),), ("e1",))
+    ent = EntitySnap("sensor.solaredge_7f123456_78_power", "solaredge_modbus_multi",
+                     "solaredge_7f123456_78_power", "d1", "e1", None, None, None, None, False)
+    inv = InverterFinding("solaredge_modbus_multi", "e1", "SolarEdge", "192.168.1.70",
+                          [dev], [ent], "domain")
+    r = _report(classification=Classification([inv], [], []))
+    entity = r["inverters"][0]["entities"][0]
+    assert entity["entity_id"] == "sensor.solaredge_<SN>_power"
+    assert entity["unique_id"] == "solaredge_<SN>_power"
+
+
+def test_ip_and_wordy_identifier_do_not_corrupt_structural_fields():
+    # identifier equal to the host IP, and a digit-less identifier equal to a domain word —
+    # neither should ever become a serial candidate, and structural keys stay untouched
+    # even if a value happened to slip through.
+    dev = DeviceSnap("d1", "Deye", "SUN-10K", f"Deye {SN}", "1.0", None, SN,
+                     (("solarman", "192.168.1.50"), ("solarman", "solarman")), ("e1",))
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [], "domain")
+    r = _report(classification=Classification([inv], [], []))
+    assert r["inverters"][0]["host"] == "192.168.1.50"
+    assert r["inverters"][0]["domain"] == "solarman"
+    assert r["inverters"][0]["devices"][0]["identifiers"][0] == ["solarman", "192.168.1.50"]
+    assert r["inverters"][0]["devices"][0]["identifiers"][1] == ["solarman", "solarman"]
+
+
+def test_mac_adjacent_to_underscore_masked():
+    ent = EntitySnap("sensor.aabbccddeeff_rssi", "solarman", "aabbccddeeff_rssi",
+                     "d1", "e1", None, None, None, None, False)
+    dev = DeviceSnap("d1", "Deye", "SUN-10K", f"Deye {SN}", "1.0", None, SN, (), ("e1",))
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [ent], "domain")
+    r = _report(classification=Classification([inv], [], []))
+    unique_id = r["inverters"][0]["entities"][0]["unique_id"]
+    assert unique_id == "AABBCC******_rssi"
+
+
+def test_plain_digit_run_not_masked_as_mac():
+    states = {"select.deye_mode": StateSnap("select.deye_mode", "123456789012", {})}
+    ent = EntitySnap("select.deye_mode", "solarman", "solarman_mode", "d1", "e1",
+                     None, None, None, None, False)
+    dev = DeviceSnap("d1", "Deye", "SUN-10K", f"Deye {SN}", "1.0", None, SN, (), ("e1",))
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [ent], "domain")
+    r = _report(classification=Classification([inv], [], []), states=states)
+    assert r["inverters"][0]["entities"][0]["state"] == "123456789012"
+
+
+def test_options_tuple_masked_and_type_preserved():
+    states = {"select.deye_mode": StateSnap("select.deye_mode", "auto",
+              {"options": (f"Mode {SN}", "Zero Export")})}
+    ent = EntitySnap("select.deye_mode", "solarman", "solarman_mode", "d1", "e1",
+                     None, None, None, None, False)
+    dev = DeviceSnap("d1", "Deye", "SUN-10K", f"Deye {SN}", "1.0", None, SN, (), ("e1",))
+    inv = InverterFinding("solarman", "e1", "Deye", "192.168.1.50", [dev], [ent], "domain")
+    r = _report(classification=Classification([inv], [], []), states=states)
+    options = r["inverters"][0]["entities"][0]["options"]
+    assert isinstance(options, tuple)
+    assert SN not in "".join(options)
+
+
+def test_mask_value_handles_dict_keys_and_sets_directly():
+    from custom_components.volcast.core.discovery.report import _mask_value, _serial_pattern
+
+    pattern = _serial_pattern({SN})
+    masked = _mask_value({SN: "x", "opts": {f"a{SN}", "b"}}, pattern)
+    assert SN not in "".join(masked.keys())
+    assert isinstance(masked["opts"], set)
+    assert SN not in "".join(masked["opts"])
