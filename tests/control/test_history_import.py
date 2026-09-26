@@ -2,6 +2,8 @@ import asyncio
 import sys
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from custom_components.volcast.control import history_import as hi
 
 NOW = datetime(2026, 9, 27, 10, 30, tzinfo=timezone.utc)
@@ -85,12 +87,25 @@ def test_recorder_error_is_swallowed_and_not_marked(monkeypatch):
 
 
 def test_pv_series_sent_with_load(monkeypatch):
+    # Rekorder jest proszony o `units={"energy": "kWh"}`, więc wiersze przychodzą już
+    # w kWh niezależnie od jednostki zapisanej w metadanych — metadana "Wh" tu tylko
+    # POTWIERDZA klasę energii, nie jest współczynnikiem przeliczenia.
     patch_recorder(monkeypatch, {"sensor.house": [{"start": T8, "change": 0.4}],
-                                 "sensor.pv": [{"start": T8, "change": 1500.0}]}, unit="Wh")
+                                 "sensor.pv": [{"start": T8, "change": 1.5}]}, unit="Wh")
     cloud = Cloud({"accepted": 1, "inserted": 1})
     asyncio.run(hi.async_import_history_once(object(), cloud, Exec(), load_entity="sensor.house",
                                              pv_entity="sensor.pv", now_utc=NOW))
-    assert cloud.hours == [{"start": "2026-09-27T08:00:00Z", "load_kwh": 0.0004, "pv_kwh": 1.5}]
+    assert cloud.hours == [{"start": "2026-09-27T08:00:00Z", "load_kwh": 0.4, "pv_kwh": 1.5}]
+
+
+def test_non_energy_unit_is_skipped_not_treated_as_kwh(monkeypatch):
+    """Jednostka w metadanych, która nie jest klasy energii (np. moc "W"), nie ma
+    współczynnika przeliczenia do zgadywania — seria jest pomijana CAŁKOWICIE."""
+    patch_recorder(monkeypatch, {"sensor.house": [{"start": T8, "change": 0.4}]}, unit="W")
+    ex, cloud = Exec(), Cloud({"accepted": 1})
+    out = asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house",
+                                                    now_utc=NOW))
+    assert out is None and cloud.calls == [] and ex.marked == []
 
 
 def test_large_history_sent_in_batches_and_totals_summed(monkeypatch):
@@ -120,6 +135,121 @@ def test_failed_batch_stops_and_is_not_marked(monkeypatch):
     assert asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house",
                                                     now_utc=NOW)) is None
     assert len(cloud.calls) == 2 and ex.marked == []                   # trzecia partia nie poszła
+
+
+def test_all_rejected_is_not_marked(monkeypatch):
+    """Chmura odpowiada 0 przyjętych i 0 pominiętych — to znak zepsutego czujnika/jednostki,
+    nie „wszystko już było". Wynik wraca do wołającego, ale znacznika NIE zapisujemy,
+    żeby naprawiona encja mogła spróbować ponownie."""
+    patch_recorder(monkeypatch, {"sensor.house": [{"start": T8, "change": 0.4}]})
+    ex = Exec()
+    cloud = Cloud({"accepted": 0, "inserted": 0, "skipped_existing": 0,
+                   "rejected": [{"index": 0, "reason": "load_out_of_range"}]})
+    out = asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house",
+                                                    now_utc=NOW))
+    assert out == {"accepted": 0, "inserted": 0, "skipped_existing": 0,
+                   "rejected": [{"index": 0, "reason": "load_out_of_range"}]}
+    assert ex.marked == []
+
+
+def test_partial_accept_logs_rejected_count(monkeypatch, caplog):
+    """5 zaakceptowanych z 10 wysłanych (reszta odrzucona, np. zły czujnik dla części
+    okresu) nadal się oznacza jako zrobione — ale w logu MUSI być widać, że coś odpadło,
+    inaczej „done" wygląda identycznie jak pełny sukces."""
+    base = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    rows = [{"start": (base + timedelta(hours=i)).timestamp(), "change": 0.3} for i in range(10)]
+    patch_recorder(monkeypatch, {"sensor.house": rows})
+    ex = Exec()
+    cloud = Cloud({"accepted": 5, "inserted": 5, "skipped_existing": 0,
+                   "rejected": [{"index": 5, "reason": "load_out_of_range"}]})
+    with caplog.at_level("INFO", logger=hi._LOGGER.name):
+        out = asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house",
+                                                        now_utc=NOW))
+    assert out["accepted"] == 5
+    assert ex.marked == [NOW.isoformat()]                                  # 5 > 0 -> oznaczone mimo odrzuceń
+    assert any("partial" in r.message and "5" in r.message for r in caplog.records)
+
+
+def test_all_already_existing_is_still_marked(monkeypatch):
+    """0 nowo przyjętych, ale same pominięte jako już istniejące — to legalny stan
+    (import po raz drugi), nie porażka; znacznik ma się zapisać."""
+    patch_recorder(monkeypatch, {"sensor.house": [{"start": T8, "change": 0.4}]})
+    ex = Exec()
+    cloud = Cloud({"accepted": 0, "inserted": 0, "skipped_existing": 1, "rejected": []})
+    asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house", now_utc=NOW))
+    assert ex.marked == [NOW.isoformat()]
+
+
+def test_marker_error_is_swallowed_and_result_still_returned(monkeypatch):
+    """Zapis znacznika może się wywrócić (magazyn), ale import się UDAŁ — błąd znacznika
+    nie ma prawa ukryć udanego wyniku ani wywrócić wołającego."""
+    patch_recorder(monkeypatch, {"sensor.house": [{"start": T8, "change": 0.4}]})
+
+    class BrokenExec(Exec):
+        async def async_mark_history_imported(self, when):
+            raise RuntimeError("store broken")
+
+    ex, cloud = BrokenExec(), Cloud({"accepted": 1, "inserted": 1})
+    out = asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house",
+                                                    now_utc=NOW))
+    assert out == {"accepted": 1, "inserted": 1}
+    assert ex.marked == []
+
+
+def test_waiter_does_not_rerun_after_leader_failure(monkeypatch):
+    """Gdy przebieg w toku PADA, czekający dostaje TEN SAM wynik (None) i nie odpala
+    własnego, drugiego przebiegu — tylko jedno wywołanie chmury."""
+    patch_recorder(monkeypatch, {"sensor.house": [{"start": T8, "change": 0.4}]})
+    ex = Exec()
+    cloud = Cloud(None, delay=0.01)
+
+    async def go():
+        return await asyncio.gather(
+            hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house", now_utc=NOW),
+            hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house", now_utc=NOW))
+
+    first, second = asyncio.run(go())
+    assert first is None and second is None
+    assert len(cloud.calls) == 1
+    assert ex.marked == []
+
+
+def test_last_result_is_reset_not_stale_after_noop_run(monkeypatch):
+    """Po udanym przebiegu `_LAST_RESULT` niesie sukces. Kolejny przebieg, który trafia
+    na ścieżkę no-op (już zaimportowano), MUSI go nadpisać na None — inaczej czekający za
+    TYM przebiegiem dostałby sukces sprzed chwili, niezwiązany z tym wywołaniem."""
+    patch_recorder(monkeypatch, {"sensor.house": [{"start": T8, "change": 0.4}]})
+    ex, cloud = Exec(), Cloud({"accepted": 1, "inserted": 1})
+
+    first = asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house",
+                                                      now_utc=NOW))
+    assert first == {"accepted": 1, "inserted": 1}
+    assert hi._LAST_RESULT[ex] == {"accepted": 1, "inserted": 1}
+
+    second = asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house",
+                                                       now_utc=NOW))
+    assert second is None                                                  # już zaimportowano — no-op
+    assert hi._LAST_RESULT[ex] is None
+    assert len(cloud.calls) == 1                                           # drugi przebieg nic nie wysłał
+
+
+def test_last_result_is_reset_after_exception_in_import(monkeypatch):
+    """Wyjątek w `_async_import` (poza znanymi, łykanymi ścieżkami) leci do wołającego,
+    ale `_LAST_RESULT` nie może zostać ze starym sukcesem — `finally` musi go nadpisać."""
+    patch_recorder(monkeypatch, {"sensor.house": [{"start": T8, "change": 0.4}]})
+    ex, cloud = Exec(), Cloud({"accepted": 1, "inserted": 1})
+    asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house", now_utc=NOW))
+    assert hi._LAST_RESULT[ex] == {"accepted": 1, "inserted": 1}
+
+    ex.history_imported_at = None                                         # wymuś ponowny (nie-no-op) przebieg
+
+    async def boom(*_a):
+        raise RuntimeError("cloud on fire")
+    monkeypatch.setattr(hi, "_async_import", boom)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(hi.async_import_history_once(object(), cloud, ex, load_entity="sensor.house", now_utc=NOW))
+    assert hi._LAST_RESULT[ex] is None
 
 
 def test_concurrent_imports_send_once(monkeypatch):
@@ -166,6 +296,8 @@ def test_recorder_reads_run_in_executor_with_hour_change(monkeypatch):
     rows = asyncio.run(hi._async_statistics(object(), {"sensor.house"}, start, NOW))
     units = asyncio.run(hi._async_units(object(), {"sensor.house", "sensor.pv"}))
     assert rows == {"sensor.house": []}
-    assert calls == [(start, NOW, {"sensor.house"}, "hour", None, {"change"})]
+    # `units={"energy": "kWh"}` — jednoznaczna jednostka, nie zgadywanie z aktualnej
+    # jednostki stanu encji.
+    assert calls == [(start, NOW, {"sensor.house"}, "hour", {"energy": "kWh"}, {"change"})]
     assert units == {"sensor.house": "Wh", "sensor.pv": None}
     assert len(jobs) == 2                                                  # oba odczyty poza pętlą zdarzeń
