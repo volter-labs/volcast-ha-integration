@@ -15,6 +15,8 @@ trybie ładuje z sieci). Zasady, które trzymają grupę:
   z planu, wtedy sama moc jest zwykłą korektą nastawy;
 * tryb albo moc, których falownik nie obsługuje, wyłączają intencję na całą sesję;
 * parametr niedopasowalny do zakresu encji blokuje cały cykl.
+Awaria zapisu w trakcie cyklu to już sprawa wykonawcy grupowego (`group_writes`):
+cykl układa grupę w bezpiecznej kolejności i podaje zapisy cofające (`restore`).
 
 Zatrzask rezerwy dostaje WYŁĄCZNIE odczyt, który przeszedł sanityzację i świeżość
 strażników (I-10, I-9) — strażnicy liczą najpierw próbę z założonym zatrzaskiem;
@@ -35,7 +37,9 @@ from ..guards import GuardContext, GuardResult, apply_guards, temperature_ok
 from ..slot import Schedule, effective_action
 from ..write_sequence import WriteReport
 from .caps import missing_write_keys
+from ..params import Params
 from .entity_fit import control_writes, fit_params
+from .group_writes import order_group, power_first
 from .latch import ReserveLatch
 
 WRITE, DRY_RUN, IDLE, BLOCKED, ERROR = "write", "dry_run", "idle", "blocked", "error"
@@ -109,6 +113,8 @@ class CycleDecision:
     unmapped: tuple[str, ...] = ()
     dropped_unsupported: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    # klucz grupy → zapis przywracający poprzednią wartość (dla wykonawcy grupowego)
+    restore: dict[str, EntityWrite] = field(default_factory=dict)
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -267,6 +273,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         notes.append("group_held")
     writes, unmapped = control_writes(params, profile, ents.domain, ents.mapped,
                                       keys=allowed, units=ents.units)
+    writes, restore = _group_layout(writes, params, device, profile, ents, memory)
     reason = _gate_reason(gates, memory, now_mono)
     status = WRITE if reason is None else DRY_RUN
     if status == WRITE and not writes:
@@ -276,7 +283,34 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         direction=direction if any(w.key == "mode" for w in writes) else None,
         adjusted=adjusted, unmapped=tuple(dict.fromkeys([*held_by, *unmapped])),
         dropped_unsupported=tuple(sorted(memory.unsupported & set(flat))), notes=tuple(notes),
-        **common)
+        restore=restore, **common)
+
+
+def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str, float | str],
+                  profile, ents: EntityContext, memory: ControlMemory
+                  ) -> tuple[list[EntityWrite], dict[str, EntityWrite]]:
+    """Grupa na końcu, w bezpiecznej kolejności, i zapisy cofające do stanu z urządzenia.
+
+    Poprzednia wartość: odczyt z urządzenia, a bez odczytu — nasz ostatni zapis. Tryb
+    spoza profilu (znacznik `?opcja`) nie ma zapisu cofającego — nie odtwarzamy obcego trybu.
+    """
+    prev_power = device.get("power_w")
+    if not isinstance(prev_power, float):
+        prev_power = memory.last_written.get("power_w")
+        prev_power = prev_power if isinstance(prev_power, float) else None
+    prev_mode = device.get("mode")
+    if prev_mode not in profile.modes:
+        prev_mode = memory.last_written.get("mode")
+        prev_mode = prev_mode if prev_mode in profile.modes else None
+    new_power = params.power_w
+    first = power_first(new_power, prev_power) if new_power is not None else False
+    ordered = order_group(writes, power_first=first)
+    keys = {w.key for w in ordered}
+    if not {"mode", "power_w"} <= keys:
+        return ordered, {}
+    back, _ = control_writes(Params(mode=prev_mode, power_w=prev_power), profile, ents.domain,
+                             ents.mapped, keys=None, units=ents.units)
+    return ordered, {w.key: w for w in back}
 
 
 def _unsupported_group(flat: Mapping[str, float | str], profile, ents: EntityContext,

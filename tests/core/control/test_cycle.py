@@ -74,11 +74,12 @@ def _written(d):
 
 # ── Ścieżka podstawowa ──
 
-def test_sell_slot_writes_in_profile_order():
+def test_sell_slot_writes_conditions_then_group_in_safe_order():
     d, _ = run()
     assert d.status == WRITE and d.intent == "sell" and d.direction == "discharge"
-    assert [w.key for w in d.writes] == ["power_w", "export_limit_enabled", "mode"]
-    assert d.writes[-1].data == {"option": "sell_power"}
+    # Moc nieznana → tryb przed mocą (postój z dużym Xset to znana pułapka).
+    assert [w.key for w in d.writes] == ["export_limit_enabled", "mode", "power_w"]
+    assert d.writes[1].data == {"option": "sell_power"}
 
 
 def test_no_mode_chosen_is_idle_and_does_not_touch_latch():
@@ -393,7 +394,7 @@ def test_power_never_written_into_pending_standby():
     d3, _ = run(mem, schedule=sched(power_w=2000), readings=dev2, now_mono=1100.0)
     assert _group_keys(d3) == [] and d3.status == IDLE
     d4, _ = run(mem, schedule=sched(power_w=2000), readings=dev2, now_mono=1130.5)
-    assert _group_keys(d4) == ["power_w", "mode"]
+    assert _group_keys(d4) == ["mode", "power_w"]                # 0 → 2000 W: tryb najpierw
 
 
 @pytest.mark.parametrize("gap", [5.0, 30.0, 59.9])
@@ -408,7 +409,7 @@ def test_mode_change_with_pending_condition_param_holds_group(gap):
     d2, _ = run(mem, schedule=blocked, now_mono=1070.0 + gap)
     assert d2.writes == [] and "mode_held" in d2.notes
     d3, _ = run(mem, schedule=blocked, now_mono=1130.5)
-    assert [w.key for w in d3.writes] == ["power_w", "export_limit_enabled", "mode"]
+    assert [w.key for w in d3.writes] == ["export_limit_enabled", "power_w", "mode"]
 
 
 def test_power_alone_goes_when_device_has_planned_mode():
@@ -467,3 +468,33 @@ def test_bool_reading_is_a_flag():
     readings = {"power_w": 2000.0, "export_limit_enabled": False, "mode": "sell_power"}
     d, _ = run(readings=readings)
     assert (d.status, d.reason, d.writes) == (IDLE, "nothing_to_write", [])
+
+
+# ── Układ grupy dla wykonawcy grupowego ──
+
+def test_power_decrease_goes_power_first_with_restore_from_device():
+    dev = {"mode": "sell_power", "power_w": 3000.0, "export_limit_enabled": 0.0}
+    d, _ = run(schedule=plan(slot("10:00", "11:00", **STANDBY)), readings=dev)
+    assert [w.key for w in d.writes] == ["power_w", "mode"]
+    assert d.restore["power_w"].data == {"value": 3000.0}
+    assert d.restore["mode"].data == {"option": "sell_power"}
+
+
+def test_restore_falls_back_to_last_written_without_reading():
+    d, mem = run()
+    commit(d, _written(d), mem, 1000.0)
+    d2, _ = run(mem, schedule=plan(slot("10:00", "11:00", **STANDBY)), now_mono=1100.0)
+    assert [w.key for w in d2.writes] == ["power_w", "mode"]
+    assert d2.restore["power_w"].data == {"value": 2000.0}
+
+
+def test_foreign_option_has_no_mode_restore():
+    dev = {"mode": "export_ac", "power_w": 0.0, "export_limit_enabled": 0.0}
+    d, _ = run(readings=dev)
+    assert [w.key for w in d.writes] == ["mode", "power_w"] and "mode" not in d.restore
+
+
+def test_single_group_member_has_no_restore():
+    dev = {"mode": "sell_power", "power_w": 2000.0, "export_limit_enabled": 0.0}
+    d, _ = run(schedule=sched(power_w=2600), readings=dev)
+    assert [w.key for w in d.writes] == ["power_w"] and d.restore == {}
