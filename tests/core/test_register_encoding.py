@@ -38,3 +38,34 @@ def test_tou_encoding_hhmm_and_bit_preserves_other_bits():
 def test_bit_field_without_current_image_is_error():
     with pytest.raises(RegisterError):
         encode_writes(Params(tou=(TouProgram(0, 1000.0, 20.0, True),)), TW)
+
+
+def test_bit_field_clears_flag_and_keeps_other_bits():
+    cur = RegisterImage.from_blocks({172: [0, 0b11, 0, 0, 0, 0]})
+    progs = (TouProgram(0, 1000.0, 20.0, False), TouProgram(150, 1000.0, 20.0, False))
+    ws = {w.key: w for w in encode_writes(Params(tou=progs), TW, current=cur)}
+    assert (ws["tou.2.grid_charge"].addr, ws["tou.2.grid_charge"].value) == (173, 0b10)
+
+
+def test_tou_program_count_exceeded_is_error():
+    # Profil (TW) ma tylko 6 programów — siódmy nachodziłby na rejestry programu 1
+    # (addr 148+6 == addr power_w programu 1) zamiast błędu.
+    progs = tuple(TouProgram(m, 1000.0, 20.0, False) for m in range(7))
+    with pytest.raises(RegisterError):
+        encode_writes(Params(tou=progs), TW, keys={"tou.7.start"})
+
+
+def test_start_min_must_be_integer_minutes():
+    with pytest.raises(RegisterError):
+        encode_writes(Params(tou=(TouProgram(150.5, 1000.0, 20.0, False),)), TW,
+                      keys={"tou.1.start"})
+
+
+def test_unknown_mode_name_is_typed_error():
+    with pytest.raises(RegisterError):
+        encode_writes(Params(mode="no-such-mode"), GW)
+
+
+def test_non_finite_value_is_typed_error():
+    with pytest.raises(RegisterError):
+        encode_writes(Params(power_w=float("nan")), GW)

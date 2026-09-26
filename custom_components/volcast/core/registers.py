@@ -2,6 +2,7 @@
 """
 from __future__ import annotations
 
+import math
 import struct
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
@@ -115,6 +116,8 @@ class RegisterWrite:
 
 def _round_clamp(v: float, hi: int) -> int:
     # Obcięcie do zakresu, potem zaokrąglenie do najbliższej liczby całkowitej.
+    if not math.isfinite(v):
+        raise RegisterError(f"nastawa nie jest liczbą skończoną: {v!r}")
     if v < 0:
         return 0
     if v > hi:
@@ -151,11 +154,19 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
             continue
         if key.startswith("tou."):
             _, idx, field = key.split(".")
-            prog = params.tou[int(idx) - 1]
+            i = int(idx)
+            count = spec["tou_program"]["count"]
+            if i > count:
+                # Bez tej granicy adres nachodzi cicho na rejestry programu 1 (i - count).
+                raise RegisterError(f"{key}: program {i} przekracza liczbę programów profilu ({count})")
+            prog = params.tou[i - 1]
             fs = spec["tou_program"][field]
-            addr = fs["addr"] + int(idx) - 1
+            addr = fs["addr"] + i - 1
             if field == "start":
-                value = (prog.start_min // 60) * 100 + prog.start_min % 60      # HHMM dziesiętnie
+                if not float(prog.start_min).is_integer():
+                    raise RegisterError(f"{key}: start_min musi być całkowitą liczbą minut, jest {prog.start_min!r}")
+                start_min = int(prog.start_min)
+                value = (start_min // 60) * 100 + start_min % 60      # HHMM dziesiętnie
             elif field == "power_w":
                 value = _round_clamp(prog.power_w, 65535)
             elif field == "soc":
@@ -172,6 +183,8 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
         raw = getattr(params, key)
         enc = s["encode"]
         if enc == "mode":
+            if raw not in profile.modes:
+                raise RegisterError(f"{key}: nieznany tryb {raw!r}")
             value = profile.mode_value(raw)
         elif enc == "bool":
             value = 1 if raw else 0

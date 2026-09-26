@@ -33,13 +33,21 @@ class WriteReport:
 
 
 def run_writes(writes: Sequence[W], write: Callable[[W], str]) -> WriteReport:
+    """`write` powinien zwrócić jeden z OK/UNSUPPORTED/DENIED/ERROR i nie rzucać.
+
+    Wyjątek z callbacku (np. transportu) liczy się jak ERROR dla tego klucza —
+    pętla nie może przerwać się w połowie i zgubić raport o tym, co już zaszło.
+    """
     rep = WriteReport()
     param_failed = False
     for w in writes:
         if w.key == "mode" and param_failed:
             rep.mode_held = True
             continue
-        outcome = write(w)
+        try:
+            outcome = write(w)
+        except Exception:
+            outcome = ERROR
         if outcome == OK:
             if w.key not in rep.written:
                 rep.written.append(w.key)
