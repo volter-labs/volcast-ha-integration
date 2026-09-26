@@ -186,3 +186,20 @@ def test_ref_chain_without_cycle_is_valid():
     p = ms_profile()
     p["read"]["grid_power_w"] = {"sum": [{"ref": "load_power_w"}]}
     assert validate_profile(p) == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("min_interval_s", -5), ("min_interval_s", -0.1),
+    ("max_state_age_s", 0), ("max_state_age_s", -1), ("max_state_age_s", 0.0),
+])
+def test_write_policy_lower_bounds(field, value):
+    p = ms_profile()
+    p["write_policy"][field] = value
+    assert f"$.write_policy.{field}" in _errs(p)
+
+
+@pytest.mark.parametrize("field,value", [("min_interval_s", 0), ("max_state_age_s", 0.5)])
+def test_write_policy_boundary_values_accepted(field, value):
+    p = ms_profile()
+    p["write_policy"][field] = value
+    assert validate_profile(p) == []

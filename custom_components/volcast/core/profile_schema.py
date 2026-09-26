@@ -454,7 +454,8 @@ def validate_profile(raw: object) -> list[str]:
                 v.err("$.write_policy.order", f"musi zawierać dokładnie raz każdy zapis: {sorted(written)}")
             elif "mode" in order and order[-1] != "mode":
                 v.err("$.write_policy.order", "tryb musi być zapisywany OSTATNI")
-        v.num(wp.get("min_interval_s"), "$.write_policy.min_interval_s")
+        if v.num(wp.get("min_interval_s"), "$.write_policy.min_interval_s") and wp["min_interval_s"] < 0:
+            v.err("$.write_policy.min_interval_s", "oczekiwano liczby >= 0")
         v.bool_(wp.get("nvm"), "$.write_policy.nvm")
         # Dolna granica 1 obowiązuje tylko mode_setpoint: DirectionLimiter blokuje
         # KAŻDĄ zmianę kierunku przy wartości 0, więc dla time_window (który go
@@ -462,7 +463,9 @@ def validate_profile(raw: object) -> list[str]:
         min_changes = 1 if model == "mode_setpoint" else 0
         v.int_(wp.get("max_direction_changes_per_hour"),
                "$.write_policy.max_direction_changes_per_hour", min_changes, 60)
-        v.num(wp.get("max_state_age_s"), "$.write_policy.max_state_age_s")
+        # 0 albo mniej = każdy odczyt nieświeży (albo wyłączony I-9 w starszym kodzie).
+        if v.num(wp.get("max_state_age_s"), "$.write_policy.max_state_age_s") and wp["max_state_age_s"] <= 0:
+            v.err("$.write_policy.max_state_age_s", "oczekiwano liczby > 0")
 
     lim = v.obj(top.get("limits"), "$.limits", ("battery_temp_c", "rated_power_register"))
     if lim is not None:
