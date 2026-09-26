@@ -535,3 +535,26 @@ def test_unfittable_restore_value_is_dropped():
                readings=dev, attrs=attrs)
     assert [w.key for w in d.writes] == ["mode", "power_w"]
     assert "power_w" not in d.restore and d.restore["mode"].data == {"option": "sell_power"}
+
+
+@pytest.mark.parametrize("dev,slot_kw,safe", [
+    ({"mode": "sell_power", "power_w": 1500.0}, dict(mode="charge", charge_source="grid", power_w=3000),
+     ("mode",)),                                                      # powrót do sprzedaży: bezpieczny
+    ({"mode": "charge_battery", "power_w": 1500.0}, dict(mode="discharge", discharge_purpose="sell",
+                                                         power_w=3000), ()),     # powrót do ładowania
+    ({"mode": "sell_power", "power_w": 3000.0}, dict(mode="idle"), ()),          # planowany postój
+    ({"mode": "charge_battery", "power_w": 3000.0}, dict(mode="discharge", discharge_purpose="sell",
+                                                         power_w=2000), ("power_w",)),
+    ({"mode": "sell_power", "power_w": 3000.0}, dict(mode="charge", charge_source="grid", power_w=2000),
+     ()),                                                             # planowane ładowanie
+])
+def test_restore_ambiguous_safe_per_direction(dev, slot_kw, safe):
+    d, _ = run(schedule=plan(slot("10:00", "11:00", **slot_kw)),
+               readings={**dev, "export_limit_enabled": 0.0})
+    assert d.restore_ambiguous_safe == safe
+
+
+def test_no_mode_restore_into_standby_with_unknown_power():
+    d, _ = run(schedule=plan(slot("10:00", "11:00", mode="charge", charge_source="grid", power_w=3000)),
+               readings={"mode": "battery_standby", "export_limit_enabled": 0.0})
+    assert [w.key for w in d.writes] == ["mode", "power_w"] and "mode" not in d.restore

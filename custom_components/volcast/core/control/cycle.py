@@ -135,6 +135,8 @@ class CycleDecision:
     # te same wartości w postaci `Params.flatten()` i kierunek trybu cofającego (dla I-6/I-8)
     restore_flat: dict[str, float | str] = field(default_factory=dict)
     restore_direction: str | None = None
+    # klucze, które wolno cofnąć także po niejednoznacznym ERROR drugiego członka grupy
+    restore_ambiguous_safe: tuple[str, ...] = ()
     # urządzenie ma czytelny tryb spoza profilu — zmiana z zewnątrz, nie nadpisujemy
     takeover: bool = False
 
@@ -294,7 +296,9 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     if "mode" in allowed and direction is not None and not memory.limiter.allows(direction, now_mono):
         allowed.discard("mode")
         notes.append("I-8")
-    if _MODE_GROUP & allowed and memory.in_backoff(now_mono):
+    # Odwrót dotyczy tylko zmiany OBU członków (tylko taka może skończyć się cofnięciem);
+    # korekta jednego klucza — np. po zapisie, który doszedł mimo błędu — idzie od razu.
+    if _MODE_GROUP <= need and _MODE_GROUP & allowed and memory.in_backoff(now_mono):
         allowed -= _MODE_GROUP                  # po cofnięciu grupa odczekuje
         notes.append("group_backoff")
     # Grupa: członek, który musi się zmienić, a nie pójdzie → nie idzie żaden.
@@ -303,7 +307,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         notes.append("group_held")
     writes, unmapped = control_writes(params, profile, ents.domain, ents.mapped,
                                       keys=allowed, units=ents.units)
-    writes, restore, restore_flat = _group_layout(writes, params, device, profile, ents, memory)
+    writes, restore, restore_flat, ambiguous_safe = _group_layout(writes, params, device, profile,
+                                                                  ents, memory)
     reason = _gate_reason(gates, memory, now_mono)
     status = WRITE if reason is None else DRY_RUN
     if status == WRITE and not writes:
@@ -313,20 +318,26 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         direction=direction if any(w.key == "mode" for w in writes) else None,
         adjusted=adjusted, unmapped=tuple(dict.fromkeys([*held_by, *unmapped])),
         dropped_unsupported=tuple(sorted(memory.unsupported & set(flat))), notes=tuple(notes),
-        restore=restore, restore_flat=restore_flat,
+        restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
                            if "mode" in restore_flat else None), **common)
 
 
 def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str, float | str],
                   profile, ents: EntityContext, memory: ControlMemory
-                  ) -> tuple[list[EntityWrite], dict[str, EntityWrite], dict[str, float | str]]:
+                  ) -> tuple[list[EntityWrite], dict[str, EntityWrite], dict[str, float | str],
+                             tuple[str, ...]]:
     """Grupa na końcu, w bezpiecznej kolejności, i zapisy cofające do stanu z urządzenia.
 
     Poprzednia wartość: odczyt z urządzenia, a bez żadnego odczytu — nasz ostatni zapis
     (obcego trybu tu nie ma — cykl zatrzymał się wcześniej). Cofnięcie dopasowane do
     zakresu encji (niedopasowalne = brak cofnięcia); nigdy do trybu postoju przy mocy > 0
     — to odtworzyłoby ładowanie z sieci.
+
+    Po niejednoznacznym ERROR drugi członek mógł dojść, więc cofnięcie pierwszego wolno
+    tylko wtedy, gdy z KAŻDĄ wartością drugiego nie da postoju z mocą ani ładowania
+    ponad poprzednią moc: tryb (pierwszy) — gdy wracamy do trybu innego niż postój
+    i ładowanie; moc (pierwsza) — gdy planowany tryb nie jest postojem ani ładowaniem.
     """
     prev_power = device.get("power_w")
     if not isinstance(prev_power, float):
@@ -339,7 +350,7 @@ def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str
     ordered = order_group(writes, power_first=first)
     keys = {w.key for w in ordered}
     if not {"mode", "power_w"} <= keys:
-        return ordered, {}, {}
+        return ordered, {}, {}, ()
     if prev_mode is not None and profile.mode_direction(prev_mode) == "idle" \
             and (prev_power is None or prev_power > 0.0):
         prev_mode = None
@@ -348,7 +359,14 @@ def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str
     back, _ = control_writes(back_params, profile, ents.domain, ents.mapped, keys=None, units=ents.units)
     back_flat = back_params.flatten()
     restore = {w.key: w for w in back if w.key not in unfit}
-    return ordered, restore, {k: back_flat[k] for k in restore}
+    restore_flat = {k: back_flat[k] for k in restore}
+    risky = ("idle", "charge")
+    head = next(w.key for w in ordered if w.key in _MODE_GROUP)
+    if head == "mode":
+        safe = "mode" in restore_flat and profile.mode_direction(restore_flat["mode"]) not in risky
+    else:
+        safe = params.mode is not None and profile.mode_direction(params.mode) not in risky
+    return ordered, restore, restore_flat, ((head,) if safe else ())
 
 
 def _unsupported_group(flat: Mapping[str, float | str], profile, ents: EntityContext,
@@ -391,6 +409,13 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
         for key in restored:
             if key in decision.restore_flat:
                 memory.last_written[key] = decision.restore_flat[key]
+    # Stan nieznany: klucz, którego zapis się nie powiódł (ERROR bywa zapisem, który
+    # doszedł), i klucz z nieudanym cofnięciem. Pamięć nie może go uznać za zgodny —
+    # następny cykl czyta urządzenie, a bez odczytu zapisuje go ponownie.
+    unknown = [*report.failed, *restore_failed]
+    memory.throttle.forget(unknown)
+    for key in restore_failed:
+        memory.last_written.pop(key, None)
     # Tryb nieobsługiwany zapamiętujemy per opcja: inne tryby dalej działają.
     mode = decision.flat.get("mode")
     memory.unsupported |= {f"mode:{mode}" if key == "mode" and isinstance(mode, str) else key

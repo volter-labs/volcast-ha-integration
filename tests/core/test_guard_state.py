@@ -35,6 +35,13 @@ def test_pending_is_changed_value_inside_interval():
     assert t.pending(changed, -5.0) == set()               # zegar cofnięty = interwał minął (jak filter)
 
 
+def test_forget_makes_key_writable_again():
+    t = WriteThrottle(60)
+    t.record(P, P.keys(), 0.0)
+    t.forget(["power_w", "unknown_key"])
+    assert t.filter(P, 1.0) == {"power_w"} and t.pending({**P, "power_w": 1.0}, 1.0) == set()
+
+
 def test_failed_write_does_not_move_memory():
     t = WriteThrottle(60)
     t.record(P, ["mode"], 0.0)                 # tylko tryb się zapisał

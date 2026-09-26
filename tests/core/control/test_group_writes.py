@@ -95,7 +95,7 @@ def test_first_group_member_not_ok_skips_second(outcome):
 
 def test_second_failure_restores_first_and_reports_error():
     ws = [W("power_w", {"v": 0}), W("mode", {"v": "battery_standby"})]
-    write, calls = _writer({"mode": ERROR})
+    write, calls = _writer({"mode": DENIED})
     rep = run_group_writes(ws, write, restore={"power_w": W("power_w", {"v": 3000})})
     assert calls == [("power_w", 0), ("mode", "battery_standby"), ("power_w", 3000)]
     assert rep.written == [] and rep.restored == ["power_w"] and rep.error
@@ -105,14 +105,15 @@ def test_second_failure_restores_first_and_reports_error():
 def test_failed_restore_is_reported_and_first_stays_written():
     ws = [W("mode", {"v": "sell_power"}), W("power_w", {"v": 3000})]
     write, _ = _writer({"power_w": "raise", ("mode", "battery_standby"): "raise"})
-    rep = run_group_writes(ws, write, restore={"mode": W("mode", {"v": "battery_standby"})})
+    rep = run_group_writes(ws, write, restore={"mode": W("mode", {"v": "battery_standby"})},
+                           ambiguous_safe=("mode",))
     assert rep.written == ["mode"] and rep.restore_failed == ["mode"] and rep.error
     assert rep.errors == {"power_w": "RuntimeError", "mode:restore": "RuntimeError"}
 
 
 def test_missing_restore_is_a_failed_restore():
     ws = [W("mode", {"v": "sell_power"}), W("power_w", {"v": 3000})]
-    write, _ = _writer({"power_w": ERROR})
+    write, _ = _writer({"power_w": DENIED})
     rep = run_group_writes(ws, write)
     assert rep.restore_failed == ["mode"] and rep.error
 
@@ -127,7 +128,7 @@ def test_all_ok_writes_everything_in_given_order():
 
 def test_async_twin_same_semantics():
     ws = [W("power_w", {"v": 0}), W("mode", {"v": "battery_standby"})]
-    write, calls = _writer({"mode": ERROR})
+    write, calls = _writer({"mode": DENIED})
 
     async def awrite(w):
         return write(w)
@@ -190,17 +191,18 @@ SHAPES = [
 ]
 
 
-def tick(dev, mem, sched, t):
+def tick(dev, mem, sched, t, hide=()):
     from datetime import datetime
     d = decide_cycle(profile=GW, schedule=sched, now_utc=datetime.fromisoformat(NOW), now_mono=t,
                      tele=Telemetry(soc=60.0, soc_age_s=5.0, battery_temp_c=25.0),
                      limits=Limits(rated_power_w=8000.0),
                      ents=EntityContext(domain="goodwe", mapped=MAPPED, units=UNITS, attrs=ATTRS,
-                                        readings=dict(dev.state)),
+                                        readings={k: v for k, v in dev.state.items() if k not in hide}),
                      gates=OPEN, memory=mem)
     rep = None
     if d.status == WRITE:
-        rep = run_group_writes(d.writes, dev.write, restore=d.restore)
+        rep = run_group_writes(d.writes, dev.write, restore=d.restore,
+                               ambiguous_safe=d.restore_ambiguous_safe)
         commit(d, rep, mem, t)
     return d, rep
 
@@ -224,7 +226,7 @@ def test_failing_write_never_leaves_standby_with_power(slot, fail):
 
 
 def test_mode_failure_after_power_restores_power():
-    dev = Device(mode="sell_power", power=3000.0, fail={"mode": ERROR})
+    dev = Device(mode="sell_power", power=3000.0, fail={"mode": DENIED})
     mem = ControlMemory.for_profile(GW)
     d, rep = tick(dev, mem, schedule(mode="idle"), 60.0)
     assert [w.key for w in d.writes] == ["power_w", "mode"]
@@ -232,7 +234,7 @@ def test_mode_failure_after_power_restores_power():
 
 
 def test_power_failure_after_mode_restores_mode():
-    dev = Device(fail={"power_w": ERROR})
+    dev = Device(fail={"power_w": DENIED})
     mem = ControlMemory.for_profile(GW)
     d, rep = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 60.0)
     assert [w.key for w in d.writes] == ["mode", "power_w"]
@@ -249,7 +251,7 @@ def _check_pair(before, after, planned, rep):
     """Tryb i moc: stan sprzed, stan z planu albo — tylko po nieudanym cofnięciu — mniejsza moc."""
     if after in (before, planned):
         return
-    assert rep is not None and rep.restore_failed, (before, after, planned)
+    assert rep is not None and (rep.restore_failed or rep.restore_held), (before, after, planned)
     mode_b, pow_b = before
     mode_a, pow_a = after
     if mode_a != mode_b:            # nowy tryb na starej mocy — tylko gdy stara moc mniejsza
@@ -347,7 +349,7 @@ def test_soak_failing_power_mode_first_stays_in_budget():
     dev.fail = {}
     mem = ControlMemory.for_profile(GW)
     tick(dev, mem, schedule(**charge), 0.0)
-    dev.fail = {"power_w": ERROR}
+    dev.fail = {"power_w": DENIED}
     dev.nvm, dev.flips = {"mode": 0, "power_w": 0}, 0
     t, round_trips = 0.0, 0
     while t < 3600.0:
@@ -360,7 +362,7 @@ def test_soak_failing_power_mode_first_stays_in_budget():
 
 
 def test_soak_failing_mode_power_first_backs_off():
-    dev = Counting(mode="sell_power", power=3000.0, fail={"mode": ERROR})
+    dev = Counting(mode="sell_power", power=3000.0, fail={"mode": DENIED})
     mem, errors = _soak(dev, dict(mode="discharge", discharge_purpose="sell", power_w=3000),
                         dict(mode="idle"))
     # odwrót 300 → 600 → 1200 → 2400 s: najwyżej 4 próby w godzinie, 2 zapisy mocy na próbę
@@ -369,7 +371,7 @@ def test_soak_failing_mode_power_first_backs_off():
 
 
 def test_backoff_resets_after_full_group_write():
-    dev = Device(mode="sell_power", power=3000.0, fail={"mode": ERROR})
+    dev = Device(mode="sell_power", power=3000.0, fail={"mode": DENIED})
     mem = ControlMemory.for_profile(GW)
     tick(dev, mem, schedule(mode="idle"), 60.0)
     assert mem.group_backoff_s == 300.0 and mem.group_backoff_until == 360.0
@@ -385,9 +387,185 @@ def test_round_trip_counts_in_throttle_and_limiter():
     dev = Device()
     mem = ControlMemory.for_profile(GW)
     tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=1500), 0.0)
-    dev.fail = {"power_w": ERROR}
+    dev.fail = {"power_w": DENIED}
     d, rep = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 60.0)
     assert rep.restored == ["mode"]
     assert mem.last_written["mode"] == "charge_battery"
     assert mem.limiter._changes and len(mem.limiter._changes) == 2      # tam i z powrotem
     assert mem.throttle.pending({"mode": "sell_power"}, 90.0) == {"mode"}
+
+
+# ── Niejednoznaczny ERROR: zapis mógł dojść ──
+
+class Landing(Device):
+    """ERROR po zapisie, który DOSZEDŁ (zgubione potwierdzenie) — dla wskazanych kluczy albo losowo."""
+
+    def __init__(self, *a, landed=(), landed_rate=0.0, **k):
+        super().__init__(*a, **k)
+        self.landed = set(landed)
+        self.landed_rate = landed_rate
+
+    def write(self, w):
+        o = super().write(w)
+        if o == OK and (w.key in self.landed or (self.rng is not None and self.rng.random() < self.landed_rate)):
+            self.landed.discard(w.key)          # jednorazowo
+            return ERROR
+        return o
+
+
+def test_ambiguous_error_holds_unsafe_restore():
+    ws = [W("mode", {"v": "charge_battery"}), W("power_w", {"v": 3000})]
+    for outcome in (ERROR, "raise"):
+        write, calls = _writer({"power_w": outcome})
+        rep = run_group_writes(ws, write, restore={"mode": W("mode", {"v": "battery_standby"})})
+        assert [c[0] for c in calls] == ["mode", "power_w"]            # bez cofnięcia
+        assert rep.restore_held == ["mode"] and rep.written == ["mode"] and rep.error
+        assert rep.restored == [] and rep.restore_failed == []
+
+
+def test_ambiguous_error_restores_only_safe_key():
+    ws = [W("mode", {"v": "charge_battery"}), W("power_w", {"v": 3000})]
+    write, calls = _writer({"power_w": ERROR})
+    rep = run_group_writes(ws, write, restore={"mode": W("mode", {"v": "sell_power"})},
+                           ambiguous_safe=("mode",))
+    assert calls[-1] == ("mode", "sell_power") and rep.restored == ["mode"]
+
+
+def test_async_twin_holds_ambiguous_restore():
+    ws = [W("power_w", {"v": 0}), W("mode", {"v": "battery_standby"})]
+    write, calls = _writer({"mode": ERROR})
+
+    async def awrite(w):
+        return write(w)
+
+    rep = asyncio.run(async_run_group_writes(ws, awrite, restore={"power_w": W("power_w", {"v": 3000})}))
+    assert [c[0] for c in calls] == ["power_w", "mode"] and rep.restore_held == ["power_w"]
+
+
+@pytest.mark.parametrize("start,slot,landed,end", [
+    ((("battery_standby", 0.0)), dict(mode="charge", charge_source="grid", power_w=3000), "power_w",
+     ("charge_battery", 3000.0)),
+    ((("sell_power", 3000.0)), dict(mode="idle"), "mode", ("battery_standby", 0.0)),
+    ((("charge_battery", 1500.0)), dict(mode="discharge", discharge_purpose="sell", power_w=3000), "power_w",
+     ("sell_power", 3000.0)),
+])
+def test_landed_error_never_restored_into_grid_charging(start, slot, landed, end):
+    dev = Landing(mode=start[0], power=start[1], landed=[landed])
+    mem = ControlMemory.for_profile(GW)
+    d, rep = tick(dev, mem, schedule(**slot), 60.0)
+    assert rep.restore_held and dev.pair() == end and not _standby_charging(dev)
+    assert mem.group_backoff_until is None                 # bez odwrotu
+    for t in (120.0, 180.0):
+        tick(dev, mem, schedule(**slot), t)
+        assert dev.pair() == end
+
+
+def test_landed_error_with_safe_restore_is_corrected_next_tick():
+    # sprzedaż 1500 → ładowanie 3000 (tryb pierwszy): powrót do sprzedaży jest bezpieczny,
+    # więc cofamy; moc jednak doszła — następny cykl poprawia sam tryb, mimo odwrotu grupy.
+    dev = Landing(mode="sell_power", power=1500.0, landed=["power_w"])
+    mem = ControlMemory.for_profile(GW)
+    charge = schedule(mode="charge", charge_source="grid", power_w=3000)
+    d, rep = tick(dev, mem, charge, 60.0)
+    assert d.restore_ambiguous_safe == ("mode",) and rep.restored == ["mode"]
+    assert dev.pair() == ("sell_power", 3000.0) and mem.in_backoff(120.0)
+    d2, _ = tick(dev, mem, charge, 120.0)
+    assert [w.key for w in d2.writes] == ["mode"] and dev.pair() == ("charge_battery", 3000.0)
+
+
+def test_unlanded_error_leaves_reduced_command_and_retries_without_backoff():
+    dev = Device(fail={"power_w": ERROR})
+    mem = ControlMemory.for_profile(GW)
+    charge = schedule(mode="charge", charge_source="grid", power_w=3000)
+    _, rep = tick(dev, mem, charge, 60.0)
+    assert rep.restore_held == ["mode"] and dev.pair() == ("charge_battery", 0.0)
+    dev.fail = {}
+    d2, _ = tick(dev, mem, charge, 120.0)
+    assert [w.key for w in d2.writes] == ["power_w"] and dev.pair() == ("charge_battery", 3000.0)
+
+
+def test_backoff_only_when_both_members_must_change():
+    dev = Device(mode="sell_power", power=3000.0, fail={"mode": DENIED})
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="idle"), 60.0)
+    assert mem.in_backoff(120.0) and dev.pair() == ("sell_power", 3000.0)
+    dev.fail = {}
+    dev.state["power_w"] = 0.0                              # np. zapis, który jednak doszedł
+    d, _ = tick(dev, mem, schedule(mode="idle"), 120.0)
+    assert [w.key for w in d.writes] == ["mode"] and "group_backoff" not in d.notes
+    assert dev.pair() == ("battery_standby", 0.0)
+
+
+def test_backoff_caps_at_one_hour():
+    dev = Device(mode="sell_power", power=3000.0, fail={"mode": DENIED})
+    mem = ControlMemory.for_profile(GW)
+    t = 0.0
+    for _ in range(7):
+        t = (mem.group_backoff_until or t) + 1.0
+        tick(dev, mem, schedule(mode="idle"), t)
+    assert mem.group_backoff_s == 3600.0
+
+
+def test_backoff_expires_when_clock_goes_backwards():
+    dev = Device(mode="sell_power", power=3000.0, fail={"mode": DENIED})
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="idle"), 1000.0)
+    assert mem.in_backoff(1100.0) and not mem.in_backoff(10.0)
+
+
+def test_soak_ambiguous_error_no_round_trips():
+    dev = Counting()
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=1500), 0.0)
+    dev.fail = {"power_w": ERROR}
+    dev.nvm, dev.flips = {"mode": 0, "power_w": 0}, 0
+    t = 0.0
+    while t < 3600.0:
+        t += 60.0
+        tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), t)
+        assert not _standby_charging(dev)
+    # jeden przełącz trybu (sprzedaż na starej, mniejszej mocy), bez rund i bez odwrotu
+    assert dev.flips == 1 and dev.nvm == {"mode": 1, "power_w": 0}
+    assert dev.pair() == ("sell_power", 1500.0) and mem.group_backoff_until is None
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_fuzz_landed_errors_never_leave_standby_with_power(seed):
+    rng = random.Random(5000 + seed)
+    dev = Landing(rng=rng, fail_rate=0.1, landed_rate=0.05)
+    mem = ControlMemory.for_profile(GW)
+    t, sched = 0.0, schedule(**SHAPES[0])
+    for _ in range(80):
+        t += rng.choice([5.0, 30.0, 60.0, 90.0])
+        if rng.random() < 0.3:
+            sched = schedule(**rng.choice(SHAPES))
+        tick(dev, mem, sched, t)
+        assert not _standby_charging(dev), (seed, t, dev.pair())
+
+
+class LandingRestore(Device):
+    """Drugi zapis mocy (cofnięcie) dochodzi, ale zwraca ERROR."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.power_writes = 0
+
+    def write(self, w):
+        o = super().write(w)
+        if w.key == "power_w" and o == OK:
+            self.power_writes += 1
+            if self.power_writes == 2:
+                return ERROR
+        return o
+
+
+def test_ambiguous_restore_failure_is_not_trusted_without_reading():
+    dev = LandingRestore(mode="sell_power", power=3000.0, fail={"mode": DENIED})
+    mem = ControlMemory.for_profile(GW)
+    _, rep = tick(dev, mem, schedule(mode="idle"), 60.0)
+    assert rep.restore_failed == ["power_w"] and dev.pair() == ("sell_power", 3000.0)
+    assert "power_w" not in mem.last_written
+    dev.fail = {}
+    d, _ = tick(dev, mem, schedule(mode="idle"), 400.0, hide=("mode", "power_w"))
+    assert [w.key for w in d.writes] == ["power_w", "mode"]
+    assert dev.pair() == ("battery_standby", 0.0)

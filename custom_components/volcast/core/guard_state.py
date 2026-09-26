@@ -66,6 +66,16 @@ class WriteThrottle:
                 self._value[key] = flat[key]
                 self._at[key] = now_s
 
+    def forget(self, keys: Iterable[str]) -> None:
+        """Kasuje pamięć kluczy o nieznanym stanie (zapis mógł dojść albo nie).
+
+        Pamięć nie może wtedy udawać, że falownik ma którąkolwiek wartość — bez odczytu
+        klucz musi zostać uznany za niezgodny i zapisany ponownie.
+        """
+        for key in keys:
+            self._value.pop(key, None)
+            self._at.pop(key, None)
+
     def reconcile(self, actual: Mapping[str, float | str]) -> int:
         """Kasuje pamięć tam, gdzie falownik ma co innego (zmiana z zewnątrz).
 

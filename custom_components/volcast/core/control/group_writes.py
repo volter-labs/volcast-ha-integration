@@ -10,7 +10,13 @@ falowniku zostaje wtedy stary tryb z nową mocą — standby honoruje ją jako n
 3. grupa w bezpiecznej kolejności: „mniejsza moc wygrywa stan przejściowy" —
    spadek mocy: moc, potem tryb; wzrost mocy (albo moc nieznana): tryb, potem moc;
 4. gdy drugi członek grupy się nie zapisał po udanym pierwszym, pierwszy wraca od razu
-   do poprzedniej wartości z urządzenia, a raport niesie błąd.
+   do poprzedniej wartości z urządzenia, a raport niesie błąd. ERROR jest jednak
+   niejednoznaczny (zgubione potwierdzenie, przekroczony czas — zapis mógł dojść):
+   wtedy cofamy tylko klucz z `ambiguous_safe`, czyli taki, którego powrót z KAŻDĄ
+   wartością drugiego członka nie daje postoju z mocą > 0 ani ładowania ponad
+   poprzednią moc. Inaczej pierwszy zostaje (`restore_held`) — kolejność grupy
+   gwarantuje, że to pomniejszona wersja zamówionej komendy — a następny cykl
+   odczytuje urządzenie i poprawia sam brakujący klucz.
 
 Po nieudanym cofnięciu zostaje najwyżej pomniejszona wersja zamówionej komendy
 (nowy tryb na mniejszej, starej mocy albo stary tryb na mniejszej, nowej mocy).
@@ -25,9 +31,9 @@ z grupą ułożoną przez `order_group(power_first(...))`, nigdy wprost przez `r
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Generator, Iterable, Mapping, Sequence, TypeVar
+from typing import Awaitable, Callable, Collection, Generator, Iterable, Mapping, Sequence, TypeVar
 
-from ..write_sequence import OnException, WriteReport, async_run_writes, run_writes
+from ..write_sequence import ERROR, OnException, WriteReport, async_run_writes, run_writes
 
 GROUP_KEYS = ("mode", "power_w")
 
@@ -41,12 +47,14 @@ class GroupReport(WriteReport):
     restored: list[str] = field(default_factory=list)
     # klucze, których cofnięcie się nie udało albo nie było do czego wrócić
     restore_failed: list[str] = field(default_factory=list)
+    # klucze zostawione bez cofnięcia, bo błąd drugiego członka był niejednoznaczny
+    restore_held: list[str] = field(default_factory=list)
     group_skipped: bool = False
 
     @property
     def error(self) -> bool:
         """Grupa rozjechała się w trakcie cyklu (z cofnięciem albo bez)."""
-        return bool(self.restored or self.restore_failed)
+        return bool(self.restored or self.restore_failed or self.restore_held)
 
 
 def power_first(new_power: float, previous_power: float | None) -> bool:
@@ -79,7 +87,8 @@ def _hold(rep: GroupReport, held: Sequence) -> None:
         rep.mode_held = True
 
 
-def _plan(writes: Sequence, restore: Mapping[str, object]) -> _Plan:
+def _plan(writes: Sequence, restore: Mapping[str, object], ambiguous_safe: Collection[str],
+          outcomes: Mapping[str, str]) -> _Plan:
     """Kroki zapisu jako generator: wysyła partie do `run_writes`, dostaje ich raporty."""
     rep = GroupReport()
     rest = [w for w in writes if w.key not in GROUP_KEYS]
@@ -103,6 +112,9 @@ def _plan(writes: Sequence, restore: Mapping[str, object]) -> _Plan:
     if group[1].key in second.written:
         return rep
     key = group[0].key
+    if outcomes.get(group[1].key) == ERROR and key not in ambiguous_safe:
+        rep.restore_held.append(key)      # drugi mógł dojść — cofnięcie mogłoby być groźne
+        return rep
     undo = restore.get(key)
     if undo is None:
         rep.restore_failed.append(key)
@@ -118,26 +130,42 @@ def _plan(writes: Sequence, restore: Mapping[str, object]) -> _Plan:
 
 
 def run_group_writes(writes: Sequence[W], write: Callable[[W], str], *,
-                     restore: Mapping[str, W] | None = None,
+                     restore: Mapping[str, W] | None = None, ambiguous_safe: Collection[str] = (),
                      on_exception: OnException | None = None) -> GroupReport:
-    """Zapis grupowy; `restore` = zapisy przywracające poprzednią wartość członka grupy."""
-    plan = _plan(writes, restore or {})
+    """Zapis grupowy; `restore` = zapisy przywracające poprzednią wartość członka grupy,
+    `ambiguous_safe` = klucze, które wolno cofnąć także po niejednoznacznym ERROR."""
+    outcomes: dict[str, str] = {}
+
+    def noted(w: W) -> str:
+        outcomes[w.key] = ERROR               # wyjątek pisarza = ERROR (jak w `run_writes`)
+        outcomes[w.key] = write(w)
+        return outcomes[w.key]
+
+    plan = _plan(writes, restore or {}, ambiguous_safe, outcomes)
     try:
         batch = next(plan)
         while True:
-            batch = plan.send(run_writes(batch, write, on_exception=on_exception))
+            batch = plan.send(run_writes(batch, noted, on_exception=on_exception))
     except StopIteration as done:
         return done.value
 
 
 async def async_run_group_writes(writes: Sequence[W], write: Callable[[W], Awaitable[str]], *,
                                  restore: Mapping[str, W] | None = None,
+                                 ambiguous_safe: Collection[str] = (),
                                  on_exception: OnException | None = None) -> GroupReport:
     """Bliźniak `run_group_writes` dla pisarza asynchronicznego — te same kroki."""
-    plan = _plan(writes, restore or {})
+    outcomes: dict[str, str] = {}
+
+    async def noted(w: W) -> str:
+        outcomes[w.key] = ERROR
+        outcomes[w.key] = await write(w)
+        return outcomes[w.key]
+
+    plan = _plan(writes, restore or {}, ambiguous_safe, outcomes)
     try:
         batch = next(plan)
         while True:
-            batch = plan.send(await async_run_writes(batch, write, on_exception=on_exception))
+            batch = plan.send(await async_run_writes(batch, noted, on_exception=on_exception))
     except StopIteration as done:
         return done.value
