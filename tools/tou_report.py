@@ -48,47 +48,79 @@ def summarize(values: list[float]) -> dict[str, float]:
              "zero_share": round(sum(1 for v in s if v == 0) / len(s), 4)}
 
 
+# Kryterium „N programów wystarcza" liczone na stracie ze SCALEŃ (jedyna część zależna
+# od N). Strata z degradacji intencji, których sprzęt nie ma, jest osobną kolumną.
+MERGE_MEDIAN_MAX_PLN = 0.10
+MERGE_P90_MAX_PLN = 0.50
+# Moc znamionowa, gdy wpis jej nie podaje (NULL/0) — jawnie liczona w wyniku.
+DEFAULT_RATED_W = 5000
+
+
+def verdict(s: dict[str, float]) -> str:
+    if not s.get("n"):
+        return "BRAK DANYCH"
+    ok = s["median"] < MERGE_MEDIAN_MAX_PLN and s["p90"] < MERGE_P90_MAX_PLN
+    return "PASS" if ok else "FAIL"
+
+
 def run(entries: list[dict], ns: list[int], profile: Profile) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for n in ns:
         prof = with_programs(profile, n)
-        lost, merges, degraded, zero_cost, skipped = [], [], [], 0, 0
+        lost, merge_loss, merges, degraded = [], [], [], []
+        zero_cost, assumed = 0, 0
+        skipped = {"missing": 0, "invalid": 0, "empty": 0, "engine": 0}
         for e in entries:
+            if not isinstance(e, dict) or "schedule" not in e:
+                skipped["missing"] += 1
+                continue
             try:
                 sch = parse_schedule(e["schedule"])
             except InvalidSchedule:
-                skipped += 1
+                skipped["invalid"] += 1
                 continue
             if not sch.slots:
-                skipped += 1
+                skipped["empty"] += 1
                 continue
             now = max(sch.generated_at or sch.slots[0].start, sch.slots[0].start).astimezone(timezone.utc)
             reserve = sch.fallback.soc_reserve
-            rated = float(e.get("max_charge_rate_w") or 5000)
+            rated = e.get("max_charge_rate_w")
+            if not rated:
+                assumed += 1
+                rated = DEFAULT_RATED_W
             try:
-                r = compress(sch, now, prof, soc_reserve=reserve, rated_power_w=rated, tz=WAW)
+                r = compress(sch, now, prof, soc_reserve=reserve, rated_power_w=float(rated), tz=WAW)
             except ValueError:
-                skipped += 1
+                skipped["engine"] += 1
                 continue
             lost.append(r.lost_value_pln)
+            merge_loss.append(r.merge_loss_pln)
             merges.append(float(len(r.merges)))
             degraded.append(r.degrade_loss_pln)
             zero_cost += sum(1 for m in r.merges if m.lost_value_pln == 0
                               and {m.kept_intent, m.absorbed_intent} == {"standby", "self_consume"})
-        out[n] = {"plans": len(lost), "skipped": skipped, "lost": summarize(lost),
-                  "merges": summarize(merges), "degrade": summarize(degraded),
+        ml = summarize(merge_loss)
+        out[n] = {"plans": len(lost), "skipped": skipped,
+                  "assumed_rated_w": {"count": assumed, "value": DEFAULT_RATED_W},
+                  "merge_loss": ml, "verdict": verdict(ml),
+                  "lost": summarize(lost), "merges": summarize(merges), "degrade": summarize(degraded),
                   "standby_self_zero_cost_merges": zero_cost}
     return out
 
 
 def to_markdown(result: dict[int, dict]) -> str:
-    rows = ["| N | plany | pominięte | strata mediana zł | p90 | max | udział 0 | scalenia (med.) | degradacja (med.) |",
-            "|---|---|---|---|---|---|---|---|---|"]
+    rows = [f"Kryterium (strata ze scaleń): mediana < {MERGE_MEDIAN_MAX_PLN} zł i p90 < {MERGE_P90_MAX_PLN} zł na plan.",
+            "",
+            "| N | plany | pominięte (brak/kontrakt/puste/silnik) | domyślna moc | scalenia: strata mediana zł | p90 | max "
+            "| udział 0 | wynik | liczba scaleń (med.) | strata łączna (med.) | degradacja (med.) |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for n, r in sorted(result.items()):
-        lo, me, de = r["lost"], r["merges"], r["degrade"]
-        rows.append(f"| {n} | {r['plans']} | {r['skipped']} | {lo.get('median', '-')} | {lo.get('p90', '-')} | "
-                    f"{lo.get('max', '-')} | {lo.get('zero_share', '-')} | {me.get('median', '-')} | "
-                    f"{de.get('median', '-')} |")
+        ml, lo, me, de = r["merge_loss"], r["lost"], r["merges"], r["degrade"]
+        sk, ar = r["skipped"], r["assumed_rated_w"]
+        rows.append(f"| {n} | {r['plans']} | {sk['missing']}/{sk['invalid']}/{sk['empty']}/{sk['engine']} | "
+                    f"{ar['count']}× {ar['value']} W | {ml.get('median', '-')} | {ml.get('p90', '-')} | "
+                    f"{ml.get('max', '-')} | {ml.get('zero_share', '-')} | {r['verdict']} | "
+                    f"{me.get('median', '-')} | {lo.get('median', '-')} | {de.get('median', '-')} |")
     return "\n".join(rows)
 
 
