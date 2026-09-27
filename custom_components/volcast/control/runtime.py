@@ -117,7 +117,8 @@ async def async_direct_search(hass, entry, *, manual=None, port: int | None = No
     if port is not None or unit_id is not None:
         def factory(cfg):
             return ds.make_transport(replace(cfg, port=port if port is not None else cfg.port,
-                                             unit=unit_id if unit_id is not None else cfg.unit))
+                                             unit=unit_id if unit_id is not None else cfg.unit),
+                                     allow_loopback=ds.ALLOW_LOOPBACK)
         kw.setdefault("transport_factory", factory)
     reports = await ds.async_search(hass, entry, profiles, manual=manual, **kw)
     rt = (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
@@ -290,7 +291,7 @@ def compose_direct(hass, entry, profiles, *, salt: bytes):
     poll_s = float(poll) if isinstance(poll, (int, float)) and not isinstance(poll, bool) else float(DIRECT_POLL_S)
     poll_s = min(max(poll_s, _POLL_RANGE_S[0]), _POLL_RANGE_S[1])
     conn = DirectConnection(hass, entry, profile, target, trial=trial, salt=salt, poll_s=poll_s,
-                            unreadable=unreadable)
+                            unreadable=unreadable, allow_loopback=ds.ALLOW_LOOPBACK)
     io = DirectIO(conn, profile, trial=trial, unreadable=unreadable,
                   capabilities=caps if isinstance(caps, Mapping) else None, salt=salt)
     return ProfileChoice(profile, None, None), io, conn

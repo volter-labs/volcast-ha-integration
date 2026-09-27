@@ -160,3 +160,31 @@ def store_state(hass_storage, entry_id: str, data: dict) -> None:
 async def setup_entry(hass, entry) -> None:
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+
+
+# ── połączenie bezpośrednie: symulator falownika na pętli zwrotnej ──────────
+# Gniazda tylko do 127.0.0.1 (lista dozwolonych hostów harnessu HA); pętla zwrotna włączana
+# wyłącznie stałą testową `direct_search.ALLOW_LOOPBACK` na czas testu.
+
+SALT = bytes(range(16))
+
+
+@pytest.fixture
+async def goodwe_sim(socket_enabled, monkeypatch):
+    from custom_components.volcast.control import direct_search as ds
+    from tests.sim.device import Faults, RegisterBank
+    from tests.sim.fixtures import GOODWE_UNREADABLE, goodwe_words
+    from tests.sim.servers import goodwe_udp_server
+
+    monkeypatch.setattr(ds, "ALLOW_LOOPBACK", True)
+    bank = RegisterBank(goodwe_words(), unreadable=GOODWE_UNREADABLE)
+    faults = Faults()
+    server = await goodwe_udp_server(bank, faults)
+    server.bank, server.faults = bank, faults
+    yield server
+    await server.close()
+
+
+def seed_salt(hass_storage) -> None:
+    hass_storage["volcast.installation"] = {"version": 1, "minor_version": 1, "key": "volcast.installation",
+                                            "data": {"salt": SALT.hex()}}

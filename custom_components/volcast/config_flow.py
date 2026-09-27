@@ -703,7 +703,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             host = str(user_input.get("host") or "").strip()
             transport = user_input.get("transport")
             try:
-                host = check_target(host)
+                host = check_target(host, allow_loopback=ds.ALLOW_LOOPBACK)
             except (ValueError, TypeError):
                 errors["host"] = "invalid_host"
             serial = str(user_input.get("logger_serial") or "").strip()

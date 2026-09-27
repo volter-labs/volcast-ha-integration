@@ -32,6 +32,8 @@ from .store import async_installation_salt
 
 _LOGGER = logging.getLogger(__name__)
 DISCOVER_TIMEOUT_S = 60.0
+# Pętla zwrotna (symulator) — WYŁĄCZNIE zestawy testów; w działającej instalacji zawsze False.
+ALLOW_LOOPBACK = False
 
 NOT_FOUND, CONFLICT, IN_USE, UNVERIFIED = "direct_not_found", "direct_conflict", "direct_in_use", "direct_unverified"
 # Teksty kroku `control_mode` w onboardingu (strona i aplikacja tłumaczą je z jednej tabeli).
@@ -55,7 +57,7 @@ def load_profiles() -> list:
 
 
 def _default_factory(cfg):
-    return make_transport(cfg)
+    return make_transport(cfg, allow_loopback=ALLOW_LOOPBACK)
 
 
 def live_hosts(hass, entry_id: str) -> set[str]:
@@ -84,7 +86,7 @@ async def async_clash(hass, entry_id: str, host: str, *, resolve=None) -> tuple[
 
 async def async_search(hass, entry, profiles: Sequence, *, manual: Candidate | None = None,
                        timeout_s: float = DISCOVER_TIMEOUT_S, transport_factory: Callable | None = None,
-                       udp_probe: Callable[[], Awaitable] | None = None, allow_loopback: bool = False,
+                       udp_probe: Callable[[], Awaitable] | None = None, allow_loopback: bool | None = None,
                        resolve=None) -> list[ProbeReport]:
     """Raporty sondy (kolejność kandydatów); pusta lista przy braku kandydatów albo przekroczonym czasie."""
     try:
@@ -94,7 +96,7 @@ async def async_search(hass, entry, profiles: Sequence, *, manual: Candidate | N
         else:
             network = await (udp_probe or probe_udp_48899)()
             candidates = candidates_from(getattr(network, "replies", None) or [], (), None,
-                                         allow_loopback=allow_loopback)
+                                         allow_loopback=ALLOW_LOOPBACK if allow_loopback is None else allow_loopback)
         if not candidates:
             return []
         snaps = await async_entry_snaps(hass, entry.entry_id, resolve=resolve)
