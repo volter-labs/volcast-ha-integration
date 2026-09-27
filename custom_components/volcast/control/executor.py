@@ -50,7 +50,8 @@ Tryb bezpośredni (`DirectIO`, rejestry falownika):
   rozpoczętego po końcu naszego ostatniego zapisu; drugi rozjazd tego samego klucza w 30 min przy
   niezmienionej wartości planu = przejęcie (pauza jak w trybie encji); zmiana wartości planu kasuje
   historię rozjazdów klucza;
-* budżet NVM liczy każdą wysłaną ramkę (także powrotu) i jest trwały w magazynie; decyzja `RESTORE`
+* budżet NVM liczy każdą wysłaną ramkę (także powrotu) i jest trwały w magazynie (w trybie encji: każde
+  wywołanie usługi zapisu planu, bez powrotu do trybu bazowego); decyzja `RESTORE`
   (wyczerpany budżet przy trybie wymuszonym) idzie przez wykonawcę grupowego tylko przy własności;
 * okna czasowe: sekwencja OFF → programy → ON, migawka programów właściciela zapisana przed
   pierwszym zapisem, powrót do niej po przerwanej sekwencji i po utracie prawa.
@@ -646,10 +647,14 @@ class VolcastExecutor:
                 decision.writes, self._writer.async_write, restore=decision.restore,
                 ambiguous_safe=decision.restore_ambiguous_safe, on_exception=self._log_write_exception)
             self._end_direct_writes()
-            commit(decision, report, self._memory, now_mono)
+            # Tryb encji: budżet liczy każde wywołanie usługi zapisu planu (tryb bezpośredni — pisarz ramek).
+            commit(decision, report, self._memory, now_mono,
+                   now_wall=now_utc.timestamp() if self._direct is None else None)
             self._log_report(decision, report)
             if self._note_written([*report.written, *report.ambiguous, *report.restored]):
                 await self._async_save("control state")
+            if self._direct is None:
+                await self._persist_budget()
         elif decision.status == RESTORE:
             decision = await self._run_budget_restore(decision, now_mono)
         self._finish(decision)
@@ -838,9 +843,9 @@ class VolcastExecutor:
         return f"tou_safety_off_cap_{self._entry.entry_id}"
 
     async def _persist_budget(self, *, force: bool = False) -> None:
-        """Budżet NVM do magazynu, gdy przybyło ramek (także po powrocie do trybu bazowego)."""
+        """Budżet NVM do magazynu, gdy przybyło zapisów (tryb bezpośredni: także ramki powrotu)."""
         budget = self._memory.budget if self._memory is not None else None
-        if self._direct is None or budget is None:
+        if budget is None:
             return
         log = budget.to_list()
         if log != self._state.nvm_log:
