@@ -47,28 +47,37 @@ DOMYSLNY_INTERVAL_MIN = 60
 #: bo dzisiaj+jutro w dobie zmiany czasu daje legalne 49 godzin.
 MAX_MINUT_SERII = 60 * 24 * 2
 
-#: Przedrostki jednostek oznaczające setne części waluty (centy, grosze), po
-#: normalizacji `_znormalizuj` (wielkie litery, Ø/Ö sprowadzone do O). Licznik
-#: w tej postaci NIE jest kodem waluty (samo "CT" nic nie mówi o PLN czy EUR)
-#: — ale wartość PRZELICZAMY dokładnie (÷100), bo to jednoznaczna konwersja,
-#: nie zgadywanie.
-_JEDNOSTKI_CENTOWE = frozenset({
-    "CT", "C", "GR", "CENT", "CENTS", "¢", "ORE", "GROSZ", "GROSZE",
-})
-
-#: Litery skandynawskie w symbolach centowych (`Øre` DKK/NOK, `Öre` SEK) —
-#: sprowadzamy je do zwykłego O, żeby porównanie z `_JEDNOSTKI_CENTOWE`
-#: działało bez względu na diakrytyk.
-_DIAKRYTYKI = str.maketrans({"Ø": "O", "ø": "o", "Ö": "O", "ö": "o"})
+#: Litery skandynawskie i polskie w symbolach jednostek (`Øre` DKK/NOK, `Öre`
+#: SEK, `zł` PLN) — sprowadzamy je do zwykłych liter ASCII, żeby porównanie
+#: z listami niżej działało bez względu na diakrytyk.
+_DIAKRYTYKI = str.maketrans({"Ø": "O", "ø": "o", "Ö": "O", "ö": "o", "Ł": "L", "ł": "l"})
 
 
 def _znormalizuj(tekst: str) -> str:
-    """Wielkie litery, bez Ø/Ö — postać do porównań z `_JEDNOSTKI_CENTOWE`."""
+    """Wielkie litery, bez diakrytyków — postać do porównań z listami liczników."""
     return tekst.translate(_DIAKRYTYKI).strip().upper()
 
 
-def _jest_centowy(licznik: str) -> bool:
-    return _znormalizuj(licznik) in _JEDNOSTKI_CENTOWE
+#: Tokeny centowe (setne części waluty), po normalizacji i odcięciu kropki na
+#: końcu (`ct.`, `gr.`) → waluta, którą NAZWA tokenu jednoznacznie wskazuje,
+#: albo None, gdy nazwa jest wspólna wielu walutom (nie da się zgadnąć bez
+#: atrybutu `currency`). `p`/`pence` to grosz brytyjski (GBP), `gr`/`grosz(e)`
+#: to grosz polski (PLN) — to JEDYNE dwa jednoznaczne tokeny w tym zestawie.
+_TOKENY_CENTOWE: dict[str, str | None] = {
+    "CT": None, "C": None, "CENT": None, "CENTS": None, "¢": None,
+    "ORE": None,  # øre/öre po normalizacji diakrytyków
+    "P": "GBP", "PENCE": "GBP",
+    "GR": "PLN", "GROSZ": "PLN", "GROSZE": "PLN",
+}
+
+#: Symbole walut spoza ISO 4217 (nie trzyliterowe), po normalizacji → kod.
+_SYMBOLE_WALUT: dict[str, str] = {"ZL": "PLN", "€": "EUR", "£": "GBP"}
+
+#: Symbole/skróty walutowe WIELOZNACZNE: licznik jest rozpoznany (jednostka
+#: przechodzi walidację, mianownik ma sens), ale sam NIE wskazuje jednej
+#: konkretnej waluty (korona i dolar są w wielu krajach) — waluta musi wtedy
+#: przyjść z atrybutu `currency`.
+_SYMBOLE_NIEJEDNOZNACZNE: frozenset[str] = frozenset({"KR", "$"})
 
 
 #: Mianowniki jednostki, które kontrakt rozpoznaje jako cenę energii, razem z
@@ -80,8 +89,34 @@ def _jest_centowy(licznik: str) -> bool:
 _DZIELNIKI_MIANOWNIKA: dict[str, int] = {"KWH": 1, "MWH": 1000}
 
 #: Kod waluty kontraktu: dokładnie trzy litery ASCII (ISO 4217). „zł", „euro"
-#: czy „PL" walutą w rozumieniu chmury nie są.
+#: czy „PL" walutą w rozumieniu chmury nie są. Sam KSZTAŁT (trzyliterowy ASCII)
+#: wystarcza dla atrybutu `currency`/fallbacku integracji — to pole wprost
+#: deklaruje walutę, użytkownik już ją wybrał w opcjach integracji.
 _KOD_WALUTY = re.compile(r"^[A-Z]{3}$")
+
+#: Kody walut ISO 4217 dopuszczone jako LICZNIK jednostki (`unit_of_measurement`).
+#: W przeciwieństwie do atrybutu `currency` (kształt wystarczy), licznik jednostki
+#: jest tekstem wolnym z encji obcej integracji — samokształt trzyliterowy nie
+#: wystarcza (np. „foo/kWh" ma kształt kodu, ale kodem nie jest), więc licznik
+#: sprawdzamy wprost względem realnych kodów walut.
+_KODY_WALUT_ISO: frozenset[str] = frozenset({
+    "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN",
+    "BAM", "BBD", "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL",
+    "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHF", "CLP", "CNY",
+    "COP", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP",
+    "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD",
+    "GNF", "GTQ", "GYD", "HKD", "HNL", "HRK", "HTG", "HUF", "IDR", "ILS",
+    "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR",
+    "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD",
+    "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU",
+    "MUR", "MVR", "MWK", "MXN", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK",
+    "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG",
+    "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK",
+    "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SYP", "SZL", "THB",
+    "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX",
+    "USD", "UYU", "UZS", "VES", "VND", "VUV", "WST", "XAF", "XCD", "XOF",
+    "XPF", "YER", "ZAR", "ZMW", "ZWL",
+})
 
 
 def _kod_waluty(tekst: Any) -> str | None:
@@ -97,10 +132,18 @@ def _rozbierz_jednostke(attrs: Mapping[str, Any]) -> tuple[float, bool, str | No
 
     None oznacza, że jednostka jest OBECNA i JEDNOZNACZNIE nie jest ceną
     energii kontraktu — encja jest wtedy odrzucana CAŁKOWICIE, bez względu na
-    to, co mówi atrybut `currency`. Dwa takie przypadki:
+    to, co mówi atrybut `currency`. Takie przypadki:
     - mianownik inny niż kWh/MWh (np. `Wh`);
+    - licznik PUSTY (np. `/kWh`) albo spoza jawnej listy dozwolonych: kod ISO
+      (regex trzyliterowy), symbol waluty (`zł`, `€`, `£`), symbol wieloznaczny
+      (`kr`, `$` — jednostka OK, ale sama waluta wymaga atrybutu) albo token
+      centowy (`ct`, `c`, `cent(s)`, `¢`, `øre`/`öre`, `p`/`pence`, `gr`/`grosz(e)`,
+      z opcjonalną kropką na końcu jak `ct.`/`gr.`). Zgadywanie nierozpoznanego
+      licznika (np. „foo/kWh") to ta sama pomyłka rzędu wielkości co centy czy
+      MWh bez kontroli — dlatego licznik spoza listy odrzuca encję, NAWET gdy
+      atrybut `currency` jest podany wprost;
     - atrybut `price_in_cents` PRZECZY jednostce — jawne `True` przy liczniku,
-      który jest kodem waluty (`EUR/kWh` nie może być jednocześnie "w euro"
+      który jest kodem ISO (`EUR/kWh` nie może być jednocześnie "w euro"
       i "w centach"), albo jawne `False` przy liczniku centowym (`ct/kWh`).
 
     Brak jednostki albo jednostka bez ukośnika nie niesie informacji o
@@ -118,14 +161,36 @@ def _rozbierz_jednostke(attrs: Mapping[str, Any]) -> tuple[float, bool, str | No
     if dzielnik_mianownika is None:
         return None
 
-    licznik = licznik.strip()
-    centowy = _jest_centowy(licznik)
-    kod_z_jednostki = None if centowy else _kod_waluty(licznik)
+    # Kropka na końcu skrótu (`ct.`, `gr.`) to ten sam token co bez niej.
+    licznik_znorm = _znormalizuj(licznik).rstrip(".")
+    if not licznik_znorm:
+        return None  # licznik pusty (np. "/kWh") — nic do rozpoznania
+
+    centowy = False
+    kod_z_jednostki: str | None = None
+    z_kodu_iso = False  # waluta z FAKTYCZNEGO kodu ISO, nie z symbolu/mapy centów
+
+    if licznik_znorm in _TOKENY_CENTOWE:
+        centowy = True
+        kod_z_jednostki = _TOKENY_CENTOWE[licznik_znorm]
+    elif licznik_znorm in _SYMBOLE_WALUT:
+        kod_z_jednostki = _SYMBOLE_WALUT[licznik_znorm]
+    elif licznik_znorm in _SYMBOLE_NIEJEDNOZNACZNE:
+        kod_z_jednostki = None
+    elif licznik_znorm in _KODY_WALUT_ISO:
+        kod_z_jednostki = licznik_znorm
+        z_kodu_iso = True
+    else:
+        # Licznik ma KSZTAŁT trzyliterowy, ale to nie prawdziwy kod ISO 4217
+        # (np. „foo") ani żaden symbol/token z list wyżej — odrzucamy CAŁKOWICIE,
+        # nawet z atrybutem `currency` obecnym (ten sam błąd co centy/MWh bez
+        # kontroli: zgadywanie nierozpoznanego licznika).
+        return None
 
     centy_flaga = attrs.get("price_in_cents")
     centy_flaga = centy_flaga if isinstance(centy_flaga, bool) else None
     if centy_flaga is True:
-        if kod_z_jednostki is not None:
+        if z_kodu_iso:
             return None
         centowy = True
     elif centy_flaga is False and centowy:

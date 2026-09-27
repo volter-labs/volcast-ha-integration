@@ -452,19 +452,39 @@ def test_currency_atrybut_sprzeczny_z_jednostka_daje_none():
 @pytest.mark.parametrize(
     "jednostka",
     [
-        "ct/kWh", "c/kWh", "gr/kWh", "CT/KWH",
+        "ct/kWh", "c/kWh", "CT/KWH",
         "Cent/kWh", "cents/kWh", "¢/kWh",
         "Øre/kWh", "Öre/kWh", "ore/kWh",
-        "Grosz/kWh", "grosze/kWh",
     ],
 )
 def test_currency_centy_daja_none_niezaleznie_od_fallbacku(jednostka):
     """Jednostka centowa to NIE jest brak informacji — to informacja, że wartości
     są w setnych. Podstawienie fallbacku wysłałoby ceny 100x za duże. Zbiór
     liczników centowych jest niewrażliwy na wielkość liter i diakrytyki
-    skandynawskie (Øre, Öre)."""
+    skandynawskie (Øre, Öre). Te tokeny nie NARZUCAJĄ żadnej konkretnej waluty
+    (nazwa wspólna wielu krajom) — w przeciwieństwie do `p`/`gr` niżej."""
     assert currency_from_attributes({"unit_of_measurement": jednostka}, "EUR") is None
     assert currency_from_attributes({"unit_of_measurement": jednostka}, None) is None
+
+
+@pytest.mark.parametrize(
+    ("jednostka", "kod"),
+    [("p/kWh", "GBP"), ("pence/kWh", "GBP"), ("gr/kWh", "PLN"),
+     ("gr./kWh", "PLN"), ("Grosz/kWh", "PLN"), ("grosze/kWh", "PLN")],
+)
+def test_currency_centy_z_jednoznaczna_waluta_jest_narzucona(jednostka, kod):
+    """`p`/`pence` (grosz brytyjski) i `gr`/`grosz(e)` (grosz polski) są jedynymi
+    tokenami centowymi w tym zestawie, których nazwa wskazuje JEDNĄ, konkretną
+    walutę — bez atrybutu `currency` ta waluta jest przyjmowana wprost."""
+    assert currency_from_attributes({"unit_of_measurement": jednostka}, None) == kod
+    assert currency_from_attributes({"unit_of_measurement": jednostka}, "EUR") == kod
+
+
+@pytest.mark.parametrize("jednostka", ["p/kWh", "gr/kWh"])
+def test_currency_centy_narzucona_sprzeczna_z_atrybutem_daje_none(jednostka):
+    """Atrybut `currency` sprzeczny z walutą narzuconą przez token centowy (`p`
+    → GBP, `gr` → PLN) to dane niespójne, nie „atrybut wygrywa"."""
+    assert currency_from_attributes({"currency": "EUR", "unit_of_measurement": jednostka}, None) is None
 
 
 def test_currency_price_in_cents_bez_ukosnika_nie_blokuje_fallbacku():
@@ -524,9 +544,58 @@ def test_currency_fallback_tylko_gdy_encja_nic_nie_mowi():
     assert currency_from_attributes({"unit_of_measurement": "kWh"}, "PLN") == "PLN"
 
 
-@pytest.mark.parametrize("zla", ["zł/kWh", "zloty/kWh", "PL/kWh", "PLNN/kWh"])
-def test_currency_niebedaca_trzyliterowym_kodem_daje_none(zla):
+@pytest.mark.parametrize("zla", ["zloty/kWh", "PL/kWh", "PLNN/kWh", "foo/kWh"])
+def test_currency_niebedaca_trzyliterowym_kodem_ani_symbolem_daje_none(zla):
+    """Licznik spoza listy dozwolonych (kod ISO, symbol albo token centowy)
+    odrzuca encję CAŁKOWICIE — nawet z atrybutem `currency` obecnym (zgadywanie
+    nierozpoznanego licznika to ta sama pomyłka rzędu wielkości co centy albo
+    MWh bez kontroli)."""
     assert currency_from_attributes({"unit_of_measurement": zla}, None) is None
+    assert currency_from_attributes({"currency": "EUR", "unit_of_measurement": zla}, None) is None
+
+
+def test_currency_licznik_pusty_daje_none():
+    assert currency_from_attributes({"unit_of_measurement": "/kWh"}, None) is None
+    assert currency_from_attributes({"currency": "EUR", "unit_of_measurement": "/kWh"}, None) is None
+
+
+def test_currency_symbol_zl_bez_atrybutu_daje_pln():
+    """`zł` jest w jawnej mapie symboli (`zł` → PLN) — waluta przychodzi wprost
+    z symbolu, bez potrzeby atrybutu `currency`."""
+    assert currency_from_attributes({"unit_of_measurement": "zł/kWh"}, None) == "PLN"
+
+
+def test_currency_symbol_zl_z_pasujacym_atrybutem_dziala():
+    attrs = {"currency": "PLN", "unit_of_measurement": "zł/kWh"}
+    assert currency_from_attributes(attrs, None) == "PLN"
+
+
+def test_currency_symbol_zl_ze_sprzecznym_atrybutem_daje_none():
+    """Symbol `zł` mapuje na PLN — atrybut `currency` inny niż PLN to dane
+    niespójne, nie „atrybut wygrywa"."""
+    attrs = {"currency": "EUR", "unit_of_measurement": "zł/kWh"}
+    assert currency_from_attributes(attrs, None) is None
+
+
+@pytest.mark.parametrize(("jednostka", "kod"), [("€/kWh", "EUR"), ("£/kWh", "GBP")])
+def test_currency_symbole_walutowe_bez_atrybutu(jednostka, kod):
+    assert currency_from_attributes({"unit_of_measurement": jednostka}, None) == kod
+
+
+@pytest.mark.parametrize("jednostka", ["kr/kWh", "$/kWh"])
+def test_currency_symbole_wieloznaczne_wymagaja_atrybutu(jednostka):
+    """`kr` i `$` są rozpoznane jako jednostka ceny energii (mianownik OK), ale
+    same nie wskazują JEDNEJ waluty — bez atrybutu `currency` nie zgadujemy."""
+    assert currency_from_attributes({"unit_of_measurement": jednostka}, None) is None
+    assert currency_from_attributes({"unit_of_measurement": jednostka}, "EUR") is None
+    assert currency_from_attributes({"currency": "SEK", "unit_of_measurement": jednostka}, None) == "SEK"
+
+
+def test_currency_licznik_z_kropka_normalizowany():
+    """Kropka końcowa (skrót `ct.`, `gr.`) jest odcinana przed rozpoznaniem —
+    `ct.` to ten sam token co `ct`."""
+    assert currency_from_attributes({"currency": "EUR", "unit_of_measurement": "ct./kWh"}, None) == "EUR"
+    assert currency_from_attributes({"unit_of_measurement": "gr./kWh"}, None) == "PLN"
 
 
 @pytest.mark.parametrize("zla", ["zloty", "euro", "zł", "PL", "€"])
@@ -583,7 +652,10 @@ def test_mwh_przelicza_wartosci_dokladnie_przez_1000():
     assert [w["buy"] for w in out] == [0.0255, 0.0255]
 
 
-@pytest.mark.parametrize("jednostka", ["ct/kWh", "c/kWh", "gr/kWh", "CT/KWH", "Cent/kWh", "¢/kWh"])
+@pytest.mark.parametrize(
+    "jednostka",
+    ["ct/kWh", "c/kWh", "gr/kWh", "CT/KWH", "Cent/kWh", "¢/kWh", "p/kWh", "ct./kWh", "gr./kWh"],
+)
 def test_centy_przelicza_wartosci_dokladnie_przez_100(jednostka):
     attrs = {
         "unit_of_measurement": jednostka,
