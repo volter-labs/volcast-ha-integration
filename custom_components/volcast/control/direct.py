@@ -4,7 +4,9 @@ Warstwa HA robi wyłącznie I/O i cykl życia; decyzje są w rdzeniu (`core/`).
 
 * Start: kontrola adresu (literał lokalny, bez gniazda przy odmowie), rejestr hostów wpisów
   (`hass.data[DOMAIN]["direct_hosts"]` — jedno połączenie na host), kolizja statyczna z innymi
-  wpisami (fail-closed). Odmowa = żadnego gniazda.
+  wpisami (fail-closed). Odmowa = żadnego gniazda. Odmowa, która może minąć (kolizja, host zajęty),
+  i nieoczekiwany wyjątek startu (`start_failed`, zgłoszenie w Naprawach, najwyżej `START_RETRIES`
+  prób) — ponowny start z rosnącą przerwą; zły cel — nigdy.
 * Odpytywanie co `poll_s` (przy kolizji co `DIRECT_SLOW_POLL_S`); błąd łącza nie kasuje
   ostatniego odczytu (wiek rośnie), słuchacze wołani po każdej próbie. Kolizja statyczna
   sprawdzana znowu co 10 min, liczniki transportu karmią `ContentionMonitor`.
@@ -49,6 +51,8 @@ _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 STATIC_CHECK_S = 600.0              # kolizja statyczna sprawdzana znowu co 10 min
 RETRY_MIN_S = 60.0                  # odmowa startu (kolizja, host zajęty): ponowny start po 1 min,
 RETRY_MAX_S = 600.0                 # potem co 2×, najwyżej co 10 min
+START_RETRIES = 5                   # nieoczekiwany wyjątek przy starcie: tyle prób, potem do przeładowania
+START_FAILED = "start_failed"
 IDENTITY_RETRY_S = 600.0            # przy niezgodnej tożsamości — tylko sprawdzanie co 10 min
 IDENTITY_UDP_MAX_AGE_S = 3600.0     # UDP (bez połączenia): tożsamość co godzinę
 IDENTITY_MAX_AGE_S = 3600.0         # przed sesją zapisów: potwierdzenie nie starsze niż godzina
@@ -200,6 +204,8 @@ class DirectConnection:
         self.retry_min_s = RETRY_MIN_S
         self.retry_max_s = RETRY_MAX_S
         self._retries = 0
+        self._start_failures = 0
+        self._start_issue = f"direct_start_failed_{getattr(entry, 'entry_id', '')}"
         self._retry_task: asyncio.Task | None = None
         self._sleep = asyncio.sleep
 
@@ -300,9 +306,31 @@ class DirectConnection:
         self._host = host
         try:
             await self._start_registered(cfg)
+        except Exception as err:  # noqa: BLE001 — nieoczekiwany wyjątek: odmowa z ponowieniem, nie „łączenie”
+            await self._release()                        # bez rejestracji hosta i bez otwartego transportu
+            self.client = None
+            self._start_failed(err)
+            return
         except BaseException:
-            await self._release()                        # nieoczekiwany wyjątek nie zostawia rejestracji hosta
+            await self._release()                        # anulowanie nie zostawia rejestracji hosta
             raise
+        if self._start_failures and self._refused is None:
+            self._start_failures = 0
+            ir.async_delete_issue(self._hass, DOMAIN, self._start_issue)
+
+    def _start_failed(self, err: Exception) -> None:
+        """Wyjątek przy starcie: odmowa `start_failed`, zgłoszenie w Naprawach, ograniczona liczba prób."""
+        self._refused = START_FAILED
+        self._start_failures += 1
+        if self._start_failures == 1:
+            ir.async_create_issue(self._hass, DOMAIN, self._start_issue, is_fixable=False, severity=_WARNING,
+                                  translation_key="direct_start_failed")
+        if self._start_failures < START_RETRIES:
+            _LOGGER.warning("Volcast direct connection start failed (%s) — retrying", type(err).__name__)
+            self._schedule_retry()
+        else:
+            _LOGGER.warning("Volcast direct connection start failed (%s) — giving up until Volcast is reloaded",
+                            type(err).__name__)
 
     def _refuse(self, reason: str, why: str) -> None:
         """Odmowa startu, która może minąć (kolizja, host zajęty): ponowny start z rosnącą przerwą."""
@@ -367,6 +395,11 @@ class DirectConnection:
         if self._stopped:
             return
         self._stopped = True
+        if self._start_failures:
+            try:
+                ir.async_delete_issue(self._hass, DOMAIN, self._start_issue)
+            except Exception:  # noqa: BLE001
+                pass
         if self._unsub_timer is not None:
             try:
                 self._unsub_timer()

@@ -100,6 +100,7 @@ from ..core.params import Params
 from ..core.profile import direct_verified
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from .device_io import NO_READING, DeviceIO, DirectIO, EntityIO, Reading
+from .direct import START_FAILED
 from .store import ControlState, ControlStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -1086,7 +1087,8 @@ class VolcastExecutor:
                     else:
                         _LOGGER.warning("Volcast control: return to the baseline waits — the direct connection "
                                         "was refused (%s)", refused)
-                if refused is not None and not self._conflict_issue_open:
+                # Wyjątek przy starcie ma własne zgłoszenie połączenia (`direct_start_failed`) — to nie kolizja.
+                if refused is not None and refused != START_FAILED and not self._conflict_issue_open:
                     self._conflict_issue_open = True
                     self._create_issue(self._conflict_issue_id, "direct_conflict", {"reason": refused})
                 self._finish(CycleDecision(BLOCKED, reason))

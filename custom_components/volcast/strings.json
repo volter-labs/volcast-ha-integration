@@ -258,6 +258,10 @@
     "control_record_dropped": {
       "title": "Volcast could not return the inverter to its previous settings",
       "description": "Volcast had changed inverter settings through a control method or inverter that is no longer configured, so it cannot return them. The inverter may still use the last settings Volcast applied. Check the inverter mode and settings."
+    },
+    "direct_start_failed": {
+      "title": "Volcast could not start the direct inverter connection",
+      "description": "The direct connection to the inverter failed to start because of an unexpected error. Volcast retries a few times; until it connects, it cannot change or return the inverter settings. If this stays, reload Volcast and check the Home Assistant logs."
     }
   },
   "services": {

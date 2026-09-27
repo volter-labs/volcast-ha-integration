@@ -5,6 +5,8 @@ import asyncio
 
 import pytest
 
+from custom_components.volcast.const import DOMAIN
+
 from tests.control.test_direct_connection import _conn, _entry, _target, hass, issues  # noqa: F401
 
 
@@ -70,3 +72,87 @@ async def test_stop_cancels_a_pending_retry(hass, goodwe_udp_sim, issues):
     assert task is not None and not task.done()
     await conn.async_stop()
     assert task.done() and goodwe_udp_sim.requests == 0
+
+
+# ── nieoczekiwany wyjątek przy starcie połączenia ─────────────────────────
+
+
+def _failing_client(monkeypatch, fails: list[int]):
+    from custom_components.volcast.control import direct as direct_mod
+    real = direct_mod.RegisterClient
+
+    def client(*a, **k):
+        if fails[0] > 0:
+            fails[0] -= 1
+            raise RuntimeError("boom")
+        return real(*a, **k)
+    monkeypatch.setattr(direct_mod, "RegisterClient", client)
+
+
+@pytest.mark.asyncio
+async def test_start_exception_is_a_refusal_with_repair_issue_and_bounded_retry(hass, goodwe_udp_sim, issues,
+                                                                                monkeypatch):
+    from custom_components.volcast.control import direct as direct_mod
+    fails = [10**6]
+    _failing_client(monkeypatch, fails)
+    h = hass()
+    conn = _conn(h, _target(goodwe_udp_sim))
+    conn.retry_min_s = conn.retry_max_s = 0.001
+    try:
+        await conn.async_start()                             # nie rzuca
+        assert conn.refused() == "start_failed" and conn.client is None
+        assert h.data[DOMAIN]["direct_hosts"] == {}          # host zwolniony
+        assert ("direct_start_failed_self", "direct_start_failed") in issues.created
+        await _until(lambda: conn._start_failures >= direct_mod.START_RETRIES)
+        await asyncio.sleep(0.05)
+        assert conn._start_failures == direct_mod.START_RETRIES                 # ograniczona liczba prób
+        assert conn._retry_task is None or conn._retry_task.done()
+        assert conn.refused() == "start_failed"
+    finally:
+        await conn.async_stop()
+    assert "direct_start_failed_self" in issues.deleted
+
+
+@pytest.mark.asyncio
+async def test_start_exception_then_success_clears_the_issue(hass, goodwe_udp_sim, issues, monkeypatch):
+    fails = [1]
+    _failing_client(monkeypatch, fails)
+    conn = _conn(hass(), _target(goodwe_udp_sim))
+    conn.retry_min_s = conn.retry_max_s = 0.001
+    try:
+        await conn.async_start()
+        assert conn.refused() == "start_failed"
+        await _until(lambda: conn.refused() is None and conn.identity == "confirmed")
+        assert "direct_start_failed_self" in issues.deleted
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_restore_after_start_exception_is_not_silent_connecting(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                     monkeypatch, caplog):
+    from custom_components.volcast.control.store import ControlStore
+    from tests.control.test_executor_direct import GW_V, Harness, _owned_sell
+    from custom_components.volcast.control import direct as direct_mod
+    from custom_components.volcast.control import executor as ex_mod
+    created = []
+    for mod in (ex_mod, direct_mod):
+        monkeypatch.setattr(mod.ir, "async_create_issue",
+                            lambda hass, domain, issue_id, **kw: created.append(kw.get("translation_key")))
+        monkeypatch.setattr(mod.ir, "async_delete_issue", lambda *a, **k: None)
+    store = ControlStore(make_hass(), "e1")
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, store=store)
+    await h.close()
+    _failing_client(monkeypatch, [10**6])
+    h2 = Harness(make_hass, GW_V, h.target, store=store)
+    h2.conn.retry_min_s = h2.conn.retry_max_s = 60.0
+    await h2.conn.async_start()
+    await h2.ex.async_start()
+    try:
+        await h2.ex.async_set_consent(False)
+        with caplog.at_level("WARNING"):
+            await h2.ex.async_tick()
+        assert h2.ex.last_decision.reason == "direct_refused" and h2.ex.owned
+        assert "start_failed" in caplog.text and "direct_start_failed" in created
+    finally:
+        await h2.close()

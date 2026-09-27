@@ -254,9 +254,12 @@ async def test_host_released_when_start_raises_after_registration(make_hass, goo
         raise RuntimeError("client")
     monkeypatch.setattr(direct_mod, "RegisterClient", boom)
     h = Harness(make_hass, GW_V, gw_target(goodwe_udp_sim))
-    with pytest.raises(RuntimeError):
-        await h.conn.async_start()
-    assert h.hass.data[DOMAIN]["direct_hosts"] == {}
+    await h.conn.async_start()                     # odmowa z ponowieniem zamiast wyjątku
+    try:
+        assert h.conn.refused() == "start_failed"
+        assert h.hass.data[DOMAIN]["direct_hosts"] == {}
+    finally:
+        await h.conn.async_stop()
 
 
 # ── wstrzymanie właściciela nie przeżywa zmiany planu i nie blokuje bezpieczeństwa ──
