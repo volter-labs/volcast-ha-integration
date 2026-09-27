@@ -13,6 +13,8 @@ from ..guards import MAX_POWER_W
 _KW = re.compile(r"(?<![\d.])(\d{1,2}(?:[.,]\d)?)K")
 _W_MIN, _W_MAX = 100.0, MAX_POWER_W
 _RATED_MIN, _RATED_MAX = 1_000.0, MAX_POWER_W
+# Zakres mocy znamionowej (W) — także dla pola w opcjach integracji.
+RATED_POWER_RANGE_W = (_RATED_MIN, _RATED_MAX)
 _KWH_MIN, _KWH_MAX = 0.5, 200.0
 
 

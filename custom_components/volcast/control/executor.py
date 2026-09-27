@@ -163,6 +163,11 @@ class VolcastExecutor:
                     and self._clock() < self._memory.paused_until)
 
     @property
+    def owned(self) -> bool:
+        """Czy to my zmienialiśmy nastawy falownika (jest co przywracać)."""
+        return self._state.owned
+
+    @property
     def history_imported_at(self) -> str | None:
         return self._state.history_imported_at
 

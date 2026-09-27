@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo
 import homeassistant.util.dt as dt_util
 
 from .const import CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY
-from .core.control.caps import missing_write_keys
+from .core.control.caps import entity_mode_ready
 from .core.prices import has_usable_prices_now
 
 _LOGGER = logging.getLogger(__name__)
@@ -140,11 +140,8 @@ class Onboarding:
             self._hass.config_entries.async_update_entry(entry, options={**entry.options, **patch})
 
     def _control_ready(self, rt) -> bool:
-        """Ta sama reguła co w opcjach: profil z integracją i encja dla KAŻDEGO klucza zapisu."""
-        choice = getattr(rt, "choice", None)
-        if choice is None or not getattr(choice, "integration_domain", None):
-            return False
-        return not missing_write_keys(choice.profile, getattr(rt, "mapped", None) or {})
+        """Ta sama reguła co w opcjach (`entity_mode_ready`)."""
+        return entity_mode_ready(getattr(rt, "choice", None), getattr(rt, "mapped", None) or {})
 
     def _usable_price(self, entity_id: str | None) -> bool:
         if not entity_id:

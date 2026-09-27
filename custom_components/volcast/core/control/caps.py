@@ -22,6 +22,16 @@ def missing_write_keys(profile, mapped_keys: Iterable[str]) -> tuple[str, ...]:
     return tuple(k for k in order if k not in mapped)
 
 
+def entity_mode_ready(choice, mapped_keys: Iterable[str]) -> bool:
+    """Czy tryb encji jest dostępny: profil z integracją HA i encja dla KAŻDEGO klucza zapisu.
+
+    Jedna reguła dla opcji integracji i dla wyboru zdalnego w onboardingu.
+    """
+    if choice is None or not getattr(choice, "integration_domain", None):
+        return False
+    return not missing_write_keys(choice.profile, mapped_keys or ())
+
+
 def capabilities_for(profile, mapped_keys: Iterable[str]) -> dict[str, bool]:
     mapped = set(mapped_keys)
     complete = not missing_write_keys(profile, mapped)

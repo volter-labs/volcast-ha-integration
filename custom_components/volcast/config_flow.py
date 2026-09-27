@@ -6,6 +6,7 @@ import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 import voluptuous as vol
@@ -23,7 +24,12 @@ from homeassistant.core import callback
 from homeassistant.helpers import instance_id, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .cloud.client import PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
+from .cloud.client import Backend, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
+from .control.runtime import async_restore_if_control_changed
+from .control.telemetry import TELEMETRY_FIELDS
+from .core.control.caps import entity_mode_ready
+from .core.control.limits import RATED_POWER_RANGE_W
+from .core.prices import has_usable_prices_now
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
 from .version import async_integration_version
@@ -42,11 +48,23 @@ from .const import (
     CONF_BATTERY_SOC_ENTITY,
     CONF_PV_POWER_ENTITY,
     CONF_UPDATE_INTERVAL,
+    CONTROL_MODE_ENTITIES,
     DEFAULT_API_URL,
     DEFAULT_PEAK_THRESHOLD,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     MODE_DISCOVERY_ONLY,
+    OPT_BATTERY_CAPACITY_KWH,
+    OPT_CONTROL_MODE,
+    OPT_GRID_NEGATE,
+    OPT_INVERTER_DOMAIN,
+    OPT_LOAD_ENERGY,
+    OPT_PRICE_BUY,
+    OPT_PRICE_CURRENCY,
+    OPT_PRICE_SELL,
+    OPT_PROFILE_ID,
+    OPT_RATED_POWER_W,
+    OPT_TELEMETRY_MAP,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -399,82 +417,177 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         return VolcastOptionsFlow(config_entry)
 
 
-class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
-    """Handle options flow for Volcast."""
+_FORECAST_KEYS = (CONF_UPDATE_INTERVAL, CONF_PEAK_THRESHOLD, CONF_PV_ENERGY_ENTITY, CONF_PV_POWER_ENTITY,
+                  CONF_BATTERY_SOC_ENTITY, CONF_BATTERY_CHARGE_POWER_ENTITY)
+_EMPTY = (None, "", {})
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+
+def _clean(values: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in values.items() if not any(v is e or v == e for e in _EMPTY)}
+
+
+class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
+    """Opcje: wpis bez konta — jeden formularz prognozy; wpis sparowany — menu.
+
+    Sposób sterowania nie ma wartości domyślnej: tryb encji tylko na wyraźny wybór.
+    Zmiana, która zmienia sterowanie (sposób, profil, integracja falownika), najpierw
+    przywraca tryb bazowy przez OBECNEGO wykonawcę — dopiero potem zapis opcji i
+    przeładowanie wpisu.
+    """
+
+    def _paired(self) -> bool:
+        return Backend.from_dict(self.config_entry.data.get(CONF_BACKEND)) is not None
+
+    def _merged(self, patch: dict[str, Any]) -> dict[str, Any]:
+        out = dict(self.config_entry.options)
+        for key, value in patch.items():
+            if any(value is e or value == e for e in _EMPTY):
+                out.pop(key, None)
+            else:
+                out[key] = value
+        return out
+
+    def _runtime(self):
+        data = getattr(self.hass, "data", None) or {}
+        return (data.get(DOMAIN, {}).get(self.config_entry.entry_id) or {}).get("control")
+
+    async def _finish(self, options: dict[str, Any]) -> ConfigFlowResult:
+        await async_restore_if_control_changed(self._runtime(), self.config_entry.options, options)
+        return self.async_create_entry(data=options)
+
+    def _forecast_options(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        """Formularz prognozy posiada swoje klucze: pominięty = wyczyszczony, reszta zostaje."""
+        kept = {k: v for k, v in self.config_entry.options.items() if k not in _FORECAST_KEYS}
+        return {**kept, **_clean(user_input)}
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         if self.config_entry.data.get(CONF_MODE) == MODE_DISCOVERY_ONLY:
             # Wpis bez konta nie ma żadnych opcji do skonfigurowania.
             return self.async_create_entry(data={})
+        if not self._paired():
+            if user_input is not None:
+                return await self._finish(self._forecast_options(user_input))
+            return self.async_show_form(step_id="init", data_schema=self._forecast_schema())
+        return self.async_show_menu(step_id="init", menu_options=["forecast", "control", "details", "prices"])
 
+    async def async_step_forecast(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            return await self._finish(self._forecast_options(user_input))
+        return self.async_show_form(step_id="forecast", data_schema=self._forecast_schema())
 
-        options_schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_UPDATE_INTERVAL,
-                    default=self.config_entry.options.get(
-                        CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
-                    ),
-                ): vol.All(int, vol.Range(min=15, max=1440)),
-                vol.Optional(
-                    CONF_PEAK_THRESHOLD,
-                    default=self.config_entry.options.get(
-                        CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD
-                    ),
-                ): vol.All(int, vol.Range(min=50, max=100)),
-                vol.Optional(
-                    CONF_PV_ENERGY_ENTITY,
-                    default=self.config_entry.options.get(
-                        CONF_PV_ENERGY_ENTITY, ""
-                    ),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="energy",
-                    )
-                ),
-                vol.Optional(
-                    CONF_PV_POWER_ENTITY,
-                    default=self.config_entry.options.get(
-                        CONF_PV_POWER_ENTITY, ""
-                    ),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="power",
-                    )
-                ),
-                vol.Optional(
-                    CONF_BATTERY_SOC_ENTITY,
-                    default=self.config_entry.options.get(
-                        CONF_BATTERY_SOC_ENTITY, ""
-                    ),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="battery",
-                    )
-                ),
-                vol.Optional(
-                    CONF_BATTERY_CHARGE_POWER_ENTITY,
-                    default=self.config_entry.options.get(
-                        CONF_BATTERY_CHARGE_POWER_ENTITY, ""
-                    ),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="power",
-                    )
-                ),
-            }
-        )
+    async def async_step_control(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        # Dwie pozycje, żadnej domyślnej. Połączenie bezpośrednie nie jest dostępne w tej wersji.
+        return self.async_show_menu(step_id="control", menu_options=["control_entities", "control_off"])
 
-        return self.async_show_form(step_id="init", data_schema=options_schema)
+    async def async_step_control_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        rt = self._runtime()
+        choice = getattr(rt, "choice", None)
+        if not entity_mode_ready(choice, getattr(rt, "mapped", None) or {}):
+            return self.async_abort(reason="entity_mode_unavailable")
+        return await self._finish(self._merged({
+            OPT_CONTROL_MODE: CONTROL_MODE_ENTITIES, OPT_PROFILE_ID: choice.profile.id,
+            OPT_INVERTER_DOMAIN: choice.integration_domain}))
+
+    async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return await self._finish(self._merged({OPT_CONTROL_MODE: None}))
+
+    async def async_step_details(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            tmap = {k: v for k in TELEMETRY_FIELDS if (v := (user_input.get(k) or "").strip())}
+            return await self._finish(self._merged({
+                OPT_TELEMETRY_MAP: tmap,
+                OPT_GRID_NEGATE: bool(user_input.get(OPT_GRID_NEGATE)) or None,
+                OPT_RATED_POWER_W: user_input.get(OPT_RATED_POWER_W),
+                OPT_BATTERY_CAPACITY_KWH: user_input.get(OPT_BATTERY_CAPACITY_KWH),
+                OPT_LOAD_ENERGY: user_input.get(OPT_LOAD_ENERGY)}))
+        return self.async_show_form(step_id="details", data_schema=self._details_schema())
+
+    async def async_step_prices(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            buy = (user_input.get(OPT_PRICE_BUY) or "").strip()
+            currency = (user_input.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
+            if buy and not self._price_usable(buy, currency):
+                return self.async_show_form(step_id="prices", data_schema=self._prices_schema(),
+                                            errors={OPT_PRICE_BUY: "prices_not_usable"})
+            return await self._finish(self._merged({
+                OPT_PRICE_BUY: buy or None, OPT_PRICE_SELL: (user_input.get(OPT_PRICE_SELL) or "").strip() or None,
+                OPT_PRICE_CURRENCY: currency}))
+        return self.async_show_form(step_id="prices", data_schema=self._prices_schema())
+
+    # ── ceny ──────────────────────────────────────────────────────────────
+    def _price_usable(self, entity_id: str, currency: str | None) -> bool:
+        """Encja ceny daje pełną serię JUŻ TERAZ (ta sama reguła co w onboardingu)."""
+        st = self.hass.states.get(entity_id)
+        if st is None:
+            return False
+        try:
+            return has_usable_prices_now(st.attributes, currency, ZoneInfo(self.hass.config.time_zone),
+                                         dt_util.utcnow())
+        except Exception:  # noqa: BLE001 — zła encja = nieużywalna
+            return False
+
+    def _usable_price_entities(self) -> list[str]:
+        currency = (self.config_entry.options.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
+        try:
+            states = self.hass.states.async_all("sensor")
+        except Exception:  # noqa: BLE001
+            return []
+        return sorted(st.entity_id for st in states
+                      if st is not None and self._price_usable(st.entity_id, currency))
+
+    # ── schematy ──────────────────────────────────────────────────────────
+    def _forecast_schema(self) -> vol.Schema:
+        o = self.config_entry.options
+
+        def sensor(device_class: str):
+            return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class=device_class))
+
+        return vol.Schema({
+            vol.Optional(CONF_UPDATE_INTERVAL, default=o.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)):
+                vol.All(int, vol.Range(min=15, max=1440)),
+            vol.Optional(CONF_PEAK_THRESHOLD, default=o.get(CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD)):
+                vol.All(int, vol.Range(min=50, max=100)),
+            vol.Optional(CONF_PV_ENERGY_ENTITY, default=o.get(CONF_PV_ENERGY_ENTITY, "")): sensor("energy"),
+            vol.Optional(CONF_PV_POWER_ENTITY, default=o.get(CONF_PV_POWER_ENTITY, "")): sensor("power"),
+            vol.Optional(CONF_BATTERY_SOC_ENTITY, default=o.get(CONF_BATTERY_SOC_ENTITY, "")): sensor("battery"),
+            vol.Optional(CONF_BATTERY_CHARGE_POWER_ENTITY, default=o.get(CONF_BATTERY_CHARGE_POWER_ENTITY, "")):
+                sensor("power"),
+        })
+
+    def _details_schema(self) -> vol.Schema:
+        o = self.config_entry.options
+        tmap = o.get(OPT_TELEMETRY_MAP) or {}
+        fields: dict = {
+            vol.Optional(key, default=tmap.get(key, "")):
+                selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+            for key in TELEMETRY_FIELDS
+        }
+        fields[vol.Optional(OPT_GRID_NEGATE, default=bool(o.get(OPT_GRID_NEGATE)))] = bool
+        rated = vol.Optional(OPT_RATED_POWER_W, description={"suggested_value": o.get(OPT_RATED_POWER_W)})
+        fields[rated] = vol.All(vol.Coerce(int), vol.Range(min=int(RATED_POWER_RANGE_W[0]),
+                                                                 max=int(RATED_POWER_RANGE_W[1])))
+        cap = vol.Optional(OPT_BATTERY_CAPACITY_KWH,
+                           description={"suggested_value": o.get(OPT_BATTERY_CAPACITY_KWH)})
+        fields[cap] = vol.All(vol.Coerce(float), vol.Range(min=0.5, max=200))
+        fields[vol.Optional(OPT_LOAD_ENERGY, default=o.get(OPT_LOAD_ENERGY, ""))] = selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="energy"))
+        return vol.Schema(fields)
+
+    def _prices_schema(self) -> vol.Schema:
+        o = self.config_entry.options
+        usable = self._usable_price_entities()
+        buy_cfg = {"domain": "sensor"}
+        if usable:
+            # Tylko encje, które już teraz dają pełną serię cen.
+            buy_cfg["include_entities"] = usable
+        return vol.Schema({
+            vol.Optional(OPT_PRICE_BUY, default=o.get(OPT_PRICE_BUY, "")):
+                selector.EntitySelector(selector.EntitySelectorConfig(**buy_cfg)),
+            vol.Optional(OPT_PRICE_SELL, default=o.get(OPT_PRICE_SELL, "")):
+                selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            vol.Optional(OPT_PRICE_CURRENCY, default=o.get(OPT_PRICE_CURRENCY, "")): str,
+        })
 
 
 class CannotConnect(Exception):

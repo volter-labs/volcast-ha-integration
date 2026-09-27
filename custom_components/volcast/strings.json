@@ -83,8 +83,77 @@
           "pv_power_entity": "A sensor that shows current solar power output in watts. Used as fallback.",
           "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect curtailment.",
           "battery_charge_power_entity": "A sensor for battery charging power in watts. Detects curtailment and grid charging."
+        },
+        "menu_options": {
+          "forecast": "Forecast",
+          "control": "Inverter control",
+          "details": "Installation details",
+          "prices": "Energy prices"
+        }
+      },
+      "forecast": {
+        "title": "Forecast",
+        "data": {
+          "update_interval": "Update interval (minutes)",
+          "peak_threshold": "Peak production threshold (%)",
+          "pv_energy_entity": "Today's PV generation (kWh)",
+          "pv_power_entity": "Current PV power (W)",
+          "battery_soc_entity": "Battery state of charge (%)",
+          "battery_charge_power_entity": "Battery charge power (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "A sensor that shows today's total solar production in kWh (resets daily).",
+          "pv_power_entity": "A sensor that shows current solar power output in watts. Used as fallback.",
+          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect curtailment.",
+          "battery_charge_power_entity": "A sensor for battery charging power in watts. Detects curtailment and grid charging."
+        }
+      },
+      "control": {
+        "title": "Inverter control",
+        "description": "Through your inverter integration — Volcast writes the inverter's mode and power entities. Direct connection arrives in a later version. Control also needs the switch in Home Assistant and your consent in the Volcast app.",
+        "menu_options": {
+          "control_entities": "Through the inverter integration (entities)",
+          "control_off": "Off — forecast and monitoring only"
+        }
+      },
+      "details": {
+        "title": "Installation details",
+        "description": "Optional. Pick sensors for the readings Volcast cannot find through the inverter integration, and correct the installation data.",
+        "data": {
+          "soc": "Battery state of charge",
+          "pv_power_w": "PV power",
+          "battery_power_w": "Battery power",
+          "grid_power_w": "Grid power",
+          "load_power_w": "House load power",
+          "pv_energy_total_kwh": "PV energy total",
+          "grid_import_total_kwh": "Grid import total",
+          "grid_export_total_kwh": "Grid export total",
+          "grid_power_negate": "Grid sensor shows export as positive",
+          "rated_power_w": "Inverter rated power (W)",
+          "battery_capacity_kwh": "Battery capacity (kWh)",
+          "load_energy_entity": "House consumption energy sensor (kWh)"
+        },
+        "data_description": {
+          "grid_power_negate": "Turn on when your grid sensor is negative while importing.",
+          "rated_power_w": "Between 1000 and 30000 W.",
+          "load_energy_entity": "Used once to send your consumption history to Volcast."
+        }
+      },
+      "prices": {
+        "title": "Energy prices",
+        "description": "Only sensors that already provide a complete price series are listed.",
+        "data": {
+          "entity_price_buy": "Purchase price sensor",
+          "entity_price_sell": "Sale price sensor",
+          "price_currency": "Currency (when the sensor does not say)"
         }
       }
+    },
+    "abort": {
+      "entity_mode_unavailable": "Inverter control entities not found. Control through the integration needs a supported inverter integration with an entity for every setting."
+    },
+    "error": {
+      "prices_not_usable": "This sensor does not provide a complete price series right now."
     }
   },
   "issues": {
