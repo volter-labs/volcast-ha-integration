@@ -61,3 +61,35 @@ def test_owner_mode_uid_ignored_without_owner_record_or_when_not_a_string():
     assert asyncio.run(st.async_load()).owner == {}
     asyncio.run(st._store.async_save({"owned": True, "owner": {"profile": "p"}, "owner_mode_uid": 5}))
     assert asyncio.run(st.async_load()).owner == {"profile": "p"}
+
+
+TOU_SNAP = {"programs": [[0, 3000, 80, 1], [300, 5000, 20, 0], [600, 5000, 20, 0], [840, 5000, 20, 0],
+                         [1080, 4000, 30, 0], [1320, 3000, 80, 1]], "tou_word": 255}
+
+
+def test_tou_snapshot_roundtrip_and_legacy_store():
+    st = ControlStore(object(), "e1")
+    asyncio.run(st._store.async_save({"owned": True}))
+    assert asyncio.run(st.async_load()).tou_snapshot is None          # stary magazyn bez pola
+    s = ControlState(owned=True, tou_snapshot=TOU_SNAP)
+    asyncio.run(st.async_save(s))
+    assert asyncio.run(st.async_load()).tou_snapshot == TOU_SNAP
+
+
+def test_bad_tou_snapshot_dropped_with_warning(caplog):
+    import copy
+    st = ControlStore(object(), "e1")
+    bad = []
+    for mutate in (lambda d: d["programs"].pop(), lambda d: d["programs"][0].__setitem__(0, 1440),
+                   lambda d: d["programs"][1].__setitem__(2, 101), lambda d: d["programs"][2].__setitem__(1, 1.5),
+                   lambda d: d["programs"][3].__setitem__(3, True), lambda d: d.__setitem__("tou_word", 70000),
+                   lambda d: d.__setitem__("programs", "x")):
+        snap = copy.deepcopy(TOU_SNAP)
+        mutate(snap)
+        bad.append(snap)
+    bad += ["x", [1], {"programs": TOU_SNAP["programs"]}]
+    with caplog.at_level("WARNING"):
+        for snap in bad:
+            asyncio.run(st._store.async_save({"owned": True, "tou_snapshot": snap}))
+            assert asyncio.run(st.async_load()).tou_snapshot is None
+    assert "time-of-use snapshot" in caplog.text

@@ -196,3 +196,22 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
             value = _round_clamp(raw, 65535)
         out.append(RegisterWrite(key, s["addr"], value))
     return out
+
+
+def encode_tou_enable(on: bool, current_word: int, profile, owner_word: int | None) -> RegisterWrite:
+    """Słowo włącznika harmonogramu (bit włącznika + maska dni) — odczyt-modyfikacja-zapis.
+
+    OFF zdejmuje wyłącznie bit włącznika (dni zostają). ON dokłada bit włącznika i dni: dni
+    właściciela z migawki; bez nich (albo = 0) dni bieżące, a gdy i tych brak — cały tydzień
+    (włączony harmonogram „w żadnym dniu” byłby martwy).
+    """
+    spec = profile.raw["write"]["tou_enable"]
+    ebit = 1 << spec["enable_bit"]
+    mask = spec.get("day_mask", 0)
+    word = int(current_word) & 0xFFFF
+    if not on:
+        return RegisterWrite("tou_enable", spec["addr"], word & ~ebit & 0xFFFF)
+    days = (int(owner_word) & mask) if owner_word else 0
+    if not days and not word & mask:
+        days = mask
+    return RegisterWrite("tou_enable", spec["addr"], (word | ebit | days) & 0xFFFF)

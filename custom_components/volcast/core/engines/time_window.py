@@ -14,7 +14,11 @@ Znane ograniczenia:
 - scalenie `standby` z samokonsumpcją bez mocy w slocie wycenia się na 0
   (nie znamy naturalnego rozładowania) — raport kompresji liczy je osobno;
 - „program 1" to okno obejmujące „teraz" (`windows[0]`), a `programs` są
-  posortowane wg godziny doby, bo tak je przyjmuje falownik;
+  posortowane wg godziny doby, bo tak je przyjmuje falownik; z kotwicą dobową
+  (`anchor="day"`) horyzont to stała siatka doby lokalnej [00:00, 24:00) — pora doby bierze
+  slot z najbliższego wystąpienia od początku bieżącego slotu (późniejsze pory — dziś,
+  wcześniejsze — jutro), więc `windows[0]` zaczyna się o północy, a starty programów
+  zmieniają się tylko ze zmianą planu, nie z upływem „teraz";
 - w dniu zmiany czasu jesienią dwa okna mogą zacząć się o tej samej godzinie
   lokalnej — guard I-10 odrzuca wtedy całą komendę (fail-closed).
 """
@@ -22,7 +26,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import datetime, time, timedelta, timezone, tzinfo
 
 from ..params import Params, TouProgram
 from ..profile import Profile
@@ -183,6 +187,37 @@ def _horizon(schedule: Schedule, now: datetime, tz: tzinfo, step: int) -> tuple[
     return slots, flags
 
 
+def _day_grid(slots: list[Slot], flags: list[bool], tz: tzinfo) -> tuple[list[Slot], list[bool]]:
+    """Horyzont [t0, t0+doba) przestawiony na siatkę doby lokalnej od północy.
+
+    Część po najbliższej północy („jutro”, pory wcześniejsze niż t0) idzie na początek, część
+    przed nią („dziś”) jest przesuwana o dobę lokalną na koniec — powstaje ciągła doba
+    [północ, północ + doba), na której pory doby = starty programów.
+    """
+    t0 = slots[0].start
+    loc = t0.astimezone(tz)
+    if (loc.hour, loc.minute, loc.second, loc.microsecond) == (0, 0, 0, 0):
+        return slots, flags
+    midnight = datetime.combine(loc.date() + timedelta(days=1), time(0), tzinfo=tz).astimezone(timezone.utc)
+
+    def shift(dt: datetime) -> datetime:
+        return (dt.astimezone(tz) + timedelta(days=1)).astimezone(timezone.utc)
+
+    today: list[tuple[Slot, bool]] = []
+    tomorrow: list[tuple[Slot, bool]] = []
+    for s, fb in zip(slots, flags):
+        if s.end <= midnight:
+            today.append((s, fb))
+        elif s.start >= midnight:
+            tomorrow.append((s, fb))
+        else:
+            today.append((replace(s, end=midnight), fb))
+            tomorrow.append((replace(s, start=midnight), fb))
+    moved = [(replace(s, start=shift(s.start), end=shift(s.end)), fb) for s, fb in today]
+    out = tomorrow + moved
+    return [s for s, _ in out], [fb for _, fb in out]
+
+
 def _within(a: ProgramSpec, b: ProgramSpec, profile: Profile) -> bool:
     return (a.grid_charge == b.grid_charge and abs(a.soc - b.soc) <= profile.soc_tolerance_pp
             and abs(a.power_w - b.power_w) <= profile.power_tolerance_w)
@@ -214,12 +249,16 @@ def _split(w: _W, mid: datetime) -> tuple[_W, _W]:
 
 
 def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve: float,
-             rated_power_w: float, tz: tzinfo) -> CompressionResult:
+             rated_power_w: float, tz: tzinfo, anchor: str = "now") -> CompressionResult:
     if profile.control_model != "time_window":
         raise ValueError(f"profil {profile.id} nie jest modelu time_window")
+    if anchor not in ("now", "day"):
+        raise ValueError(f"nieznana kotwica {anchor!r}")
     _check_inputs(now, soc_reserve, rated_power_w)
     step, n = profile.time_step_min, profile.tou_programs
     slots, flags = _horizon(schedule, now, tz, step)
+    if anchor == "day":
+        slots, flags = _day_grid(slots, flags, tz)
 
     hs: list[_H] = []
     degraded: dict[str, int] = {}

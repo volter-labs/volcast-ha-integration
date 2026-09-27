@@ -379,3 +379,59 @@ def test_slot_longer_than_a_day_still_covers_now():
     r = _run(sch, now=now)
     _check_shape(r, sch, now)
     assert r.windows[0].start == DAY0 + timedelta(hours=30, minutes=5)
+
+
+# ── kotwica dobowa (siatka doby lokalnej, program 1 od północy) ─────────────
+
+
+def _daily_plan(days=3):
+    """Ten sam wzór każdej doby: tanie ładowanie 02–05, sprzedaż… samokonsumpcja reszta."""
+    slots = []
+    for d in range(-1, days):
+        for h in range(24):
+            f = ({"mode": "charge", "charge_source": "grid", "power_w": 3000, "soc_target": 90, "price_pln_kwh": 0.2}
+                 if 2 <= h < 5 else {"mode": "idle", "price_pln_kwh": 0.9} if 17 <= h < 19 else SELF)
+            start = DAY0 + timedelta(days=d, hours=h)
+            slots.append({"from": _iso(start), "to": _iso(start + timedelta(hours=1)), **f})
+    return parse_schedule({"schedule_id": "d", "slots": slots,
+                           "fallback": {"mode": "self_consume", "soc_reserve": 10}})
+
+
+def test_day_anchor_program_1_starts_at_midnight():
+    now = DAY0 + timedelta(hours=13, minutes=20)
+    r = compress(_daily_plan(), now, TW, soc_reserve=10.0, rated_power_w=5000.0, tz=WAW, anchor="day")
+    assert r.programs[0].start_min == 0 and len(r.programs) == 6
+    assert r.windows[0].start.astimezone(WAW).hour == 0 and r.windows[0].start.astimezone(WAW).minute == 0
+    starts = [p.start_min for p in r.programs]
+    assert starts == sorted(starts) and 120 in starts and 300 in starts
+
+
+def test_day_anchor_starts_stable_when_now_moves_within_unchanged_plan():
+    plan = _daily_plan()
+    first = None
+    for i in range(24):                                 # co 15 min przez 6 h
+        now = DAY0 + timedelta(hours=8, minutes=15 * i)
+        r = compress(plan, now, TW, soc_reserve=10.0, rated_power_w=5000.0, tz=WAW, anchor="day")
+        first = first or r.programs
+        assert r.programs == first
+
+
+def test_now_anchor_moves_programs_but_day_anchor_does_not():
+    plan = _daily_plan()
+    a = compress(plan, DAY0 + timedelta(hours=8), TW, soc_reserve=10.0, rated_power_w=5000.0, tz=WAW)
+    b = compress(plan, DAY0 + timedelta(hours=11), TW, soc_reserve=10.0, rated_power_w=5000.0, tz=WAW)
+    assert a.programs != b.programs                     # kotwica „teraz” przepisuje starty
+
+
+def test_default_anchor_unchanged():
+    plan = _daily_plan()
+    now = DAY0 + timedelta(hours=9)
+    default = compress(plan, now, TW, soc_reserve=10.0, rated_power_w=5000.0, tz=WAW)
+    explicit = compress(plan, now, TW, soc_reserve=10.0, rated_power_w=5000.0, tz=WAW, anchor="now")
+    assert default == explicit
+    assert default.windows[0].start <= now < default.windows[0].end
+
+
+def test_unknown_anchor_rejected():
+    with pytest.raises(ValueError):
+        compress(_daily_plan(), DAY0, TW, soc_reserve=10.0, rated_power_w=5000.0, tz=WAW, anchor="week")

@@ -12,12 +12,21 @@ wszystkie klucze migawki (jak dotąd).
 `owner["mode_uid"]` (identyfikator rejestru encji trybu — przeżywa zmianę entity_id)
 jest w magazynie trzymany OBOK rekordu (`owner_mode_uid`), nie w nim: poprzednia wersja
 porównuje cały rekord `{profile, domain, mode_entity}` i po powrocie do niej musi go
-dalej uznać za swój (inaczej zgubiłaby migawkę i własność)."""
+dalej uznać za swój (inaczej zgubiłaby migawkę i własność).
+
+`tou_snapshot` — programy harmonogramu właściciela (surowe słowa) sprzed naszego pierwszego
+zapisu okien czasowych; wczytywana przez osobny, walidujący loader (zły kształt → brak
+migawki + ostrzeżenie, powrót idzie wtedy do programów bazowych)."""
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 
 from homeassistant.helpers.storage import Store
+
+from ..core.control.tou_writes import validate_tou_snapshot
+
+_LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 _OWNER_MODE_UID = "owner_mode_uid"
@@ -34,6 +43,7 @@ class ControlState:
     owner: dict = field(default_factory=dict)
     restore_keys: list[str] | None = None
     taken_over: list[str] = field(default_factory=list)
+    tou_snapshot: dict | None = None
 
 
 def _keys(values: list) -> list[str]:
@@ -62,6 +72,10 @@ class ControlStore:
         taken_over = raw.get("taken_over")
         owner = ({k: v for k, v in owner.items() if isinstance(k, str) and isinstance(v, str)}
                  if isinstance(owner, dict) else {})
+        tou_raw = raw.get("tou_snapshot")
+        tou_snapshot = validate_tou_snapshot(tou_raw) if tou_raw is not None else None
+        if tou_raw is not None and tou_snapshot is None:
+            _LOGGER.warning("Stored time-of-use snapshot is malformed; ignoring it")
         mode_uid = raw.get(_OWNER_MODE_UID)
         if owner and isinstance(mode_uid, str) and mode_uid:
             owner["mode_uid"] = mode_uid
@@ -74,7 +88,8 @@ class ControlStore:
             history_imported_at=hist if isinstance(hist, str) else None,
             owner=owner,
             restore_keys=_keys(restore_keys) if isinstance(restore_keys, list) else None,
-            taken_over=_keys(taken_over) if isinstance(taken_over, list) else [])
+            taken_over=_keys(taken_over) if isinstance(taken_over, list) else [],
+            tou_snapshot=tou_snapshot)
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)
