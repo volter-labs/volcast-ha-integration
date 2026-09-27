@@ -28,6 +28,16 @@ Zasady wykonania:
   wyjątku (bywa w nich numer seryjny albo adres hosta);
 * wejścia (plan, zgoda, przełącznik) nie rzucają: błąd magazynu zostawia stan w pamięci
   i trafia do logu.
+
+Obca zmiana nastaw (przejęcie): zdarzenie zmiany stanu encji klucza zapisu z aktorem
+(użytkownik, automatyzacja), nie z naszym kontekstem, z wartością inną niż nasz ostatni
+zapis — albo tryb falownika ustawiony na czytelną opcję spoza profilu (sygnał poziomu,
+także bez aktora i także gdy cykl zatrzymał się wcześniej na innej blokadzie). Skutek:
+pauza 30 min (bez zapisów i bez powrotu do trybu bazowego), wpis w `foreign_changes`
+(lokalnie, z `entity_id`), zgłoszenie w Naprawach (z `entity_id` jako parametrem tekstu),
+w logu sam klucz. Sygnał poziomu działa raz na epizod i tylko przy otwartym sterowaniu
+(nie w próbie na sucho); epizod kończy odczyt trybu z profilu. Zgłoszenie znika po
+pauzie, gdy epizod się skończył. Pauza nie przeżywa restartu (zegar monotoniczny).
 """
 from __future__ import annotations
 
@@ -43,7 +53,7 @@ from zoneinfo import ZoneInfo
 import homeassistant.util.dt as dt_util
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from ..const import (CONTROL_MODE_ENTITIES, DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S,
                      OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED, STOP_WRITE_TIMEOUT_S)
@@ -54,6 +64,7 @@ from ..core.control.entity_fit import control_writes, fit_params
 from ..core.control.group_writes import GROUP_KEYS, GroupReport, async_run_group_writes, order_group
 from ..core.control.readings import RawState, normalize_readings
 from ..core.control.select import ProfileChoice, control_verified
+from ..core.control.takeover import FOREIGN_PAUSE_S, is_foreign_change
 from ..core.engines.time_window import compress
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from .store import ControlState, ControlStore
@@ -64,6 +75,8 @@ RESTORE = "restore"
 _NO_READING = ("unavailable", "unknown", "")
 # Ile razy z rzędu cykl powtarza się po tikach zgłoszonych w jego trakcie.
 _MAX_RERUNS = 2
+# Ile ostatnich obcych zmian trzymamy w atrybutach (lokalnie).
+_FOREIGN_KEEP = 20
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
@@ -121,6 +134,8 @@ class VolcastExecutor:
         self._rerun = False
         self._stopped = False
         self._started = False
+        self._foreign_issue_open = False
+        self._foreign_episode = False                 # tryb spoza profilu na falowniku
         self._restore_failed: tuple[str, ...] | None = None   # ostatnio zalogowane (bez powtórek co tik)
         self._disabled = False
         self._unsub: list[Callable[[], None]] = []
@@ -179,6 +194,8 @@ class VolcastExecutor:
             self.last_decision = CycleDecision(ERROR, "store_unreadable")
             _LOGGER.error("Volcast control disabled: saved control state could not be read (%s)",
                           type(err).__name__)
+            # Falownik może zostać przy naszej ostatniej komendzie — właściciel musi to wiedzieć.
+            self._create_issue(f"control_error_{self._entry.entry_id}", "control_error")
             return
         if self._drop_foreign_owner():
             await self._async_save("control state")
@@ -189,6 +206,12 @@ class VolcastExecutor:
                 self._state.plan_raw = None      # zły plan z magazynu = brak planu
         self._unsub.append(async_track_time_interval(
             self._hass, self._async_timer, timedelta(seconds=EXECUTOR_INTERVAL_S)))
+        # Pauza nie przeżywa restartu — zgłoszenie z poprzedniego przebiegu jest nieaktualne.
+        ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
+        watched = [self._mapped[k] for k in self._write_keys() if k in self._mapped]
+        if watched:
+            self._unsub.append(async_track_state_change_event(self._hass, watched,
+                                                              self.async_on_state_event))
 
     async def async_stop(self) -> None:
         """Bez przywracania; czeka na zapis w toku najwyżej `stop_timeout_s`."""
@@ -204,6 +227,15 @@ class VolcastExecutor:
             _LOGGER.error("Volcast control: write still in progress at stop — giving up waiting")
             return
         self._lock.release()
+
+    @property
+    def _foreign_issue_id(self) -> str:
+        return f"foreign_control_{self._entry.entry_id}"
+
+    def _write_keys(self) -> tuple[str, ...]:
+        if self._profile is None:
+            return ()
+        return tuple((self._profile.raw.get("write_policy") or {}).get("order") or ())
 
     def _owner(self) -> dict:
         return {"profile": self._profile.id if self._profile else "", "domain": self._domain or "",
@@ -226,6 +258,71 @@ class VolcastExecutor:
     async def _async_timer(self, _now=None) -> None:
         await self.async_tick()
 
+    # ── obca zmiana nastaw ────────────────────────────────────────────────
+    async def async_on_state_event(self, event) -> None:
+        """Zmiana stanu encji klucza zapisu — przejęcie, jeśli zmienił ją ktoś inny."""
+        try:
+            self._on_state_event(event)
+        except Exception as err:  # noqa: BLE001 — obserwator nie może wywrócić pętli zdarzeń HA
+            _LOGGER.warning("Volcast control: settings change check failed (%s)", type(err).__name__)
+
+    def _on_state_event(self, event) -> None:
+        if self._memory is None or not self._domain or self._stopped or self._disabled:
+            return
+        data = event.data or {}
+        eid = data.get("entity_id")
+        new = data.get("new_state")
+        key = next((k for k in self._write_keys() if self._mapped.get(k) == eid), None)
+        if key is None or new is None:
+            return
+        ctx = getattr(new, "context", None) or getattr(event, "context", None)
+        raw_state = new.state
+        value = normalize_readings(
+            {key: RawState(raw_state, new.attributes.get("unit_of_measurement"))},
+            self._profile, self._domain).get(key)
+        foreign_option = (key == "mode" and value is None and isinstance(raw_state, str)
+                          and raw_state not in _NO_READING)
+        if foreign_option:
+            value = "?" + raw_state          # czytelna opcja spoza profilu ≠ brak odczytu
+        if not is_foreign_change(ours=self._writer.is_ours(getattr(ctx, "id", None)),
+                                 has_actor=bool(getattr(ctx, "user_id", None)
+                                                or getattr(ctx, "parent_id", None)),
+                                 new_value=value, last_written=self._memory.last_written.get(key)):
+            return
+        if foreign_option:
+            self._foreign_episode = True     # sygnał poziomu nie powtórzy tego epizodu
+        _LOGGER.warning("Volcast control paused for 30 min: %s changed outside Volcast", key)
+        self._pause_for_foreign(key, eid)
+
+    def _pause_for_foreign(self, key: str, eid: str | None) -> None:
+        self._memory.paused_until = self._clock() + FOREIGN_PAUSE_S
+        self.foreign_changes = (self.foreign_changes + [
+            {"key": key, "entity_id": eid, "at": self._utcnow().isoformat()}])[-_FOREIGN_KEEP:]
+        if not self._foreign_issue_open:
+            self._foreign_issue_open = True
+            # Parametr tekstu Napraw zostaje lokalnie w UI — to nie jest log.
+            self._create_issue(self._foreign_issue_id, "foreign_control", {"entity_id": eid or ""})
+        self._notify()
+
+    def _update_foreign_episode(self, rd: _Reading) -> None:
+        """Epizod trybu spoza profilu kończy dopiero odczyt trybu z profilu (brak odczytu — nic)."""
+        if "mode" in rd.readings:
+            self._foreign_episode = False
+
+    def _signal_foreign_mode(self, rd: _Reading, live: bool, takeover: bool) -> None:
+        """Sygnał poziomu: raz na epizod, tylko przy otwartym sterowaniu."""
+        if not (rd.foreign_mode or takeover) or not live or self._foreign_episode:
+            return
+        self._foreign_episode = True
+        _LOGGER.warning("Volcast control paused for 30 min: the inverter mode was set to an option "
+                        "outside the profile")
+        self._pause_for_foreign("mode", self._mapped.get("mode"))
+
+    def _close_foreign_issue(self) -> None:
+        if self._foreign_issue_open and not self.paused and not self._foreign_episode:
+            self._foreign_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
+
     # ── wejścia ───────────────────────────────────────────────────────────
     async def async_on_plan(self, raw: dict, schedule: Schedule) -> None:
         self._state.plan_raw = raw
@@ -236,7 +333,6 @@ class VolcastExecutor:
     async def async_set_consent(self, value: bool) -> None:
         if not isinstance(value, bool) or value == self._state.consent:
             return       # wartość innego typu nie zmienia stanu
-            return
         self._state.consent = value
         _LOGGER.warning("Volcast account consent for inverter control: %s",
                         "granted" if value else "withdrawn")
@@ -292,6 +388,7 @@ class VolcastExecutor:
                     _LOGGER.error("Volcast control cycle failed (%s)", type(err).__name__)
                     self.last_decision = CycleDecision(ERROR, "exception:tick")
                     self._count(self.last_decision)
+                self._close_foreign_issue()
                 if not self._rerun or self._stopped:
                     break
         self._notify()
@@ -332,6 +429,7 @@ class VolcastExecutor:
             self.last_decision = CycleDecision("idle", "no_profile")
             return
         rd = self._read(now_utc)
+        self._update_foreign_episode(rd)
         gates = Gates(consent=self._state.consent, local_switch=self._state.local_switch,
                       control_mode=self._entry.options.get(OPT_CONTROL_MODE),
                       verified=control_verified(self._profile, self._domain))
@@ -356,10 +454,14 @@ class VolcastExecutor:
             gates=gates, memory=self._memory)
         if soc is not None:
             self._prev_soc = (soc, now_mono)
+        # Z własnego odczytu, nie tylko z decyzji — wcześniejsza blokada cyklu go nie zasłoni.
+        self._signal_foreign_mode(rd, self._gates_open() and gates.verified, decision.takeover)
+        if decision.status == WRITE and self.paused:
+            decision = replace(decision, status=BLOCKED, reason="paused")
         if decision.status == WRITE and not self._state.owned:
             decision = await self._async_take_ownership(decision, readings)
             if decision.status == WRITE and not self._gates_open():
-                # Zgoda, przełącznik albo zatrzymanie zmieniły się w trakcie zapisu migawki.
+                # Zgoda, przełącznik, pauza albo zatrzymanie zmieniły się w trakcie zapisu migawki.
                 decision = replace(decision, status=BLOCKED, reason="gates_changed")
         if decision.status == WRITE:
             report = await async_run_group_writes(
@@ -390,6 +492,7 @@ class VolcastExecutor:
 
     def _gates_open(self) -> bool:
         return (self._state.consent is True and self._state.local_switch and not self._stopped
+                and not self.paused
                 and self._entry.options.get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES)
 
     async def _restore(self, rd: _Reading) -> None:
@@ -515,12 +618,17 @@ class VolcastExecutor:
         if d.status == ERROR:
             self._errors += 1
             if self._errors == ERROR_ISSUE_AFTER:
-                ir.async_create_issue(self._hass, DOMAIN, issue, is_fixable=False, severity=_WARNING,
-                                      translation_key="control_error")
+                self._create_issue(issue, "control_error")
         else:
             if self._errors >= ERROR_ISSUE_AFTER:
                 ir.async_delete_issue(self._hass, DOMAIN, issue)
             self._errors = 0
+
+    def _create_issue(self, issue_id: str, translation_key: str,
+                      placeholders: dict[str, str] | None = None) -> None:
+        kwargs = {"translation_placeholders": placeholders} if placeholders else {}
+        ir.async_create_issue(self._hass, DOMAIN, issue_id, is_fixable=False, severity=_WARNING,
+                              translation_key=translation_key, **kwargs)
 
     def _log_write_exception(self, key: str, err: BaseException) -> None:
         # Sam klucz i klasa — treść wyjątku bywa z adresem hosta albo numerem seryjnym.
