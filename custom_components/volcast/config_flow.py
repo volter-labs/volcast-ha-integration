@@ -158,7 +158,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         if self._session is not None or self._result is not None:
             return await self._async_step_external()
-        if self._discovery_target_disabled():
+        if self._pair_target_disabled():
             return self.async_abort(reason="existing_entry_disabled")
         if user_input is None:
             return self.async_show_form(step_id="pair", data_schema=self._pair_schema(None))
@@ -184,6 +184,19 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         accounts, discovery = self._entries_by_kind()
         return not accounts and bool(discovery) and bool(getattr(discovery[0], "disabled_by", None))
+
+    def _account_target_disabled(self) -> bool:
+        """The single existing account entry that pairing would update is disabled.
+
+        Same reasoning as `_discovery_target_disabled`: updating a disabled entry in
+        place would silently do nothing until the owner re-enables it — better to say
+        so up front than to claim `paired_existing`.
+        """
+        accounts, _ = self._entries_by_kind()
+        return len(accounts) == 1 and bool(getattr(accounts[0], "disabled_by", None))
+
+    def _pair_target_disabled(self) -> bool:
+        return self._discovery_target_disabled() or self._account_target_disabled()
 
     def _entries_by_kind(self) -> tuple[list, list]:
         """(wpisy konta, wpisy „tylko rozpoznanie") — ignorowane pomijamy."""
@@ -243,7 +256,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         r = self._result
         if r is None or r.status != "confirmed" or r.backend is None or not r.api_key:
             return self.async_abort(reason=_ABORT_BY_STATUS.get(getattr(r, "status", ""), "pairing_failed"))
-        if self._discovery_target_disabled():
+        if self._pair_target_disabled():
             # Wyłączony w trakcie oczekiwania na potwierdzenie — nie przerabiamy go po cichu.
             return self.async_abort(reason="existing_entry_disabled")
         now = dt_util.utcnow()

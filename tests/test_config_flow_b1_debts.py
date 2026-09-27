@@ -76,8 +76,17 @@ def test_disabled_discovery_entry_is_not_converted_by_pairing():
     flow.hass.config_entries.async_update_entry.assert_not_called()
 
 
-def test_disabled_account_entry_does_not_block_pairing():
-    """Reguła dotyczy tylko wpisu „tylko rozpoznanie" (konto aktualizujemy w miejscu jak dotąd)."""
+def test_disabled_account_entry_is_not_paired_into_either():
+    """Wyłączony wpis konta ma tę samą regułę co wpis „tylko rozpoznanie": nie przerabiamy go po cichu."""
     acc = SimpleNamespace(entry_id="a", data={"api_key": "vk_x"}, options={}, disabled_by="user")
-    flow = _flow_with([acc, DISABLED_DISC])
-    assert flow._discovery_target_disabled() is False
+    flow = _flow_with([acc])
+    assert flow._account_target_disabled() is True
+    assert asyncio.run(flow.async_step_pair()) == {"type": "abort", "reason": "existing_entry_disabled"}
+    flow._result = cf.PollResult("confirmed", api_key="vk_" + "e" * 64, user_id="u1",
+                                 backend=cf.Backend.from_dict({"base_url": "https://s.example.test", **{
+                                     k: f"https://s.example.test/functions/v1/{k}" for k in (
+                                         "forecast", "submit_production", "telemetry", "schedule",
+                                         "history_import", "pairing")}}))
+    flow._session = SimpleNamespace(session_id="s", poll_token="t")
+    assert asyncio.run(flow.async_step_pair_finish()) == {"type": "abort", "reason": "existing_entry_disabled"}
+    flow.hass.config_entries.async_update_entry.assert_not_called()

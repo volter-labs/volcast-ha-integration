@@ -107,6 +107,35 @@ def test_remove_entry_restores_only_when_owned(monkeypatch):
     assert restored == [True] and asyncio.run(store.async_load()) == ControlState()
 
 
+def test_remove_entry_warns_when_no_profile_can_restore(monkeypatch, caplog):
+    caplog.set_level("WARNING", logger="custom_components.volcast.control.runtime")
+
+    class Exec:
+        def __init__(self, *a, **k):
+            pass
+
+        async def async_start(self):
+            return None
+
+        async def async_restore_now(self):
+            return None          # profil nieznany, więc wykonawca i tak nic nie robi
+
+        async def async_stop(self):
+            return None
+
+    monkeypatch.setattr(rt_mod, "VolcastExecutor", Exec)
+    monkeypatch.setattr(rt_mod, "_choice_for", lambda hass, entry, profiles: None)
+    monkeypatch.setattr(rt_mod, "_load_profiles", lambda: [])
+    hass = SimpleNamespace(data={}, async_add_executor_job=lambda f, *a: _ret(f(*a)))
+    entry = SimpleNamespace(entry_id="e1", options={}, data={"api_key": "vk_x", "backend": BACKEND})
+    store = ControlStore(hass, "e1")
+    monkeypatch.setattr(rt_mod, "ControlStore", lambda h, eid: store)
+    asyncio.run(store.async_save(ControlState(owned=True)))
+    asyncio.run(rt_mod.async_remove_control(hass, entry))
+    assert "could not return the inverter" in caplog.text
+    assert asyncio.run(store.async_load()) == ControlState()
+
+
 def test_remove_entry_tolerates_unreadable_store(monkeypatch):
     removed = []
 

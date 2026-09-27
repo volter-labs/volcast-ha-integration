@@ -329,6 +329,11 @@ async def async_remove_control(hass, entry) -> None:
     if state is not None and state.owned:
         profiles = await hass.async_add_executor_job(_load_profiles)
         choice = _choice_for(hass, entry, profiles)
+        if choice is None:
+            # Bez profilu/integracji nie ma czego przywrócić — magazyn i tak zaraz
+            # wyzerujemy, więc to jedyny moment na ostrzeżenie właściciela.
+            _LOGGER.warning("Volcast control: could not return the inverter to its settings from "
+                            "before control — no inverter integration profile found; check its mode")
         executor = VolcastExecutor(hass, entry, choice=choice, mapped=map_entities(hass, choice) if choice else {},
                                    rated_power_w=None, store=store, writer=EntityServiceWriter(hass),
                                    lock=_entry_lock(hass, entry.entry_id))
