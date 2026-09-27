@@ -4,6 +4,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from homeassistant.core import Context
 from homeassistant.helpers import event as ha_event
 
@@ -271,3 +273,74 @@ def test_flush_is_single_flight():
         return await asyncio.gather(s.async_flush(), s.async_flush())
     results = asyncio.run(go())
     assert len(cloud.sent) == 1 and sorted(results) == [False, True]
+
+
+# ── ceny i blok driver bez odczytów, izolacja ręcznych encji, rynek ──────────
+
+
+def test_build_reading_without_values_but_with_prices():
+    prices = {"market": "PL", "currency": "PLN", "intervals": [{"startAt": "2026-09-23T10:00:00Z"}]}
+    drv = {"id": "goodwe-et", "model": "mode_setpoint", "local_switch_enabled": False}
+    r = build_reading(now_utc=NOW, profile_readings={}, manual={}, driver=drv, extra={}, prices=prices)
+    assert r == {"timestamp": NOW.isoformat(), "extra": {"volcast": {}}, "driver": drv, "prices": prices}
+    assert build_reading(now_utc=NOW, profile_readings={}, manual={}, driver=drv, extra={}, prices=None) is None
+
+
+def test_prices_sent_even_without_monitoring_values():
+    h, cloud = goodwe_hass(), Cloud()
+    for eid in E.values():
+        h.states.set(eid, "unavailable")
+    assert asyncio.run(sender(h, cloud).async_flush()) is True
+    (r,) = cloud.sent
+    assert "prices" in r and r["driver"]["id"] == "goodwe-et"
+    assert not set(r) & {*tm.TELEMETRY_FIELDS.values(), "ems_mode"}
+
+
+def test_manual_entity_with_non_string_unit_drops_only_that_field():
+    h, cloud = goodwe_hass(), Cloud()
+    h.states.set("sensor.load", "250", {"unit_of_measurement": ["W"]})
+    s = sender(h, cloud, manual={"load_power_w": "sensor.load"})
+    assert asyncio.run(s.async_flush()) is True
+    assert "load_power_w" not in cloud.sent[0] and cloud.sent[0]["battery_soc"] == 60.0
+
+
+def test_manual_reading_exception_drops_only_that_field(monkeypatch):
+    def boom(key, raw, negate=False):
+        raise TypeError("x")
+    monkeypatch.setattr(tm, "manual_reading", boom)
+    h, cloud = goodwe_hass(), Cloud()
+    h.states.set("sensor.load", "250", {"unit_of_measurement": "W"})
+    assert asyncio.run(sender(h, cloud, manual={"load_power_w": "sensor.load"}).async_flush()) is True
+    assert "load_power_w" not in cloud.sent[0] and cloud.sent[0]["battery_soc"] == 60.0
+
+
+@pytest.mark.parametrize("country", [None, "", "POL", "p1", 5])
+def test_market_falls_back_to_pl(country):
+    h, cloud = goodwe_hass(), Cloud()
+    h.config.country = country
+    asyncio.run(sender(h, cloud).async_flush())
+    assert cloud.sent[0]["prices"]["market"] == "PL"
+
+
+def test_country_change_resends_prices():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud)
+    asyncio.run(s.async_flush())
+    h.config.country = "DE"
+    asyncio.run(s.async_flush())
+    assert cloud.sent[1]["prices"]["market"] == "DE"
+
+
+def test_truthy_non_bool_post_result_is_not_success():
+    h, cloud = goodwe_hass(), Cloud(ok="yes")
+    s = sender(h, cloud)
+    assert asyncio.run(s.async_flush()) is False
+    cloud.ok = True
+    asyncio.run(s.async_flush())
+    assert "prices" in cloud.sent[1]                         # pierwsza wysyłka nie liczyła się jako udana
+
+
+def test_time_window_profile_has_no_capabilities_even_in_entity_mode():
+    deye = ProfileChoice(load_builtin("deye-sg"), "solarman", None)
+    b = driver_block(choice=deye, control_mode="entities", mapped_keys=ALL, local_switch=True, limits=None)
+    assert b is not None and "capabilities" not in b

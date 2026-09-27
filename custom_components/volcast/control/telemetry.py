@@ -68,7 +68,9 @@ def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | s
                   prices: dict | None) -> dict | None:
     """Odczyt kontraktu; encja wskazana ręcznie ma pierwszeństwo (także gdy nieczytelna).
 
-    Bez żadnej wartości monitoringu → None (nie wysyłamy pustego odczytu).
+    Bez wartości monitoringu odczyt i tak idzie, gdy niesie ceny — chmura nie ma dla cen
+    z HA żadnego zapasu, a blok `driver` jedzie razem z nimi. None tylko wtedy, gdy nie
+    ma ani wartości, ani cen.
     """
     values: dict = {}
     for key, name in TELEMETRY_FIELDS.items():
@@ -78,7 +80,7 @@ def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | s
     mode = profile_readings.get("mode")
     if isinstance(mode, str):
         values["ems_mode"] = mode
-    if not values:
+    if not values and prices is None:
         return None
     reading = {"timestamp": now_utc.isoformat(), **values, "extra": {"volcast": extra}}
     if driver is not None:
@@ -123,6 +125,17 @@ class TelemetrySender:
             return None
         state = st.state if isinstance(st.state, str) else None
         return RawState(state, st.attributes.get("unit_of_measurement"))
+
+    def _manual(self, key: str, eid: str) -> float | None:
+        """Jedna encja wskazana ręcznie; jej błąd kasuje tylko to pole, nie cały odczyt."""
+        r = self._raw(eid)
+        if r is None or not (r.unit is None or isinstance(r.unit, str)):
+            return None               # nieznana postać jednostki ≠ brak jednostki
+        try:
+            return manual_reading(key, r, negate=(key == "grid_power_w" and self._negate))
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Volcast telemetry: manual reading of %s skipped (%s)", key, type(err).__name__)
+            return None
 
     def _market(self) -> str:
         country = getattr(self._hass.config, "country", None)
@@ -180,9 +193,7 @@ class TelemetrySender:
         prof = normalize_readings(raw, self._choice.profile, domain) if domain else {}
         manual: dict[str, float | None] = {}
         for key, eid in self._manual_map.items():
-            r = self._raw(eid)
-            manual[key] = None if r is None else manual_reading(
-                key, r, negate=(key == "grid_power_w" and self._negate))
+            manual[key] = self._manual(key, eid)
         try:
             priced = self._prices(now)
         except Exception as err:  # noqa: BLE001 — ceny nigdy nie zabierają telemetrii
