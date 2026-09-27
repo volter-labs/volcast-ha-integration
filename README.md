@@ -98,7 +98,7 @@ The downloadable diagnostics file masks serial numbers, MAC addresses and e-mail
 
 Volcast can connect to a supported inverter directly on your local network — **GoodWe** (ET/EH/BT/BH, over UDP or Modbus TCP), **Deye** three-phase hybrids (SUN-xK-SG, through a Solarman data logger or Modbus TCP), or either behind an RS485 ↔ TCP gateway.
 
-- **Search**: **Options → Installation details → Search for the inverter on the local network** reads only the identification of devices that answer; pick your inverter from the list or enter its local IP address.
+- **Search**: **Options → Installation details → Search for the inverter on the local network** only reads from devices that answer (identification and settings registers) and never writes; pick your inverter from the list or enter its local IP address.
 - **Sensors**: state of charge, temperatures, voltages, power flows, lifetime energy counters (Energy dashboard), the inverter mode and diagnostic settings, refreshed every 10 s by default.
 - **Read-only test connection**: for inverters whose direct control is not verified yet, **Installation details → Read-only test connection** shows the sensors and what Volcast *would* write, and never writes.
 
@@ -108,9 +108,9 @@ Safety rules for the direct connection:
 
 - Every write is read back; only values the inverter actually holds are recorded.
 - A daily limit on setting changes protects the inverter's memory; a forced charge or discharge returns to the inverter's normal mode when the limit is hit, and returning to baseline is never blocked by it.
-- Withdrawing consent, turning the switch off, or disabling/removing the entry returns the inverter to its settings from before Volcast (confirmed by reading back); a restart or reload does not.
+- Withdrawing consent, turning the switch off, or disabling/removing the entry returns the inverter to its settings from before Volcast (confirmed by reading back); a restart or reload does not. Changing the control method in the options first returns the inverter through the current method — if the inverter cannot be reached, the change is refused.
 - A setting you change twice within 30 minutes pauses control for 30 minutes and stays as you set it until the plan for it changes.
-- Another integration configured for the same inverter blocks the direct connection; signs of another client while connected stop plan writes (returning to baseline still works).
+- Another integration configured with the inverter's local address blocks the direct connection (Volcast checks again every few minutes; cloud-only integrations do not block it); signs of another client while connected stop plan writes (returning to baseline still works).
 - If a different device answers at the saved address, reading and control stop until you search again.
 
 Stored in Home Assistant only: the inverter's local address, port, unit ID, Solarman logger serial, a salted device fingerprint and the search results. Sent to Volcast: the readings, the profile id, the connection type and counters, which settings can be controlled and the rated power — **never** the address, serial numbers, the fingerprint or the salt. Raw frames appear in the diagnostics file only while the read-only test connection is on, with serial numbers and the logger serial zeroed.

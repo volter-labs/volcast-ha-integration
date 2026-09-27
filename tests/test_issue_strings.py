@@ -37,3 +37,9 @@ def test_every_issue_key_has_title_and_description(path):
         assert issues.get(key, {}).get("title") and issues[key].get("description"), key
     # Tekst Napraw podaje encję, którą zmieniono (parametr przekazywany przez wykonawcę).
     assert "{entity_id}" in issues["foreign_control"]["description"]
+
+
+def test_write_budget_issue_does_not_claim_a_return_that_may_not_have_happened():
+    # Zgłoszenie idzie przy każdej blokadzie budżetu, także przy trybie neutralnym (bez powrotu).
+    text = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))["issues"]["nvm_budget"]["description"]
+    assert "was returned" not in text and "If the inverter was in a forced charge or discharge" in text

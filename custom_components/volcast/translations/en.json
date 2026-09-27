@@ -245,7 +245,7 @@
     },
     "nvm_budget": {
       "title": "Volcast inverter write budget used up",
-      "description": "Volcast reached the daily limit of inverter setting changes. A forced charge or discharge was returned to the inverter's normal mode, and further changes wait for now. This protects the inverter memory; download diagnostics if it happens again."
+      "description": "Volcast reached the daily limit of inverter setting changes, so further changes wait for now. If the inverter was in a forced charge or discharge, Volcast returns it to its normal mode instead of leaving it running. This protects the inverter memory; download diagnostics if it happens again."
     },
     "tou_snapshot_lost": {
       "title": "Volcast lost the saved copy of your inverter schedule",
