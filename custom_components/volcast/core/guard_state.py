@@ -279,6 +279,14 @@ class WriteBudget:
         self._normalize(now_wall)
         self._entries.append((key, now_wall))
 
+    def counts(self, now_wall: float) -> dict[str, int]:
+        """Ramki w oknie na klucz (diagnostyka)."""
+        self._normalize(now_wall)
+        out: dict[str, int] = {}
+        for k, _ in self._entries:
+            out[k] = out.get(k, 0) + 1
+        return out
+
     def to_list(self) -> list[list]:
         limit = None if self._last_now is None else self._last_now + _FUTURE_SLACK_S
         return [[k, ts if limit is None or ts <= limit else self._last_now] for k, ts in self._entries]

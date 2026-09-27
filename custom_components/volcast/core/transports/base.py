@@ -269,6 +269,9 @@ class BaseTransport:
         self._last_end: float | None = None
         self._dirty = False          # przerwana wymiana — reset kanału przed następnym żądaniem
         self._closed = False
+        # nagrywanie surowych ramek (tryb próbny, diagnostyka): (żądanie, ramka, odpowiedź albo None)
+        self.recorder: Callable[[Request, bytes, bytes | None], None] | None = None
+        self._matched: bytes | None = None
 
     # ── API ──
 
@@ -326,6 +329,7 @@ class BaseTransport:
             await self._open()
         frame, ctx = self._encode(req)
         self._dirty = True
+        self._matched = None
         try:
             self._send(frame)
             self.stats.requests += 1
@@ -333,6 +337,7 @@ class BaseTransport:
                 on_send()
             result = await self._await_answer(req, ctx)
         except RequestTimeout:
+            self._matched = None             # ramki obce/złe nie są odpowiedzią
             self.stats.timeouts += 1
             self.stats.consecutive_timeouts += 1
             _LOGGER.debug("%s: %s", self.kind, RequestTimeout.__name__)
@@ -343,8 +348,18 @@ class BaseTransport:
             raise
         finally:
             self._last_end = self._clock()
+            self._record(req, frame)
         self._answered()
         return result
+
+    def _record(self, req: Request, frame: bytes) -> None:
+        recorder = self.recorder
+        if recorder is None:
+            return
+        try:
+            recorder(req, bytes(frame), None if self._matched is None else bytes(self._matched))
+        except Exception as err:  # noqa: BLE001 — nagrywanie nie psuje wymiany
+            _LOGGER.debug("%s: frame recorder failed: %s", self.kind, type(err).__name__)
 
     def _answered(self) -> None:
         """Wymiana zakończona czystą odpowiedzią (także wyjątkiem Modbus)."""
@@ -362,6 +377,7 @@ class BaseTransport:
             if frame is None:
                 raise RequestTimeout(silent=not got_any)
             got_any = True
+            self._matched = frame
             try:
                 return self._match(frame, req, ctx)
             except Stray:

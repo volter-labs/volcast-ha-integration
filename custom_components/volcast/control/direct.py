@@ -305,8 +305,9 @@ class DirectConnection:
             self._refused = "bad_target"
             await self._release()
             return
+        # Połączenie próbne nagrywa surowe ramki odczytów (diagnostyka, złote wektory — zamaskowane).
         self.client = RegisterClient(transport, self.profile, clock=self._clock, utcnow=self._utcnow, salt=self._salt,
-                                     unreadable=self.unreadable)
+                                     unreadable=self.unreadable, record=self.trial)
         await self.async_confirm_identity()
         if self._stopped:                                # stop w trakcie potwierdzania: bez zegara
             await self._release()

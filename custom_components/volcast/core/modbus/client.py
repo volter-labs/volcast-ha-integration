@@ -46,10 +46,14 @@ def _aborts(err: TransportError) -> bool:
     return isinstance(err, (LinkDown, _OutOfTime)) or (isinstance(err, RequestTimeout) and err.silent)
 
 
+_RECORD_MAX = 64
+
+
 class RegisterClient:
     def __init__(self, transport: RegisterTransport, profile, *, clock: Callable[[], float] = time.monotonic,
                  utcnow: Callable[[], datetime] = _utcnow, salt: bytes | None = None,
-                 unreadable: Iterable[str] = (), cycle_budget_s: float = DEFAULT_CYCLE_BUDGET_S) -> None:
+                 unreadable: Iterable[str] = (), cycle_budget_s: float = DEFAULT_CYCLE_BUDGET_S,
+                 record: bool = False) -> None:
         self.transport = transport
         self.profile = profile
         self._clock = clock
@@ -58,6 +62,26 @@ class RegisterClient:
         self.unreadable: frozenset[str] = frozenset(unreadable)
         self.cycle_budget_s = cycle_budget_s
         self.last_frames: list[dict] = []       # {"addr","count","ok"} — bez bajtów ramek
+        # Tryb nagrywania (połączenie próbne): surowe ramki odczytów, ostatnia na blok (offset, count).
+        # SUROWE — z numerem seryjnym i numerem loggera; wychodzą wyłącznie przez maskowanie diagnostyki.
+        self.record = bool(record)
+        self._raw: dict[tuple[int, int], tuple[bytes, bytes | None]] = {}
+        if self.record and hasattr(transport, "recorder"):
+            transport.recorder = self._on_frame
+
+    def _on_frame(self, req, request: bytes, response: bytes | None) -> None:
+        if getattr(req, "fc", None) != 3:
+            return                                  # tylko odczyty (zapisy nie idą do wektorów)
+        key = (int(req.addr), int(req.count))
+        self._raw.pop(key, None)
+        self._raw[key] = (request, response)
+        while len(self._raw) > _RECORD_MAX:
+            self._raw.pop(next(iter(self._raw)))
+
+    def recorded(self) -> list[dict]:
+        """Nagrane ramki: `{"offset","count","request","response"}` (bajty, NIEZAMASKOWANE)."""
+        return [{"offset": a, "count": c, "request": req, "response": resp}
+                for (a, c), (req, resp) in sorted(self._raw.items())]
 
     async def read_block(self, addr: int, count: int, *, tries: int | None = None) -> list[int]:
         return await self.transport.read(addr, count, tries=tries)
