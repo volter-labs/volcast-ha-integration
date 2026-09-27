@@ -152,9 +152,18 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_show_form(step_id="pair", data_schema=self._pair_schema(url),
                                             errors={"base": "invalid_url"})
             self._pairing_url = url
-        elif self.show_advanced_options:
+        elif self._advanced_requested():
             return self.async_show_form(step_id="pair", data_schema=self._pair_schema(BETA_PAIRING_URL))
         return await self._async_step_external()
+
+    def _advanced_requested(self) -> bool:
+        """Formularz adresu tylko na jawną prośbę frontendu (tryb zaawansowany użytkownika).
+
+        Bieżące HA wycofuje tryb zaawansowany i `show_advanced_options` zwraca True dla
+        każdego — formularz zmiany usługi parowania pokazywałby się wszystkim.
+        """
+        context = getattr(self, "context", None)
+        return isinstance(context, dict) and context.get("show_advanced_options") is True
 
     @staticmethod
     def _pair_schema(default: str) -> vol.Schema:

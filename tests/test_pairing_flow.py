@@ -146,7 +146,7 @@ def test_pair_happy_path_creates_entry_with_backend(monkeypatch):
 def test_advanced_reentry_after_form_does_not_show_form_again(monkeypatch):
     """Po formularzu adresu external step ma id `pair` — powrót HA nie może pokazać formularza."""
     flow = make_flow(monkeypatch, polls=[CONFIRMED])
-    flow.show_advanced_options = True
+    flow.context = {"source": "user", "show_advanced_options": True}
 
     async def go():
         ext = await flow.async_step_pair({"pairing_url": cf.BETA_PAIRING_URL})
@@ -347,9 +347,24 @@ def test_cancel_failure_is_swallowed(monkeypatch):
     assert not any(isinstance(r, Exception) and not isinstance(r, asyncio.CancelledError) for r in results)
 
 
-def test_advanced_url_must_be_https(monkeypatch):
+def test_address_form_only_on_explicit_advanced_context(monkeypatch):
+    """Bieżące HA: `show_advanced_options` zwraca True dla każdego — to nie może pokazać
+    formularza adresu; decyduje tylko jawna flaga w kontekście kreatora."""
     flow = make_flow(monkeypatch, polls=[PollResult("pending")])
     flow.show_advanced_options = True
+    flow.context = {"source": "user"}
+
+    async def go():
+        ext = await flow.async_step_pair()
+        flow.async_remove()
+        await asyncio.gather(*flow._tasks, return_exceptions=True)
+        return ext
+    assert asyncio.run(go())["type"] == "external"
+
+
+def test_advanced_url_must_be_https(monkeypatch):
+    flow = make_flow(monkeypatch, polls=[PollResult("pending")])
+    flow.context = {"source": "user", "show_advanced_options": True}
     form = asyncio.run(flow.async_step_pair())
     assert form["type"] == "form" and form["step_id"] == "pair"
     for bad_url in ("http://x", "https://x.example/", "https://", "https://a b.example", "https://u@x.example/p"):
@@ -361,7 +376,7 @@ def test_advanced_url_must_be_https(monkeypatch):
 def test_advanced_url_is_used_and_stored(monkeypatch):
     url = "https://pair.example.test/functions/v1/pairing-session"
     flow = make_flow(monkeypatch, polls=[CONFIRMED])
-    flow.show_advanced_options = True
+    flow.context = {"source": "user", "show_advanced_options": True}
 
     async def go():
         await flow.async_step_pair({"pairing_url": f"  {url} "})
