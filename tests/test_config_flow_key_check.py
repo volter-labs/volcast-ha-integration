@@ -123,3 +123,32 @@ def test_error_codes_have_user_facing_strings(path):
         assert code in errors, f"{path.name} missing config.error.{code}"
     assert "Copy or Share" in errors["masked_key"]
     assert "api_key" in config["step"], f"{path.name} missing config.step.api_key"
+
+
+def test_key_already_in_an_entry_aborts_before_network():
+    """Także wpis sprzed skrótu w unique_id (jawny klucz) — rozpoznany po danych."""
+    from types import SimpleNamespace
+
+    flow = config_flow.VolcastConfigFlow()
+    good = "vk_" + "0123456789abcdef" * 4
+    flow._async_current_entries = lambda include_ignore=None: [SimpleNamespace(data={"api_key": good})]
+    with patch.object(config_flow, "_validate_api_key", new=AsyncMock()) as validate:
+        result = _run(flow.async_step_api_key({"api_key": good}))
+    assert result == {"type": "abort", "reason": "already_configured"}
+    validate.assert_not_awaited()
+
+
+def test_api_key_entry_unique_id_is_hash_not_key():
+    from custom_components.volcast.key_format import account_unique_id
+
+    flow = config_flow.VolcastConfigFlow()
+    good = "vk_" + "0123456789abcdef" * 4
+    seen = []
+
+    async def set_uid(uid, **_kw):
+        seen.append(uid)
+    flow.async_set_unique_id = set_uid
+    with patch.object(config_flow, "_validate_api_key", new=AsyncMock(return_value={"title": "Volcast — X"})), \
+            patch.object(flow, "async_step_production", new=AsyncMock(return_value={"type": "form"})):
+        _run(flow.async_step_api_key({"api_key": good}))
+    assert seen == [account_unique_id(good)] and good not in seen[0]

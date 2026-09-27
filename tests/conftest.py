@@ -555,9 +555,10 @@ def setup_forecast_entry(monkeypatch):
 
     monkeypatch.setattr(discovery_runner, "probe_udp_48899", AsyncMock(return_value=None))
 
-    async def _setup(*, options=None, data=None, is_running=True):
+    async def _setup(*, options=None, data=None, is_running=True, unique_id=None):
         hass, entry, ok = await run_setup(
-            monkeypatch.setattr, options=options, data=data, is_running=is_running)
+            monkeypatch.setattr, options=options, data=data, is_running=is_running,
+            unique_id=unique_id)
         assert ok is True
         _setup.hass, _setup.entry = hass, entry
         return unique_ids(hass.entities)

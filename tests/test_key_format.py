@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.volcast.key_format import check_api_key_format
+from custom_components.volcast.key_format import account_unique_id, check_api_key_format, is_legacy_unique_id
 
 VALID = "vk_" + "0123456789abcdef" * 4
 
@@ -38,3 +38,19 @@ def test_wrong_shape_is_invalid_format(key):
 
 def test_surrounding_whitespace_is_tolerated():
     assert check_api_key_format(f"  {VALID}\n") is None
+
+
+def test_account_unique_id_is_a_stable_hash_without_the_key():
+    key = "vk_" + "0123456789abcdef" * 4
+    uid = account_unique_id(key)
+    assert uid == account_unique_id(f"  {key} ") and uid != account_unique_id("vk_" + "f" * 64)
+    assert key not in uid and key[3:11] not in uid
+    assert uid.startswith("account_") and len(uid) == len("account_") + 64
+
+
+def test_legacy_unique_id_detection():
+    """Wpisy sprzed skrótu miały jawny klucz jako unique_id (także skrócony/zły kształt)."""
+    key = "vk_" + "a" * 64
+    assert is_legacy_unique_id(key) and is_legacy_unique_id("vk_494e...77827")
+    assert not is_legacy_unique_id(account_unique_id(key))
+    assert not is_legacy_unique_id("discovery_only") and not is_legacy_unique_id(None)

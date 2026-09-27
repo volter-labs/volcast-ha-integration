@@ -24,7 +24,7 @@ from homeassistant.helpers import instance_id, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .cloud.client import PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
-from .key_format import check_api_key_format
+from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
 from .version import async_integration_version
 from .const import (
@@ -57,7 +57,8 @@ PAIR_POLL_INTERVAL_S = 3.0
 PAIR_DEADLINE_S = 630.0
 # Okno postępu i wyborów po potwierdzeniu (chmura liczy je od potwierdzenia).
 LIVE_WINDOW = timedelta(minutes=30)
-_ABORT_BY_STATUS = {"expired": "pairing_expired", "gone": "pairing_expired", "disabled": "pairing_disabled"}
+_ABORT_BY_STATUS = {"expired": "pairing_expired", "gone": "pairing_expired", "disabled": "pairing_disabled",
+                    "error": "pairing_connection_lost"}
 # Poświadczenia wydane (także w zgubionej odpowiedzi) — anulowanie sesji nic by nie cofnęło.
 _CREDENTIALS_ISSUED = ("confirmed", "consumed")
 
@@ -118,7 +119,14 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_pair(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Start pairing; advanced mode may point it at another pairing service."""
+        """Start pairing; advanced mode may point it at another pairing service.
+
+        External step idzie bez (przestarzałego) `step_id`, więc HA zapisuje go jako
+        krok `pair` i po odpowiedzi chmury wraca TUTAJ bez danych — wtedy od razu
+        do obsługi kroku zewnętrznego, nigdy do formularza adresu.
+        """
+        if self._session is not None or self._result is not None:
+            return await self._async_step_external()
         if user_input is not None:
             url = str(user_input.get(CONF_PAIRING_URL, "")).strip()
             if not is_https_url(url):
@@ -127,7 +135,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
             self._pairing_url = url
         elif self.show_advanced_options:
             return self.async_show_form(step_id="pair", data_schema=self._pair_schema(BETA_PAIRING_URL))
-        return await self.async_step_pair_wait()
+        return await self._async_step_external()
 
     @staticmethod
     def _pair_schema(default: str) -> vol.Schema:
@@ -140,9 +148,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         accounts = [e for e in entries if e.data.get(CONF_MODE) != MODE_DISCOVERY_ONLY]
         return accounts, discovery
 
-    async def async_step_pair_wait(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def _async_step_external(self) -> ConfigFlowResult:
         """External step: the owner confirms in the app or on the web page.
 
         Po wejściu w external step wolno zwrócić wyłącznie kolejny external step albo
@@ -168,7 +174,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.debug("Volcast pairing: session not started (%s)", err)
                 return self.async_abort(reason="cannot_connect")
             self._pair_task = self.hass.async_create_task(self._async_wait_for_owner())
-        return self.async_external_step(step_id="pair_wait", url=self._session.connect_url)
+        return self.async_external_step(url=self._session.connect_url)
 
     async def _async_wait_for_owner(self) -> None:
         try:
@@ -180,7 +186,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
             raise
         except Exception:  # noqa: BLE001 — kreator musi się zakończyć czytelnym powodem
             _LOGGER.exception("Volcast pairing: waiting for confirmation failed")
-            self._result = PollResult("error")
+            self._result = PollResult("failed")
         try:
             await self.hass.config_entries.flow.async_configure(flow_id=self.flow_id)
         except Exception:  # noqa: BLE001 — kreator mógł zostać zamknięty
@@ -207,20 +213,45 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 "url": self._pairing_url,
             },
         }
+        unique_id = account_unique_id(r.api_key)
+        title = f"Volcast — {self.hass.config.location_name or 'Home'}"
         accounts, discovery = self._entries_by_kind()
-        target = (accounts or discovery or [None])[0]
-        if target is not None:
+        if accounts or discovery:
+            target = (accounts or discovery)[0]
             # Aktualizacja w miejscu: entry_id zostaje, więc encje prognozy, statystyki
             # i opcje też; wpis „tylko rozpoznanie" traci `mode` i staje się wpisem konta.
-            new_data = {k: v for k, v in target.data.items() if k != CONF_MODE} | data
-            self.hass.config_entries.async_update_entry(target, data=new_data, unique_id=r.api_key)
-            await self.hass.config_entries.async_reload(target.entry_id)
+            changes: dict[str, Any] = {
+                "data": {k: v for k, v in target.data.items() if k != CONF_MODE} | data,
+                "unique_id": unique_id,
+            }
+            if not accounts:
+                changes["title"] = title
+            self._async_update_and_reload_once(target, changes)
             return self.async_abort(reason="paired_existing")
-        await self.async_set_unique_id(r.api_key)
+        # Krok końcowy jest rozstrzygający — równoległy kreator klucza nie może go przerwać.
+        await self.async_set_unique_id(unique_id, raise_on_progress=False)
         self._abort_if_unique_id_configured()
-        return self.async_create_entry(
-            title=f"Volcast — {self.hass.config.location_name or 'Home'}", data=data,
-        )
+        return self.async_create_entry(title=title, data=data)
+
+    def _async_update_and_reload_once(self, entry: ConfigEntry, changes: dict[str, Any]) -> None:
+        """Jedno przeładowanie po aktualizacji wpisu.
+
+        Uruchomiony wpis konta ma listener aktualizacji, który sam przeładowuje wpis —
+        HA każe wtedy polegać na nim (`async_update_reload_and_abort` z listenerem
+        ostrzega, a w przyszłych wersjach odmawia). Bez listenera (wpis „tylko
+        rozpoznanie", wpis czekający na ponowienie) przeładowanie planujemy sami,
+        nie czekając na nie w kroku kreatora.
+        """
+        ce = self.hass.config_entries
+        has_listener = bool(getattr(entry, "update_listeners", None))
+        changed = ce.async_update_entry(entry, **changes)
+        if has_listener and changed:
+            return
+        schedule = getattr(ce, "async_schedule_reload", None)
+        if schedule is not None:
+            schedule(entry.entry_id)
+        else:  # HA sprzed async_schedule_reload
+            self.hass.async_create_task(ce.async_reload(entry.entry_id))
 
     @callback
     def async_remove(self) -> None:
@@ -258,6 +289,11 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                     errors=errors,
                 )
 
+            if any(e.data.get(CONF_API_KEY) == api_key
+                   for e in self._async_current_entries(include_ignore=False)):
+                # Wpis z tym kluczem (także sprzed skrótu w unique_id).
+                return self.async_abort(reason="already_configured")
+
             try:
                 info = await _validate_api_key(api_key, api_url)
             except CannotConnect:
@@ -268,7 +304,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception during validation")
                 errors["base"] = "unknown"
             else:
-                await self.async_set_unique_id(api_key)
+                await self.async_set_unique_id(account_unique_id(api_key))
                 self._abort_if_unique_id_configured()
 
                 self._api_data = {

@@ -12,14 +12,13 @@
       },
       "pair": {
         "title": "Connect to Volcast",
-        "description": "Advanced: the address of the pairing service. Leave the default unless Volcast support asked you to change it.",
+        "description": "Confirm this connection in the Volcast app or on the Volcast page that opens. This window closes by itself once you confirm.",
         "data": {
           "pairing_url": "Pairing service address"
+        },
+        "data_description": {
+          "pairing_url": "Advanced setting. Leave the default unless Volcast support asked you to change it."
         }
-      },
-      "pair_wait": {
-        "title": "Confirm in Volcast",
-        "description": "Confirm the connection in the Volcast app or on the page that just opened. This window closes by itself."
       },
       "api_key": {
         "title": "Connect to Volcast",
@@ -35,12 +34,14 @@
         "data": {
           "pv_energy_entity": "Today's PV generation (kWh)",
           "pv_power_entity": "Current PV power (W)",
-          "battery_soc_entity": "Battery state of charge (%)"
+          "battery_soc_entity": "Battery state of charge (%)",
+          "battery_charge_power_entity": "Battery charge power (W)"
         },
         "data_description": {
           "pv_energy_entity": "A sensor that shows today's total solar production in kWh (resets daily). This is the primary source for tracking — look for sensors like \"Today's PV Generation\" or \"Daily Yield\" from your inverter (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "A sensor that shows current solar power output in watts. Used as a fallback when the energy sensor is unavailable or resets mid-day.",
-          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect inverter curtailment when the battery is full. Optional — only needed if you have a battery system."
+          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect inverter curtailment when the battery is full. Optional — only needed if you have a battery system.",
+          "battery_charge_power_entity": "A sensor that shows battery charging power in watts. Used to confirm curtailment (battery full, not accepting charge) and detect grid charging (negative price scenarios). Optional."
         }
       }
     },
@@ -60,7 +61,9 @@
       "pairing_disabled": "Pairing is not available right now. Try again later, or connect with an API key.",
       "pairing_failed": "Pairing did not complete. Start again; if it keeps failing, connect with an API key.",
       "paired_existing": "Your existing Volcast entry is now connected to your account.",
-      "multiple_accounts": "More than one Volcast entry is set up here. Remove the extra entries, then pair again."
+      "multiple_accounts": "More than one Volcast entry is set up here. Remove the extra entries, then pair again.",
+      "pairing_connection_lost": "Home Assistant lost the connection to the Volcast pairing service while waiting for your confirmation. Check the internet connection of Home Assistant and start again.",
+      "already_in_progress": "Volcast setup is already in progress. Finish or close the other setup window first."
     }
   },
   "options": {
@@ -72,14 +75,22 @@
           "peak_threshold": "Peak production threshold (%)",
           "pv_energy_entity": "Today's PV generation (kWh)",
           "pv_power_entity": "Current PV power (W)",
-          "battery_soc_entity": "Battery state of charge (%)"
+          "battery_soc_entity": "Battery state of charge (%)",
+          "battery_charge_power_entity": "Battery charge power (W)"
         },
         "data_description": {
           "pv_energy_entity": "A sensor that shows today's total solar production in kWh (resets daily).",
           "pv_power_entity": "A sensor that shows current solar power output in watts. Used as fallback.",
-          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect curtailment."
+          "battery_soc_entity": "A sensor that shows battery state of charge (0-100%). Used to detect curtailment.",
+          "battery_charge_power_entity": "A sensor for battery charging power in watts. Detects curtailment and grid charging."
         }
       }
+    }
+  },
+  "issues": {
+    "production_tracking_available": {
+      "title": "Improve forecast accuracy with production tracking",
+      "description": "Volcast v1.5.0 can now track your actual PV production and use it to calibrate forecasts. Go to the integration options and select your inverter's energy or power sensor to enable this feature."
     }
   },
   "services": {

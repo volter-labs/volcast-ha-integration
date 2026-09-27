@@ -68,5 +68,11 @@ def test_error_counter_resets_after_success():
     assert run(c, max_errors=5).status == "confirmed"
 
 
-def test_errors_stop_at_deadline():
-    assert run(Client(PollResult("error")), deadline_s=20.0, max_errors=1000).status == "expired"
+def test_network_loss_until_deadline_is_error_not_expired():
+    """Brak sieci do końca terminu to nie „wygasło" — właściciel mógł potwierdzić."""
+    assert run(Client(PollResult("error")), deadline_s=20.0, max_errors=1000).status == "error"
+
+
+def test_deadline_after_recovered_errors_is_expired():
+    c = Client(PollResult("error"), PollResult("pending"))
+    assert run(c, deadline_s=30.0, max_errors=1000).status == "expired"

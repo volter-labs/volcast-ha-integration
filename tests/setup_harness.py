@@ -26,8 +26,9 @@ class FakeEntry:
     """Atrapa ConfigEntry z rejestrem callbacków unload."""
 
     def __init__(self, *, data: dict | None = None, options: dict | None = None,
-                 entry_id: str = ENTRY_ID) -> None:
+                 entry_id: str = ENTRY_ID, unique_id: str | None = None) -> None:
         self.entry_id = entry_id
+        self.unique_id = unique_id
         self.data = dict(data if data is not None else {"api_key": API_KEY})
         self.options = dict(options or {})
         self.version = 1
@@ -94,6 +95,8 @@ class _ConfigEntries:
     def __init__(self, hass: "SetupHass") -> None:
         self._hass = hass
         self.forwarded: list[str] = []
+        self.unloaded: list[str] = []
+        self.updates: list[dict] = []
 
     def async_entries(self, domain: str | None = None):
         return []
@@ -111,6 +114,13 @@ class _ConfigEntries:
             await module.async_setup_entry(self._hass, entry, _add)
 
     async def async_unload_platforms(self, entry, platforms) -> bool:
+        self.unloaded.extend(_platform_name(p) for p in platforms)
+        return True
+
+    def async_update_entry(self, entry, **changes) -> bool:
+        self.updates.append(changes)
+        for attr, value in changes.items():
+            setattr(entry, attr, value)
         return True
 
     async def async_reload(self, entry_id) -> None:
@@ -188,7 +198,7 @@ def unique_ids(entities) -> set[str]:
 
 async def run_setup(setattr_: Callable[[Any, str, Any], None], *,
                     options: dict | None = None, data: dict | None = None,
-                    is_running: bool = True):
+                    is_running: bool = True, unique_id: str | None = None):
     """Uruchom `async_setup_entry`, dokończ utworzone zadania; zwróć (hass, entry, ok)."""
     integ = importlib.import_module("custom_components.volcast")
     setattr_(integ, "VolcastCoordinator", FakeCoordinator)
@@ -196,7 +206,7 @@ async def run_setup(setattr_: Callable[[Any, str, Any], None], *,
     setattr_(integ, "DailyReconciler", FakeReconciler)
 
     hass = SetupHass(is_running=is_running)
-    entry = FakeEntry(data=data, options=options)
+    entry = FakeEntry(data=data, options=options, unique_id=unique_id)
     ok = await integ.async_setup_entry(hass, entry)
     await drain(hass)
     return hass, entry, ok

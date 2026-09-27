@@ -9,6 +9,7 @@ here lets the config flow explain exactly what went wrong.
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 API_KEY_PATTERN = re.compile(r"^vk_[0-9a-f]{64}$")
@@ -30,3 +31,20 @@ def check_api_key_format(api_key: str) -> str | None:
     if not API_KEY_PATTERN.match(key):
         return ERROR_INVALID_FORMAT
     return None
+
+
+# unique_id wpisu konta. HA loguje unique_id jawnie (np. przy kolizji), więc sam klucz
+# nigdy nim nie jest — tylko jego SHA-256 (klucz to 256 bitów losowości: nieodwracalny).
+_UNIQUE_ID_PREFIX = "account_"
+_LEGACY_KEY_PREFIX = "vk_"
+
+
+def account_unique_id(api_key: str) -> str:
+    """Stabilny unique_id wpisu konta, bez klucza w jawnej postaci."""
+    digest = hashlib.sha256(api_key.strip().encode("utf-8")).hexdigest()
+    return f"{_UNIQUE_ID_PREFIX}{digest}"
+
+
+def is_legacy_unique_id(unique_id: object) -> bool:
+    """Wpisy sprzed skrótu miały jawny klucz konta jako unique_id."""
+    return isinstance(unique_id, str) and unique_id.startswith(_LEGACY_KEY_PREFIX)

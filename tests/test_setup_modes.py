@@ -31,6 +31,7 @@ IDS_172_NO_OPTIONS = {f"test_entry_id_{k}" for k in (
     "peak_production", "integration_healthy")}
 
 DISCOVERY_IDS = {"test_entry_id_discovery", "test_entry_id_run_discovery"}
+MODES_DATA = [pytest.param(None, id="forecast"), pytest.param({"mode": "discovery_only"}, id="discovery_only")]
 
 
 async def test_forecast_entry_unique_ids_identical_to_1_7_2(setup_forecast_entry):
@@ -229,8 +230,8 @@ async def test_discovery_only_entry_data_has_only_discovery_runner(setup_forecas
     await setup_forecast_entry(data={"mode": "discovery_only"})
     hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
     entry_data = hass.data[DOMAIN][entry.entry_id]
-    # Żadnego koordynatora/trackera/reconcilera — tylko wykrywanie.
-    assert set(entry_data) == {"discovery"}
+    # Żadnego koordynatora/trackera/reconcilera — tylko wykrywanie (+ lista platform).
+    assert set(entry_data) == {"discovery", "platforms"}
     assert isinstance(entry_data["discovery"], DiscoveryRunner)
 
 
@@ -282,6 +283,72 @@ async def test_discovery_only_unload_uses_discovery_only_platforms(setup_forecas
     assert await async_unload_entry(hass, entry) is True
     assert captured["platforms"] == DISCOVERY_ONLY_PLATFORMS
     assert entry.entry_id not in hass.data[DOMAIN]
+
+
+async def test_discovery_entry_upgraded_in_place_unloads_only_loaded_platforms(setup_forecast_entry):
+    """Parowanie zamienia wpis „tylko rozpoznanie" w wpis konta PRZED przeładowaniem —
+    unload musi zdjąć platformy faktycznie załadowane, nie wyliczone z nowych danych
+    (HA: „Config entry was never loaded!" → wpis martwy do restartu)."""
+    from custom_components.volcast import async_unload_entry
+
+    await setup_forecast_entry(data={"mode": "discovery_only"})
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    forwarded = list(hass.config_entries.forwarded)
+    entry.data = {"api_key": "vk_" + "b" * 64, "api_url": "https://x.example/f"}
+
+    assert await async_unload_entry(hass, entry) is True
+    assert hass.config_entries.unloaded == forwarded == ["sensor", "button"]
+
+
+@pytest.mark.parametrize("data", MODES_DATA)
+async def test_unload_uses_platforms_recorded_at_setup(setup_forecast_entry, data):
+    from custom_components.volcast import async_unload_entry
+
+    await setup_forecast_entry(data=data)
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    assert await async_unload_entry(hass, entry) is True
+    assert hass.config_entries.unloaded == hass.config_entries.forwarded
+
+
+async def test_unload_without_record_falls_back_to_entry_mode(setup_forecast_entry):
+    from custom_components.volcast import async_unload_entry
+
+    await setup_forecast_entry(data={"mode": "discovery_only"})
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    del hass.data[DOMAIN][entry.entry_id]["platforms"]
+    assert await async_unload_entry(hass, entry) is True
+    assert hass.config_entries.unloaded == ["sensor", "button"]
+
+
+# --- unique_id wpisu konta: skrót klucza, nigdy jawny klucz ---
+
+async def test_legacy_raw_key_unique_id_migrated_to_hash(setup_forecast_entry):
+    from custom_components.volcast.key_format import account_unique_id
+    from tests.setup_harness import API_KEY
+
+    await setup_forecast_entry(options={}, unique_id=API_KEY)
+    hass, entry = setup_forecast_entry.hass, setup_forecast_entry.entry
+    assert hass.config_entries.updates == [{"unique_id": account_unique_id(API_KEY)}]
+    assert entry.unique_id == account_unique_id(API_KEY)
+    # Migracja przed rejestracją listenera — zmiana unique_id nie przeładowuje wpisu.
+    assert hass.config_entries.updates and len(entry.update_listeners) == 1
+
+
+@pytest.mark.parametrize("data,unique_id", [
+    ({}, None), ({}, "account_" + "0" * 64), ({"mode": "discovery_only"}, "discovery_only")])
+async def test_unique_id_left_alone_when_not_a_raw_key(setup_forecast_entry, data, unique_id):
+    await setup_forecast_entry(data=data or None, options={}, unique_id=unique_id)
+    assert setup_forecast_entry.hass.config_entries.updates == []
+
+
+async def test_unique_id_migration_failure_does_not_block_forecast(setup_forecast_entry, monkeypatch):
+    from tests.setup_harness import API_KEY, _ConfigEntries
+
+    def boom(self, entry, **changes):
+        raise ValueError("collision")
+    monkeypatch.setattr(_ConfigEntries, "async_update_entry", boom)
+    ids = await setup_forecast_entry(options={}, unique_id=API_KEY)
+    assert IDS_172_NO_OPTIONS <= ids
 
 
 async def test_discovery_only_unload_does_not_touch_unregistered_service(setup_forecast_entry):

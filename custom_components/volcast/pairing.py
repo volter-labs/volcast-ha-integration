@@ -38,4 +38,6 @@ class PairingPoller:
                 continue
             errors = 0
             await self._sleep(self._interval)
-        return PollResult("expired")
+        # Termin minął bez odpowiedzi chmury (ostatnie odpytanie się nie udało): to utrata
+        # połączenia, nie wygaśnięcie — właściciel mógł zdążyć potwierdzić.
+        return PollResult("error" if errors else "expired")

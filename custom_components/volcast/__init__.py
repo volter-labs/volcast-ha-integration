@@ -34,6 +34,7 @@ from .const import (
 )
 from .coordinator import VolcastCoordinator
 from .discovery_runner import DiscoveryRunner
+from .key_format import account_unique_id, is_legacy_unique_id
 from .production import VolcastProductionTracker
 from .reconciler import DailyReconciler
 from .version import async_integration_version
@@ -45,6 +46,42 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.B
 # Wpis bez konta (tylko wykrywanie) — bez koordynatora/trackera/reconcilera,
 # więc tylko encje, które czytają raport wykrywania.
 DISCOVERY_ONLY_PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
+
+# Klucz w hass.data[DOMAIN][entry_id]: platformy faktycznie przekazane przy setupie.
+# Unload zdejmuje dokładnie je — dane wpisu mogą się zmienić przed przeładowaniem
+# (parowanie zamienia wpis „tylko rozpoznanie" w wpis konta).
+DATA_PLATFORMS = "platforms"
+
+
+async def _async_forward_platforms(hass: HomeAssistant, entry: ConfigEntry, platforms: list) -> None:
+    """Przekaż platformy i zapamiętaj ich listę dla `async_unload_entry`."""
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    hass.data[DOMAIN][entry.entry_id][DATA_PLATFORMS] = list(platforms)
+
+
+def _loaded_platforms(hass: HomeAssistant, entry: ConfigEntry) -> list:
+    """Platformy do zdjęcia: zapamiętane przy setupie, awaryjnie według trybu wpisu."""
+    recorded = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get(DATA_PLATFORMS)
+    if recorded is not None:
+        return list(recorded)
+    if entry.data.get(CONF_MODE) == MODE_DISCOVERY_ONLY:
+        return DISCOVERY_ONLY_PLATFORMS
+    return PLATFORMS
+
+
+def _migrate_unique_id(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Wpis sprzed skrótu miał jawny klucz jako unique_id — zamiana na skrót.
+
+    Wołane przed rejestracją listenera aktualizacji (zmiana nie przeładowuje wpisu).
+    Błąd nie blokuje prognozy; bez klucza/unique_id w logu.
+    """
+    api_key = entry.data.get(CONF_API_KEY)
+    if not is_legacy_unique_id(getattr(entry, "unique_id", None)) or not isinstance(api_key, str):
+        return
+    try:
+        hass.config_entries.async_update_entry(entry, unique_id=account_unique_id(api_key))
+    except Exception as err:  # noqa: BLE001 — porządek w rejestrze, nie warunek działania
+        _LOGGER.warning("Volcast: could not update the entry identifier (%s)", type(err).__name__)
 
 
 def _async_register_services(hass: HomeAssistant) -> None:
@@ -101,6 +138,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Volcast from a config entry."""
     if entry.data.get(CONF_MODE) == MODE_DISCOVERY_ONLY:
         return await _async_setup_discovery_only_entry(hass, entry)
+
+    _migrate_unique_id(hass, entry)
 
     api_key = entry.data[CONF_API_KEY]
     api_url = entry.data.get(CONF_API_URL, DEFAULT_API_URL)
@@ -185,7 +224,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _async_register_services(hass)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await _async_forward_platforms(hass, entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
@@ -204,7 +243,7 @@ async def _async_setup_discovery_only_entry(hass: HomeAssistant, entry: ConfigEn
     runner = DiscoveryRunner(hass, entry.entry_id, await async_integration_version(hass))
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"discovery": runner}
 
-    await hass.config_entries.async_forward_entry_setups(entry, DISCOVERY_ONLY_PLATFORMS)
+    await _async_forward_platforms(hass, entry, DISCOVERY_ONLY_PLATFORMS)
 
     _schedule_discovery(hass, entry, runner)
 
@@ -342,11 +381,7 @@ def _setup_reconciler(
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    platforms = (
-        DISCOVERY_ONLY_PLATFORMS
-        if entry.data.get(CONF_MODE) == MODE_DISCOVERY_ONLY
-        else PLATFORMS
-    )
+    platforms = _loaded_platforms(hass, entry)
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, platforms):
         entry_data = hass.data[DOMAIN].pop(entry.entry_id)
         tracker = entry_data.get("tracker")
