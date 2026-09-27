@@ -206,6 +206,7 @@ async def test_identity_rechecked_after_timeout_streak(hass, goodwe_udp_sim, sim
             clock.advance(10.0)
             await conn.async_poll()
         assert conn.stats.consecutive_timeouts >= 3 and conn.identity_check_due()
+        assert conn.identity == "pending"                      # zapisy wstrzymane przed ponownym odczytem
         clock.advance(10.0)
         await conn.async_poll()
         assert (3, 35000, 33) in goodwe_udp_sim.log[seen + 4:] and conn.identity == "confirmed"
@@ -272,7 +273,7 @@ async def test_stop_is_idempotent_and_unregisters_host(hass, goodwe_udp_sim):
     h = hass()
     conn = _conn(h, _target(goodwe_udp_sim))
     await conn.async_start()
-    assert h.data[DOMAIN]["direct_hosts"] == {goodwe_udp_sim.host: "self"}
+    assert h.data[DOMAIN]["direct_hosts"][goodwe_udp_sim.host] is conn
     await conn.async_stop()
     await conn.async_stop()
     assert h.data[DOMAIN]["direct_hosts"] == {} and await conn.async_poll() is None
@@ -307,3 +308,223 @@ def test_target_fingerprint_salted_and_hides_host():
     assert fp == target_fingerprint(dict(t), SALT) and fp != target_fingerprint(t, bytes(range(1, 17)))
     assert len(fp) == 16 and "192" not in fp
     assert fp != target_fingerprint({**t, "port": 503}, SALT)
+
+
+# ── tożsamość w toku: zdarzenia łącza, godzinne sprawdzenie na UDP ─────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("counter", ["peer_resets", "reconnects"])
+async def test_link_event_makes_identity_pending_until_recheck_passes(hass, goodwe_udp_sim, sim_faults, counter):
+    clock = FakeClock()
+    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    try:
+        await conn.async_start()
+        first = await conn.async_poll()
+        assert conn.identity == "confirmed"
+        setattr(conn.stats, counter, getattr(conn.stats, counter) + 1)
+        sim_faults.drop_next = 100                             # ponowne sprawdzenie jeszcze się nie udaje
+        clock.advance(10.0)
+        await conn.async_poll()
+        assert conn.identity == "pending" and conn.identity_check_due()
+        assert conn.reading is first                           # bez nowego odczytu z niepotwierdzonego urządzenia
+        clock.advance(10.0)
+        await conn.async_poll()
+        assert conn.identity == "pending"                      # nadal: dopóki sprawdzenie nie przejdzie
+        sim_faults.drop_next = 0
+        clock.advance(10.0)
+        await conn.async_poll()
+        assert conn.identity == "confirmed" and conn.reading is not first
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_link_event_seen_during_read_drops_that_reading(hass, goodwe_udp_sim, sim_faults):
+    clock = FakeClock()
+    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    try:
+        await conn.async_start()
+        first = await conn.async_poll()
+        real = conn.client.read_state
+
+        async def read_then_reset():
+            r = await real()
+            conn.stats.peer_resets += 1
+            sim_faults.drop_next = 100                         # ponowne sprawdzenie tożsamości nie przechodzi
+            return r
+        conn.client.read_state = read_then_reset
+        clock.advance(10.0)
+        await conn.async_poll()
+        assert conn.identity == "pending" and conn.reading is first
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_hourly_identity_recheck_inside_polling_on_udp(hass, goodwe_udp_sim):
+    clock = FakeClock()
+    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    try:
+        await conn.async_start()
+        await conn.async_poll()
+        seen = len(goodwe_udp_sim.log)
+        clock.advance(10.0)
+        await conn.async_poll()
+        assert all(addr != 35000 for _, addr, _ in goodwe_udp_sim.log[seen:])
+        seen = len(goodwe_udp_sim.log)
+        clock.advance(3601.0)
+        await conn.async_poll()
+        assert (3, 35000, 33) in goodwe_udp_sim.log[seen:] and conn.identity == "confirmed"
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_hourly_recheck_mismatch_drops_readings(hass, goodwe_udp_sim, goodwe_bank, issues):
+    clock = FakeClock()
+    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    try:
+        await conn.async_start()
+        assert await conn.async_poll() is not None
+        for a in range(35003, 35011):
+            goodwe_bank.poke(a, 0x5A5A)                       # inne urządzenie pod tym samym adresem
+        clock.advance(3601.0)
+        assert await conn.async_poll() is None
+        assert conn.identity == "mismatch" and conn.reading is None
+        assert any(k == "direct_identity_changed" for _, k in issues.created)
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_identity_not_read_without_expected_fingerprint(hass, goodwe_udp_sim):
+    for fp in (None, "zz" * 8, "ą" * 16):
+        conn = _conn(hass(), _target(goodwe_udp_sim, device_fp=fp))
+        try:
+            await conn.async_start()
+            assert conn.refused() is None and conn.identity == "unknown"
+            await conn.async_poll()
+            assert all(addr != 35000 for _, addr, _ in goodwe_udp_sim.log)
+        finally:
+            await conn.async_stop()
+
+
+# ── zatrzymanie w trakcie startu, rejestr hostów ──────────────────────────
+
+
+@pytest.fixture
+def timers(monkeypatch):
+    made, cancelled = [], []
+
+    def track(hass, action, interval):
+        made.append(action)
+        return lambda: cancelled.append(action)
+    monkeypatch.setattr(direct_mod, "async_track_time_interval", track)
+    return types.SimpleNamespace(made=made, cancelled=cancelled)
+
+
+@pytest.mark.asyncio
+async def test_stop_during_slow_resolve_leaves_nothing_behind(hass, goodwe_udp_sim, timers):
+    gate = asyncio.Event()
+
+    async def resolve(name):
+        await gate.wait()
+        return ("192.168.77.1",)                               # inny adres: bez kolizji
+    h = hass(_entry("goodwe", "g", data={"host": "inverter.local"}))
+    conn = _conn(h, _target(goodwe_udp_sim), resolve=resolve)
+    start = asyncio.create_task(conn.async_start())
+    await asyncio.sleep(0.02)
+    await conn.async_stop()
+    gate.set()
+    await asyncio.wait_for(start, 2.0)
+    await asyncio.sleep(0.05)
+    assert h.data.get(DOMAIN, {}).get("direct_hosts", {}) == {}
+    assert conn.client is None and timers.made == [] and goodwe_udp_sim.requests == 0
+
+
+@pytest.mark.asyncio
+async def test_stop_during_identity_read_registers_no_timer(hass, goodwe_udp_sim, sim_faults, timers):
+    h = hass()
+    conn = _conn(h, _target(goodwe_udp_sim))
+    sim_faults.delay_s = 0.3
+    start = asyncio.create_task(conn.async_start())
+    await asyncio.sleep(0.05)
+    await conn.async_stop()
+    at_stop = goodwe_udp_sim.requests
+    await asyncio.wait_for(start, 3.0)
+    await asyncio.sleep(0.4)
+    assert timers.made == [] and h.data[DOMAIN]["direct_hosts"] == {}
+    assert goodwe_udp_sim.requests == at_stop
+
+
+@pytest.mark.asyncio
+async def test_second_connection_of_same_entry_is_refused(hass, goodwe_udp_sim, caplog):
+    h = hass()
+    first = _conn(h, _target(goodwe_udp_sim))
+    second = _conn(h, _target(goodwe_udp_sim))
+    try:
+        await first.async_start()
+        with caplog.at_level(logging.WARNING):
+            await second.async_start()
+        assert second.refused() == "direct_in_use" and "in use" in caplog.text
+        assert goodwe_udp_sim.host not in caplog.text
+        await second.async_stop()
+        assert h.data[DOMAIN]["direct_hosts"][goodwe_udp_sim.host] is first
+    finally:
+        await first.async_stop()
+    assert h.data[DOMAIN]["direct_hosts"] == {}
+
+
+# ── kolizja statyczna w pracy, powrót tożsamości ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_static_conflict_rechecked_every_ten_minutes(hass, goodwe_udp_sim):
+    clock = FakeClock()
+    h = hass()
+    conn = _conn(h, _target(goodwe_udp_sim), clock=clock)
+    try:
+        await conn.async_start()
+        h.config_entries._entries.append(_entry("goodwe", "g", data={"host": goodwe_udp_sim.host}))
+        clock.advance(10.0)
+        await conn.async_poll()
+        assert not conn.conflict
+        clock.advance(600.0)
+        await conn.async_poll()
+        assert conn.static_conflicts == ("goodwe",) and conn.conflict
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_mismatch_retries_every_ten_minutes_and_recovers(hass, goodwe_udp_sim, goodwe_bank, issues):
+    clock = FakeClock()
+    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    try:
+        await conn.async_start()
+        saved = goodwe_bank.read(35003, 8)
+        for a in range(35003, 35011):
+            goodwe_bank.poke(a, 0x5A5A)
+        clock.advance(3601.0)
+        await conn.async_poll()
+        assert conn.identity == "mismatch"
+        for a, w in zip(range(35003, 35011), saved):
+            goodwe_bank.poke(a, w)
+        clock.advance(10.0)
+        await conn.async_poll()
+        assert conn.identity == "mismatch"                     # tylko co 10 min
+        clock.advance(600.0)
+        await conn.async_poll()
+        assert conn.identity == "confirmed"
+        assert "direct_identity_changed_self" in issues.deleted
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_with_forget_clears_identity_issue(hass, goodwe_udp_sim, issues):
+    conn = _conn(hass(), _target(goodwe_udp_sim))
+    await conn.async_start()
+    await conn.async_stop(forget=True)
+    assert "direct_identity_changed_self" in issues.deleted

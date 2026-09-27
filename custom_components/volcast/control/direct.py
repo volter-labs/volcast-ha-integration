@@ -9,9 +9,12 @@ Warstwa HA robi wyłącznie I/O i cykl życia; decyzje są w rdzeniu (`core/`).
   ostatniego odczytu (wiek rośnie), słuchacze wołani po każdej próbie. Kolizja statyczna
   sprawdzana znowu co 10 min, liczniki transportu karmią `ContentionMonitor`.
 * Tożsamość (odcisk z solą instalacji) potwierdzana przy starcie, po ponownym połączeniu, po serii
-  ≥ 3 przekroczeń czasu, na UDP co godzinę i na żądanie wykonawcy (`identity_check_due`).
-  `mismatch` → odczyt znika (sensory niedostępne), odczyty wstrzymane poza sprawdzaniem tożsamości
-  co 10 min, zgłoszenie w Naprawach. Zapisy rozstrzyga wykonawca (`identity == "confirmed"`).
+  ≥ 3 przekroczeń czasu, na UDP co godzinę (w odpytywaniu) i na żądanie wykonawcy
+  (`identity_check_due`). Zdarzenie łącza albo wiek potwierdzenia → `pending` aż do udanego
+  ponownego sprawdzenia (bez nowych odczytów stanu). `mismatch` → odczyt znika (sensory
+  niedostępne), odczyty wstrzymane poza sprawdzaniem tożsamości co 10 min, zgłoszenie w Naprawach.
+  Zapisy i decyzje trybu próbnego wymagają `identity == "confirmed"` (rozstrzyga wykonawca).
+* Odpytywanie z zegara HA biegnie na pętli zdarzeń (`@callback`), zadanie w tle wpisu.
 
 Logi: wyłącznie nazwy klas błędów i liczniki — nigdy host, port, numer seryjny ani numer loggera.
 """
@@ -27,6 +30,7 @@ from datetime import timedelta
 from typing import Awaitable, Callable, Iterable, Mapping
 
 import homeassistant.util.dt as dt_util
+from homeassistant.core import callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 
@@ -48,6 +52,7 @@ IDENTITY_UDP_MAX_AGE_S = 3600.0     # UDP (bez połączenia): tożsamość co go
 IDENTITY_MAX_AGE_S = 3600.0         # przed sesją zapisów: potwierdzenie nie starsze niż godzina
 TIMEOUT_STREAK = 3
 RESOLVE_TIMEOUT_S = 2.0
+_FP_HEX = frozenset("0123456789abcdef")
 
 Resolver = Callable[[str], Awaitable[Iterable[str] | None]]
 
@@ -56,6 +61,13 @@ def target_fingerprint(target: Mapping, salt: bytes) -> str:
     """Odcisk celu połączenia (własność w trybie bezpośrednim): HMAC z solą instalacji — bez adresu jawnie."""
     msg = f"{target.get('transport')}|{target.get('host')}|{target.get('port')}|{target.get('unit_id')}"
     return hmac.new(bytes(salt), msg.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def _expected_fp(value) -> str | None:
+    """Oczekiwany odcisk urządzenia: dokładnie 16 małych cyfr szesnastkowych, inaczej brak."""
+    if isinstance(value, str) and len(value) == 16 and set(value) <= _FP_HEX:
+        return value
+    return None
 
 
 async def _default_resolve(name: str) -> list[str]:
@@ -139,7 +151,7 @@ async def async_entry_snaps(hass, self_entry_id: str, *, resolve: Resolver | Non
 class DirectConnection:
     def __init__(self, hass, entry, profile, target: Mapping, *, trial: bool, salt: bytes,
                  poll_s: float = DIRECT_POLL_S, transport_factory=make_transport, clock=time.monotonic,
-                 utcnow=dt_util.utcnow, allow_loopback: bool = False, unreadable: Iterable[str] = (),
+                 utcnow=dt_util.utcnow, allow_loopback: bool = False, unreadable: Iterable[str],
                  resolve: Resolver | None = None) -> None:
         self._hass = hass
         self._entry = entry
@@ -167,6 +179,7 @@ class DirectConnection:
         self._started = False
         self._poll_lock = asyncio.Lock()
         self._poll_task: asyncio.Task | None = None
+        self._timer_task: asyncio.Task | None = None
         self._last_poll: float | None = None
         self._last_static: float | None = None
         self._identity_at: float | None = None
@@ -212,7 +225,9 @@ class DirectConnection:
 
     def identity_check_due(self, now_mono: float | None = None) -> bool:
         """Czy przed sesją zapisów trzeba potwierdzić tożsamość urządzenia: brak potwierdzenia, ponowne
-        połączenie, seria przekroczeń czasu albo potwierdzenie starsze niż godzina."""
+        połączenie, seria przekroczeń czasu albo potwierdzenie starsze niż godzina.
+
+        Dla bramek zapisu to za mało: zapis i decyzja próbna wymagają też `identity == "confirmed"`."""
         now = self._clock() if now_mono is None else now_mono
         self._observe_link()
         if self.identity != "confirmed" or self._recheck or self._identity_at is None:
@@ -249,17 +264,23 @@ class DirectConnection:
             _LOGGER.warning("Volcast direct connection refused: target is not a valid local address")
             return
         hosts = self._hass.data.setdefault(DOMAIN, {}).setdefault("direct_hosts", {})
-        owner = hosts.get(host)
-        if owner is not None and owner != self._entry.entry_id:
+        if hosts.get(host) is not None:                  # inne połączenie (także tego samego wpisu) żyje
             self._refused = "direct_in_use"
+            _LOGGER.warning("Volcast direct connection refused: the inverter address is already in use")
             return
         clash = await self._static_check(host)
+        if self._stopped:                                # zatrzymane w trakcie startu: nic nie zostawiamy
+            return
+        if hosts.get(host) is not None:
+            self._refused = "direct_in_use"
+            _LOGGER.warning("Volcast direct connection refused: the inverter address is already in use")
+            return
         if clash:
             self._refused = "direct_in_use" if SELF_DOMAIN in clash else f"direct_conflict:{clash[0]}"
             self.static_conflicts = ()
             _LOGGER.warning("Volcast direct connection refused: another integration uses this inverter")
             return
-        hosts[host] = self._entry.entry_id
+        hosts[host] = self
         self._host = host
         try:
             transport = self._factory(cfg, allow_loopback=self._allow_loopback)
@@ -272,13 +293,22 @@ class DirectConnection:
         self.client = RegisterClient(transport, self.profile, clock=self._clock, utcnow=self._utcnow, salt=self._salt,
                                      unreadable=self.unreadable)
         await self.async_confirm_identity()
+        if self._stopped:                                # stop w trakcie potwierdzania: bez zegara
+            await self._release()
+            return
         try:
             self._unsub_timer = async_track_time_interval(self._hass, self._on_timer,
                                                           timedelta(seconds=self.poll_s))
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Volcast direct polling timer not started: %s", type(err).__name__)
 
-    async def async_stop(self) -> None:
+    async def async_stop(self, *, forget: bool = False) -> None:
+        """Zatrzymanie; `forget=True` (usunięcie wpisu albo zmiana celu) kasuje też zgłoszenie tożsamości."""
+        if forget:
+            try:
+                ir.async_delete_issue(self._hass, DOMAIN, self._identity_issue)
+            except Exception:  # noqa: BLE001
+                pass
         if self._stopped:
             return
         self._stopped = True
@@ -288,16 +318,21 @@ class DirectConnection:
             except Exception:  # noqa: BLE001
                 pass
             self._unsub_timer = None
-        task = self._poll_task
-        if task is not None and task is not asyncio.current_task() and not task.done():
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+        for task in (self._poll_task, self._timer_task):
+            if task is not None and task is not asyncio.current_task() and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+        await self._release()
+        self._listeners.clear()
+
+    async def _release(self) -> None:
+        """Zwolnienie hosta (tylko własnej rejestracji) i zamknięcie transportu; powtarzalne."""
         if self._host is not None:
             hosts = self._hass.data.get(DOMAIN, {}).get("direct_hosts", {})
-            if hosts.get(self._host) == self._entry.entry_id:
+            if hosts.get(self._host) is self:
                 hosts.pop(self._host, None)
             self._host = None
         if self.client is not None:
@@ -305,12 +340,19 @@ class DirectConnection:
                 await self.client.transport.close()
             except Exception:  # noqa: BLE001
                 pass
-        self._listeners.clear()
 
+    @callback
     def _on_timer(self, _now=None) -> None:
+        """Zegar HA: na pętli zdarzeń (bez `@callback` HA uruchomiłby to w wątku roboczym)."""
         if self._stopped or self._refused is not None or not self.poll_due() or self._poll_lock.locked():
             return
-        self._hass.async_create_task(self.async_poll())
+        if self._timer_task is not None and not self._timer_task.done():
+            return
+        create = getattr(self._entry, "async_create_background_task", None)
+        if callable(create):
+            self._timer_task = create(self._hass, self.async_poll(), name="volcast_direct_poll")
+        else:
+            self._timer_task = self._hass.async_create_task(self.async_poll())
 
     # ── odpytywanie ──
 
@@ -342,11 +384,17 @@ class DirectConnection:
                 await self.async_confirm_identity()
             self._notify()
             return self.reading
+        self._observe_link()
+        if self.identity == "confirmed" and self._identity_stale(now):
+            self.identity = "pending"                  # UDP: tożsamość co godzinę, przed odczytem stanu
         if self.identity != "confirmed" or self._recheck:
             await self.async_confirm_identity()
             if self.identity == "mismatch":
                 self._notify()
                 return None
+            if self.identity == "pending":             # niepotwierdzone po zdarzeniu łącza: bez odczytu stanu
+                self._tick_monitor(now)
+                return self.reading
         try:
             reading = await self.client.read_state()
         except TransportError as err:
@@ -355,24 +403,35 @@ class DirectConnection:
         self._observe_link()
         if self._recheck and reading is not None:
             await self.async_confirm_identity()        # ponowne połączenie w trakcie odczytu
-            if self.identity == "mismatch":
-                reading = None
+        if self.identity in ("mismatch", "pending"):
+            reading = None                             # odczyt z urządzenia, którego nie potwierdziliśmy
         if reading is not None:
             self.reading = reading
+        self._tick_monitor(now)
+        return self.reading if self.identity != "mismatch" else None
+
+    def _tick_monitor(self, now: float) -> None:
         stats = self.stats
         self.monitor.note_stats(stats, now)
         self.monitor.tick(now)
         self._notify()
-        return self.reading
+
+    def _identity_stale(self, now: float) -> bool:
+        if self.target.get("transport") != "goodwe_udp" or self._identity_at is None:
+            return False
+        return not 0.0 <= now - self._identity_at < IDENTITY_UDP_MAX_AGE_S
 
     def _observe_link(self) -> None:
+        """Zdarzenie łącza (ponowne połączenie, zerwanie, seria przekroczeń czasu) → ponowne sprawdzenie;
+        potwierdzona tożsamość spada do `pending` aż do udanego sprawdzenia."""
         stats = self.stats
-        if stats.reconnects > self._seen_reconnects or stats.peer_resets > self._seen_peer_resets:
-            self._recheck = True
+        event = stats.reconnects > self._seen_reconnects or stats.peer_resets > self._seen_peer_resets
         self._seen_reconnects = stats.reconnects
         self._seen_peer_resets = stats.peer_resets
-        if stats.consecutive_timeouts >= TIMEOUT_STREAK:
+        if event or stats.consecutive_timeouts >= TIMEOUT_STREAK:
             self._recheck = True
+            if self.identity == "confirmed":
+                self.identity = "pending"
 
     def _notify(self) -> None:
         for cb in list(self._listeners):
@@ -394,7 +453,11 @@ class DirectConnection:
 
     async def async_confirm_identity(self) -> str:
         """Odczyt rejestrów identyfikacyjnych i porównanie z odciskiem celu."""
-        if self.client is None:
+        if self.client is None or self._stopped:
+            return self.identity
+        expected = _expected_fp(self.target.get("device_fp"))
+        if expected is None:                           # bez oczekiwanego odcisku nie ma czego potwierdzać
+            self.identity = "unknown"
             return self.identity
         now = self._clock()
         self._identity_tried = now
@@ -404,16 +467,16 @@ class DirectConnection:
             _LOGGER.debug("Volcast direct identity read failed: %s", type(err).__name__)
             fp = None
         self._observe_link()
-        expected = self.target.get("device_fp")
         previous = self.identity
-        if fp is None or not isinstance(expected, str) or not expected:
-            self.identity = "unknown" if previous != "mismatch" else previous
+        if fp is None or self._stopped:
+            # nieudane sprawdzenie: `pending`/`mismatch` trwają, pierwsze sprawdzenie zostaje `unknown`
+            self.identity = previous if previous in ("pending", "mismatch") else "unknown"
             return self.identity
         self._recheck = False
         self._identity_at = now
-        if hmac.compare_digest(fp, expected):
+        if hmac.compare_digest(fp.encode(), expected.encode()):
             self.identity = "confirmed"
-            if previous == "mismatch":
+            if previous != "confirmed" and previous != "pending":
                 ir.async_delete_issue(self._hass, DOMAIN, self._identity_issue)
         else:
             self.identity = "mismatch"
