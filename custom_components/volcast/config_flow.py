@@ -25,6 +25,11 @@ from homeassistant.core import callback
 from homeassistant.helpers import instance_id, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+try:
+    from homeassistant.data_entry_flow import section
+except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w formularzu
+    section = None
+
 from .cloud.client import Backend, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control.runtime import async_restore_if_control_changed
 from .control.telemetry import TELEMETRY_FIELDS
@@ -80,6 +85,8 @@ _ABORT_BY_STATUS = {"expired": "pairing_expired", "gone": "pairing_expired", "di
                     "error": "pairing_connection_lost"}
 # Poświadczenia wydane (także w zgubionej odpowiedzi) — anulowanie sesji nic by nie cofnęło.
 _CREDENTIALS_ISSUED = ("confirmed", "consumed")
+# Zwinięta sekcja formularza parowania z adresem usługi parowania.
+PAIR_ADVANCED = "advanced"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -138,36 +145,34 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_pair(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Start pairing; advanced mode may point it at another pairing service.
+        """Start pairing: a one-click form, then the external step.
+
+        Formularz ma zwiniętą sekcję „zaawansowane" z adresem usługi parowania: puste
+        pole = usługa domyślna. Tryb zaawansowany HA jest wycofywany (frontend nie
+        przekazuje już tej flagi do kreatora), więc nadpisanie adresu żyje w sekcji
+        formularza, widocznej dla każdego, ale domyślnie zwiniętej.
 
         External step idzie bez (przestarzałego) `step_id`, więc HA zapisuje go jako
         krok `pair` i po odpowiedzi chmury wraca TUTAJ bez danych — wtedy od razu
-        do obsługi kroku zewnętrznego, nigdy do formularza adresu.
+        do obsługi kroku zewnętrznego, nigdy do formularza.
         """
         if self._session is not None or self._result is not None:
             return await self._async_step_external()
-        if user_input is not None:
-            url = str(user_input.get(CONF_PAIRING_URL, "")).strip()
-            if not is_https_url(url):
-                return self.async_show_form(step_id="pair", data_schema=self._pair_schema(url),
-                                            errors={"base": "invalid_url"})
-            self._pairing_url = url
-        elif self._advanced_requested():
-            return self.async_show_form(step_id="pair", data_schema=self._pair_schema(BETA_PAIRING_URL))
+        if user_input is None:
+            return self.async_show_form(step_id="pair", data_schema=self._pair_schema(None))
+        url = _pairing_url_from(user_input)
+        if url and not is_https_url(url):
+            return self.async_show_form(step_id="pair", data_schema=self._pair_schema(url),
+                                        errors={"base": "invalid_url"})
+        self._pairing_url = url or BETA_PAIRING_URL
         return await self._async_step_external()
 
-    def _advanced_requested(self) -> bool:
-        """Formularz adresu tylko na jawną prośbę frontendu (tryb zaawansowany użytkownika).
-
-        Bieżące HA wycofuje tryb zaawansowany i `show_advanced_options` zwraca True dla
-        każdego — formularz zmiany usługi parowania pokazywałby się wszystkim.
-        """
-        context = getattr(self, "context", None)
-        return isinstance(context, dict) and context.get("show_advanced_options") is True
-
     @staticmethod
-    def _pair_schema(default: str) -> vol.Schema:
-        return vol.Schema({vol.Required(CONF_PAIRING_URL, default=default): str})
+    def _pair_schema(url: str | None) -> vol.Schema:
+        field = {vol.Optional(CONF_PAIRING_URL, description={"suggested_value": url or None}): str}
+        if section is None:
+            return vol.Schema(field)
+        return vol.Schema({vol.Optional(PAIR_ADVANCED): section(vol.Schema(field), {"collapsed": True})})
 
     def _entries_by_kind(self) -> tuple[list, list]:
         """(wpisy konta, wpisy „tylko rozpoznanie") — ignorowane pomijamy."""
@@ -449,6 +454,13 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
 _FORECAST_KEYS = (CONF_UPDATE_INTERVAL, CONF_PEAK_THRESHOLD, CONF_PV_ENERGY_ENTITY, CONF_PV_POWER_ENTITY,
                   CONF_BATTERY_SOC_ENTITY, CONF_BATTERY_CHARGE_POWER_ENTITY)
 _EMPTY = (None, "", {})
+
+
+def _pairing_url_from(user_input: dict[str, Any]) -> str:
+    """Adres z formularza parowania: z sekcji „zaawansowane" albo płaskiego pola (starsze HA)."""
+    adv = user_input.get(PAIR_ADVANCED)
+    raw = adv.get(CONF_PAIRING_URL) if isinstance(adv, dict) else user_input.get(CONF_PAIRING_URL)
+    return str(raw or "").strip()
 _CURRENCY = re.compile(r"[A-Z]{3}")
 
 

@@ -44,6 +44,8 @@ KEY = "vk_" + "b" * 64
 UID = account_unique_id(KEY)
 SESSION = PairingSession("s1", "vps_tok", "https://volcast.app/connect?s=s1", "t")
 CONFIRMED = PollResult("confirmed", api_key=KEY, user_id="u1", backend=BACKEND)
+# Jedno kliknięcie w formularzu parowania: zwinięta sekcja „zaawansowane" nietknięta.
+SUBMIT = {"advanced": {}}
 COMPONENT = Path(__file__).parent.parent / "custom_components" / "volcast"
 
 
@@ -108,7 +110,7 @@ def make_flow(monkeypatch, *, polls, entries=(), begin_error=None):
 
 
 async def _pair_until_result(flow):
-    await flow.async_step_pair()
+    await flow.async_step_pair(SUBMIT)
     await asyncio.gather(*flow._tasks)
     return await flow.async_step_pair_finish()
 
@@ -122,7 +124,7 @@ def test_pair_happy_path_creates_entry_with_backend(monkeypatch):
     flow = make_flow(monkeypatch, polls=[PollResult("pending"), CONFIRMED])
 
     async def go():
-        ext = await flow.async_step_pair()
+        ext = await flow.async_step_pair(SUBMIT)
         await asyncio.gather(*flow._tasks)
         # HA wraca do kroku, który pokazał external step (tu: `pair`) — bez danych.
         done = await flow.async_step_pair()
@@ -144,12 +146,11 @@ def test_pair_happy_path_creates_entry_with_backend(monkeypatch):
 
 
 def test_advanced_reentry_after_form_does_not_show_form_again(monkeypatch):
-    """Po formularzu adresu external step ma id `pair` — powrót HA nie może pokazać formularza."""
+    """Po formularzu external step ma id `pair` — powrót HA nie może pokazać formularza."""
     flow = make_flow(monkeypatch, polls=[CONFIRMED])
-    flow.context = {"source": "user", "show_advanced_options": True}
 
     async def go():
-        ext = await flow.async_step_pair({"pairing_url": cf.BETA_PAIRING_URL})
+        ext = await flow.async_step_pair({"advanced": {"pairing_url": cf.BETA_PAIRING_URL}})
         await asyncio.gather(*flow._tasks)
         return ext, await flow.async_step_pair()
     ext, done = asyncio.run(go())
@@ -161,7 +162,7 @@ def test_begin_describes_this_instance(monkeypatch):
     flow = make_flow(monkeypatch, polls=[PollResult("pending")])
 
     async def go():
-        await flow.async_step_pair()
+        await flow.async_step_pair(SUBMIT)
         flow.async_remove()
         await asyncio.gather(*flow._tasks, return_exceptions=True)
     asyncio.run(go())
@@ -175,7 +176,7 @@ def test_pair_reentry_while_pending_does_not_begin_again(monkeypatch):
     flow = make_flow(monkeypatch, polls=[PollResult("pending")])
 
     async def go():
-        first = await flow.async_step_pair()
+        first = await flow.async_step_pair(SUBMIT)
         again = await flow.async_step_pair()
         flow.async_remove()
         await asyncio.gather(*flow._tasks, return_exceptions=True)
@@ -219,7 +220,7 @@ def test_poller_crash_still_finishes_the_flow(monkeypatch):
 @pytest.mark.parametrize("err,reason", [(PairingDisabled(), "pairing_disabled"), (PairingError("x"), "cannot_connect")])
 def test_begin_failures_abort(monkeypatch, err, reason):
     flow = make_flow(monkeypatch, polls=[PollResult("pending")], begin_error=err)
-    assert asyncio.run(flow.async_step_pair()) == {"type": "abort", "reason": reason}
+    assert asyncio.run(flow.async_step_pair(SUBMIT)) == {"type": "abort", "reason": reason}
     assert flow._tasks == []
 
 
@@ -286,7 +287,7 @@ def test_multiple_account_entries_abort(monkeypatch):
     a = entry("a", {"api_key": "vk_1" * 5})
     b = entry("b", {"api_key": "vk_2" * 5})
     flow = make_flow(monkeypatch, polls=[PollResult("pending")], entries=[a, b])
-    assert asyncio.run(flow.async_step_pair()) == {"type": "abort", "reason": "multiple_accounts"}
+    assert asyncio.run(flow.async_step_pair(SUBMIT)) == {"type": "abort", "reason": "multiple_accounts"}
     assert FakeClient.begins == []
 
 
@@ -304,7 +305,7 @@ def test_flow_removed_cancels_session(monkeypatch):
     flow = make_flow(monkeypatch, polls=[PollResult("pending")])
 
     async def go():
-        await flow.async_step_pair()
+        await flow.async_step_pair(SUBMIT)
         flow.async_remove()
         await asyncio.sleep(0)
         await asyncio.gather(*flow._tasks, return_exceptions=True)
@@ -340,50 +341,91 @@ def test_cancel_failure_is_swallowed(monkeypatch):
     monkeypatch.setattr(FakeClient, "async_cancel", bad_cancel)
 
     async def go():
-        await flow.async_step_pair()
+        await flow.async_step_pair(SUBMIT)
         flow.async_remove()
         return await asyncio.gather(*flow._tasks, return_exceptions=True)
     results = asyncio.run(go())
     assert not any(isinstance(r, Exception) and not isinstance(r, asyncio.CancelledError) for r in results)
 
 
-def test_address_form_only_on_explicit_advanced_context(monkeypatch):
-    """Bieżące HA: `show_advanced_options` zwraca True dla każdego — to nie może pokazać
-    formularza adresu; decyduje tylko jawna flaga w kontekście kreatora."""
+def _capture_forms(flow):
+    forms = []
+
+    def show_form(*, step_id, data_schema=None, errors=None, **_):
+        forms.append(data_schema)
+        return {"type": "form", "step_id": step_id, "errors": errors or {}}
+    flow.async_show_form = show_form
+    return forms
+
+
+def test_pair_first_shows_one_click_form_with_collapsed_advanced_section(monkeypatch):
+    """Tryb zaawansowany HA jest wycofywany — adres usługi jest w zwiniętej sekcji formularza."""
     flow = make_flow(monkeypatch, polls=[PollResult("pending")])
-    flow.show_advanced_options = True
-    flow.context = {"source": "user"}
+    forms = _capture_forms(flow)
+    form = asyncio.run(flow.async_step_pair())
+    assert form == {"type": "form", "step_id": "pair", "errors": {}}
+    (schema,) = forms
+    (key,) = schema.schema
+    sec = schema.schema[key]
+    assert str(key) == "advanced" and sec.options["collapsed"] is True
+    (field,) = sec.schema.schema
+    assert str(field) == "pairing_url" and field.description == {"suggested_value": None}
+    assert FakeClient.begins == []
+
+
+@pytest.mark.parametrize("submitted", [{}, {"advanced": {}}, {"advanced": {"pairing_url": ""}},
+                                       {"advanced": {"pairing_url": "   "}}])
+def test_empty_address_uses_default_service(monkeypatch, submitted):
+    flow = make_flow(monkeypatch, polls=[PollResult("pending")])
 
     async def go():
-        ext = await flow.async_step_pair()
+        ext = await flow.async_step_pair(submitted)
         flow.async_remove()
         await asyncio.gather(*flow._tasks, return_exceptions=True)
         return ext
     assert asyncio.run(go())["type"] == "external"
+    assert FakeClient.urls == [cf.BETA_PAIRING_URL]
 
 
 def test_advanced_url_must_be_https(monkeypatch):
     flow = make_flow(monkeypatch, polls=[PollResult("pending")])
-    flow.context = {"source": "user", "show_advanced_options": True}
-    form = asyncio.run(flow.async_step_pair())
-    assert form["type"] == "form" and form["step_id"] == "pair"
+    forms = _capture_forms(flow)
     for bad_url in ("http://x", "https://x.example/", "https://", "https://a b.example", "https://u@x.example/p"):
-        bad = asyncio.run(flow.async_step_pair({"pairing_url": bad_url}))
-        assert bad["errors"] == {"base": "invalid_url"}, bad_url
+        bad = asyncio.run(flow.async_step_pair({"advanced": {"pairing_url": bad_url}}))
+        assert bad["type"] == "form" and bad["errors"] == {"base": "invalid_url"}, bad_url
+        # Wpisany adres wraca jako podpowiedź w sekcji — do poprawienia, nie do przepisania.
+        sec = next(iter(forms[-1].schema.values()))
+        assert next(iter(sec.schema.schema)).description == {"suggested_value": bad_url.strip() or None}
     assert FakeClient.begins == []
 
 
 def test_advanced_url_is_used_and_stored(monkeypatch):
     url = "https://pair.example.test/functions/v1/pairing-session"
     flow = make_flow(monkeypatch, polls=[CONFIRMED])
-    flow.context = {"source": "user", "show_advanced_options": True}
 
     async def go():
-        await flow.async_step_pair({"pairing_url": f"  {url} "})
+        await flow.async_step_pair({"advanced": {"pairing_url": f"  {url} "}})
         await asyncio.gather(*flow._tasks)
         return await flow.async_step_pair_finish()
     created = asyncio.run(go())
     assert FakeClient.urls == [url] and created["data"]["pairing"]["url"] == url
+
+
+def test_flat_address_field_on_ha_without_sections(monkeypatch):
+    """HA sprzed sekcji formularza: pole adresu płasko; pusty = usługa domyślna."""
+    monkeypatch.setattr(cf, "section", None)
+    url = "https://pair.example.test/p"
+    flow = make_flow(monkeypatch, polls=[PollResult("pending")])
+    forms = _capture_forms(flow)
+    asyncio.run(flow.async_step_pair())
+    assert [str(k) for k in forms[0].schema] == ["pairing_url"]
+
+    async def go():
+        ext = await flow.async_step_pair({"pairing_url": url})
+        flow.async_remove()
+        await asyncio.gather(*flow._tasks, return_exceptions=True)
+        return ext
+    assert asyncio.run(go())["type"] == "external" and FakeClient.urls == [url]
 
 
 @pytest.mark.parametrize("path", [COMPONENT / "strings.json", COMPONENT / "translations" / "en.json"])
@@ -392,6 +434,9 @@ def test_pairing_texts_present(path):
     assert cfg["step"]["user"]["menu_options"]["pair"]
     # Krok `pair` opisuje zarówno formularz adresu (tryb zaawansowany), jak i external step.
     assert cfg["step"]["pair"]["description"] and cfg["step"]["pair"]["data"]["pairing_url"]
+    # Zwinięta sekcja formularza parowania (HA z sekcjami) ma własną nazwę i etykietę pola.
+    adv = cfg["step"]["pair"]["sections"]["advanced"]
+    assert adv["name"] and adv["data"]["pairing_url"] and adv["data_description"]["pairing_url"]
     assert "pair_wait" not in cfg["step"]
     for reason in ("pairing_expired", "pairing_disabled", "pairing_failed", "pairing_connection_lost",
                    "paired_existing", "multiple_accounts", "cannot_connect", "already_in_progress"):

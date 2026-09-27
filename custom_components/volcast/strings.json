@@ -11,13 +11,25 @@
         }
       },
       "pair": {
-        "title": "Connect to Volcast",
-        "description": "Confirm this connection in the Volcast app or on the Volcast page that opens. This window closes by itself once you confirm.",
+        "title": "Connect your Volcast account",
+        "description": "Open the Volcast app or page and confirm this connection there. This window closes by itself once you confirm.",
         "data": {
           "pairing_url": "Pairing service address"
         },
         "data_description": {
-          "pairing_url": "Advanced setting. Leave the default unless Volcast support asked you to change it."
+          "pairing_url": "Leave empty to use the default Volcast service. Change it only if Volcast support asked you to."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced",
+            "description": "Only needed if Volcast support asked you to use another pairing service.",
+            "data": {
+              "pairing_url": "Pairing service address"
+            },
+            "data_description": {
+              "pairing_url": "Leave empty to use the default Volcast service."
+            }
+          }
         }
       },
       "api_key": {

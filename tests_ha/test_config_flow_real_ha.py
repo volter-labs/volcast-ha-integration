@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.translation import async_get_translations
+from homeassistant.setup import async_setup_component
 import homeassistant.util.dt as dt_util
 
 from custom_components.volcast import config_flow as cf
@@ -61,10 +62,13 @@ def pairing(monkeypatch):
     return release, outcome
 
 
-async def _to_pair(hass, **context):
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user", **context})
+async def _to_pair(hass, submit: dict | None = None):
+    """Menu → formularz parowania (jedno kliknięcie) → krok zewnętrzny."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert result["type"] is FlowResultType.MENU and "pair" in result["menu_options"]
-    return await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "pair"})
+    form = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "pair"})
+    assert form["type"] is FlowResultType.FORM and form["step_id"] == "pair"
+    return await hass.config_entries.flow.async_configure(result["flow_id"], submit or {})
 
 
 async def test_pairing_external_step_to_entry(hass: HomeAssistant, pairing, network_down):
@@ -74,7 +78,7 @@ async def test_pairing_external_step_to_entry(hass: HomeAssistant, pairing, netw
     # Krok zapisany jako `pair` — frontend pokazuje `config.step.pair.description`.
     assert result["step_id"] == "pair" and result["url"] == CONNECT_URL
     tr = await async_get_translations(hass, "en", "config", {DOMAIN})
-    assert "Confirm this connection" in tr[f"component.{DOMAIN}.config.step.pair.description"]
+    assert "confirm this connection" in tr[f"component.{DOMAIN}.config.step.pair.description"]
     begun = FakePairing.instances[0].begun
     assert begun["instance_id"] and begun["ha_version"]
 
@@ -113,18 +117,79 @@ async def test_closing_the_wizard_cancels_the_session(hass: HomeAssistant, pairi
     assert FakePairing.instances[0].cancelled == ["sess1"]
 
 
-async def test_advanced_mode_shows_address_form_then_external_step(hass: HomeAssistant, pairing):
-    result = await _to_pair(hass, show_advanced_options=True)
-    assert result["type"] is FlowResultType.FORM and result["step_id"] == "pair"
-    bad = await hass.config_entries.flow.async_configure(result["flow_id"], {"pairing_url": "http://x.test/p"})
-    assert bad["type"] is FlowResultType.FORM and bad["errors"] == {"base": "invalid_url"}
-    ok = await hass.config_entries.flow.async_configure(result["flow_id"],
-                                                        {"pairing_url": "https://other.example.test/p"})
-    assert ok["type"] is FlowResultType.EXTERNAL_STEP and ok["step_id"] == "pair"
-    assert FakePairing.instances[0].url == "https://other.example.test/p"
+FLOW_URL = "/api/config/config_entries/flow"
+
+
+async def _http_client(hass, hass_client):
+    # Zależności integracji przed startem serwera HTTP (później router jest zamrożony).
+    for component in ("config", "repairs"):
+        assert await async_setup_component(hass, component, {})
+    return await hass_client()
+
+
+async def _http_to_pair_form(hass, client) -> tuple[str, dict]:
+    """Jak frontend: nowy kreator przez HTTP, wybór „pair" z menu → formularz."""
+    resp = await client.post(FLOW_URL, json={"handler": DOMAIN, "show_advanced_options": False})
+    assert resp.status == 200
+    menu = await resp.json()
+    assert menu["type"] == "menu"
+    resp = await client.post(f"{FLOW_URL}/{menu['flow_id']}", json={"next_step_id": "pair"})
+    form = await resp.json()
+    assert resp.status == 200 and form["type"] == "form" and form["step_id"] == "pair"
+    return menu["flow_id"], form
+
+
+async def test_http_pair_form_has_collapsed_advanced_section_and_default_service(
+        hass: HomeAssistant, pairing, hass_client):
+    client = await _http_client(hass, hass_client)
+    flow_id, form = await _http_to_pair_form(hass, client)
+    (adv,) = form["data_schema"]
+    assert adv["name"] == "advanced" and adv["type"] == "expandable"
+    assert adv["expanded"] is False                      # zwinięta (collapsed=True)
+    assert [f["name"] for f in adv["schema"]] == ["pairing_url"]
+    assert "default" not in adv["schema"][0]            # puste pole = usługa domyślna
     tr = await async_get_translations(hass, "en", "config", {DOMAIN})
-    assert f"component.{DOMAIN}.config.step.pair.data.pairing_url" in tr
-    hass.config_entries.flow.async_abort(ok["flow_id"])
+    assert tr[f"component.{DOMAIN}.config.step.pair.sections.advanced.name"]
+    # Jedno kliknięcie: sekcja nietknięta (frontend wysyła pusty słownik sekcji).
+    resp = await client.post(f"{FLOW_URL}/{flow_id}", json={"advanced": {}})
+    ext = await resp.json()
+    assert resp.status == 200 and ext["type"] == "external" and ext["step_id"] == "pair"
+    assert ext["url"] == CONNECT_URL and FakePairing.instances[0].url == cf.BETA_PAIRING_URL
+    hass.config_entries.flow.async_abort(flow_id)
+    await hass.async_block_till_done()
+
+
+async def test_http_pair_form_without_section_key_uses_default(hass: HomeAssistant, pairing, hass_client):
+    client = await _http_client(hass, hass_client)
+    flow_id, _ = await _http_to_pair_form(hass, client)
+    resp = await client.post(f"{FLOW_URL}/{flow_id}", json={})
+    assert (await resp.json())["type"] == "external"
+    assert FakePairing.instances[0].url == cf.BETA_PAIRING_URL
+    hass.config_entries.flow.async_abort(flow_id)
+    await hass.async_block_till_done()
+
+
+async def test_http_pair_address_override_from_advanced_section(hass: HomeAssistant, pairing, hass_client):
+    client = await _http_client(hass, hass_client)
+    flow_id, _ = await _http_to_pair_form(hass, client)
+    resp = await client.post(f"{FLOW_URL}/{flow_id}", json={"advanced": {"pairing_url": "http://x.test/p"}})
+    bad = await resp.json()
+    assert bad["type"] == "form" and bad["errors"] == {"base": "invalid_url"}
+    assert FakePairing.instances == []
+    resp = await client.post(f"{FLOW_URL}/{flow_id}",
+                             json={"advanced": {"pairing_url": " https://other.example.test/p "}})
+    ext = await resp.json()
+    assert ext["type"] == "external" and ext["step_id"] == "pair"
+    assert FakePairing.instances[0].url == "https://other.example.test/p"
+    # Adres trafia do danych wpisu po potwierdzeniu.
+    release, _ = pairing
+    release.set()
+    await hass.async_block_till_done()
+    resp = await client.post(f"{FLOW_URL}/{flow_id}", json={})
+    done = await resp.json()
+    assert done["type"] == "create_entry"
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert entry.data["pairing"]["url"] == "https://other.example.test/p"
     await hass.async_block_till_done()
 
 

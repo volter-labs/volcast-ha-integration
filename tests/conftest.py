@@ -320,6 +320,18 @@ _make_module("homeassistant.components.frontend", {
     "async_remove_panel": MagicMock(),
 })
 
+# --- homeassistant.data_entry_flow.section (zwinięte sekcje formularzy kreatora) ---
+class _FakeSection:
+    def __init__(self, schema, options=None):
+        self.schema = schema
+        self.options = {"collapsed": False, **(options or {})}
+
+    def __call__(self, value):
+        return self.schema(value)
+
+
+_make_module("homeassistant.data_entry_flow", {"section": _FakeSection})
+
 # --- homeassistant.components.panel_custom (sidebar panel) ---
 _make_module("homeassistant.components.panel_custom", {
     "async_register_panel": AsyncMock(),
