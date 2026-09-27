@@ -484,8 +484,11 @@ def _sprzedaz_dopuszczalna(attrs: Mapping[str, Any], waluta: str) -> bool:
     Każda inna kombinacja — atrybut sprzeczny z walutą bloku, atrybut
     sprzeczny z WŁASNĄ jednostką sprzedaży, symbol wieloznaczny rozstrzygnięty
     na inną walutę, atrybut o kształcie kodu ale nierealny — degraduje CAŁĄ
-    sprzedaż do None. `buy` tym się nie przejmuje.
+    sprzedaż do None. `buy` tym się nie przejmuje. Atrybuty, które nie są
+    mapowaniem, to zepsute dane sprzedaży — też None, nigdy wyjątek.
     """
+    if not isinstance(attrs, Mapping):
+        return False
     jawna = attrs.get("currency")
     ma_atrybut = isinstance(jawna, str) and jawna.strip() != ""
 

@@ -856,6 +856,29 @@ def test_sell_atrybut_bez_kodu_iso_degraduje_do_none():
     assert [w["sell"] for w in out] == [None, None]
 
 
+
+@pytest.mark.parametrize("jednostka", ["kr/kWh", "Kr./kWh"])
+def test_sell_goly_symbol_wieloznaczny_bez_atrybutu_degraduje_do_none(jednostka):
+    """Sprzedaż `kr/kWh` bez atrybutu `currency` DEKLARUJE walutę (koronę), tylko
+    nierozstrzygniętą — to nie jest „brak deklaracji", więc nie dziedziczy waluty
+    bloku (PLN): sprzedaż degraduje, zakup zostaje nietknięty."""
+    buy = {"unit_of_measurement": "PLN/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"unit_of_measurement": jednostka, "raw_today": _raw(_polnoc(), 2, 60, wartosc=500.0)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [None, None]
+    assert [w["buy"] for w in out] == [pytest.approx(1.0), pytest.approx(1.0)]
+
+
+@pytest.mark.parametrize("zle", [["x"], "abc", 42])
+def test_sell_nie_mapping_degraduje_do_none(zle):
+    buy = {"unit_of_measurement": "PLN/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+
+    out = intervals_from_attributes(buy, zle, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [None, None]
+
 # ── odcisk ──────────────────────────────────────────────────────────────────
 
 
