@@ -52,6 +52,12 @@ _CHOICE_MAX = 64
 _EXPIRES_MAX = 40
 _FALLBACK_NAME = "Home Assistant"
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]+")
+# Znaki, które chmura wycina z nazwy (klasa jak po stronie chmury, plus ZWJ). Nie usuwamy
+# ich sami — chmura robi to lepiej (zostawia ZWJ w emoji); sprawdzamy tylko, czy po jej
+# czyszczeniu coś zostanie, bo pusta nazwa to 400.
+_INVISIBLE = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\xad\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e"
+    r"\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb\U000e0000-\U000e007f]")
 
 
 def _https(v: Any, *, allow_query: bool = False) -> bool:
@@ -66,6 +72,11 @@ def _https(v: Any, *, allow_query: bool = False) -> bool:
     except ValueError:
         return False
     return parts.scheme == "https" and bool(host) and "@" not in parts.netloc
+
+
+def is_https_url(v: Any) -> bool:
+    """Adres usługi (np. parowania) podany przez użytkownika: https, host, bez zapytania."""
+    return _https(v)
 
 
 def _clean(text: Any, limit: int) -> str:
@@ -238,8 +249,11 @@ class PairingClient:
 
     async def async_begin(self, *, instance_id: str, instance_name: str, ha_version: str,
                           client_version: str) -> PairingSession:
+        name = _clean(instance_name, _NAME_MAX)
+        if not _INVISIBLE.sub("", name).strip():
+            name = _FALLBACK_NAME
         body: dict[str, Any] = {"action": "begin", "kind": "ha", "instance_id": instance_id,
-                                "instance_name": _clean(instance_name, _NAME_MAX) or _FALLBACK_NAME}
+                                "instance_name": name}
         for key, value in (("ha_version", ha_version), ("client_version", client_version)):
             cleaned = _clean(value, _VERSION_MAX)
             if cleaned:

@@ -89,7 +89,7 @@ def _run(coro):
 def test_user_step_is_menu():
     flow = config_flow.VolcastConfigFlow()
     res = _run(flow.async_step_user())
-    assert res == {"type": "menu", "step_id": "user", "menu_options": ["api_key", "discovery_only"]}
+    assert res == {"type": "menu", "step_id": "user", "menu_options": ["pair", "api_key", "discovery_only"]}
 
 
 def test_discovery_only_creates_entry_without_api_key():

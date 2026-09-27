@@ -192,6 +192,21 @@ def test_begin_empty_name_falls_back():
     assert s.calls[0]["json"]["instance_name"] == "Home Assistant"
 
 
+def test_begin_invisible_only_name_falls_back():
+    """Chmura wycina znaki niewidoczne; nazwa z samych takich znaków dałaby 400."""
+    s = FakeSession()
+    s.add("POST", PAIR, 201, BEGIN_OK)
+    begin(s, instance_name="\u200b\u200d\u2066\ufeff\x85\U000e0041")
+    assert s.calls[0]["json"]["instance_name"] == "Home Assistant"
+
+
+def test_begin_keeps_visible_name_for_cloud_to_clean():
+    s = FakeSession()
+    s.add("POST", PAIR, 201, BEGIN_OK)
+    begin(s, instance_name="Dom\u200b 🏠")
+    assert s.calls[0]["json"]["instance_name"] == "Dom\u200b 🏠"
+
+
 @pytest.mark.parametrize("status,body,expected", [
     (202, {"status": "pending", "expires_at": "2026-09-27T10:10:00.000Z"}, "pending"),
     (410, {"status": "expired"}, "expired"),

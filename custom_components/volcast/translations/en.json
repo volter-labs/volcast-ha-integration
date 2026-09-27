@@ -5,9 +5,21 @@
         "title": "Set up Volcast",
         "description": "Connect your Volcast account, or only run a read-only discovery of your installation (nothing is changed and nothing leaves Home Assistant until you share the diagnostics file).",
         "menu_options": {
+          "pair": "Connect to your Volcast account (recommended)",
           "api_key": "Connect with API key",
           "discovery_only": "Discovery only (no account)"
         }
+      },
+      "pair": {
+        "title": "Connect to Volcast",
+        "description": "Advanced: the address of the pairing service. Leave the default unless Volcast support asked you to change it.",
+        "data": {
+          "pairing_url": "Pairing service address"
+        }
+      },
+      "pair_wait": {
+        "title": "Confirm in Volcast",
+        "description": "Confirm the connection in the Volcast app or on the page that just opened. This window closes by itself."
       },
       "api_key": {
         "title": "Connect to Volcast",
@@ -37,11 +49,18 @@
       "invalid_auth": "Invalid API key or premium subscription required.",
       "masked_key": "This looks like the shortened preview from the app (vk_xxxx...xxxx), not the full key. In the Volcast app open Settings > API Key and use the Copy or Share button, then paste the full 67-character key here.",
       "invalid_key_format": "That is not a Volcast API key. A key starts with vk_ and is 67 characters long. Use the Copy or Share button in the Volcast app under Settings > API Key.",
-      "unknown": "An unexpected error occurred."
+      "unknown": "An unexpected error occurred.",
+      "invalid_url": "Enter a full https:// address without a trailing slash."
     },
     "abort": {
       "already_configured": "This API key is already configured.",
-      "single_instance_allowed": "Volcast is already set up here, and installation discovery already runs as part of it."
+      "single_instance_allowed": "Volcast is already set up here, and installation discovery already runs as part of it.",
+      "cannot_connect": "Unable to reach the Volcast pairing service. Check your internet connection and try again.",
+      "pairing_expired": "The pairing request expired or was cancelled before it was confirmed. Start again and confirm within 10 minutes.",
+      "pairing_disabled": "Pairing is not available right now. Try again later, or connect with an API key.",
+      "pairing_failed": "Pairing did not complete. Start again; if it keeps failing, connect with an API key.",
+      "paired_existing": "Your existing Volcast entry is now connected to your account.",
+      "multiple_accounts": "More than one Volcast entry is set up here. Remove the extra entries, then pair again."
     }
   },
   "options": {

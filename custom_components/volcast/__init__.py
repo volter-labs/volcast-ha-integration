@@ -16,11 +16,6 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_change
 
-try:
-    from homeassistant.loader import async_get_integration
-except ImportError:  # atrapy w testach nie mają loadera
-    async_get_integration = None
-
 from .const import (
     ATTR_DATE,
     CONF_API_URL,
@@ -41,6 +36,7 @@ from .coordinator import VolcastCoordinator
 from .discovery_runner import DiscoveryRunner
 from .production import VolcastProductionTracker
 from .reconciler import DailyReconciler
+from .version import async_integration_version
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -184,7 +180,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Wykrywanie instalacji (tylko odczyt) — runner musi istnieć przed platformami,
     # bo dają mu encje; sam przebieg startuje dopiero po ich załadowaniu.
-    runner = DiscoveryRunner(hass, entry.entry_id, await _integration_version(hass))
+    runner = DiscoveryRunner(hass, entry.entry_id, await async_integration_version(hass))
     hass.data[DOMAIN][entry.entry_id]["discovery"] = runner
 
     _async_register_services(hass)
@@ -205,7 +201,7 @@ async def _async_setup_discovery_only_entry(hass: HomeAssistant, entry: ConfigEn
     tracker produkcji, reconciler i repair issue prognozy — tylko `DiscoveryRunner`
     i platformy, które wystawiają jego raport (sensor + przycisk ręcznego uruchomienia).
     """
-    runner = DiscoveryRunner(hass, entry.entry_id, await _integration_version(hass))
+    runner = DiscoveryRunner(hass, entry.entry_id, await async_integration_version(hass))
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"discovery": runner}
 
     await hass.config_entries.async_forward_entry_setups(entry, DISCOVERY_ONLY_PLATFORMS)
@@ -213,19 +209,6 @@ async def _async_setup_discovery_only_entry(hass: HomeAssistant, entry: ConfigEn
     _schedule_discovery(hass, entry, runner)
 
     return True
-
-
-async def _integration_version(hass: HomeAssistant) -> str:
-    """Wersja z manifest.json przez loader HA (już wczytany — bez I/O). Nigdy nie rzuca."""
-    try:
-        if async_get_integration is None:
-            return "unknown"
-        integration = await async_get_integration(hass, DOMAIN)
-        version = getattr(integration, "version", None)
-        return str(version) if version else "unknown"
-    except Exception:  # noqa: BLE001 — wersja jest informacyjna, setup idzie dalej
-        _LOGGER.debug("Volcast: integration version unavailable", exc_info=True)
-        return "unknown"
 
 
 DISCOVERY_TASK_NAME = "volcast_discovery"

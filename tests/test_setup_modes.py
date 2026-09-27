@@ -159,7 +159,7 @@ async def test_unload_before_start_event_removes_listener(setup_forecast_entry):
 
 
 async def test_integration_version_from_loader(setup_forecast_entry, monkeypatch):
-    import custom_components.volcast as integ
+    import custom_components.volcast.version as integ
 
     monkeypatch.setattr(integ, "async_get_integration",
                         AsyncMock(return_value=SimpleNamespace(version="1.7.2")), raising=False)
@@ -169,7 +169,7 @@ async def test_integration_version_from_loader(setup_forecast_entry, monkeypatch
 
 
 async def test_integration_version_unknown_when_loader_fails(setup_forecast_entry, monkeypatch):
-    import custom_components.volcast as integ
+    import custom_components.volcast.version as integ
 
     monkeypatch.setattr(integ, "async_get_integration",
                         AsyncMock(side_effect=RuntimeError("no loader")), raising=False)

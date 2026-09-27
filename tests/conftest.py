@@ -166,6 +166,13 @@ _helpers_mod.dispatcher = _make_module("homeassistant.helpers.dispatcher", {
     "async_dispatcher_connect": MagicMock(return_value=MagicMock()),
 })
 
+
+async def _fake_instance_id(hass):
+    return "abcdef1234567890"
+
+
+_helpers_mod.instance_id = _make_module("homeassistant.helpers.instance_id", {"async_get": _fake_instance_id})
+
 # --- homeassistant.util.dt ---
 FAKE_UTCNOW = datetime(2026, 9, 23, 10, 0, tzinfo=timezone.utc)
 _util_mod = _make_module("homeassistant.util")
