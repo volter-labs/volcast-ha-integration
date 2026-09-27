@@ -1072,3 +1072,111 @@ def test_frozen_executor_never_ticks_but_still_restores(monkeypatch):
     assert asyncio.run(go()) == 0
     assert h.states.get(E["mode"]).state == "auto" and not ex.owned
     assert ex._unsub == []
+
+
+# ── własność związana z identyfikatorem rejestru encji trybu ─────────────
+
+
+MODE_UID = "goodwe-ems_mode-X"
+RENAMED_MODE = "select.renamed_ems_mode"
+
+
+def _executor_with_uid(h, store, monkeypatch, *, mapped=E, mode_uid=MODE_UID):
+    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+    entry = SimpleNamespace(entry_id="e1", options={"control_mode": "entities"})
+    return VolcastExecutor(h, entry, choice=GW, mapped=mapped, rated_power_w=8000.0, store=store,
+                           writer=EntityServiceWriter(h), clock=Clock(), utcnow=lambda: NOW + timedelta(seconds=30),
+                           mode_unique_id=mode_uid)
+
+
+def _b2_owner_matches(record: dict, profile: str, domain: str, mode_entity: str) -> bool:
+    # Reguła poprzedniej wersji: pełna równość rekordu z {profile, domain, mode_entity}.
+    return record == {"profile": profile, "domain": domain, "mode_entity": mode_entity}
+
+
+def test_owner_survives_mode_entity_rename(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    ex = _executor_with_uid(h, store, monkeypatch)
+
+    async def take():
+        await ready(ex)
+        await ex.async_tick()
+        return await store.async_load()
+    before = asyncio.run(take())
+    assert before.owned and before.snapshot
+    assert before.owner == {"profile": "goodwe-et", "domain": "goodwe", "mode_uid": MODE_UID,
+                            "mode_entity": E["mode"]}
+    # Użytkownik zmienia entity_id encji trybu; identyfikator rejestru zostaje.
+    old = h.states.get(E["mode"])
+    h.states.set(RENAMED_MODE, old.state, dict(old.attributes))
+    ex2 = _executor_with_uid(h, store, monkeypatch, mapped={**E, "mode": RENAMED_MODE})
+
+    async def reload():
+        await ex2.async_start()
+        return await store.async_load()
+    after = asyncio.run(reload())
+    assert ex2.owned is True
+    assert after.owned is True and after.snapshot == before.snapshot
+    assert after.owner == {"profile": "goodwe-et", "domain": "goodwe", "mode_uid": MODE_UID,
+                           "mode_entity": RENAMED_MODE}
+
+
+def test_owner_dropped_when_mode_uid_differs(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        owned=True, snapshot={"soc_min": 15.0},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_uid": "goodwe-ems_mode-OTHER",
+               "mode_entity": E["mode"]})))
+    ex = _executor_with_uid(h, store, monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        return await store.async_load()
+    state = asyncio.run(go())
+    assert ex.owned is False and state.owned is False and state.owner == {} and state.snapshot == {}
+
+
+def test_legacy_owner_record_migrated(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        consent=False, owned=True, snapshot={"soc_min": 15.0, "export_limit_w": 0.0},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": E["mode"]})))
+    ex = _executor_with_uid(h, store, monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        await ex.async_set_local_switch(True)          # dowolny zapis magazynu
+        return await store.async_load()
+    state = asyncio.run(go())
+    assert ex.owned is True and state.owned is True
+    assert state.snapshot == {"soc_min": 15.0, "export_limit_w": 0.0}
+    assert state.owner == {"profile": "goodwe-et", "domain": "goodwe", "mode_uid": MODE_UID,
+                           "mode_entity": E["mode"]}
+
+
+def test_legacy_owner_record_with_other_entity_still_dropped(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        owned=True, snapshot={"soc_min": 15.0},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": "select.other_inverter_mode"})))
+    ex = _executor_with_uid(h, store, monkeypatch)
+    asyncio.run(ex.async_start())
+    assert ex.owned is False
+
+
+def test_owner_record_readable_by_b2_shape(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    ex = _executor_with_uid(h, store, monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    raw = store._store._data                         # zapis w magazynie, tak jak go czyta starsza wersja
+    assert raw["owned"] is True
+    assert _b2_owner_matches(raw["owner"], "goodwe-et", "goodwe", E["mode"])

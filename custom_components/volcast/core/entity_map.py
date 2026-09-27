@@ -199,8 +199,11 @@ def _to_canonical(key: str, value: float, unit: str | None) -> float | None:
     if factor is None:
         return None
     if unit and _quantity(key) == "temperature":
-        return _TEMPERATURE[unit](value)
-    return value * factor
+        out = _TEMPERATURE[unit](value)
+    else:
+        out = value * factor
+    # Skończoność PO przeliczeniu: 1e303 MW to już nieskończoność W.
+    return out if math.isfinite(out) else None
 
 
 def canonical_value(key: str, state: str | None, unit: str | None) -> float | None:

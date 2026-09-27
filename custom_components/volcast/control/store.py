@@ -7,7 +7,12 @@ migawka innego falownika albo innego mapowania nie może trafić w nowe encje.
 `restore_keys` — klucze, które zapisaliśmy w tej własności, bez tych, które właściciel
 potem zmienił (`taken_over`, na stałe do końca własności). Powrót do trybu bazowego
 dotyczy tylko ich. `restore_keys` = None: stan zapisany przed tym polem — powrót obejmuje
-wszystkie klucze migawki (jak dotąd)."""
+wszystkie klucze migawki (jak dotąd).
+
+`owner["mode_uid"]` (identyfikator rejestru encji trybu — przeżywa zmianę entity_id)
+jest w magazynie trzymany OBOK rekordu (`owner_mode_uid`), nie w nim: poprzednia wersja
+porównuje cały rekord `{profile, domain, mode_entity}` i po powrocie do niej musi go
+dalej uznać za swój (inaczej zgubiłaby migawkę i własność)."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -15,6 +20,7 @@ from dataclasses import asdict, dataclass, field
 from homeassistant.helpers.storage import Store
 
 STORAGE_VERSION = 1
+_OWNER_MODE_UID = "owner_mode_uid"
 
 
 @dataclass
@@ -54,6 +60,11 @@ class ControlStore:
         owner = raw.get("owner")
         restore_keys = raw.get("restore_keys")
         taken_over = raw.get("taken_over")
+        owner = ({k: v for k, v in owner.items() if isinstance(k, str) and isinstance(v, str)}
+                 if isinstance(owner, dict) else {})
+        mode_uid = raw.get(_OWNER_MODE_UID)
+        if owner and isinstance(mode_uid, str) and mode_uid:
+            owner["mode_uid"] = mode_uid
         return ControlState(
             plan_raw=plan if isinstance(plan, dict) else None,
             consent=consent if isinstance(consent, bool) else None,
@@ -61,13 +72,16 @@ class ControlStore:
             snapshot={k: v for k, v in snap.items() if isinstance(v, (int, float, str))
                       and not isinstance(v, bool)} if isinstance(snap, dict) else {},
             history_imported_at=hist if isinstance(hist, str) else None,
-            owner={k: v for k, v in owner.items() if isinstance(k, str) and isinstance(v, str)}
-            if isinstance(owner, dict) else {},
+            owner=owner,
             restore_keys=_keys(restore_keys) if isinstance(restore_keys, list) else None,
             taken_over=_keys(taken_over) if isinstance(taken_over, list) else [])
 
     async def async_save(self, state: ControlState) -> None:
-        await self._store.async_save(asdict(state))
+        data = asdict(state)
+        mode_uid = data["owner"].pop("mode_uid", None)
+        if mode_uid:
+            data[_OWNER_MODE_UID] = mode_uid
+        await self._store.async_save(data)
 
     async def async_remove(self) -> None:
         await self._store.async_remove()

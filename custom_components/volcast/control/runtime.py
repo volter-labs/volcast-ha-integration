@@ -153,6 +153,16 @@ def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
     return dict(resolve_entities(choice.profile, choice.integration_domain, cands).mapped)
 
 
+def mode_unique_id(hass, mapped: Mapping[str, str]) -> str | None:
+    """Identyfikator rejestru zmapowanej encji trybu — wiąże własność niezależnie od entity_id."""
+    eid = mapped.get("mode")
+    if not eid:
+        return None
+    entry = er.async_get(hass).entities.get(eid)
+    uid = getattr(entry, "unique_id", None) if entry is not None else None
+    return uid if isinstance(uid, str) and uid else None
+
+
 def inverter_entity_ids(hass, choice: ProfileChoice | None, mapped: Mapping[str, str]) -> frozenset[str]:
     """Encje z tego samego wpisu konfiguracji albo urządzenia co zmapowane encje falownika.
 
@@ -184,7 +194,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     rated = float(manual_rated) if manual_rated else rated_power_from_model(choice.model if choice else None)
     executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped, rated_power_w=rated,
                                store=ControlStore(hass, entry.entry_id), writer=EntityServiceWriter(hass),
-                               lock=_entry_lock(hass, entry.entry_id))
+                               lock=_entry_lock(hass, entry.entry_id),
+                               mode_unique_id=mode_unique_id(hass, mapped))
     await executor.async_start()
     telemetry = None
     rt = None
@@ -329,9 +340,11 @@ async def async_remove_control(hass, entry) -> None:
     if state is not None and state.owned:
         profiles = await hass.async_add_executor_job(_load_profiles)
         choice = _choice_for(hass, entry, profiles)
-        executor = VolcastExecutor(hass, entry, choice=choice, mapped=map_entities(hass, choice) if choice else {},
+        mapped = map_entities(hass, choice) if choice else {}
+        executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped,
                                    rated_power_w=None, store=store, writer=EntityServiceWriter(hass),
-                                   lock=_entry_lock(hass, entry.entry_id))
+                                   lock=_entry_lock(hass, entry.entry_id),
+                                   mode_unique_id=mode_unique_id(hass, mapped))
         await executor.async_start()
         await executor.async_restore_now()
         if executor.owned:

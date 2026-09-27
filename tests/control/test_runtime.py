@@ -415,3 +415,67 @@ async def test_setup_computes_the_inverter_entity_scope(monkeypatch):
     rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
     assert rt.inverter_entities == frozenset({"select.gw_mode", "sensor.gw_total_load"})
     await rt_mod.async_unload_control(hass, rt)
+
+
+# ── identyfikator rejestru encji trybu dla powiązania własności ───────────
+
+
+def test_mode_unique_id_from_registry():
+    reg = SimpleNamespace(entities={"select.gw_mode": _reg_entry("select.gw_mode", "goodwe", "ce1", "d1")})
+    hass = SimpleNamespace(data={"entity_registry": reg})
+    reg.entities["select.gw_mode"].unique_id = "goodwe-ems_mode-X"
+    assert rt_mod.mode_unique_id(hass, {"mode": "select.gw_mode"}) == "goodwe-ems_mode-X"
+    assert rt_mod.mode_unique_id(hass, {"mode": "select.missing"}) is None
+    assert rt_mod.mode_unique_id(hass, {"power_w": "number.x"}) is None
+    assert rt_mod.mode_unique_id(SimpleNamespace(data={}), {}) is None   # bez encji trybu rejestr nietknięty
+
+
+@pytest.mark.asyncio
+async def test_setup_passes_mode_unique_id_to_executor(monkeypatch):
+    _patch(monkeypatch)
+    made = _recording_executor(monkeypatch)
+    choice = ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET")
+    monkeypatch.setattr(rt_mod, "_choice_for", lambda hass, entry, profiles: choice)
+    monkeypatch.setattr(rt_mod, "map_entities", lambda hass, c: {"mode": "select.gw_mode"})
+    hass, entry = _setup_hass(), _entry()
+    mode = _reg_entry("select.gw_mode", "goodwe", "ce1", "d1")
+    mode.unique_id = "goodwe-ems_mode-X"
+    hass.data["entity_registry"] = SimpleNamespace(entities={"select.gw_mode": mode})
+    rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    assert made[0]._owner()["mode_uid"] == "goodwe-ems_mode-X"
+    await rt_mod.async_unload_control(hass, rt)
+
+
+def test_remove_entry_passes_mode_unique_id(monkeypatch):
+    seen = {}
+
+    class Exec:
+        owned = False
+
+        def __init__(self, *a, **k):
+            seen.update(k)
+
+        async def async_start(self):
+            return None
+
+        async def async_restore_now(self):
+            return None
+
+        async def async_stop(self):
+            return None
+
+    choice = ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET")
+    monkeypatch.setattr(rt_mod, "VolcastExecutor", Exec)
+    monkeypatch.setattr(rt_mod, "_choice_for", lambda hass, entry, profiles: choice)
+    monkeypatch.setattr(rt_mod, "_load_profiles", lambda: [])
+    monkeypatch.setattr(rt_mod, "map_entities", lambda hass, c: {"mode": "select.gw_mode"})
+    mode = _reg_entry("select.gw_mode", "goodwe", "ce1", "d1")
+    mode.unique_id = "goodwe-ems_mode-X"
+    hass = SimpleNamespace(data={"entity_registry": SimpleNamespace(entities={"select.gw_mode": mode})},
+                           async_add_executor_job=lambda f, *a: _ret(f(*a)))
+    entry = SimpleNamespace(entry_id="e1", options={}, data={"api_key": "vk_x", "backend": BACKEND})
+    store = ControlStore(hass, "e1")
+    monkeypatch.setattr(rt_mod, "ControlStore", lambda h, eid: store)
+    asyncio.run(store.async_save(ControlState(owned=True)))
+    asyncio.run(rt_mod.async_remove_control(hass, entry))
+    assert seen["mode_unique_id"] == "goodwe-ems_mode-X"

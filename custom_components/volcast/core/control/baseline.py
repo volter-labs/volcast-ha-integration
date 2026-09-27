@@ -7,6 +7,7 @@ Przywracamy tylko to, co sami przejęliśmy.
 """
 from __future__ import annotations
 
+import math
 from typing import Iterable, Mapping
 
 from ..params import Params
@@ -29,7 +30,9 @@ def snapshot_missing(snapshot: Mapping[str, float | str], mapped_keys: Iterable[
 
 
 def _f(v) -> float | None:
-    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return None
+    return float(v) if math.isfinite(v) else None
 
 
 def baseline_params(profile, snapshot: Mapping[str, float | str]) -> Params:

@@ -174,3 +174,19 @@ def test_invalid_now_fails_closed_from_released_state(bad_now):
     assert l.is_engaged == was_engaged
     assert l._since == since
     assert l._last_release == last_release
+
+
+@pytest.mark.parametrize("bad", [("soc", v) for v in BAD_PERCENT] + [("reserve", v) for v in BAD_PERCENT]
+                         + [("now", v) for v in BAD_TIME])
+def test_core_minors_latch_bad_input_after_dwell(bad):
+    # Po upływie minimalnego czasu trwania (now ≥ 1801) złe wejście nadal nie zwalnia zatrzasku.
+    which, value = bad
+    l = ReserveLatch()
+    l.engaged(10.0, 10.0, now=0.0)                         # zalaczony
+    since, last_release = l._since, l._last_release
+    args = {"soc": 14.0, "reserve": 10.0, "now": 1801.0}
+    args[which] = value
+    assert l.engaged(args["soc"], args["reserve"], now=args["now"]) is True
+    assert l.is_engaged is True
+    assert l._since == since
+    assert l._last_release == last_release

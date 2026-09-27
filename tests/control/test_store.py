@@ -40,3 +40,24 @@ def test_restore_keys_missing_or_corrupt_is_legacy_none():
     assert loaded.restore_keys is None and loaded.taken_over == ["mode"]
     asyncio.run(st._store.async_save({"owned": True, "restore_keys": ["mode", 3]}))
     assert asyncio.run(st.async_load()).restore_keys == ["mode"]
+
+
+def test_owner_mode_uid_persisted_beside_the_owner_record():
+    # Rekord `owner` w magazynie zostaje w kształcie czytelnym dla poprzedniej wersji.
+    st = ControlStore(object(), "e1")
+    owner = {"profile": "goodwe-et", "domain": "goodwe", "mode_uid": "goodwe-ems_mode-X", "mode_entity": "select.x"}
+    s = ControlState(owned=True, snapshot={"soc_min": 15.0}, owner=dict(owner))
+    asyncio.run(st.async_save(s))
+    raw = st._store._data
+    assert raw["owner"] == {"profile": "goodwe-et", "domain": "goodwe", "mode_entity": "select.x"}
+    assert raw["owner_mode_uid"] == "goodwe-ems_mode-X"
+    assert s.owner == owner                                  # stan w pamięci nietknięty
+    assert asyncio.run(st.async_load()) == s
+
+
+def test_owner_mode_uid_ignored_without_owner_record_or_when_not_a_string():
+    st = ControlStore(object(), "e1")
+    asyncio.run(st._store.async_save({"owned": True, "owner": {}, "owner_mode_uid": "u"}))
+    assert asyncio.run(st.async_load()).owner == {}
+    asyncio.run(st._store.async_save({"owned": True, "owner": {"profile": "p"}, "owner_mode_uid": 5}))
+    assert asyncio.run(st.async_load()).owner == {"profile": "p"}

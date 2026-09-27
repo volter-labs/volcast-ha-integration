@@ -25,8 +25,9 @@ Zasady wykonania:
   trybu = tryb wraca do bazowego, chyba że właściciel przejął tryb już PO naszym zapisie
   albo falownik pokazuje opcję spoza profilu. Powrót rusza od razu po cofnięciu zgody
   albo wyłączeniu przełącznika, także w pauzie;
-* własność i migawka są związane z profilem i encją trybu (`owner`); migawki innego
-  falownika albo mapowania nie wpisujemy w nowe encje;
+* własność i migawka są związane z profilem i encją trybu (`owner`) — po identyfikatorze
+  rejestru encji (`mode_uid`, przeżywa zmianę entity_id), a przy rekordzie bez niego po
+  entity_id; migawki innego falownika albo mapowania nie wpisujemy w nowe encje;
 * zatrzymany wykonawca nie zaczyna zapisów i nie nadpisuje magazynu (poza powrotem do
   trybu bazowego w toku); nieczytelny magazyn wyłącza wykonawcę — start ze stanem
   domyślnym zgubiłby własność i nigdy nie przywrócił trybu bazowego;
@@ -114,13 +115,15 @@ class VolcastExecutor:
     def __init__(self, hass, entry, *, choice: ProfileChoice | None, mapped: Mapping[str, str],
                  rated_power_w: float | None, store: ControlStore, writer,
                  clock: Callable[[], float] = time.monotonic, utcnow=dt_util.utcnow,
-                 stop_timeout_s: float = STOP_WRITE_TIMEOUT_S, lock: asyncio.Lock | None = None) -> None:
+                 stop_timeout_s: float = STOP_WRITE_TIMEOUT_S, lock: asyncio.Lock | None = None,
+                 mode_unique_id: str | None = None) -> None:
         self._hass = hass
         self._entry = entry
         self._choice = choice
         self._profile = choice.profile if choice else None
         self._domain = choice.integration_domain if choice else None
         self._mapped = dict(mapped) if self._domain else {}
+        self._mode_uid = mode_unique_id if self._domain and "mode" in self._mapped else None
         self._rated = rated_power_w
         self._store = store
         self._writer = writer
@@ -273,16 +276,39 @@ class VolcastExecutor:
         return tuple((self._profile.raw.get("write_policy") or {}).get("order") or ())
 
     def _owner(self) -> dict:
-        return {"profile": self._profile.id if self._profile else "", "domain": self._domain or "",
-                "mode_entity": self._mapped.get("mode", "")}
+        owner = {"profile": self._profile.id if self._profile else "", "domain": self._domain or ""}
+        if self._mode_uid:
+            owner["mode_uid"] = self._mode_uid
+        # entity_id zapisywany dalej obok — poprzednia wersja dopasowuje rekord po nim.
+        owner["mode_entity"] = self._mapped.get("mode", "")
+        return owner
+
+    def _owner_matches(self, record: Mapping[str, str]) -> bool:
+        current = self._owner()
+        if record.get("profile") != current["profile"] or record.get("domain") != current["domain"]:
+            return False
+        if record.get("mode_uid") and "mode_uid" in current:
+            return record["mode_uid"] == current["mode_uid"]
+        return record.get("mode_entity") == current["mode_entity"]
 
     def _drop_foreign_owner(self) -> bool:
         """Migawka z innego profilu albo innej encji trybu nie trafia w nowe encje.
 
         Własność bez powiązania (zapisana przed jego wprowadzeniem) uznajemy za własną.
+        Pasujący rekord w starszym kształcie (bez `mode_uid`) albo ze starym entity_id jest
+        uaktualniany. Zwraca True, gdy stan się zmienił i trzeba go zapisać.
         """
-        if not self._state.owned or not self._state.owner or self._state.owner == self._owner():
+        if not self._state.owned or not self._state.owner:
             return False
+        record = self._state.owner
+        if self._owner_matches(record):
+            fresh = self._owner()
+            if "mode_uid" not in fresh and record.get("mode_uid"):
+                fresh["mode_uid"] = record["mode_uid"]
+            if fresh == record:
+                return False
+            self._state.owner = fresh
+            return True
         _LOGGER.warning("Volcast control: saved baseline settings belong to a different inverter "
                         "profile or mode entity — not reusing them; check the inverter settings")
         self._state.owned = False
