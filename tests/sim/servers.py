@@ -20,6 +20,7 @@ class SimServer:
         self.port = 0
         self.requests = 0
         self.clients = 0
+        self.log: list[tuple[int, int, int]] = []   # (funkcja, rejestr, wartość FC 6 / liczba FC 3 i 16)
         self._last: bytes | None = None
         self._closed = False
 
@@ -27,11 +28,16 @@ class SimServer:
     def _respond(self, pdu: bytes, frame) -> list[bytes]:
         """`frame(pdu, stray)` składa odpowiedź; zwraca ramki do wysłania w kolejności."""
         self.requests += 1
+        addr = struct.unpack(">H", pdu[1:3])[0] if len(pdu) >= 5 else -1
+        if len(pdu) >= 5:
+            self.log.append((pdu[0], addr, struct.unpack(">H", pdu[3:5])[0]))
         f = self.faults
         if f.drop_next > 0:
             f.drop_next -= 1
             return []
         resp, is_write = handle_pdu(self.bank, pdu, f)
+        if is_write and addr in f.mute_write_addrs:
+            return []
         if is_write and f.mute_write_echo > 0:
             f.mute_write_echo -= 1
             return []

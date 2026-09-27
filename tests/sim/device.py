@@ -103,6 +103,7 @@ class Faults:
     oversize_next: int = 0          # TCP: N kolejnych odpowiedzi to strumień ponad limit bufora klienta
     heartbeat_next: int = 0         # V5: N razy ramka protokołu loggera (heartbeat) przed odpowiedzią
     asleep_next: int = 0            # V5: N odpowiedzi loggera bez ramki RTU (falownik uśpiony)
+    mute_write_addrs: set = field(default_factory=set)       # zapisy tych rejestrów zawsze bez echa
 
     def take_delay(self) -> float:
         """Opóźnienie następnej odpowiedzi (zużywa licznik `delay_only_next`)."""
