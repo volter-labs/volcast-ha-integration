@@ -228,6 +228,12 @@
       },
       "discovery": {
         "name": "Installation discovery"
+      },
+      "control_plan": {
+        "name": "Plan"
+      },
+      "control_status": {
+        "name": "Status"
       }
     },
     "binary_sensor": {
@@ -241,6 +247,11 @@
       },
       "run_discovery": {
         "name": "Run discovery"
+      }
+    },
+    "switch": {
+      "control_switch": {
+        "name": "Control"
       }
     }
   }

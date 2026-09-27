@@ -50,6 +50,41 @@ If you'd prefer to skip this beta:
 3. Select version **1.7.2**
 4. Restart Home Assistant
 
+## Beta: Account Pairing & Inverter Control (v2.0.0b2)
+
+### Connect your account (beta)
+
+Choose "**Connect to your Volcast account**" during setup, or convert an existing discovery-only or API-key entry to it later. Home Assistant opens a pairing window; confirm it in the Volcast app or on the Volcast website, and the setup finishes by itself — no code to copy.
+
+Once paired, the integration:
+
+- Sends live readings roughly once a minute
+- Sends up to 60 days of past consumption history, once
+- Adds a plan card and a "Volcast" panel with the current and upcoming plan slots
+- Can use a price sensor you choose, in **Options → Energy prices**
+
+### Inverter control (beta)
+
+Volcast can write plan-driven mode and power settings to your inverter **through your existing inverter integration's entities** (for example a select for mode and a number for power). Direct Modbus/local connection to the inverter is not available yet.
+
+Control is **off by default**. Nothing is written unless all three of these are true at once:
+
+1. "**Through the inverter integration (entities)**" is selected in **Options → Inverter control**
+2. You've given consent in the Volcast app
+3. The Volcast **control switch** entity is turned on in Home Assistant
+
+Entity-mode control and account pairing are both beta features.
+
+### Safety behaviour
+
+- **You change a setting yourself while control is on** — Volcast pauses control for 30 minutes, keeps the value you set, and raises a repair notification. A clock-triggered schedule you already run on your inverter is treated the same way — as ordinary drift, not as "someone took over" — so it doesn't trip a pause by itself.
+- **Consent is revoked, the switch is turned off, or the entry is disabled/removed** — Volcast restores the inverter's baseline mode and settings. The one exception: if you had already taken the mode over yourself, Volcast leaves the mode alone and keeps only the last power setpoint it wrote, instead of overwriting your choice.
+- **Repeated write failures** — a repair notification tells you control has stopped working and what to check.
+
+### Diagnostics privacy
+
+The downloadable diagnostics file masks serial numbers, MAC addresses and e-mail addresses (IP addresses are kept, since they help with troubleshooting). Once an entry is paired, its readings and plan also go to your Volcast account — diagnostics is no longer the only place they're visible.
+
 ## Features
 
 - **Energy Dashboard integration** — appears as a solar forecast source in the HA Energy Dashboard
