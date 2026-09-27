@@ -35,23 +35,24 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from ..engines.mode_setpoint import map_slot
-from ..entity_map import EntityWrite, entity_value
-from ..guard_state import DirectionLimiter, WriteThrottle
+from ..entity_map import EntityWrite
+from ..guard_state import DirectionLimiter, WriteBudget, WriteThrottle
 from ..guards import GuardContext, GuardResult, apply_guards, temperature_ok
 from ..slot import Schedule, effective_action
 from ..write_sequence import WriteReport
-from .caps import missing_write_keys
 from ..params import Params
-from .entity_fit import control_writes, fit_params
 from .group_writes import order_group, power_first
 from .latch import ReserveLatch
+from .target import EntityTarget, WriteTarget
 
 WRITE, DRY_RUN, IDLE, BLOCKED, ERROR = "write", "dry_run", "idle", "blocked", "error"
+# Powrót do trybu bazowego zamiast wstrzymania (wyczerpany budżet NVM przy trybie wymuszonym):
+# wykonawca pisze tryb bazowy poza budżetem, reszta kluczy czeka na przesunięcie okna.
+RESTORE = "restore"
 
 # Tryb i nastawa, która nadaje mu znaczenie — zapisywane razem albo wcale.
 _MODE_GROUP = frozenset({"mode", "power_w"})
 _DIRECTIONAL = ("charge", "discharge")
-_NO_READING = ("unavailable", "unknown", "")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
 _QUANTUM = 1.0
 # Odwrót grupy po cofnięciu: start nie krótszy niż 5 min, podwajany do 1 h.
@@ -74,12 +75,15 @@ class ControlMemory:
     group_backoff_s: float = 0.0
     group_backoff_until: float | None = None
     backoff_base_s: float = _BACKOFF_MIN_S
+    # budżet ramek zapisu do NVM w oknie dobowym (z profilu); None = bez budżetu
+    budget: WriteBudget | None = None
 
     @classmethod
     def for_profile(cls, profile) -> "ControlMemory":
         return cls(WriteThrottle(profile.min_interval_s),
                    DirectionLimiter(max(1, profile.max_direction_changes_per_hour)), ReserveLatch(),
-                   backoff_base_s=max(float(profile.min_interval_s), _BACKOFF_MIN_S))
+                   backoff_base_s=max(float(profile.min_interval_s), _BACKOFF_MIN_S),
+                   budget=WriteBudget.for_profile(profile))
 
     def in_backoff(self, now_mono: float) -> bool:
         """Czy grupa czeka; zegar cofnięty poza okno = odwrót minął (jak throttling)."""
@@ -143,6 +147,8 @@ class CycleDecision:
     restore_ambiguous_safe: tuple[str, ...] = ()
     # urządzenie ma czytelny tryb spoza profilu — zmiana z zewnątrz, nie nadpisujemy
     takeover: bool = False
+    # rodzaj celu zapisu: w trybie bezpośrednim ramki liczy pisarz rejestrów, nie `commit`
+    target_kind: str = "entities"
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -176,57 +182,27 @@ def _gate_reason(g: Gates, memory: ControlMemory, now_mono: float) -> str | None
     return None
 
 
-def _device_view(readings: Mapping[str, Any], flat: Mapping[str, float | str], profile,
-                 ents: EntityContext) -> dict[str, float | str]:
-    """Odczyty kluczy planu w postaci `Params.flatten()`; nieczytelne znikają (brak ≠ rozjazd).
-
-    Wykonawca podaje odczyty już znormalizowane; surowy stan encji (`unavailable`,
-    `on`/`off`, opcja wyboru, liczba jako tekst) przechodzi przez ten sam przekład co
-    odczyt encji. Liczba tam, gdzie tryb jest nazwą, zostaje — uzgadnianie odrzuci ją
-    jako błąd wołającego (cykl bez zapisów). Czytelna opcja spoza profilu to odczyt
-    RÓŻNY od każdego trybu (znacznik `?opcja`), nie brak odczytu — nasz tryb wraca.
-    """
-    out: dict[str, float | str] = {}
-    for key in flat:
-        if key not in readings:
-            continue
-        value = readings[key]
-        if value is None:
-            continue
-        if isinstance(value, bool):
-            value = 1.0 if value else 0.0
-        elif isinstance(value, (int, float)):
-            if not math.isfinite(value):
-                continue
-            value = float(value)
-        elif isinstance(value, str) and not (key == "mode" and value in profile.modes):
-            try:
-                value = entity_value(key, value, profile, ents.domain, unit=ents.units.get(key))
-            except (KeyError, ValueError, TypeError):
-                value = None
-            if value is None:
-                if key != "mode" or readings[key] in _NO_READING:
-                    continue
-                value = "?" + readings[key]
-        out[key] = value
-    return out
-
-
 def decide_cycle(*, profile, schedule: Schedule | None, now_utc: datetime, now_mono: float,
-                 tele: Telemetry, limits: Limits, ents: EntityContext, gates: Gates,
-                 memory: ControlMemory) -> CycleDecision:
+                 tele: Telemetry, limits: Limits, gates: Gates, memory: ControlMemory,
+                 ents: EntityContext | None = None, target: WriteTarget | None = None) -> CycleDecision:
+    """`ents` (tryb encji, jak dotąd) albo `target` (dowolny cel) — dokładnie jedno z nich."""
     try:
-        return _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, memory)
+        if (ents is None) == (target is None):
+            raise TypeError("decide_cycle: podaj dokładnie jedno z ents/target")
+        if target is None:
+            target = EntityTarget(ents)
+        return _decide(profile, schedule, now_utc, now_mono, tele, limits, target, gates, memory)
     except Exception as err:  # noqa: BLE001 — każdy błąd decyzji = brak zapisów
         return CycleDecision(ERROR, f"exception:{type(err).__name__}")
 
 
-def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, memory) -> CycleDecision:
-    if gates.control_mode != "entities":
+def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTarget, gates,
+            memory) -> CycleDecision:
+    if gates.control_mode != target.kind:
         return CycleDecision(IDLE, "no_mode_chosen")
     if profile.control_model != "mode_setpoint":
         return CycleDecision(IDLE, "tou_preview_only")
-    missing = missing_write_keys(profile, ents.mapped)
+    missing = target.missing_keys(profile)
     if missing:
         return CycleDecision(IDLE, "missing_entities", unmapped=missing)
     if schedule is None:
@@ -236,7 +212,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     mapped_slot = map_slot(slot, profile, limits.rated_power_w)
     common: dict[str, Any] = dict(intent=mapped_slot.intent, fallback=is_fallback)
     # SoC i temperatura to osobne encje: świeży SoC nic nie mówi o temperaturze.
-    if "battery_temp_c" in ents.mapped and tele.battery_temp_c is None:
+    if target.has_temperature() and tele.battery_temp_c is None:
         return CycleDecision(BLOCKED, "temperature_unknown", **common)
 
     reserve = schedule.fallback.soc_reserve
@@ -258,24 +234,23 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     if not guard.write_allowed:
         return CycleDecision(BLOCKED, f"guard:{guard.invariant}", **common)
 
-    params, adjusted, unfit = fit_params(guard.params, profile, ents.domain, ents.mapped,
-                                         ents.units, ents.attrs)
+    params, adjusted, unfit = target.fit(guard.params, profile)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
         return CycleDecision(BLOCKED, "entity_range_unknown", unmapped=unfit, **common)
     flat = params.flatten()
-    unsupported = _unsupported_group(flat, profile, ents, memory)
+    unsupported = _unsupported_group(flat, profile, target, memory)
     if unsupported:
         reason = "mode_unsupported" if unsupported[0].startswith("mode:") else "power_unsupported"
         return CycleDecision(BLOCKED, reason, flat=flat,
                              dropped_unsupported=unsupported, **common)
-    device = _device_view(ents.readings, flat, profile, ents)
+    device = target.device_view(flat, profile)
     # Uzgodnienie z tym, co falownik naprawdę ma (tylko klucze planu, tylko czytelne).
     # Zły typ odczytu rzuca TypeError po drodze (pamięć wcześniejszych kluczy mogła już
     # zniknąć) — cykl kończy się bez zapisów, następny też, więc to bezpieczne.
     memory.throttle.reconcile(device)
     # Odczyt rozstrzyga niepewność — także kluczy spoza bieżącego planu.
-    memory.uncertain -= set(_device_view(ents.readings, dict.fromkeys(memory.uncertain), profile, ents))
+    memory.uncertain -= set(target.device_view(dict.fromkeys(memory.uncertain), profile))
     mode_now = device.get("mode")
     if isinstance(mode_now, str) and mode_now.startswith("?"):
         # Ktoś inny ustawił tryb, którego profil nie zna — nie walczymy i nie cofamy do
@@ -287,11 +262,23 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     due = memory.throttle.filter(flat, now_mono) - settled
     # Do zmiany na falowniku: to, co pójdzie teraz, i to, co czeka w interwale I-6.
     need = due | (memory.throttle.pending(flat, now_mono) - settled)
-    _, runtime_unmapped = control_writes(params, profile, ents.domain, ents.mapped,
-                                         keys=None, units=ents.units)
+    notes: list[str] = []
+    # Budżet NVM: klucz ponad budżetem nie idzie, a jako zmieniony warunek wstrzymuje tryb
+    # (jak I-6); tryb/moc ponad budżetem = grupa czeka. Wyjątek: tryb wymuszony nie może stać
+    # do końca okna — wtedy powrót do trybu bazowego (poza budżetem).
+    blocked: set[str] = set()
+    if memory.budget is not None:
+        blocked = memory.budget.exhausted(set(flat) - settled - memory.unsupported, now_utc.timestamp())
+    if blocked:
+        due -= blocked
+        need |= blocked
+        notes.append("nvm_budget")
+        restore = _budget_restore(device, profile, target, memory, gates, now_mono, common)
+        if restore is not None:
+            return restore
+    _, runtime_unmapped = target.writes(params, profile, None)
     allowed = due - memory.unsupported - set(runtime_unmapped)
 
-    notes: list[str] = []
     held_by = [k for k in runtime_unmapped if k != "mode"]
     # Zmieniony warunek, który w tym cyklu nie dojdzie („nieobsługiwany" nie dojdzie nigdy).
     unsettled = (need - allowed - memory.unsupported) - {"mode"}
@@ -325,10 +312,9 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     if _MODE_GROUP & (need - allowed) and _MODE_GROUP & allowed:
         allowed -= _MODE_GROUP
         notes.append("group_held")
-    writes, unmapped = control_writes(params, profile, ents.domain, ents.mapped,
-                                      keys=allowed, units=ents.units)
+    writes, unmapped = target.writes(params, profile, allowed)
     writes, restore, restore_flat, ambiguous_safe = _group_layout(writes, params, device, profile,
-                                                                  ents, memory)
+                                                                  target, memory)
     if no_mode_restore:
         restore = {k: v for k, v in restore.items() if k != "mode"}
         restore_flat = {k: v for k, v in restore_flat.items() if k != "mode"}
@@ -344,7 +330,30 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         dropped_unsupported=tuple(sorted(memory.unsupported & set(flat))), notes=tuple(notes),
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
-                           if "mode" in restore_flat else None), **common)
+                           if "mode" in restore_flat else None), target_kind=target.kind, **common)
+
+
+def _budget_restore(device, profile, target: WriteTarget, memory: ControlMemory, gates: Gates,
+                    now_mono: float, common: Mapping[str, Any]) -> CycleDecision | None:
+    """Decyzja `RESTORE` przy wyczerpanym budżecie, gdy urządzenie jest w trybie wymuszonym.
+
+    Wymuszony = kierunek `charge`/`discharge` albo `idle` z mocą > 0 (albo nieznaną).
+    Tryb nieznany albo już neutralny → zwykłe wstrzymanie (None).
+    """
+    base = (profile.raw.get("baseline") or {}).get("mode")
+    prev_mode, prev_power = _previous(device, profile, memory)
+    if base is None or prev_mode is None or prev_mode == base:
+        return None
+    direction = profile.mode_direction(prev_mode)
+    forced = direction in _DIRECTIONAL or (direction == "idle" and (prev_power is None or prev_power > 0.0))
+    if not forced:
+        return None
+    back = Params(mode=base)
+    writes, _ = target.writes(back, profile, {"mode"})
+    reason = _gate_reason(gates, memory, now_mono)
+    return CycleDecision(RESTORE if reason is None else DRY_RUN, reason or "nvm_budget",
+                         writes=writes, flat=back.flatten(), direction=profile.mode_direction(base),
+                         notes=("nvm_budget",), target_kind=target.kind, **common)
 
 
 def _previous(device: Mapping[str, float | str], profile, memory: ControlMemory
@@ -363,10 +372,9 @@ def _previous(device: Mapping[str, float | str], profile, memory: ControlMemory
     return (prev_mode if prev_mode in profile.modes else None), prev_power
 
 
-def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str, float | str],
-                  profile, ents: EntityContext, memory: ControlMemory
-                  ) -> tuple[list[EntityWrite], dict[str, EntityWrite], dict[str, float | str],
-                             tuple[str, ...]]:
+def _group_layout(writes: list, params: Params, device: Mapping[str, float | str],
+                  profile, target: WriteTarget, memory: ControlMemory
+                  ) -> tuple[list, dict[str, Any], dict[str, float | str], tuple[str, ...]]:
     """Grupa na końcu, w bezpiecznej kolejności, i zapisy cofające do stanu z urządzenia.
 
     Poprzednia wartość: odczyt z urządzenia, a bez żadnego odczytu — pamięć throttlingu
@@ -389,9 +397,8 @@ def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str
     if prev_mode is not None and profile.mode_direction(prev_mode) == "idle" \
             and (prev_power is None or prev_power > 0.0):
         prev_mode = None
-    back_params, _, unfit = fit_params(Params(mode=prev_mode, power_w=prev_power), profile, ents.domain,
-                                       ents.mapped, ents.units, ents.attrs)
-    back, _ = control_writes(back_params, profile, ents.domain, ents.mapped, keys=None, units=ents.units)
+    back_params, _, unfit = target.fit(Params(mode=prev_mode, power_w=prev_power), profile)
+    back, _ = target.writes(back_params, profile, None)
     back_flat = back_params.flatten()
     restore = {w.key: w for w in back if w.key not in unfit}
     restore_flat = {k: back_flat[k] for k in restore}
@@ -404,7 +411,7 @@ def _group_layout(writes: list[EntityWrite], params: Params, device: Mapping[str
     return ordered, restore, restore_flat, ((head,) if safe else ())
 
 
-def _unsupported_group(flat: Mapping[str, float | str], profile, ents: EntityContext,
+def _unsupported_group(flat: Mapping[str, float | str], profile, target: WriteTarget,
                        memory: ControlMemory) -> tuple[str, ...]:
     """Członkowie grupy, których falownik nie obsługuje: tryb per opcja, moc per klucz.
 
@@ -414,16 +421,15 @@ def _unsupported_group(flat: Mapping[str, float | str], profile, ents: EntityCon
     out: list[str] = []
     mode = flat.get("mode")
     if isinstance(mode, str):
-        options = (ents.attrs.get(ents.mapped.get("mode", "")) or {}).get("options")
-        known = not isinstance(options, (list, tuple)) or profile.modes[mode].ha_option in options
-        if f"mode:{mode}" in memory.unsupported or not known:
+        if f"mode:{mode}" in memory.unsupported or target.mode_option_unknown(mode, profile):
             out.append(f"mode:{mode}")
     if "power_w" in flat and "power_w" in memory.unsupported:
         out.append("power_w")
     return tuple(out)
 
 
-def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, now_mono: float) -> None:
+def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, now_mono: float, *,
+           now_wall: float | None = None) -> None:
     """Pamięć po wykonaniu: throttling tylko dla zapisów udanych, I-8 tylko gdy tryb poszedł.
 
     Decyzja inna niż WRITE niczego nie wykonała — nie zostawia śladu w pamięci.
@@ -431,10 +437,11 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     throttling pamięta wartość cofniętą z chwilą cofnięcia (I-6), ogranicznik kierunku
     dostaje oba kierunki (I-8), a grupa wchodzi w odwrót.
     """
-    if decision.status != WRITE:
+    if decision.status not in (WRITE, RESTORE):
         return
     restored = list(getattr(report, "restored", ()))
     restore_failed = list(getattr(report, "restore_failed", ()))
+    _count_budget(decision, report, memory, restored, restore_failed, now_wall)
     memory.throttle.record(decision.flat, report.written, now_mono)
     for key in report.written:
         if key in decision.flat:
@@ -477,3 +484,20 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     elif group and all(k in report.written for k in group):
         memory.group_backoff_s = 0.0
         memory.group_backoff_until = None
+
+
+def _count_budget(decision: CycleDecision, report: WriteReport, memory: ControlMemory,
+                  restored: list[str], restore_failed: list[str], now_wall: float | None) -> None:
+    """Budżet NVM w trybie encji: każde wywołanie usługi zapisu i osobno cofnięcia.
+
+    W trybie bezpośrednim ramki liczy pisarz rejestrów (`on_send`, dokładna liczba ramek,
+    także ponowionych) — tu nic. `now_wall=None` = bez liczenia (testy, próba).
+    """
+    if now_wall is None or memory.budget is None or decision.target_kind != "entities":
+        return
+    ambiguous = getattr(report, "ambiguous", None)
+    calls = dict.fromkeys([*report.written, *(ambiguous or ()), *report.failed])
+    for key in calls:
+        memory.budget.note(key, now_wall)
+    for key in dict.fromkeys([*restored, *restore_failed]):
+        memory.budget.note(key, now_wall)

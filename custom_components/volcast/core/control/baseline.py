@@ -49,7 +49,12 @@ def baseline_params(profile, snapshot: Mapping[str, float | str]) -> Params:
 
 
 def needs_restore(*, owned: bool, consent: bool | None, local_switch: bool,
-                  control_mode: str | None) -> bool:
+                  control_mode: str | None, active_mode: str = "entities") -> bool:
+    """Powrót do trybu bazowego: tylko przy własności i utracie prawa.
+
+    `active_mode` — sposób sterowania, w którym przejęliśmy falownik (`entities`/`direct`);
+    zmiana sposobu przy własności = powrót przez stary sposób.
+    """
     if not owned:
         return False
-    return consent is False or not local_switch or control_mode != "entities"
+    return consent is False or not local_switch or control_mode != active_mode
