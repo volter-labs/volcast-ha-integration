@@ -63,7 +63,9 @@
       "paired_existing": "Your existing Volcast entry is now connected to your account.",
       "multiple_accounts": "More than one Volcast entry is set up here. Remove the extra entries, then pair again.",
       "pairing_connection_lost": "Home Assistant lost the connection to the Volcast pairing service while waiting for your confirmation. Check the internet connection of Home Assistant and start again.",
-      "already_in_progress": "Volcast setup is already in progress. Finish or close the other setup window first."
+      "already_in_progress": "Volcast setup is already in progress. Finish or close the other setup window first.",
+      "existing_entry_disabled": "Volcast is already added but disabled. Enable it in Settings → Devices & services.",
+      "converted_existing": "Your discovery-only entry now uses your Volcast account."
     }
   },
   "options": {

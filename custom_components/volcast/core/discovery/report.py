@@ -151,12 +151,14 @@ def _mask_value(value, pattern: re.Pattern[str] | None,
     omijając pola strukturalne (_STRUCTURAL_KEYS), których wartości są słownikiem/
     kontraktem raportu, nie danymi właściciela ("host"/"ip"/"unit" nie są pomijane)."""
     if isinstance(value, str):
-        if len(value) > _MAX_TEXT:
-            value = value[:_MAX_TEXT] + "…"
-        masked = pattern.sub("<SN>", value) if pattern else value
+        truncated = len(value) > _MAX_TEXT
+        # Maskujemy z zapasem, potem tniemy — cięcie przed maskowaniem potrafiło
+        # zostawić początek numeru seryjnego na granicy.
+        work = value[:_MAX_TEXT + 512] if truncated else value
+        masked = pattern.sub("<SN>", work) if pattern else work
         masked = mac_pattern.sub(_known_mac_repl, masked) if mac_pattern else masked
-        masked = _mask_mac_in_text(masked)
-        return _EMAIL_RE.sub("<EMAIL>", masked)
+        masked = _EMAIL_RE.sub("<EMAIL>", _mask_mac_in_text(masked))
+        return masked[:_MAX_TEXT] + "…" if truncated else masked
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():

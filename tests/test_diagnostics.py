@@ -40,8 +40,9 @@ async def test_diagnostics_contains_report_but_never_api_key(hass_with_runner):
 async def test_diagnostics_entry_block(hass_with_runner):
     hass, entry, _ = hass_with_runner(report=None)
     out = await async_get_config_entry_diagnostics(hass, entry)
-    assert out == {"entry": {"mode": "forecast", "version": "1.7.2"},
-                   "discovery": {"status": "pending"}}
+    assert out == {"entry": {"mode": "forecast", "version": "1.7.2", "paired": False,
+                             "backend_host": None, "options_keys": ["pv_energy_entity"]},
+                   "discovery": {"status": "pending"}, "control": None}
 
 
 async def test_diagnostics_discovery_only_mode(hass_with_runner):
@@ -53,6 +54,7 @@ async def test_diagnostics_discovery_only_mode(hass_with_runner):
 async def test_diagnostics_without_loaded_entry_is_pending():
     entry = SimpleNamespace(entry_id="e1", version=1, data={"api_key": API_KEY}, options={})
     out = await async_get_config_entry_diagnostics(SimpleNamespace(data={}), entry)
-    assert out == {"entry": {"mode": "forecast", "version": "unknown"},
-                   "discovery": {"status": "pending"}}
+    assert out == {"entry": {"mode": "forecast", "version": "unknown", "paired": False,
+                             "backend_host": None, "options_keys": []},
+                   "discovery": {"status": "pending"}, "control": None}
     assert API_KEY not in str(out)

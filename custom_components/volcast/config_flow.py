@@ -343,9 +343,15 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Create an account-less entry — only read-only installation discovery."""
+        entries = self._async_current_entries()
+        # A disabled entry cannot be reached to add an account to later, and the
+        # generic "single instance" message below would not say why. Point the
+        # owner at the actual, fixable cause instead.
+        if entries and all(getattr(e, "disabled_by", None) for e in entries):
+            return self.async_abort(reason="existing_entry_disabled")
         # Any existing Volcast entry already runs discovery (forecast entries
         # included), so a separate discovery-only entry would only duplicate it.
-        if self._async_current_entries():
+        if entries:
             return self.async_abort(reason="single_instance_allowed")
         await self.async_set_unique_id(MODE_DISCOVERY_ONLY)
         # Distinct abort reason: "already_configured" talks about an API key,
@@ -368,6 +374,18 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_BATTERY_SOC_ENTITY: user_input.get(CONF_BATTERY_SOC_ENTITY, ""),
                 CONF_BATTERY_CHARGE_POWER_ENTITY: user_input.get(CONF_BATTERY_CHARGE_POWER_ENTITY, ""),
             }
+            # An existing account-less (discovery-only) entry becomes redundant the
+            # moment an account is added — update it in place instead of running
+            # both side by side.
+            _, discovery = self._entries_by_kind()
+            if discovery:
+                target = discovery[0]
+                self.hass.config_entries.async_update_entry(
+                    target,
+                    data={CONF_API_KEY: self._api_data[CONF_API_KEY], CONF_API_URL: self._api_data[CONF_API_URL]},
+                    options=options, unique_id=self._api_data[CONF_API_KEY], title=self._api_data["title"])
+                await self.hass.config_entries.async_reload(target.entry_id)
+                return self.async_abort(reason="converted_existing")
             return self.async_create_entry(
                 title=self._api_data["title"],
                 data={
