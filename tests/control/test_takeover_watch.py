@@ -358,23 +358,57 @@ def test_owner_edits_of_keys_we_never_wrote_survive_revoke(monkeypatch):
     assert h.states.get(E["mode"]).state == "auto" and ex._state.owned is False
 
 
-def test_taken_over_key_stays_excluded_after_we_write_it_again(monkeypatch):
+def test_key_we_write_again_is_restored_after_revoke(monkeypatch):
+    # Właściciel przejął tryb, po pauzie plan zapisał go znowu — ostatni zapis jest nasz.
     h = goodwe_hass()
     store = ControlStore(h, "e1")
     _, ex = make(h, store=store, monkeypatch=monkeypatch)
 
     async def go():
         await ready(ex)
-        await ex.async_tick()
-        h.states.set(E["export_limit_enabled"], "on")
-        await ex.async_on_state_event(event(E["export_limit_enabled"], "on", Context(user_id="u1")))
+        await ex.async_tick()                                    # sell_power 2000 W
+        h.states.set(E["mode"], "charge_battery")
+        await ex.async_on_state_event(event(E["mode"], "charge_battery", Context(user_id="u1")))
         ex._clock.t += 1801
-        await ex.async_tick()                                    # po pauzie plan pisze klucz znowu
-        return await store.async_load()
-    state = asyncio.run(go())
-    assert h.states.get(E["export_limit_enabled"]).state == "off"
-    assert "export_limit_enabled" in state.taken_over
-    assert "export_limit_enabled" not in state.restore_keys and "mode" in state.restore_keys
+        await ex.async_tick()                                    # po pauzie plan pisze tryb znowu
+        assert h.states.get(E["mode"]).state == "sell_power"
+        saved = await store.async_load()
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+        return saved
+    saved = asyncio.run(go())
+    assert "mode" in saved.restore_keys and "mode" not in saved.taken_over
+    assert h.states.get(E["mode"]).state == "auto" and ex._state.owned is False
+
+
+def test_power_only_write_restores_mode_as_group(monkeypatch):
+    # Falownik już w trybie planu (ustawionym przez właściciela) — piszemy samą moc.
+    h = goodwe_hass(mode="sell_power", power="100")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        assert "mode" not in ex._state.restore_keys and "power_w" in ex._state.restore_keys
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+    asyncio.run(go())
+    # nasza nastawa zmieniła znaczenie trybu — tryb wraca do bazowego, moc zostaje
+    assert h.states.get(E["mode"]).state == "auto"
+    assert h.states.get(E["power_w"]).state == "2000.0"
+    assert ex._state.owned is False
+
+
+def test_group_write_after_mode_takeover_ends_the_takeover(monkeypatch):
+    h, ex = _written(monkeypatch)
+    h.states.set(E["mode"], "charge_battery")
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "charge_battery", Context(user_id="u1"))))
+    assert "mode" in ex._state.taken_over
+    ex._note_written(["power_w"])                               # nasz zapis mocy PO przejęciu trybu
+    assert "mode" not in ex._state.taken_over
+    asyncio.run(ex.async_set_consent(False))
+    asyncio.run(ex.async_tick())
+    assert h.states.get(E["mode"]).state == "auto" and ex._state.owned is False
 
 
 def test_restore_keys_persisted_with_ownership(monkeypatch):

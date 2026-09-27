@@ -17,10 +17,12 @@ Zasady wykonania:
 * powrót do trybu bazowego: najpierw sam tryb bazowy (neutralny, nie potrzebuje
   warunków — hamulec właściciela nie może zależeć od innej encji), potem każda
   pozostała nastawa z migawki niezależnie; własność zostaje, dopóki wszystko nie dojdzie,
-  a każdy tik ponawia brakujące. Wracają tylko klucze, które zapisaliśmy (`restore_keys`),
-  bez tych, które właściciel potem zmienił — jego zmiany zawsze wygrywają, a tryb, który
-  ustawił (także opcja spoza profilu), nigdy nie jest nadpisany. Dlatego powrót rusza od
-  razu po cofnięciu zgody albo wyłączeniu przełącznika, także w pauzie;
+  a każdy tik ponawia brakujące. Wraca klucz, którego OSTATNI zapis był nasz
+  (`restore_keys`); klucz zmieniony potem przez właściciela zostaje jego (`taken_over`),
+  dopóki sami go znowu nie zapiszemy. Tryb i moc to jedna grupa: nasz zapis mocy albo
+  trybu = tryb wraca do bazowego, chyba że właściciel przejął tryb już PO naszym zapisie
+  albo falownik pokazuje opcję spoza profilu. Powrót rusza od razu po cofnięciu zgody
+  albo wyłączeniu przełącznika, także w pauzie;
 * własność i migawka są związane z profilem i encją trybu (`owner`); migawki innego
   falownika albo mapowania nie wpisujemy w nowe encje;
 * zatrzymany wykonawca nie zaczyna zapisów i nie nadpisuje magazynu (poza powrotem do
@@ -325,7 +327,7 @@ class VolcastExecutor:
         self._notify()
 
     def _take_over_key(self, key: str) -> None:
-        """Klucz zmieniony przez właściciela: do końca tej własności nie wraca do migawki."""
+        """Klucz zmieniony przez właściciela: nie wraca do migawki, dopóki go znowu nie zapiszemy."""
         if not self._state.owned:
             return
         if key not in self._state.taken_over:
@@ -334,13 +336,25 @@ class VolcastExecutor:
             self._state.restore_keys.remove(key)
 
     def _note_written(self, keys) -> bool:
-        """Klucze zapisane (albo może zapisane) w tej własności; True, gdy zbiór się zmienił."""
-        if self._state.restore_keys is None:
-            return False                 # stan sprzed pola: powrót obejmuje całą migawkę
-        new = [k for k in dict.fromkeys(keys)
-               if k not in self._state.restore_keys and k not in self._state.taken_over]
-        self._state.restore_keys.extend(new)
-        return bool(new)
+        """Klucze zapisane (albo może zapisane) przez nas; True, gdy stan się zmienił.
+
+        Ostatni zapis klucza jest nasz, więc wraca on do powrotu — także gdy właściciel
+        przejął go wcześniej. Zapis członka grupy tryb+moc kończy przejęcie trybu sprzed
+        tego zapisu: nasza nastawa zmieniła znaczenie trybu, który zostawił właściciel.
+        """
+        keys = list(dict.fromkeys(keys))
+        if not keys:
+            return False
+        freed = set(keys)
+        if freed & set(GROUP_KEYS):
+            freed |= set(GROUP_KEYS)
+        before = (list(self._state.taken_over), None if self._state.restore_keys is None
+                  else list(self._state.restore_keys))
+        self._state.taken_over = [k for k in self._state.taken_over if k not in freed]
+        if self._state.restore_keys is not None:
+            # (stan sprzed pola: None = powrót obejmuje całą migawkę, nic do dopisania)
+            self._state.restore_keys.extend(k for k in keys if k not in self._state.restore_keys)
+        return before != (self._state.taken_over, self._state.restore_keys)
 
     def _update_foreign_episode(self, rd: _Reading) -> None:
         """Epizod trybu spoza profilu kończy dopiero odczyt trybu z profilu (brak odczytu — nic)."""
@@ -556,6 +570,8 @@ class VolcastExecutor:
         readings = rd.readings
         # Tylko to, co sami zapisaliśmy i czego właściciel potem nie zmienił (None = cała migawka).
         allowed = None if self._state.restore_keys is None else set(self._state.restore_keys)
+        if allowed is not None and allowed & set(GROUP_KEYS) and "mode" not in self._state.taken_over:
+            allowed.add("mode")          # tryb i moc to jedna grupa — nasza moc = nasz tryb
         owner_kept = [k for k in target if k in self._state.taken_over]
         # To, co falownik już ma, nie jedzie (NVM) — ta sama zasada co w cyklu.
         keys = [k for k, v in target.items()
