@@ -129,15 +129,20 @@ def _fit_register(value: float, lo: float, hi: float, direction: int) -> float:
 class RegisterTarget:
     """Cel rejestrowy: odczyt z rejestrów jest widokiem urządzenia, zapisy to `RegisterWrite`.
 
-    Klucze bez odczytu zwrotnego (`echo_only`, R9) nigdy nie dostają zapisu — wykonawca trzyma
-    je też w `memory.unsupported`, więc cykl traktuje je jak nieobsługiwane (bez wstrzymania trybu).
+    Klucze bez odczytu zwrotnego (`unreadable`, wynik sondy) nigdy nie dostają zapisu — wykonawca
+    trzyma je też w `memory.unsupported`, więc cykl traktuje je jak nieobsługiwane (bez
+    wstrzymania trybu). `tou` obejmuje wszystkie pola programów i włącznik.
     """
 
     kind = "direct"
 
-    def __init__(self, reading: "DirectReading", *, echo_only: frozenset[str] = frozenset()) -> None:
+    def __init__(self, reading: "DirectReading", *, unreadable: frozenset[str] = frozenset()) -> None:
         self.reading = reading
-        self.echo_only = frozenset(echo_only)
+        self.unreadable = frozenset(unreadable)
+
+    def _skipped(self, keys: Iterable[str]) -> set[str]:
+        return {k for k in keys if k in self.unreadable
+                or ("tou" in self.unreadable and (k.startswith("tou.") or k == "tou_enable"))}
 
     def missing_keys(self, profile) -> tuple[str, ...]:
         return ()
@@ -160,9 +165,10 @@ class RegisterTarget:
         return replace(params, **changes), tuple(adjusted), ()
 
     def writes(self, params: Params, profile, keys: Iterable[str] | None) -> tuple[list, tuple[str, ...]]:
-        wanted = None if keys is None else set(keys) - self.echo_only
-        if wanted is None and self.echo_only:
-            wanted = set(params.flatten()) - self.echo_only
+        wanted = None if keys is None else set(keys)
+        if self.unreadable:
+            wanted = set(params.flatten()) if wanted is None else wanted
+            wanted -= self._skipped(wanted)
         out: list[RegisterWrite] = encode_writes(params, profile, wanted, current=self.reading.image)
         return out, ()
 

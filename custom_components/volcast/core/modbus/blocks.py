@@ -43,46 +43,59 @@ def plan_blocks(addrs: Iterable[int], max_count: int, max_gap: int = 16) -> list
     return blocks
 
 
-def _key_runs(profile, *, include_write_keys: bool = True, include_tou: bool = True,
-              include_identify: bool = False) -> list[tuple[int, int]]:
-    """Ciągłe zakresy słów per klucz (a dla składników sumy — per składnik)."""
-    runs: list[tuple[int, int]] = []
+def _named_runs(profile, *, include_write_keys: bool = True, include_tou: bool = True,
+                include_identify: bool = False) -> list[tuple[str, int, int]]:
+    """Ciągłe zakresy słów per klucz (a dla składników sumy — per składnik): (klucz, start, liczba).
 
-    def add(addrs: list[int]) -> None:
+    Klucze TOU (pola programów i włącznik) mają nazwę `tou`; identyfikacja — `identify`.
+    """
+    runs: list[tuple[str, int, int]] = []
+
+    def add(key: str, addrs: list[int]) -> None:
         if addrs:
-            runs.append((addrs[0], len(addrs)))
+            runs.append((key, addrs[0], len(addrs)))
 
     for key, spec in profile.raw["read"].items():
         if key == "tou_enabled" and not include_tou:
             continue
+        name = "tou" if key == "tou_enabled" else key
         if "sum" in spec:
             for term in spec["sum"]:
                 if "ref" not in term:
-                    add(spec_addresses(term))
+                    add(name, spec_addresses(term))
         else:
-            add(spec_addresses(spec))
+            add(name, spec_addresses(spec))
     write = profile.raw["write"]
     if include_write_keys:
         for key, spec in write.items():
             if key not in ("tou_program", "tou_enable"):
-                add(spec_addresses(spec))
+                add(key, spec_addresses(spec))
     if include_tou and "tou_program" in write:
         tp = write["tou_program"]
         for field in _TOU_REG_FIELDS:
-            runs.append((tp[field]["addr"], tp["count"]))
+            runs.append(("tou", tp[field]["addr"], tp["count"]))
         if "tou_enable" in write:
-            runs.append((write["tou_enable"]["addr"], 1))
+            runs.append(("tou", write["tou_enable"]["addr"], 1))
     if include_identify:
-        runs.extend(profile.modbus.identify_reads)
+        runs.extend(("identify", a, n) for a, n in profile.modbus.identify_reads)
     return runs
 
 
+def _key_runs(profile, **kw) -> list[tuple[int, int]]:
+    return [(start, n) for _, start, n in _named_runs(profile, **kw)]
+
+
 def read_plan(profile, *, include_write_keys: bool = True, include_tou: bool = True,
-              include_identify: bool = False) -> list[tuple[int, int]]:
-    runs = _key_runs(profile, include_write_keys=include_write_keys, include_tou=include_tou,
-                     include_identify=include_identify)
-    addrs = {a for start, n in runs for a in range(start, start + n)}
-    return plan_blocks(addrs, profile.modbus.max_read_registers)
+              include_identify: bool = False, exclude: Iterable[str] = ()) -> list[tuple[int, int]]:
+    """Bloki odczytu. `exclude` — klucze pomijane (np. rejestry bez odczytu: odpowiedź
+    niepoprawnej długości przy każdym odpytaniu to strata czasu łącza i fałszywe obce ramki);
+    `tou` pomija wszystkie pola programów i włącznik. Słowo potrzebne innemu kluczowi zostaje."""
+    skip = set(exclude)
+    runs = [(k, start, n) for k, start, n in _named_runs(
+        profile, include_write_keys=include_write_keys, include_tou=include_tou,
+        include_identify=include_identify)]
+    keep = {a for k, start, n in runs if k not in skip for a in range(start, start + n)}
+    return plan_blocks(keep, profile.modbus.max_read_registers)
 
 
 def split_block(block: tuple[int, int], profile) -> list[tuple[int, int]]:

@@ -35,7 +35,7 @@ async def test_golden_applier_vectors_over_simulator(vec, goodwe_udp_sim, goodwe
     goodwe_bank.unreadable.clear()                 # parytet: każdy rejestr ma odczyt zwrotny
     writes = encode_writes(params_from_golden(vec["params"], GW), GW)
     if vec["fail_kind"] == "unsupported":
-        goodwe_bank.unsupported.add(vec["fail_reg"])
+        goodwe_bank.readonly.add(vec["fail_reg"])      # zapis → wyjątek 2 (odczyt działa)
     elif vec["fail_kind"] == "error":
         sim_faults.mute_write_addrs.add(vec["fail_reg"])
         goodwe_bank.ignore_writes.add(vec["fail_reg"])

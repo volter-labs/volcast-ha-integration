@@ -17,12 +17,16 @@ def test_draft_and_shape():
 
 
 def test_identify_never_reads_serial():
-    # Rejestry 3-7 to numer seryjny (10 znaków ASCII), nie model — identyfikacja nie może
-    # po niego sięgać, nawet pośrednio przez zakres jakiegoś innego rejestru.
+    # Rejestry 3-7 to numer seryjny (10 znaków ASCII), nie model — identyfikacja (typ, moc)
+    # nie może po niego sięgać, nawet pośrednio przez zakres jakiegoś innego rejestru.
+    # Wyjątek: klucz `serial` — wyłącznie do solonego odcisku urządzenia, nigdy jako model.
     ident = DEYE.raw["identify"]
     assert "model_register" not in ident
     assert "model_regex" not in ident
+    assert ident["registers"]["serial"] == {"addr": 3, "type": "ascii", "len": 5}
     for name, spec in ident["registers"].items():
+        if name == "serial":
+            continue
         addr = spec["addr"]
         words = 2 if spec["type"] in ("u32", "i32", "f32") else 1
         assert addr + words <= 3 or addr > 7, f"{name} nachodzi na numer seryjny (3-7)"
@@ -59,7 +63,8 @@ def test_deye_modbus_is_draft_with_fc16_and_tou_enable_146():
     assert m.transport_options["solarman_v5"] == {"port": 8899, "timeout_ms": 3000, "gap_ms": 200}
     assert m.transport_options["modbus_tcp"] == {"port": 502, "timeout_ms": 2000, "gap_ms": 100}
     assert m.transport_options["modbus_rtu"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 100}
-    assert m.identify_reads == ((0, 1), (20, 2))
+    assert m.identify_reads == ((0, 1), (3, 5), (20, 2))
+    assert m.echo_only == ()
     assert m.probe_keys == ("tou",)
     assert DEYE.raw["write"]["tou_enable"] == {"addr": 146, "enable_bit": 0, "day_mask": 254}
     assert DEYE.raw["read"]["tou_enabled"] == {"addr": 146, "type": "u16"}

@@ -41,6 +41,7 @@ class ModbusSpec:
     transport_options: Mapping[str, Mapping[str, int]]  # nazwa → {port, timeout_ms, gap_ms}
     identify_reads: tuple[tuple[int, int], ...]         # (adres, liczba)
     probe_keys: tuple[str, ...]
+    echo_only: tuple[str, ...] = ()                     # klucze potwierdzane samym echem (bez odczytu)
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,7 @@ def _modbus_spec(m: Mapping[str, Any]) -> ModbusSpec:
                                             for name, o in m["transport_options"].items()}),
         identify_reads=tuple((r["addr"], r["count"]) for r in m["identify_reads"]),
         probe_keys=tuple(m["probe_keys"]),
+        echo_only=tuple(m.get("echo_only", ())),
     )
 
 

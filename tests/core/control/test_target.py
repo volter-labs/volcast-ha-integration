@@ -66,8 +66,8 @@ def test_register_writes_use_current_image_for_bit_fields():
     assert writes == [RegisterWrite("tou.1.grid_charge", 172, 0b11)]
 
 
-def test_register_target_never_writes_echo_only(goodwe_profile, reading_auto):
-    t = RegisterTarget(reading_auto, echo_only=frozenset({"soc_max"}))
+def test_register_target_never_writes_unreadable(goodwe_profile, reading_auto):
+    t = RegisterTarget(reading_auto, unreadable=frozenset({"soc_max"}))
     writes, unmapped = t.writes(Params(mode="auto", soc_min=20.0, soc_max=90.0), goodwe_profile, None)
     assert [w.key for w in writes] == ["soc_min", "mode"] and unmapped == ()
     writes, _ = t.writes(Params(mode="auto", soc_max=90.0), goodwe_profile, {"soc_max", "mode"})
@@ -85,3 +85,18 @@ def test_golden_mapper_vectors_register_path(goodwe_profile, reading_auto):
         if vec["fail_kind"] is None:
             writes, _ = t.writes(params_from_golden(vec["params"], goodwe_profile), goodwe_profile, None)
             assert [[w.addr, w.value] for w in writes] == vec["writes"]
+
+
+def test_register_target_unreadable_tou_prefix():
+    from custom_components.volcast.core.params import TouProgram
+    from custom_components.volcast.core.profile import load_builtin
+    from custom_components.volcast.core.modbus.reading import build_reading
+    from custom_components.volcast.core.registers import RegisterImage
+    from tests.core.golden import T0
+    from tests.sim.fixtures import deye_words
+    deye = load_builtin("deye-sg")
+    t = RegisterTarget(build_reading(deye, RegisterImage(deye_words()), at_mono=0.0, at_utc=T0),
+                       unreadable=frozenset({"tou"}))
+    progs = tuple(TouProgram(start_min=i * 240, power_w=1000.0, soc=50.0, grid_charge=True) for i in range(6))
+    assert t.writes(Params(tou=progs), deye, None) == ([], ())
+    assert t.writes(Params(tou=progs), deye, {"tou.1.soc"}) == ([], ())

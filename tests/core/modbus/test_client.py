@@ -5,9 +5,9 @@ import pytest
 
 from custom_components.volcast.core.modbus.blocks import read_plan, split_block
 from custom_components.volcast.core.modbus.client import RegisterClient
-from custom_components.volcast.core.modbus.identity import device_fingerprint, identity_fields
+from custom_components.volcast.core.modbus.identity import device_fingerprint, identity_info
 from custom_components.volcast.core.registers import RegisterImage
-from custom_components.volcast.core.transports.base import LinkDown, RequestTimeout
+from custom_components.volcast.core.transports.base import LinkDown, RequestTimeout, TransportError
 
 from .conftest import SALT, sim_transport
 
@@ -72,7 +72,7 @@ class _Fake:
         self.calls = 0
         self.fail_after = fail_after
 
-    async def read(self, addr, count):
+    async def read(self, addr, count, *, tries=None):
         self.calls += 1
         if self.calls > self.fail_after:
             raise LinkDown("down")
@@ -142,29 +142,139 @@ async def test_read_identity_requires_salt(goodwe_udp_sim, goodwe_profile):
 
 
 @pytest.mark.asyncio
-async def test_deye_identity_from_device_type_and_power(deye_client, deye_profile, deye_bank):
+async def test_deye_identity_includes_serial(deye_client, deye_profile, deye_bank):
     fp = await deye_client.read_identity()
-    image = RegisterImage({0: 1280, 20: 34464, 21: 1})
-    fields = identity_fields(deye_profile, image)
-    assert fields == {"serial": None, "model": "1280", "rated_power_w": 10000.0}
-    assert fp == device_fingerprint(SALT, deye_profile.id, fields)
-    deye_bank.poke(3, 0x4141)                          # blok 3–7 (serial) nie wpływa na odcisk
-    assert await deye_client.read_identity() == fp
+    assert fp is not None and len(fp) == 16
+    deye_bank.poke(3, 0x4142)                          # inny serial (blok 3–7) → inny odcisk
+    assert await deye_client.read_identity() != fp
 
 
-def test_fingerprint_is_not_a_plain_hash_of_serial(goodwe_profile):
-    fields = {"serial": "SERIAL01", "model": "GW10K-ET", "rated_power_w": 10000.0}
-    a = device_fingerprint(SALT, goodwe_profile.id, fields)
-    assert a == device_fingerprint(SALT, goodwe_profile.id, dict(fields, model="other"))   # serial wygrywa
-    assert a != device_fingerprint(b"\x02" * 16, goodwe_profile.id, fields)
-    assert "SERIAL01" not in a and len(a) == 16
-    with pytest.raises(ValueError):
-        device_fingerprint(b"", goodwe_profile.id, fields)
+def _goodwe_identity_image(over=None):
+    from tests.sim.fixtures import goodwe_words
+    words = {a: w for a, w in goodwe_words().items() if 35000 <= a < 35033}
+    words.update(over or {})
+    return RegisterImage(words)
+
+
+def test_identity_info_has_no_serial(goodwe_profile):
+    info = identity_info(goodwe_profile, _goodwe_identity_image())
+    assert info == {"matched": True, "model": "GW8KN-ET", "rated_power_w": 8000.0}
+    assert "SERIAL" not in json.dumps(info)
+
+
+def test_degenerate_identity_is_unknown(goodwe_profile, deye_profile):
+    zeros = RegisterImage({a: 0 for a in range(35000, 35033)})
+    ones = RegisterImage({a: 0xFFFF for a in range(35000, 35033)})
+    assert device_fingerprint(SALT, goodwe_profile, zeros) is None
+    assert device_fingerprint(SALT, goodwe_profile, ones) is None
+    deye_zero = RegisterImage({0: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 20: 0, 21: 0})
+    assert device_fingerprint(SALT, deye_profile, deye_zero) is None
+
+
+def test_non_printable_serial_not_used(goodwe_profile):
+    # Serial z bajtów 0xFF → nie serial; odcisk z modelu i mocy (urządzenie pasuje do profilu).
+    img = _goodwe_identity_image({a: 0xFFFF for a in range(35003, 35011)})
+    fp = device_fingerprint(SALT, goodwe_profile, img)
+    img2 = _goodwe_identity_image({a: 0x0000 for a in range(35003, 35011)})
+    assert fp is not None and fp == device_fingerprint(SALT, goodwe_profile, img2)
+
+
+def test_wrong_device_is_unknown(goodwe_profile, deye_profile):
+    other_model = _goodwe_identity_image({35011: 0x5858})         # „XX…” — nie pasuje do model_regex
+    assert device_fingerprint(SALT, goodwe_profile, other_model) is None
+    words = {0: 9999, 3: 0x4142, 4: 0x4344, 5: 0x4546, 6: 0x4748, 7: 0x4950, 20: 34464, 21: 1}
+    assert device_fingerprint(SALT, deye_profile, RegisterImage(words)) is None      # device_type spoza listy
+
+
+def test_fingerprint_salted_and_serial_wins(goodwe_profile):
+    img = _goodwe_identity_image()
+    a = device_fingerprint(SALT, goodwe_profile, img)
+    assert a != device_fingerprint(b"\x02" * 16, goodwe_profile, img)
+    assert a == device_fingerprint(SALT, goodwe_profile, _goodwe_identity_image({35001: 10000}))
+    for bad in (b"", b"\x01" * 15, "salt" * 8):
+        with pytest.raises(ValueError):
+            device_fingerprint(bad, goodwe_profile, img)
 
 
 def test_rated_power_out_of_range_is_none(deye_profile):
-    fields = identity_fields(deye_profile, RegisterImage({0: 1280, 20: 0, 21: 0}))
-    assert fields["rated_power_w"] is None
+    info = identity_info(deye_profile, RegisterImage({0: 1280, 20: 0, 21: 0}))
+    assert info["rated_power_w"] is None and info["matched"] is True
+
+
+# ── limity odczytu ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_unreadable_keys_not_polled(goodwe_udp_sim, goodwe_profile):
+    client = RegisterClient(sim_transport(goodwe_udp_sim, "goodwe_udp", 0xF7), goodwe_profile,
+                            unreadable={"soc_max"})
+    try:
+        r = await client.read_state()
+        t = client.transport
+        assert t.stats.stray == 0 and t.stats.timeouts == 0 and t.stats.consecutive_timeouts == 0
+        assert all(a != 47760 for fc, a, _ in goodwe_udp_sim.log)
+        assert "soc_max" not in r.device and r.device["power_w"] == 8846.0
+    finally:
+        await client.transport.close()
+
+
+@pytest.mark.asyncio
+async def test_silent_device_gives_up_after_one_block(goodwe_udp_sim, goodwe_profile, sim_faults):
+    sim_faults.drop_next = 1000
+    client = RegisterClient(sim_transport(goodwe_udp_sim, "goodwe_udp", 0xF7, timeout_s=0.05, read_tries=3),
+                            goodwe_profile)
+    try:
+        with pytest.raises(RequestTimeout):
+            await client.read_state()
+        assert goodwe_udp_sim.requests == 3                   # jeden blok, wszystkie jego próby
+        assert [f["ok"] for f in client.last_frames] == [False] * len(read_plan(goodwe_profile))
+    finally:
+        await client.transport.close()
+
+
+class _SlowFake:
+    """Transport, który po każdym odczycie „zużywa” czas na zegarze atrapie."""
+
+    def __init__(self, clock, fail_addrs=()):
+        from custom_components.volcast.core.transports.base import TransportConfig
+        self.cfg = TransportConfig(kind="modbus_tcp", host="127.0.0.1", port=502, unit=1,
+                                   timeout_s=2.0, read_tries=3)
+        self.clock = clock
+        self.fail = set(fail_addrs)
+        self.tries_seen = []
+
+    async def read(self, addr, count, *, tries=None):
+        self.tries_seen.append(tries)
+        if addr in self.fail:
+            self.clock.now += 2.0 * tries
+            raise RequestTimeout(silent=False)
+        return [0] * count
+
+
+@pytest.mark.asyncio
+async def test_cycle_time_budget_caps_tries_and_stops(goodwe_profile):
+    from tests.core.transports.helpers import FakeClock
+    clock = FakeClock()
+    plan = read_plan(goodwe_profile)
+    fake = _SlowFake(clock, fail_addrs={plan[0][0], plan[1][0]})
+    client = RegisterClient(fake, goodwe_profile, clock=clock)
+    with pytest.raises(TransportError):
+        await client.read_state()
+    # 5 s budżetu przy 2 s na próbę: pierwszy blok dostaje 2 próby (4 s), zostaje 1 s < 2 s,
+    # więc kolejne bloki nie idzie już żaden — cykl nie trzyma łącza dłużej niż budżet.
+    assert fake.tries_seen == [2]
+    assert [f["ok"] for f in client.last_frames] == [False] * len(plan)
+
+
+@pytest.mark.asyncio
+async def test_reading_stamped_at_cycle_start(goodwe_profile):
+    from tests.core.transports.helpers import FakeClock
+    clock = FakeClock()
+    fake = _SlowFake(clock, fail_addrs={read_plan(goodwe_profile)[0][0]})
+    client = RegisterClient(fake, goodwe_profile, clock=clock, cycle_budget_s=100.0)
+    start = clock.now
+    r = await client.read_state()
+    assert r.at_mono == start and clock.now > start
 
 
 @pytest.mark.asyncio

@@ -183,6 +183,24 @@ async def test_peer_reset_counts_and_backoff(link):
 
 
 @pytest.mark.asyncio
+async def test_on_send_not_called_when_link_down_before_send(link):
+    clock = FakeClock()
+    link.faults.reset_after = 1
+    addr, value = link.write
+    sent = []
+    t = link.open(clock=clock)
+    try:
+        await _read(t, link.a)
+        with pytest.raises(LinkDown):
+            await _read(t, link.a)                        # zerwane przez drugą stronę → odwrót
+        with pytest.raises(LinkDown):
+            await t.write(addr, [value], function=link.function, on_send=lambda: sent.append(1))
+        assert sent == [] and link.bank.writes == []
+    finally:
+        await t.close()
+
+
+@pytest.mark.asyncio
 async def test_backoff_doubles_and_resets_after_success(link):
     clock = FakeClock()
     t = link.open(clock=clock, connect_timeout_s=0.5)

@@ -21,6 +21,8 @@ class SimServer:
         self.requests = 0
         self.clients = 0
         self.log: list[tuple[int, int, int]] = []   # (funkcja, rejestr, wartość FC 6 / liczba FC 3 i 16)
+        self._drop_after = 0
+        self._last_was_write = False
         self._last: bytes | None = None
         self._closed = False
 
@@ -32,10 +34,16 @@ class SimServer:
         if len(pdu) >= 5:
             self.log.append((pdu[0], addr, struct.unpack(">H", pdu[3:5])[0]))
         f = self.faults
+        if self._drop_after > 0:
+            self._drop_after -= 1
+            return []
         if f.drop_next > 0:
             f.drop_next -= 1
             return []
         resp, is_write = handle_pdu(self.bank, pdu, f)
+        self._last_was_write = is_write
+        if is_write:
+            self._drop_after = f.drop_after_write
         if is_write and addr in f.mute_write_addrs:
             return []
         if is_write and f.mute_write_echo > 0:
@@ -53,6 +61,12 @@ class SimServer:
         out.append(framed)
         self._last = framed
         return out
+
+    def _delay(self) -> float:
+        """Opóźnienie odpowiedzi na ostatnie żądanie (usterki `delay_*`)."""
+        if self.faults.delay_writes_only and not self._last_was_write:
+            return 0.0
+        return self.faults.take_delay()
 
     async def close(self) -> None:
         raise NotImplementedError
@@ -103,7 +117,7 @@ class UdpServer(SimServer):
             if self._transport is not None and not self._transport.is_closing():
                 for fr in frames:
                     self._transport.sendto(fr, addr)
-        delay = self.faults.take_delay()
+        delay = self._delay()
         if delay > 0:
             self._handles.append(asyncio.get_running_loop().call_later(delay, send))
         else:
@@ -184,7 +198,7 @@ class TcpServer(SimServer):
                         break
                     frame, buf = buf[:n], buf[n:]
                     out = self._on_frame(frame)
-                    delay = self.faults.take_delay() if out else 0.0
+                    delay = self._delay() if out else 0.0
                     if delay > 0:
                         await asyncio.sleep(delay)
                     await self._send(writer, out)

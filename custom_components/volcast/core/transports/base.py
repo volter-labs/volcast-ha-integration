@@ -178,7 +178,7 @@ class RegisterTransport(Protocol):
     kind: str
     stats: TransportStats
 
-    async def read(self, addr: int, count: int) -> list[int]: ...
+    async def read(self, addr: int, count: int, *, tries: int | None = None) -> list[int]: ...
 
     async def write(self, addr: int, values: Sequence[int], *, function: int,
                     on_send: OnSend | None = None) -> None: ...
@@ -272,14 +272,16 @@ class BaseTransport:
 
     # ── API ──
 
-    async def read(self, addr: int, count: int) -> list[int]:
+    async def read(self, addr: int, count: int, *, tries: int | None = None) -> list[int]:
+        """`tries` — mniej prób niż `read_tries` (limit czasu cyklu u wołającego); nigdy więcej."""
         req = read_req(addr, count)
+        n = self.cfg.read_tries if tries is None else max(1, min(int(tries), self.cfg.read_tries))
         async with self._lock:
-            for attempt in range(self.cfg.read_tries):
+            for attempt in range(n):
                 try:
                     return await self._transact(req)
                 except RequestTimeout:
-                    if attempt == self.cfg.read_tries - 1:
+                    if attempt == n - 1:
                         raise
         raise AssertionError("unreachable")
 

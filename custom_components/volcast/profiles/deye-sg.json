@@ -19,6 +19,7 @@
     "registers": {
       "device_type": {"addr": 0, "type": "u16",
                        "expect": [5, 6, 1280, 1537, 1538]},
+      "serial": {"addr": 3, "type": "ascii", "len": 5},
       "rated_power_w": {"addr": 20, "type": "u32", "scale": 0.1, "word_order": "lo_hi"}
     }
   },
@@ -74,7 +75,7 @@
       "modbus_tcp": {"port": 502, "timeout_ms": 2000, "gap_ms": 100},
       "modbus_rtu": {"port": 8899, "timeout_ms": 2000, "gap_ms": 100}
     },
-    "identify_reads": [{"addr": 0, "count": 1}, {"addr": 20, "count": 2}],
+    "identify_reads": [{"addr": 0, "count": 1}, {"addr": 3, "count": 5}, {"addr": 20, "count": 2}],
     "probe_keys": ["tou"]
   }
 }

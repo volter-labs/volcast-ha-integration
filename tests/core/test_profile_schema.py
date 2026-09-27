@@ -317,6 +317,27 @@ def test_probe_keys_subset_of_write():
     assert validate_profile(p) == []
 
 
+def test_echo_only_optional_subset_of_write():
+    p = ms_profile()
+    p["modbus"]["echo_only"] = ["mode"]
+    assert validate_profile(p) == []
+    for bad in (["soc_max"], ["mode", "mode"], "mode", ["tou"]):
+        p = ms_profile()
+        p["modbus"]["echo_only"] = bad
+        assert "$.modbus.echo_only" in _errs(p)
+    p = tw_profile()
+    p["modbus"]["echo_only"] = ["tou"]
+    assert validate_profile(p) == []
+
+
+def test_echo_only_parsed_into_modbus_spec():
+    from custom_components.volcast.core.profile import profile_from_dict
+    raw = ms_profile()
+    assert profile_from_dict(raw).modbus.echo_only == ()
+    raw["modbus"]["echo_only"] = ["mode"]
+    assert profile_from_dict(raw).modbus.echo_only == ("mode",)
+
+
 def test_modbus_unknown_field_and_status_note():
     p = ms_profile()
     p["modbus"]["host"] = "x"

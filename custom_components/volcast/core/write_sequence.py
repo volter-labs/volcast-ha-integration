@@ -15,6 +15,20 @@ OK = "ok"
 UNSUPPORTED = "unsupported"
 DENIED = "denied"
 ERROR = "error"
+# Zapis doszedł, ale urządzenie ustawiło inną wartość niż zamówiona (np. przycięcie do zakresu):
+# traktowany jak zapisany, z RZECZYWISTĄ wartością z odczytu (`AdjustedOutcome.actual`).
+OK_ADJUSTED = "ok_adjusted"
+
+
+class AdjustedOutcome(str):
+    """Wynik OK_ADJUSTED niosący rzeczywistą wartość klucza (postać `Params.flatten()`)."""
+
+    actual: float | str
+
+    def __new__(cls, actual: float | str) -> "AdjustedOutcome":
+        obj = super().__new__(cls, OK_ADJUSTED)
+        obj.actual = actual
+        return obj
 
 
 class _Keyed(Protocol):
@@ -33,6 +47,9 @@ class WriteReport:
     # klucz → nazwa klasy wyjątku z callbacku; sama klasa, bez treści komunikatu
     # (treść transportu bywa z adresem hosta, a raport trafia do diagnostyki)
     errors: dict[str, str] = field(default_factory=dict)
+    # klucze zapisane z wartością inną niż zamówiona (OK_ADJUSTED) i ich wartości rzeczywiste
+    adjusted: list[str] = field(default_factory=list)
+    actual: dict[str, float | str] = field(default_factory=dict)
 
 
 OnException = Callable[[str, BaseException], None]
@@ -93,9 +110,13 @@ def _swallow(rep: WriteReport, key: str, err: Exception, on_exception: OnExcepti
 
 def _account(rep: WriteReport, key: str, outcome: str, param_failed: bool) -> bool:
     """Wpisuje wynik do raportu; zwraca, czy od teraz tryb ma być wstrzymany."""
-    if outcome == OK:
+    if outcome == OK or outcome == OK_ADJUSTED:
         if key not in rep.written:
             rep.written.append(key)
+        if outcome == OK_ADJUSTED:
+            rep.adjusted.append(key)
+            if hasattr(outcome, "actual"):
+                rep.actual[key] = outcome.actual
     elif outcome == UNSUPPORTED:
         rep.unsupported.append(key)
     else:

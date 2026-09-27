@@ -83,6 +83,8 @@ def _merge(rep: GroupReport, part: WriteReport) -> None:
     rep.failed += part.failed
     rep.mode_held = rep.mode_held or part.mode_held
     rep.errors.update(part.errors)
+    rep.adjusted += [k for k in part.adjusted if k not in rep.adjusted]
+    rep.actual.update(part.actual)
 
 
 def _hold(rep: GroupReport, held: Sequence) -> None:

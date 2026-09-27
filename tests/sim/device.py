@@ -45,12 +45,13 @@ class RegisterBank:
 
     def __init__(self, words: Mapping[int, int], *, unsupported: Iterable[int] = (),
                  unreadable: Iterable[int] = (), clamp: Mapping[int, tuple[int, int]] | None = None,
-                 ignore_writes: Iterable[int] = ()) -> None:
+                 ignore_writes: Iterable[int] = (), readonly: Iterable[int] = ()) -> None:
         self._w = {int(a): int(v) & 0xFFFF for a, v in words.items()}
         self.unsupported = set(unsupported)
         self.unreadable = set(unreadable)
         self.clamp = dict(clamp or {})
         self.ignore_writes = set(ignore_writes)
+        self.readonly = set(readonly)          # czytelne, zapis → wyjątek 2
         self.writes: list[tuple[int, int]] = []
 
     def read(self, addr: int, count: int) -> list[int] | int:
@@ -69,7 +70,7 @@ class RegisterBank:
         span = range(addr, addr + len(values))
         if not values or addr + len(values) > 0x10000:
             return 3
-        if any(a in self.unsupported for a in span):
+        if any(a in self.unsupported or a in self.readonly for a in span):
             return 2
         for a, v in zip(span, values):
             self.writes.append((a, v))
@@ -104,6 +105,8 @@ class Faults:
     heartbeat_next: int = 0         # V5: N razy ramka protokołu loggera (heartbeat) przed odpowiedzią
     asleep_next: int = 0            # V5: N odpowiedzi loggera bez ramki RTU (falownik uśpiony)
     mute_write_addrs: set = field(default_factory=set)       # zapisy tych rejestrów zawsze bez echa
+    drop_after_write: int = 0       # po każdym zapisie nie odpowiadaj na N kolejnych żądań
+    delay_writes_only: bool = False  # opóźnienie (`delay_s`) tylko dla odpowiedzi na zapisy
 
     def take_delay(self) -> float:
         """Opóźnienie następnej odpowiedzi (zużywa licznik `delay_only_next`)."""

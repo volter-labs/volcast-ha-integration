@@ -257,7 +257,7 @@ def _tou_enable(v: _V, w: dict) -> None:
 def _modbus(v: _V, raw: Any, transports: Any, written: set[str]) -> None:
     """Parametry dostępu bezpośredniego: status ścieżki rejestrów, funkcja zapisu, łącza."""
     m = v.obj(raw, "$.modbus", ("status", "write_function", "max_read_registers", "transport_options",
-                                "identify_reads", "probe_keys"), ("status_note",))
+                                "identify_reads", "probe_keys"), ("status_note", "echo_only"))
     if m is None:
         return
     v.enum(m.get("status"), "$.modbus.status", ("draft", "verified"))
@@ -302,6 +302,16 @@ def _modbus(v: _V, raw: Any, transports: Any, written: set[str]) -> None:
         extra = sorted(set(keys) - written)
         if extra:
             v.err("$.modbus.probe_keys", f"klucze spoza zapisów profilu: {extra}")
+    # Klucze potwierdzane samym echem (rejestr bez odczytu w tej rodzinie falowników) —
+    # jawna zgoda profilu; każdy inny klucz jest pisany wyłącznie z odczytem zwrotnym.
+    if "echo_only" in m:
+        eo = v.str_list(m["echo_only"], "$.modbus.echo_only")
+        if eo is not None:
+            if len(set(eo)) != len(eo):
+                v.err("$.modbus.echo_only", "klucze powtórzone")
+            extra = sorted(set(eo) - written)
+            if extra:
+                v.err("$.modbus.echo_only", f"klucze spoza zapisów profilu: {extra}")
 
 
 def _nvm_budget(v: _V, raw: Any) -> None:

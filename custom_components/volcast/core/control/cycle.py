@@ -442,10 +442,14 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     restored = list(getattr(report, "restored", ()))
     restore_failed = list(getattr(report, "restore_failed", ()))
     _count_budget(decision, report, memory, restored, restore_failed, now_wall)
-    memory.throttle.record(decision.flat, report.written, now_mono)
+    # Zapis z wartością przyciętą przez urządzenie (OK_ADJUSTED): pamięć trzyma wartość
+    # RZECZYWISTĄ z odczytu zwrotnego, nie zamówioną.
+    actual = getattr(report, "actual", None) or {}
+    flat = {**decision.flat, **{k: v for k, v in actual.items() if k in decision.flat}}
+    memory.throttle.record(flat, report.written, now_mono)
     for key in report.written:
-        if key in decision.flat:
-            memory.last_written[key] = decision.flat[key]
+        if key in flat:
+            memory.last_written[key] = flat[key]
     if restored:
         memory.throttle.record(decision.restore_flat, restored, now_mono)
         for key in restored:

@@ -14,12 +14,12 @@ def _gates(**kw):
     return Gates(**{**base, **kw})
 
 
-def _run(profile, schedule, reading, *, memory=None, gates=None, age=5.0, echo_only=frozenset()):
+def _run(profile, schedule, reading, *, memory=None, gates=None, age=5.0, unreadable=frozenset()):
     memory = memory or ControlMemory.for_profile(profile)
     return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=1000.0,
                         tele=Telemetry(soc=80.0, soc_age_s=age, battery_temp_c=25.0),
                         limits=Limits(rated_power_w=8000.0), gates=gates or _gates(),
-                        memory=memory, target=RegisterTarget(reading, echo_only=echo_only)), memory
+                        memory=memory, target=RegisterTarget(reading, unreadable=unreadable)), memory
 
 
 def test_direct_sell_slot_writes_registers_params_before_mode(goodwe_profile, sell_schedule, reading_auto):
@@ -61,10 +61,10 @@ def test_stale_reading_blocks_i9(goodwe_profile, sell_schedule, reading_auto):
     assert (d.status, d.reason) == (BLOCKED, "guard:I-9") and d.writes == []
 
 
-def test_echo_only_soc_max_dropped_not_holding_mode(goodwe_profile, charge_schedule, reading_auto):
+def test_unreadable_soc_max_dropped_not_holding_mode(goodwe_profile, charge_schedule, reading_auto):
     memory = ControlMemory.for_profile(goodwe_profile)
     memory.unsupported = {"soc_max"}
-    d, _ = _run(goodwe_profile, charge_schedule, reading_auto, memory=memory, echo_only=frozenset({"soc_max"}))
+    d, _ = _run(goodwe_profile, charge_schedule, reading_auto, memory=memory, unreadable=frozenset({"soc_max"}))
     assert d.status == WRITE and "mode" in [w.key for w in d.writes]
     assert "soc_max" in d.dropped_unsupported and "mode_held" not in d.notes
     assert all(w.addr != 47760 for w in d.writes)
