@@ -40,7 +40,8 @@ async def test_paired_entry_loads_with_network_down(hass: HomeAssistant, network
     assert network_down.call_count >= 1
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.state is ConfigEntryState.NOT_LOADED and DOMAIN not in hass.data or not hass.data[DOMAIN]
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert not hass.data.get(DOMAIN)
 
 
 async def test_production_tracking_issue_created_with_real_severity(hass: HomeAssistant, network_down):
@@ -208,3 +209,36 @@ async def test_card_resource_from_older_version_is_updated_not_duplicated(hass: 
     await _setup(hass, entry)
     urls = [r["url"] for r in resources.async_items() if r["url"].split("?")[0] == CARD_PATH]
     assert len(urls) == 1 and urls[0] != f"{CARD_PATH}?v=0.0.1"
+
+
+async def test_card_added_as_extra_frontend_module_once_on_a_normal_install(hass: HomeAssistant, network_down):
+    """Normalna instalacja ma załadowany `frontend` — karta trafia do dodatkowych modułów raz.
+
+    Pakiet testowy nie zawiera plików frontendu, więc magazyn adresów podstawiamy jak `frontend`.
+    """
+    from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL, UrlManager
+
+    changes = []
+    hass.data[DATA_EXTRA_MODULE_URL] = UrlManager(lambda *a: changes.append(a), [])
+    entry = _entry(hass)
+    await _setup(hass, entry)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    urls = [u for u in hass.data[DATA_EXTRA_MODULE_URL].urls if u.split("?")[0] == CARD_PATH]
+    assert len(urls) == 1 and changes == [("added", urls[0])]
+
+
+async def test_device_registry_view_is_read_without_deprecation(hass: HomeAssistant, caplog):
+    """Bieżące HA: rejestr urządzeń czytany przez iterację — urządzenia są i nic nie jest raportowane."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from homeassistant.helpers import device_registry as dr
+
+    from custom_components.volcast.registry_compat import all_devices
+
+    inv = MockConfigEntry(domain="goodwe", title="inverter")
+    inv.add_to_hass(hass)
+    dev = dr.async_get(hass).async_get_or_create(config_entry_id=inv.entry_id, identifiers={("goodwe", "TESTSN0001")},
+                                                 manufacturer="GoodWe", model="GW10K-ET")
+    assert [d.id for d in all_devices(dr.async_get(hass))] == [dev.id]
+    assert "device_registry.devices" not in caplog.text

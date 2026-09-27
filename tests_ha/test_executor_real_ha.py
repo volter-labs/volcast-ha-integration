@@ -7,6 +7,8 @@ import inspect
 from datetime import timedelta
 from unittest.mock import patch
 
+import pytest
+
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from homeassistant.config_entries import ConfigEntryState
@@ -129,8 +131,17 @@ async def test_future_store_version_disables_control_with_issue(hass: HomeAssist
 
 
 def _real_store_load():
-    """Oryginalne `Store._async_load` sprzed atrapy magazynu harnessu (czyta plik z dysku)."""
-    return inspect.getclosurevars(storage.Store._async_load.side_effect).nonlocals["orig_load"]
+    """Oryginalne `Store._async_load` sprzed atrapy magazynu harnessu (czyta plik z dysku).
+
+    Sięga do wnętrza pakietu testowego HA: `common.mock_storage` trzyma oryginał w zmiennej
+    `orig_load` domknięcia `mock_async_load`. Gdy nowa wersja pakietu to zmieni, test się
+    pomija z czytelnym powodem zamiast padać na KeyError.
+    """
+    side_effect = getattr(storage.Store._async_load, "side_effect", None)
+    orig = inspect.getclosurevars(side_effect).nonlocals.get("orig_load") if side_effect else None
+    if orig is None:
+        pytest.skip("test package no longer exposes the original Store loader (mock_storage.orig_load)")
+    return orig
 
 
 async def test_corrupt_store_file_starts_empty_and_ha_raises_its_own_issue(hass: HomeAssistant, tmp_path,
@@ -164,3 +175,33 @@ async def test_issue_translation_keys_exist(hass: HomeAssistant):
         assert f"component.{DOMAIN}.issues.{key}.title" in tr, key
         assert f"component.{DOMAIN}.issues.{key}.description" in tr, key
     assert "{entity_id}" in tr[f"component.{DOMAIN}.issues.foreign_control.description"]
+
+
+async def test_live_cycle_writes_through_real_entities_and_echo_is_ours(
+        hass: HomeAssistant, network_down, hass_storage, freezer, monkeypatch):
+    """Pełny cykl wykonawcy (profil uznany za zweryfikowany) na prawdziwych encjach:
+    zapis przez usługi domen, echo stanu z naszym kontekstem nie jest przejęciem."""
+    from custom_components.volcast.control import executor as ex_mod
+
+    freezer.move_to("2026-09-23T10:00:30+00:00")
+    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+    plan = {"schedule_id": "p1", "control_enabled": True,
+            "slots": [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "discharge",
+                       "discharge_purpose": "sell", "power_w": 2000, "price_pln_kwh": 0.8}],
+            "fallback": {"mode": "self_consume", "soc_reserve": 10}}
+    inv = await async_setup_inverter(hass)
+    store_state(hass_storage, "paired01", {**GATES, "plan_raw": plan})
+    entry = make_entry(hass, options={**ENTITY_OPTIONS, "rated_power_w": 8000})
+    await setup_entry(hass, entry)
+    rt = control_of(hass, entry)
+    ex = rt.executor
+    # Pierwszy cykl biegnie przy setupie (zadanie w tle) — zapisał plan na falownik.
+    assert hass.states.get(rt.mapped["mode"]).state == "sell_power" and inv["mode"].calls == 1
+    assert float(hass.states.get(rt.mapped["power_w"]).state) == 2000.0
+    assert ex.owned and not ex.paused and ex.foreign_changes == []
+    saved = hass_storage["volcast.control.paired01"]["data"]
+    assert saved["owned"] is True and saved["snapshot"]["export_limit_w"] == 4000.0
+    # Następny cykl czyta stan z falownika: nic do zapisu (bez ponownych zapisów NVM).
+    await ex.async_tick()
+    await hass.async_block_till_done()
+    assert ex.last_decision.reason == "nothing_to_write" and inv["mode"].calls == 1 and not ex.paused
