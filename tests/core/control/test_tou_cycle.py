@@ -1,5 +1,6 @@
 """Cykl okien czasowych (Deye) w trybie bezpośrednim."""
-from datetime import datetime, timedelta, timezone
+import pytest
+from datetime import date, datetime, timedelta, timezone
 
 from custom_components.volcast.core.control.cycle import ControlMemory, Gates
 from custom_components.volcast.core.control.tou_cycle import commit_tou
@@ -70,23 +71,35 @@ def test_owner_days_used_when_enabling():
     assert d.writes[-1].value == 0b0111111
 
 
-def test_dst_duplicate_start_blocks_all_writes():
-    # Doba siatki = 2026-10-25 (zmiana czasu): granice planu o 02:00 CEST i 02:00 CET.
-    base = datetime(2026, 10, 23, 22, tzinfo=timezone.utc)
+def _hourly_plan(pattern, first_local_day, days=6):
+    t = datetime.combine(first_local_day, datetime.min.time(), tzinfo=WAW).astimezone(timezone.utc)
+    end = datetime.combine(first_local_day + timedelta(days=days), datetime.min.time(),
+                           tzinfo=WAW).astimezone(timezone.utc)
     slots = []
-    t = base
-    while t < base + timedelta(days=3):
-        f = SELF
-        if datetime(2026, 10, 25, 0, tzinfo=timezone.utc) <= t < datetime(2026, 10, 25, 1, tzinfo=timezone.utc):
-            f = {"mode": "charge", "charge_source": "grid", "power_w": 3000, "soc_target": 90, "price_pln_kwh": 0.2}
-        elif datetime(2026, 10, 25, 1, tzinfo=timezone.utc) <= t < datetime(2026, 10, 25, 2, tzinfo=timezone.utc):
-            f = {"mode": "idle", "price_pln_kwh": 0.9}
-        slots.append({"from": iso(t), "to": iso(t + timedelta(hours=1)), **f})
+    while t < end:
+        slots.append({"from": iso(t), "to": iso(t + timedelta(hours=1)), **pattern(t.astimezone(WAW))})
         t += timedelta(hours=1)
-    plan = parse_schedule({"schedule_id": "dst", "slots": slots, "fallback": {"mode": "self_consume", "soc_reserve": 10}})
-    now = datetime(2026, 10, 24, 10, tzinfo=timezone.utc)
-    d, _ = decide(plan, reading(), now=now)
-    assert (d.status, d.reason) == ("blocked", "guard:I-10") and d.writes == []
+    return parse_schedule({"schedule_id": "dst", "slots": slots, "fallback": {"mode": "self_consume", "soc_reserve": 10}})
+
+
+_CH = {"mode": "charge", "charge_source": "grid", "power_w": 3000, "soc_target": 90, "price_pln_kwh": 0.2}
+_IDLE = {"mode": "idle", "price_pln_kwh": 0.9}
+
+
+@pytest.mark.parametrize("first_day,start,pattern", [
+    # jesień 2026-10-25: obie godziny 02:00 różnią się intencją (pierwsza ładuje z sieci)
+    (date(2026, 10, 22), datetime(2026, 10, 23, 12, tzinfo=timezone.utc),
+     lambda loc: (_CH if loc.utcoffset() == timedelta(hours=2) else _IDLE) if loc.hour == 2
+     else _IDLE if 17 <= loc.hour < 19 else SELF),
+    # wiosna 2026-03-29: ładowanie o 02:00, postój o 03:00 (doba przed zmianą to zwykła doba)
+    (date(2026, 3, 26), datetime(2026, 3, 27, 12, tzinfo=timezone.utc),
+     lambda loc: _CH if loc.hour == 2 else _IDLE if loc.hour == 3 else SELF),
+])
+def test_dst_never_freezes_decisions(first_day, start, pattern):
+    plan = _hourly_plan(pattern, first_day)
+    for i in range(0, 60 * 12, 3):                       # co 15 min przez 60 h
+        d, _ = decide(plan, reading(), now=start + timedelta(minutes=5 * i))
+        assert d.status == "write", (start + timedelta(minutes=5 * i), d.reason)
 
 
 def test_programs_unreadable_blocks():

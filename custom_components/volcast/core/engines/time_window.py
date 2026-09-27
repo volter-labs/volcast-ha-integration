@@ -18,15 +18,19 @@ Znane ograniczenia:
   (`anchor="day"`) horyzont to stała siatka doby lokalnej [00:00, 24:00) — pora doby bierze
   slot z najbliższego wystąpienia od początku bieżącego slotu (późniejsze pory — dziś,
   wcześniejsze — jutro), więc `windows[0]` zaczyna się o północy, a starty programów
-  zmieniają się tylko ze zmianą planu, nie z upływem „teraz";
-- w dniu zmiany czasu jesienią dwa okna mogą zacząć się o tej samej godzinie
-  lokalnej — guard I-10 odrzuca wtedy całą komendę (fail-closed).
+  zmieniają się tylko ze zmianą planu, nie z upływem „teraz"; siatka leży na zegarze
+  ściennym, więc zmiana czasu nie daje zdublowanych startów (jesienią powtórzona godzina ma
+  jeden program — ten bez ładowania z sieci, gdy dwie godziny planu się różnią);
+- z kotwicą „teraz" w dniu zmiany czasu jesienią dwa okna mogą zacząć się o tej samej
+  godzinie lokalnej — guard I-10 odrzuca wtedy całą komendę (fail-closed).
 """
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from dataclasses import dataclass, field, replace
 from datetime import datetime, time, timedelta, timezone, tzinfo
+from typing import Callable
 
 from ..params import Params, TouProgram
 from ..profile import Profile
@@ -187,35 +191,70 @@ def _horizon(schedule: Schedule, now: datetime, tz: tzinfo, step: int) -> tuple[
     return slots, flags
 
 
-def _day_grid(slots: list[Slot], flags: list[bool], tz: tzinfo) -> tuple[list[Slot], list[bool]]:
-    """Horyzont [t0, t0+doba) przestawiony na siatkę doby lokalnej od północy.
+def _day_grid(schedule: Schedule, now: datetime, tz: tzinfo, step: int,
+              grid_charge: Callable[[Slot], bool]) -> tuple[list[Slot], list[bool], tzinfo]:
+    """Horyzont [t0, t0+doba) jako siatka doby na ZEGARZE ŚCIENNYM, od północy.
 
-    Część po najbliższej północy („jutro”, pory wcześniejsze niż t0) idzie na początek, część
-    przed nią („dziś”) jest przesuwana o dobę lokalną na koniec — powstaje ciągła doba
-    [północ, północ + doba), na której pory doby = starty programów.
+    Pora doby `m` (co krok) bierze slot planu z najbliższego wystąpienia tej pory od początku
+    bieżącego slotu `t0`: pory późniejsze niż t0 — dziś, wcześniejsze — jutro. Pora jest
+    rozwiązywana w SWOJEJ dobie (nie przesuwana o dobę), więc zmiana czasu jutro nie zniekształca
+    dzisiejszych godzin i odwrotnie. W dobie zmiany czasu:
+    * pora nieistniejąca (wiosną 02:00–03:00) — falownik jej nie przeżyje; dostaje slot sąsiedniej
+      pory (ciągłość okna), bez okna zerowej długości;
+    * pora powtórzona (jesienią 02:00–03:00 dwa razy) — JEDEN program na obie godziny planu;
+      gdy się różnią, wygrywa ten bez ładowania z sieci. Starty programów są więc zawsze różne —
+      zmiana czasu nigdy nie kończy się odrzuceniem I-10 ani zamrożeniem programów.
+
+    Sloty siatki leżą na osi o stałym przesunięciu (`gtz` = przesunięcie strefy o północy doby
+    siatki): minuta od północy tej osi = pora doby programu.
     """
-    t0 = slots[0].start
-    loc = t0.astimezone(tz)
-    if (loc.hour, loc.minute, loc.second, loc.microsecond) == (0, 0, 0, 0):
-        return slots, flags
-    midnight = datetime.combine(loc.date() + timedelta(days=1), time(0), tzinfo=tz).astimezone(timezone.utc)
+    slots, flags = _horizon(schedule, now, tz, step)       # walidacja kroku i granice horyzontu
+    t0, end = slots[0].start, slots[-1].end
+    starts = [sl.start for sl in slots]
+    loc0 = t0.astimezone(tz)
+    m0 = loc0.hour * 60 + loc0.minute
+    d0 = loc0.date()
+    grid_date = d0 if m0 == 0 else d0 + timedelta(days=1)
+    gtz = timezone(datetime.combine(grid_date, time(0), tzinfo=tz).utcoffset())
+    base = datetime.combine(grid_date, time(0), tzinfo=gtz)
 
-    def shift(dt: datetime) -> datetime:
-        return (dt.astimezone(tz) + timedelta(days=1)).astimezone(timezone.utc)
+    def at(inst: datetime) -> int:
+        return bisect_right(starts, inst) - 1
 
-    today: list[tuple[Slot, bool]] = []
-    tomorrow: list[tuple[Slot, bool]] = []
-    for s, fb in zip(slots, flags):
-        if s.end <= midnight:
-            today.append((s, fb))
-        elif s.start >= midnight:
-            tomorrow.append((s, fb))
-        else:
-            today.append((replace(s, end=midnight), fb))
-            tomorrow.append((replace(s, start=midnight), fb))
-    moved = [(replace(s, start=shift(s.start), end=shift(s.end)), fb) for s, fb in today]
-    out = tomorrow + moved
-    return [s for s, _ in out], [fb for _, fb in out]
+    chosen: list[int | None] = []
+    for m in range(0, 1440, step):
+        day = d0 if m >= m0 else d0 + timedelta(days=1)
+        wall = datetime.combine(day, time(m // 60, m % 60))
+        cands: list[int] = []
+        for fold in (0, 1):
+            inst = wall.replace(tzinfo=tz, fold=fold).astimezone(timezone.utc)
+            if inst.astimezone(tz).replace(tzinfo=None) != wall or not t0 <= inst < end:
+                continue                                    # pora nieistniejąca albo poza horyzontem
+            i = at(inst)
+            if i not in cands:
+                cands.append(i)
+        if len(cands) > 1:
+            safe = [i for i in cands if not grid_charge(slots[i])]
+            cands = safe or cands
+        chosen.append(cands[0] if cands else None)
+    for k in range(len(chosen)):                            # pora nieistniejąca → sąsiednia
+        if chosen[k] is None:
+            chosen[k] = chosen[k - 1] if k > 0 and chosen[k - 1] is not None else next(
+                (c for c in chosen[k:] if c is not None), 0)
+
+    out: list[Slot] = []
+    out_flags: list[bool] = []
+    k = 0
+    while k < len(chosen):
+        j = k
+        while j + 1 < len(chosen) and chosen[j + 1] == chosen[k]:
+            j += 1
+        src = slots[chosen[k]]
+        out.append(replace(src, start=base + timedelta(minutes=k * step),
+                           end=base + timedelta(minutes=(j + 1) * step)))
+        out_flags.append(flags[chosen[k]])
+        k = j + 1
+    return out, out_flags, gtz
 
 
 def _within(a: ProgramSpec, b: ProgramSpec, profile: Profile) -> bool:
@@ -256,9 +295,15 @@ def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve
         raise ValueError(f"nieznana kotwica {anchor!r}")
     _check_inputs(now, soc_reserve, rated_power_w)
     step, n = profile.time_step_min, profile.tou_programs
-    slots, flags = _horizon(schedule, now, tz, step)
+    ptz = tz                                   # strefa, w której liczona jest pora doby programu
     if anchor == "day":
-        slots, flags = _day_grid(slots, flags, tz)
+        def grid_charge(s: Slot) -> bool:
+            own, _ = slot_intent(s)
+            run = own if profile.intent(own) is not None else "self_consume"
+            return _program(run, s, profile, soc_reserve, rated_power_w).grid_charge
+        slots, flags, ptz = _day_grid(schedule, now, tz, step, grid_charge)
+    else:
+        slots, flags = _horizon(schedule, now, tz, step)
 
     hs: list[_H] = []
     degraded: dict[str, int] = {}
@@ -322,7 +367,7 @@ def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve
 
     total = sum(_cost(w, p_mean) for w in wins)
     programs = tuple(sorted(
-        (TouProgram(_local_min(w.start, tz), w.prog.power_w, w.prog.soc, w.prog.grid_charge) for w in wins),
+        (TouProgram(_local_min(w.start, ptz), w.prog.power_w, w.prog.soc, w.prog.grid_charge) for w in wins),
         key=lambda p: p.start_min))
     return CompressionResult(
         programs=programs,
