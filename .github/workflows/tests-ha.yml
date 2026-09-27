@@ -1,0 +1,20 @@
+name: Tests (Home Assistant)
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest-ha:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Najniższy Python dopuszczony przez przypiętą wersję pakietu testowego HA (Requires-Python).
+          python-version: "3.14"
+      - run: pip install -r requirements-test-ha.txt
+      - run: python -m pytest tests_ha -q -p no:cacheprovider
