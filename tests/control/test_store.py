@@ -93,3 +93,28 @@ def test_bad_tou_snapshot_dropped_with_warning(caplog):
             asyncio.run(st._store.async_save({"owned": True, "tou_snapshot": snap}))
             assert asyncio.run(st.async_load()).tou_snapshot is None
     assert "time-of-use snapshot" in caplog.text
+
+
+def test_nvm_log_roundtrip_legacy_and_corrupt_entries():
+    st = ControlStore(object(), "e1")
+    s = ControlState(owned=True, nvm_log=[["mode", 1_790_000_000.0], ["power_w", 1_790_000_060.0]])
+    asyncio.run(st.async_save(s))
+    assert asyncio.run(st.async_load()).nvm_log == s.nvm_log
+    asyncio.run(st._store.async_save({"owned": True}))                      # stary magazyn bez pola
+    assert asyncio.run(st.async_load()).nvm_log == []
+    asyncio.run(st._store.async_save({"nvm_log": [["mode", 1.0], ["", 2.0], ["x", "3"], ["y", float("inf")],
+                                                  "z", ["a", True], ["b", 4]]}))
+    assert asyncio.run(st.async_load()).nvm_log == [["mode", 1.0], ["b", 4.0]]
+
+
+def test_installation_salt_is_stable_and_outside_the_control_record():
+    from types import SimpleNamespace
+
+    from custom_components.volcast.control.store import async_installation_salt
+    hass = SimpleNamespace(data={})
+    salt = asyncio.run(async_installation_salt(hass))
+    assert isinstance(salt, bytes) and len(salt) == 16
+    assert asyncio.run(async_installation_salt(hass)) == salt
+    assert "salt" not in ControlState.__dataclass_fields__
+    other = asyncio.run(async_installation_salt(SimpleNamespace(data={})))
+    assert other != salt                                                     # losowa na instalację

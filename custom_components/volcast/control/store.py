@@ -16,10 +16,19 @@ dalej uznać za swój (inaczej zgubiłaby migawkę i własność).
 
 `tou_snapshot` — programy harmonogramu właściciela (surowe słowa) sprzed naszego pierwszego
 zapisu okien czasowych; wczytywana przez osobny, walidujący loader (zły kształt → brak
-migawki + ostrzeżenie, powrót idzie wtedy do programów bazowych)."""
+migawki + ostrzeżenie, powrót idzie wtedy do programów bazowych).
+
+`nvm_log` — ramki zapisu do pamięci nieulotnej falownika w oknie budżetu (`[klucz, czas UTC]`),
+żeby budżet przeżył restart i przeładowanie.
+
+Sól instalacji (odciski urządzenia i celu połączenia bezpośredniego) jest w OSOBNYM magazynie
+(`volcast.installation`), nie w rekordzie sterowania: poprzednia wersja zapisuje ten rekord
+własnym kształtem i zgubiłaby pole — a nowa sól unieważniłaby zapisane odciski."""
 from __future__ import annotations
 
 import logging
+import math
+import secrets
 from dataclasses import asdict, dataclass, field
 
 from homeassistant.helpers.storage import Store
@@ -30,6 +39,9 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 _OWNER_MODE_UID = "owner_mode_uid"
+_INSTALLATION_KEY = "volcast.installation"
+_SALT_CACHE = "volcast_installation_salt"
+_SALT_BYTES = 16
 
 
 @dataclass
@@ -44,6 +56,17 @@ class ControlState:
     restore_keys: list[str] | None = None
     taken_over: list[str] = field(default_factory=list)
     tou_snapshot: dict | None = None
+    nvm_log: list = field(default_factory=list)
+
+
+def _nvm_log(raw) -> list:
+    """Wpisy budżetu `[klucz, czas]`; niepoprawne pomijane (budżet i tak waliduje przy wczytaniu)."""
+    out = []
+    for item in raw if isinstance(raw, list) else ():
+        if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str) and item[0] \
+                and isinstance(item[1], (int, float)) and not isinstance(item[1], bool) and math.isfinite(item[1]):
+            out.append([item[0], float(item[1])])
+    return out
 
 
 def _keys(values: list) -> list[str]:
@@ -89,7 +112,7 @@ class ControlStore:
             owner=owner,
             restore_keys=_keys(restore_keys) if isinstance(restore_keys, list) else None,
             taken_over=_keys(taken_over) if isinstance(taken_over, list) else [],
-            tou_snapshot=tou_snapshot)
+            tou_snapshot=tou_snapshot, nvm_log=_nvm_log(raw.get("nvm_log")))
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)
@@ -100,3 +123,27 @@ class ControlStore:
 
     async def async_remove(self) -> None:
         await self._store.async_remove()
+
+
+async def async_installation_salt(hass) -> bytes:
+    """Sól instalacji (16 losowych bajtów), tworzona raz i trzymana poza rekordem sterowania.
+
+    Nigdy w diagnostyce ani w logach. Zły zapis w magazynie → nowa sól (odciski do ponownej sondy).
+    """
+    cache = hass.data.get(_SALT_CACHE)
+    if isinstance(cache, bytes) and len(cache) == _SALT_BYTES:
+        return cache
+    store = Store(hass, STORAGE_VERSION, _INSTALLATION_KEY)
+    raw = await store.async_load()
+    salt = None
+    value = raw.get("salt") if isinstance(raw, dict) else None
+    if isinstance(value, str):
+        try:
+            salt = bytes.fromhex(value)
+        except ValueError:
+            salt = None
+    if salt is None or len(salt) != _SALT_BYTES:
+        salt = secrets.token_bytes(_SALT_BYTES)
+        await store.async_save({"salt": salt.hex()})
+    hass.data[_SALT_CACHE] = salt
+    return salt

@@ -39,6 +39,22 @@ Zasady wykonania:
 * wejścia (plan, zgoda, przełącznik) nie rzucają: błąd magazynu zostawia stan w pamięci
   i trafia do logu.
 
+Tryb bezpośredni (`DirectIO`, rejestry falownika):
+* bramka weryfikacji = profil i jego sekcja `modbus` zweryfikowane i nie próba; próba liczy decyzję
+  na sucho własną ścieżką (bramki decyzji z `control_mode` = tryb bezpośredni, zawsze bez zapisu),
+  a przy własności z wcześniejszej sesji nie liczy nic (`trial_while_owned`);
+* każda decyzja, zapis i powrót wymagają potwierdzonej tożsamości urządzenia pod adresem (inaczej
+  `BLOCKED identity`, także bez powrotu — pisalibyśmy do cudzego falownika);
+* kolizja na łączu zatrzymuje zapisy planu (`bus_conflict`), nigdy powrotu do trybu bazowego;
+* rozjazd odczytu względem naszego ostatniego zapisu liczony raz na cykl sterowania, tylko z odczytu
+  rozpoczętego po końcu naszego ostatniego zapisu; drugi rozjazd tego samego klucza w 30 min przy
+  niezmienionej wartości planu = przejęcie (pauza jak w trybie encji); zmiana wartości planu kasuje
+  historię rozjazdów klucza;
+* budżet NVM liczy każdą wysłaną ramkę (także powrotu) i jest trwały w magazynie; decyzja `RESTORE`
+  (wyczerpany budżet przy trybie wymuszonym) idzie przez wykonawcę grupowego tylko przy własności;
+* okna czasowe: sekwencja OFF → programy → ON, migawka programów właściciela zapisana przed
+  pierwszym zapisem, powrót do niej po przerwanej sekwencji i po utracie prawa.
+
 Obca zmiana nastaw (przejęcie): zdarzenie zmiany stanu encji klucza zapisu z aktorem
 (użytkownik, automatyzacja), nie z naszym kontekstem, z wartością inną niż nasz ostatni
 zapis — albo tryb falownika ustawiony na czytelną opcję spoza profilu (sygnał poziomu,
@@ -67,15 +83,22 @@ from homeassistant.helpers.event import async_track_time_interval
 from ..const import (DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S, OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED,
                      STOP_WRITE_TIMEOUT_S)
 from ..core.control.baseline import baseline_params, needs_restore, snapshot_missing, take_snapshot
-from ..core.control.cycle import (BLOCKED, ERROR, WRITE, ControlMemory, CycleDecision, Gates, Limits, Telemetry,
-                                  commit, decide_cycle, same_value)
+from ..core.control.conflict import drifted_keys
+from ..core.control.cycle import (BLOCKED, ERROR, IDLE, WRITE, ControlMemory, CycleDecision, Gates, Limits,
+                                  Telemetry, commit, decide_cycle, same_value)
 from ..core.control.group_writes import GROUP_KEYS, GroupReport, async_run_group_writes, order_group
 from ..core.control.readings import RawState, normalize_readings
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.control.takeover import FOREIGN_PAUSE_S, is_foreign_change
-from ..core.engines.time_window import compress
+from ..core.control.tou_cycle import EN_KEY, commit_tou, decide_tou_cycle
+from ..core.control.tou_writes import (ENABLE, TOU_WORD, TouReport, _snapshot_programs, async_run_tou_writes,
+                                       tou_restore_writes, tou_snapshot)
+from ..core.engines.time_window import baseline_programs, compress
+from ..core.guard_state import WriteBudget
+from ..core.params import Params
+from ..core.profile import direct_verified
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
-from .device_io import NO_READING, DeviceIO, EntityIO, Reading
+from .device_io import NO_READING, DeviceIO, DirectIO, EntityIO, Reading
 from .store import ControlState, ControlStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +109,10 @@ _NO_READING = NO_READING
 _MAX_RERUNS = 2
 # Ile ostatnich obcych zmian trzymamy w atrybutach (lokalnie).
 _FOREIGN_KEEP = 20
+# Rezerwa SoC programów bazowych okien czasowych, gdy nie ma planu (powrót bez migawki).
+_DEFAULT_RESERVE = 10.0
+# Nazwy klas decyzji z blokadą budżetu NVM (zgłoszenie w Naprawach).
+_BUDGET_NOTES = ("nvm_budget", "nvm_budget_restore_ineffective")
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
@@ -133,6 +160,15 @@ class VolcastExecutor:
         self._restore_failed: tuple[str, ...] | None = None   # ostatnio zalogowane (bez powtórek co tik)
         self._disabled = False
         self._unsub: list[Callable[[], None]] = []
+        # tryb bezpośredni: to samo `io`, z dostępem do połączenia, rozjazdu i budżetu
+        self._direct = self.io if isinstance(self.io, DirectIO) else None
+        self._planned: dict[str, float | str] = {}     # wartości planu z ostatniej decyzji (rozjazd)
+        self._drift_seen: float | None = None          # odczyt, z którego rozjazd już policzono
+        self._last_write_end: float | None = None
+        self._tou_restore_pending = False
+        self.last_tou_report: TouReport | None = None
+        self._conflict_issue_open = False
+        self._budget_issue_open = False
 
     # ── stan dla encji i telemetrii ───────────────────────────────────────
     @property
@@ -206,6 +242,7 @@ class VolcastExecutor:
             return
         if self._drop_foreign_owner():
             await self._async_save("control state")
+        self._load_budget()
         if self._state.plan_raw is not None:
             try:
                 self.schedule = parse_schedule(self._state.plan_raw)
@@ -219,6 +256,22 @@ class VolcastExecutor:
         if unsub is not None:
             self._unsub.append(unsub)
 
+    def _load_budget(self) -> None:
+        """Budżet NVM z magazynu (przeżywa restart); w trybie bezpośrednim liczy go pisarz rejestrów."""
+        memory = self._memory
+        if memory is None:
+            return
+        if memory.budget is not None and self._state.nvm_log:
+            b = memory.budget
+            memory.budget = WriteBudget.from_list(self._state.nvm_log, b.per_key, b.total, b.window_s,
+                                                  now_wall=self._now_wall())
+        if self._direct is not None:
+            memory.unsupported |= self._direct.unsupported_seed()
+            self._direct.bind_budget(memory.budget, now_wall=self._now_wall)
+
+    def _now_wall(self) -> float:
+        return self._utcnow().timestamp()
+
     async def async_stop(self) -> None:
         """Bez przywracania; czeka na zapis w toku najwyżej `stop_timeout_s`."""
         self._stopped = True
@@ -229,6 +282,10 @@ class VolcastExecutor:
         self._foreign_issue_open = False
         ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
         ir.async_delete_issue(self._hass, DOMAIN, f"control_error_{self._entry.entry_id}")
+        if self._direct is not None:
+            self._conflict_issue_open = self._budget_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._conflict_issue_id)
+            ir.async_delete_issue(self._hass, DOMAIN, self._budget_issue_id)
         if not self._lock.locked():
             return
         try:
@@ -251,6 +308,18 @@ class VolcastExecutor:
     @property
     def _foreign_issue_id(self) -> str:
         return f"foreign_control_{self._entry.entry_id}"
+
+    @property
+    def _conflict_issue_id(self) -> str:
+        return f"direct_conflict_{self._entry.entry_id}"
+
+    @property
+    def _budget_issue_id(self) -> str:
+        return f"nvm_budget_{self._entry.entry_id}"
+
+    def _io_ready(self) -> bool:
+        """Czy jest przez co pisać: tryb encji — integracja falownika; bezpośredni — połączenie."""
+        return self._direct is not None or bool(self._domain)
 
     def _write_keys(self) -> tuple[str, ...]:
         if self._profile is None:
@@ -292,6 +361,7 @@ class VolcastExecutor:
         self._state.owner = {}
         self._state.restore_keys = None
         self._state.taken_over = []
+        self._state.tou_snapshot = None
         return True
 
     async def _async_timer(self, _now=None) -> None:
@@ -344,7 +414,10 @@ class VolcastExecutor:
         if not self._foreign_issue_open:
             self._foreign_issue_open = True
             # Parametr tekstu Napraw zostaje lokalnie w UI — to nie jest log.
-            self._create_issue(self._foreign_issue_id, "foreign_control", {"entity_id": eid or ""})
+            if self._direct is not None:
+                self._create_issue(self._foreign_issue_id, "foreign_control_direct", {"setting": key})
+            else:
+                self._create_issue(self._foreign_issue_id, "foreign_control", {"entity_id": eid or ""})
         self._notify()
 
     def _take_over_key(self, key: str) -> None:
@@ -428,7 +501,7 @@ class VolcastExecutor:
             return
         try:
             async with self._lock:
-                if self._state.owned and self._profile and self._domain and self._memory:
+                if self._state.owned and self._profile and self._io_ready() and self._memory:
                     await self._restore(self.io.read(self._utcnow()))
         except Exception as err:  # noqa: BLE001 — usuwanie wpisu nie może się wywrócić
             _LOGGER.error("Volcast control: return to the baseline mode failed (%s)", type(err).__name__)
@@ -490,38 +563,53 @@ class VolcastExecutor:
         if self._profile is None or self._memory is None:
             self.last_decision = CycleDecision("idle", "no_profile")
             return
+        direct = self._direct
         rd = self.io.read(now_utc)
         self._update_foreign_episode(rd)
+        real_mode = self._entry.options.get(OPT_CONTROL_MODE)
+        trial = direct is not None and direct.trial
+        verified = (direct_verified(self._profile) and not trial) if direct is not None \
+            else control_verified(self._profile, self._domain)
         gates = Gates(consent=self._state.consent, local_switch=self._state.local_switch,
-                      control_mode=self._entry.options.get(OPT_CONTROL_MODE),
-                      verified=control_verified(self._profile, self._domain))
-        if needs_restore(owned=self._state.owned, consent=gates.consent,
-                         local_switch=gates.local_switch, control_mode=gates.control_mode) \
-                and self._domain:
-            # Także w pauzie: powrót nie rusza kluczy, które zmienił właściciel.
+                      control_mode=real_mode, verified=verified)
+        if trial and self._state.owned:
+            # Próba przy własności z wcześniejszej sesji: pisarz bez zapisu nie odda falownika.
+            self._finish(CycleDecision(BLOCKED, "trial_while_owned"))
+            return
+        if needs_restore(owned=self._state.owned, consent=gates.consent, local_switch=gates.local_switch,
+                         control_mode=gates.control_mode, active_mode=self.io.kind) and self._io_ready():
+            # Także w pauzie i przy kolizji: powrót nie rusza kluczy, które zmienił właściciel.
             await self._restore(rd)
             return
-        readings = rd.readings
-        soc = readings.get("soc")
-        soc = soc if isinstance(soc, float) else None
-        temp = readings.get("battery_temp_c")
-        prev_soc, gap = (self._prev_soc[0], now_mono - self._prev_soc[1]) if self._prev_soc else (None, None)
+        if direct is not None:
+            self._update_conflict_issue()
+            if not await direct.async_identity_ok():
+                self._finish(CycleDecision(BLOCKED, "identity"))
+                return
+            if self._note_drift(rd, now_mono):
+                await self._async_save("control state")
+            if self._tou_restore_pending:
+                await self._tou_restore_after_failure()
+                return
+        # Próba: decyzja liczona tak, jakby wybrano tryb bezpośredni, ale zawsze bez zapisu.
+        dgates = replace(gates, control_mode=self.io.kind, verified=False) if trial else gates
+        tele = self._telemetry(rd, now_mono)
+        if direct is not None and self._profile.control_model == "time_window":
+            await self._tou_tick(rd, dgates, tele, now_mono, now_utc)
+            return
         decision = decide_cycle(
-            profile=self._profile, schedule=self.schedule, now_utc=now_utc, now_mono=now_mono,
-            tele=Telemetry(soc=soc, soc_age_s=rd.soc_age_s,
-                           battery_temp_c=temp if isinstance(temp, float) else None,
-                           previous_soc=prev_soc, previous_soc_gap_s=gap),
-            limits=Limits(rated_power_w=float(self._rated or 0.0)),
-            gates=gates, memory=self._memory, **self.io.cycle_input(rd))
-        if soc is not None:
-            self._prev_soc = (soc, now_mono)
+            profile=self._profile, schedule=self.schedule, now_utc=now_utc, now_mono=now_mono, tele=tele,
+            limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
+            gates=dgates, memory=self._memory, **self.io.cycle_input(rd))
+        if tele.soc is not None:
+            self._prev_soc = (tele.soc, now_mono)
+        self._forget_changed(decision.flat)
         # Z własnego odczytu, nie tylko z decyzji — wcześniejsza blokada cyklu go nie zasłoni.
         if self._signal_foreign_mode(rd, self._gates_open() and gates.verified, decision.takeover):
             await self._async_save("control state")
-        if decision.status == WRITE and self.paused:
-            decision = replace(decision, status=BLOCKED, reason="paused")
+        decision = self._gate_write(decision)
         if decision.status == WRITE and not self._state.owned:
-            decision = await self._async_take_ownership(decision, readings)
+            decision = await self._async_take_ownership(decision, rd.readings)
             if decision.status == WRITE and not self._gates_open():
                 # Zgoda, przełącznik, pauza albo zatrzymanie zmieniły się w trakcie zapisu migawki.
                 decision = replace(decision, status=BLOCKED, reason="gates_changed")
@@ -529,12 +617,268 @@ class VolcastExecutor:
             report = await async_run_group_writes(
                 decision.writes, self._writer.async_write, restore=decision.restore,
                 ambiguous_safe=decision.restore_ambiguous_safe, on_exception=self._log_write_exception)
+            self._end_direct_writes()
             commit(decision, report, self._memory, now_mono)
             self._log_report(decision, report)
             if self._note_written([*report.written, *report.ambiguous, *report.restored]):
                 await self._async_save("control state")
+        elif decision.status == RESTORE:
+            decision = await self._run_budget_restore(decision, now_mono)
+        self._finish(decision)
+        await self._after_direct_cycle(decision)
+
+    def _telemetry(self, rd: Reading, now_mono: float) -> Telemetry:
+        readings = rd.readings
+        soc = readings.get("soc")
+        soc = soc if isinstance(soc, float) else None
+        temp = readings.get("battery_temp_c")
+        prev_soc, gap = (self._prev_soc[0], now_mono - self._prev_soc[1]) if self._prev_soc else (None, None)
+        return Telemetry(soc=soc, soc_age_s=rd.soc_age_s, battery_temp_c=temp if isinstance(temp, float) else None,
+                         previous_soc=prev_soc, previous_soc_gap_s=gap)
+
+    def _rated_power(self) -> float | None:
+        if self._rated:
+            return self._rated
+        return self._direct.rated_power_w() if self._direct is not None else None
+
+    def _finish(self, decision) -> None:
         self.last_decision = decision
         self._count(decision)
+
+    def _gate_write(self, decision):
+        """Ostatnie bramki przed zapisem planu: pauza, kolizja na łączu, bramki wykonawcy (tryb = io)."""
+        if decision.status != WRITE:
+            return decision
+        if self.paused:
+            return replace(decision, status=BLOCKED, reason="paused")
+        if self._direct is not None and self._direct.conn.conflict:
+            return replace(decision, status=BLOCKED, reason="bus_conflict")
+        if not self._gates_open():
+            return replace(decision, status=BLOCKED, reason="gates_closed")
+        return decision
+
+    async def _run_budget_restore(self, decision: CycleDecision, now_mono: float) -> CycleDecision:
+        """`RESTORE` z cyklu (wyczerpany budżet przy trybie wymuszonym): tryb bazowy przez wykonawcę
+        grupowego, tylko przy własności i otwartych bramkach; kolizja go nie blokuje. Własność zostaje."""
+        if not self._state.owned or not self._gates_open():
+            return replace(decision, status=BLOCKED, reason="restore_not_owned")
+        report = await async_run_group_writes(decision.writes, self._writer.async_write,
+                                              on_exception=self._log_write_exception)
+        self._end_direct_writes()
+        commit(decision, report, self._memory, now_mono)
+        self._log_report(decision, report)
+        if self._note_written([*report.written, *report.ambiguous]):
+            await self._async_save("control state")
+        _LOGGER.warning("Volcast control: write budget used up — inverter returned to its baseline mode")
+        return decision
+
+    # ── tryb bezpośredni: rozjazd, zgłoszenia, budżet ─────────────────────
+    def _end_direct_writes(self) -> None:
+        if self._direct is None:
+            return
+        end = self._clock()
+        if self._direct.end_writes(end):
+            self._last_write_end = end
+
+    def _forget_changed(self, flat: Mapping[str, float | str]) -> None:
+        """Zmieniona wartość planu klucza kasuje jego historię rozjazdów (nowa wartość, nowa historia)."""
+        if self._direct is None or not flat:
+            return
+        for key in {*flat, *self._planned}:
+            old, new = self._planned.get(key), flat.get(key)
+            if old is None or new is None or not same_value(old, new):
+                self._direct.drift.forget(key)
+        self._planned = dict(flat)
+
+    def _note_drift(self, rd: Reading, now_mono: float) -> bool:
+        """Raz na cykl i raz na odczyt: rozjazd względem naszego ostatniego zapisu; True = przejęcie."""
+        reading = rd.source
+        if reading is None or reading.at_mono == self._drift_seen:
+            return False
+        self._drift_seen = reading.at_mono
+        drift = self._direct.drift
+        if not drift.usable(reading.at_mono):
+            return False
+        taken = False
+        for key in drifted_keys(self._memory.last_written, reading.device):
+            if key in self._memory.uncertain:
+                continue                    # nasz zapis o nieznanym wyniku — to nie zmiana właściciela
+            if drift.note_drift(key, now_mono):
+                _LOGGER.warning("Volcast control paused for 30 min: %s changed outside Volcast", key)
+                self._pause_for_foreign(key, None)
+                taken = True
+        return taken
+
+    def _update_conflict_issue(self) -> None:
+        conn = self._direct.conn
+        if conn.conflict and not self._conflict_issue_open:
+            self._conflict_issue_open = True
+            reason = conn.monitor.reason if conn.monitor.state == "conflict" else \
+                (conn.static_conflicts[0] if conn.static_conflicts else "unknown")
+            _LOGGER.warning("Volcast direct control: another client uses the inverter link (%s) — "
+                            "plan writes stopped", reason)
+            self._create_issue(self._conflict_issue_id, "direct_conflict", {"reason": str(reason or "unknown")})
+        elif not conn.conflict and self._conflict_issue_open:
+            self._conflict_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._conflict_issue_id)
+
+    async def _after_direct_cycle(self, decision) -> None:
+        if self._direct is None:
+            return
+        notes = set(getattr(decision, "notes", ()) or ())
+        live = self._gates_open()
+        if live and notes & set(_BUDGET_NOTES) and not self._budget_issue_open:
+            self._budget_issue_open = True
+            _LOGGER.warning("Volcast direct control: inverter memory write budget used up — waiting")
+            self._create_issue(self._budget_issue_id, "nvm_budget")
+        elif self._budget_issue_open and live and not notes & set(_BUDGET_NOTES) \
+                and decision.status in (WRITE, IDLE):
+            self._budget_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._budget_issue_id)
+        budget = self._memory.budget if self._memory is not None else None
+        if budget is not None:
+            log = budget.to_list()
+            if log != self._state.nvm_log:
+                self._state.nvm_log = log
+                await self._async_save("write budget")
+
+    async def _fresh_direct_reading(self, rd: Reading) -> Reading:
+        """Odczyt do powrotu: nowy, gdy go nie ma albo zaczął się przed końcem naszego ostatniego zapisu."""
+        src = rd.source
+        if src is not None and (self._last_write_end is None or src.at_mono > self._last_write_end):
+            return rd
+        await self._direct.conn.async_poll()
+        return self.io.read(self._utcnow())
+
+    # ── okna czasowe (tryb bezpośredni) ───────────────────────────────────
+    async def _tou_tick(self, rd: Reading, gates: Gates, tele: Telemetry, now_mono: float, now_utc) -> None:
+        if rd.source is None:
+            self._finish(CycleDecision(BLOCKED, "no_reading"))
+            return
+        snap = self._state.tou_snapshot
+        d = decide_tou_cycle(profile=self._profile, schedule=self.schedule, now_utc=now_utc, now_mono=now_mono,
+                             tz=self._tz(), tele=tele, limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
+                             reading=rd.source, gates=gates, memory=self._memory,
+                             owner_word=snap["tou_word"] if snap else None)
+        if tele.soc is not None:
+            self._prev_soc = (tele.soc, now_mono)
+        self._forget_changed(d.flat)
+        d = self._gate_write(d)
+        if d.status == WRITE and (not self._state.owned or self._state.tou_snapshot is None):
+            d = await self._async_take_tou_ownership(d, rd)
+        if d.status == WRITE:
+            report = await async_run_tou_writes(d.writes, self._writer.async_write, pre_held=d.pre_held,
+                                                on_exception=self._log_write_exception)
+            end = self._clock()                     # po końcu sekwencji — odczyt z jej trakcie jest nieświeży
+            self._end_direct_writes()
+            commit_tou(d, report, self._memory, end, now_wall=None)   # ramki liczy `on_send` pisarza
+            self.last_tou_report = report
+            changed = self._note_written([*report.written, *report.ambiguous])
+            if report.restore_needed:
+                _LOGGER.warning("Volcast control: time-of-use rewrite interrupted — restoring the owner's programs")
+                self._tou_restore_pending = True
+                await self._tou_restore_after_failure(record_decision=False)
+            if changed:
+                await self._async_save("control state")
+        self._finish(d)
+        await self._after_direct_cycle(d)
+
+    def _tz(self):
+        name = getattr(getattr(self._hass, "config", None), "time_zone", None)
+        try:
+            return ZoneInfo(name or "Europe/Warsaw")
+        except Exception:  # noqa: BLE001
+            return ZoneInfo("Europe/Warsaw")
+
+    async def _async_take_tou_ownership(self, d, rd: Reading):
+        """Migawka programów właściciela (surowe słowa) PRZED pierwszym zapisem okien czasowych."""
+        snap = tou_snapshot(rd.source, self._profile)
+        if snap is None:
+            return replace(d, status=BLOCKED, reason="baseline_unknown")
+        prev = (self._state.owned, dict(self._state.snapshot), dict(self._state.owner),
+                self._state.restore_keys, list(self._state.taken_over), self._state.tou_snapshot)
+        if not self._state.owned:
+            snapshot = take_snapshot(rd.readings)
+            if snapshot_missing(snapshot, self.io.snapshot_keys()):
+                return replace(d, status=BLOCKED, reason="baseline_unknown")
+            self._state.snapshot = snapshot
+            self._state.owned = True
+            self._state.owner = self._owner()
+            self._state.restore_keys = []
+            self._state.taken_over = []
+        self._state.tou_snapshot = snap
+        if not await self._async_save("baseline snapshot"):
+            (self._state.owned, self._state.snapshot, self._state.owner, self._state.restore_keys,
+             self._state.taken_over, self._state.tou_snapshot) = prev
+            return replace(d, status=ERROR, reason="store_failed")
+        return d
+
+    async def _tou_restore_after_failure(self, *, record_decision: bool = True) -> None:
+        """Przerwana sekwencja: od razu programy właściciela z migawki (własność zostaje)."""
+        rd = await self._fresh_direct_reading(self.io.read(self._utcnow()))
+        report = await self._run_tou_restore(rd)
+        done = report is not None and self._tou_restore_complete(report)
+        if done:
+            self._tou_restore_pending = False
+        if record_decision:
+            self._finish(CycleDecision(RESTORE if done else ERROR,
+                                       "tou_owner_programs" if done else "restore_failed"))
+
+    def _tou_restore_complete(self, report: TouReport) -> bool:
+        return not (report.failed or report.held or report.unsupported or report.ambiguous)
+
+    async def _run_tou_restore(self, rd: Reading) -> TouReport | None:
+        """Powrót do programów właściciela (albo bazowych bez migawki); klucze przejęte przez właściciela
+        zostają jego. None = brak świeżego odczytu programów."""
+        reading = rd.source
+        if reading is None:
+            return None
+        reserve, rated = self._tou_restore_params()
+        try:
+            writes = tou_restore_writes(self._profile, self._state.tou_snapshot, reading, soc_reserve=reserve,
+                                        rated_power_w=rated)
+        except Exception as err:  # noqa: BLE001 — brak odczytu programów: następny cykl
+            _LOGGER.debug("Volcast control: time-of-use restore not possible now (%s)", type(err).__name__)
+            return None
+        taken = set(self._state.taken_over)
+        if EN_KEY in taken:
+            taken |= {ENABLE, TOU_WORD}
+        writes = [w for w in writes if w.key not in taken]
+        if not writes:
+            return TouReport()
+        report = await async_run_tou_writes(writes, self._writer.async_write, on_exception=self._log_write_exception)
+        end = self._clock()
+        self._end_direct_writes()
+        self._record_tou_restore(report, end)
+        return report
+
+    def _tou_restore_params(self) -> tuple[float, float]:
+        reserve = self.schedule.fallback.soc_reserve if self.schedule is not None else _DEFAULT_RESERVE
+        return float(reserve), float(self._rated_power() or 0.0)
+
+    def _record_tou_restore(self, report: TouReport, end: float) -> None:
+        """Zapisy powrotu są NASZE: pamięć zna wartości, więc odczyt po nich nie jest rozjazdem."""
+        memory, snap = self._memory, self._state.tou_snapshot
+        if snap is not None:
+            programs = _snapshot_programs(self._profile, snap)
+        else:
+            programs = baseline_programs(self._profile, *self._tou_restore_params())
+        flat = Params(tou=programs).flatten()
+        ebit = 1 << self._profile.raw["write"]["tou_enable"]["enable_bit"]
+        for key in report.written:
+            if key in flat:
+                memory.last_written[key] = flat[key]
+                memory.uncertain.discard(key)
+            elif key == ENABLE:
+                memory.last_written[EN_KEY] = 0.0
+            elif key == TOU_WORD and snap is not None:
+                memory.last_written[EN_KEY] = 1.0 if int(snap["tou_word"]) & ebit else 0.0
+        for key in report.ambiguous:
+            k = EN_KEY if key in (ENABLE, TOU_WORD) else key
+            memory.last_written.pop(k, None)
+            memory.uncertain.add(k)
+        if report.frames:
+            memory.tou_write_end = end
 
     async def _async_take_ownership(self, decision: CycleDecision,
                                     readings: Mapping[str, float | str]) -> CycleDecision:
@@ -569,7 +913,21 @@ class VolcastExecutor:
         Tryb bazowy jest neutralny i nie potrzebuje warunków, więc nie czeka na żadną
         inną encję. Obie części idą przez wykonawcę grupowego; własność zostaje, dopóki
         wszystko nie dojdzie — każdy tik ponawia tylko to, czego falownik jeszcze nie ma.
+
+        Tryb bezpośredni: tylko przy potwierdzonej tożsamości urządzenia (kolizja na łączu powrotu
+        nie blokuje), na świeżym odczycie; okna czasowe wracają do programów właściciela.
         """
+        if self._direct is not None:
+            if not await self._direct.async_identity_ok():
+                if not (self.last_decision and self.last_decision.reason == "identity"):
+                    _LOGGER.warning("Volcast control: return to the baseline waits — the inverter at the "
+                                    "saved address is not confirmed")
+                self._finish(CycleDecision(BLOCKED, "identity"))
+                return
+            rd = await self._fresh_direct_reading(rd)
+            if self._profile.control_model == "time_window":
+                await self._restore_tou(rd)
+                return
         now_mono = self._clock()
         params = baseline_params(self._profile, self._state.snapshot)
         fitted, unfit = self.io.restore_fit(rd, params)
@@ -595,6 +953,7 @@ class VolcastExecutor:
             if writes:
                 reports.append(await async_run_group_writes(writes, self._writer.async_write,
                                                             on_exception=self._log_write_exception))
+        self._end_direct_writes()
         self._account_restore(target, reports, now_mono)
         writes = [*group_writes, *rest_writes]
         failed = [k for r in reports for k in (*r.failed, *r.unsupported, *r.restore_failed)]
@@ -609,26 +968,50 @@ class VolcastExecutor:
         self._restore_failed = None
         lost = [k for k in (*snapshot_missing(self._state.snapshot, self.io.snapshot_keys()), *unfit)
                 if (allowed is None or k in allowed) and k not in owner_kept]
+        await self._release_ownership()
+        self.last_decision = CycleDecision(RESTORE, "baseline_mode_kept" if mode_kept else "baseline",
+                                           writes=writes, flat=target, takeover=mode_kept)
         if owner_kept:
             _LOGGER.info("Volcast control: %s left as set by the owner", owner_kept)
         if lost:
             _LOGGER.warning("Volcast control: could not return %s to the value from before control "
                             "(no saved value or outside the entity range) — check them on the inverter",
                             lost)
-        self._state.owned = False
-        self._state.snapshot = {}
-        self._state.owner = {}
-        self._state.restore_keys = None
-        self._state.taken_over = []
-        self._memory.last_written.clear()
-        await self._async_save("baseline state", force=True)
-        self.last_decision = CycleDecision(RESTORE, "baseline_mode_kept" if mode_kept else "baseline",
-                                           writes=writes, flat=target, takeover=mode_kept)
         if mode_kept:
             _LOGGER.warning("Volcast control: settings returned to their baseline; the inverter mode "
                             "was changed outside Volcast and is left as it is")
         else:
             _LOGGER.warning("Volcast control: inverter returned to its baseline mode")
+        self._count(self.last_decision)
+
+    async def _release_ownership(self) -> None:
+        self._state.owned = False
+        self._state.snapshot = {}
+        self._state.owner = {}
+        self._state.restore_keys = None
+        self._state.taken_over = []
+        self._state.tou_snapshot = None
+        self._memory.last_written.clear()
+        await self._async_save("baseline state", force=True)
+
+    async def _restore_tou(self, rd: Reading) -> None:
+        """Utrata prawa w trybie okien czasowych: programy i włącznik właściciela z migawki."""
+        report = await self._run_tou_restore(rd)
+        if report is None or not self._tou_restore_complete(report):
+            failed = () if report is None else tuple(dict.fromkeys([*report.failed, *report.held,
+                                                                     *report.unsupported]))
+            self.last_decision = CycleDecision(ERROR, "restore_failed")
+            if failed != self._restore_failed:
+                _LOGGER.warning("Volcast control: return to the owner's time-of-use programs incomplete "
+                                "(not applied: %s) — retrying every cycle", list(failed))
+            self._restore_failed = failed
+            self._count(self.last_decision)
+            return
+        self._restore_failed = None
+        self._tou_restore_pending = False
+        await self._release_ownership()
+        self.last_decision = CycleDecision(RESTORE, "baseline")
+        _LOGGER.warning("Volcast control: inverter returned to the owner's time-of-use programs")
         self._count(self.last_decision)
 
     def _account_restore(self, target: Mapping[str, float | str], reports: list[GroupReport],
@@ -644,6 +1027,13 @@ class VolcastExecutor:
             # kierunkowa liczy się w budżecie I-8, w którąkolwiek stronę.
             if "mode" in report.written or "mode" in report.ambiguous:
                 memory.limiter.mark_unknown()
+            if self._direct is not None:
+                # Zapisy powrotu są NASZE: odczyt po nich nie może wyglądać na zmianę właściciela.
+                for key in report.written:
+                    if key in target:
+                        memory.last_written[key] = target[key]
+                for key in report.ambiguous:
+                    memory.last_written.pop(key, None)
 
     def _log_report(self, decision: CycleDecision, report: GroupReport) -> None:
         """Wynik zapisu grupowego — każdy przypadek osobnym komunikatem, same klucze."""

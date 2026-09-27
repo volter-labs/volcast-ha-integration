@@ -187,6 +187,18 @@
     "control_error": {
       "title": "Volcast cannot control the inverter",
       "description": "Volcast inverter control stopped working (repeated write errors or saved control state that could not be read). The inverter may still use the last settings Volcast applied. Check the inverter settings and the Home Assistant logs."
+    },
+    "foreign_control_direct": {
+      "title": "Volcast inverter control paused",
+      "description": "An inverter setting controlled by Volcast ({setting}) was changed outside Volcast twice within 30 minutes. Volcast paused control for 30 minutes and keeps the setting you changed. Control resumes automatically afterwards; to stop it, turn off the Volcast control switch."
+    },
+    "direct_conflict": {
+      "title": "Another client is using the inverter connection",
+      "description": "Volcast detected another client talking to the inverter over the same connection ({reason}). Volcast stopped writing its plan and reads less often; returning the inverter to its own settings still works. Disable the other integration or device that talks to the inverter; the warning clears after 30 minutes without signs of another client."
+    },
+    "nvm_budget": {
+      "title": "Volcast inverter write budget used up",
+      "description": "Volcast reached its daily limit of writes to the inverter's memory. It holds the current settings (a forced charge or discharge returns to the inverter's own mode) until older writes leave the 24-hour window."
     }
   },
   "services": {

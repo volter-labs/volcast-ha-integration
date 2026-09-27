@@ -14,6 +14,12 @@ każdym odświeżeniu planu — następny (zmiana zgody działa od razu).
 
 Błąd złożenia za `executor.async_start()` zatrzymuje wykonawcę i telemetrię, zanim
 wyjątek pójdzie dalej — nieudany setup ani przeładowanie nie zostawia żywego wykonawcy.
+
+Tryb bezpośredni (`control_mode == "direct"` albo `direct_trial`, oba z `direct_target`): wykonawca
+dostaje `DirectIO` na połączeniu `DirectConnection` (start w tle: kolizje i tożsamość mogą trwać).
+Kolejność zatrzymania: wykonawca (z powrotem przy wyłączeniu/usunięciu wpisu) → połączenie
+(zwolnienie hosta w `direct_hosts`). Zmiana celu albo trybu próbnego to zmiana sterowania — powrót
+idzie przez STARE połączenie przed przeładowaniem.
 """
 from __future__ import annotations
 
@@ -32,8 +38,9 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
-from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, DOMAIN,
-                     OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
+from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
+                     DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
+                     OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP)
 from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
@@ -41,10 +48,12 @@ from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, resolve_entities
 from ..core.profile import ProfileError, builtin_ids, load_builtin
 from ..registry_compat import all_devices
+from .device_io import DirectIO
+from .direct import DirectConnection
 from .executor import VolcastExecutor
 from .ha_writer import EntityServiceWriter
 from .history_import import async_import_history_once
-from .store import ControlStore
+from .store import ControlStore, async_installation_salt
 from .telemetry import TelemetrySender
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,7 +62,8 @@ ONBOARDING_KEY = "volcast_onboarding"
 _LOCKS_KEY = "volcast_control_locks"
 
 # Opcje, od których zależą: czy sterujemy i przez które encje.
-CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN)
+CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL)
+_POLL_RANGE_S = (5.0, 60.0)
 # Opcje, których zmiana nie wymaga przeładowania wpisu (wystarczy import historii).
 RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY})
 
@@ -72,6 +82,8 @@ class ControlRuntime:
     options_at_setup: dict = field(default_factory=dict)
     # encje wpisu konfiguracji / urządzenia zmapowanego falownika (`inverter_entity_ids`)
     inverter_entities: frozenset = frozenset()
+    # połączenie bezpośrednie z falownikiem (tryb bezpośredni albo próba), inaczej None
+    direct: object | None = None
 
 
 def control_options_changed(old: Mapping, new: Mapping) -> bool:
@@ -181,6 +193,47 @@ def inverter_entity_ids(hass, choice: ProfileChoice | None, mapped: Mapping[str,
                      or getattr(e, "device_id", None) in devices)
 
 
+def _direct_target(options: Mapping) -> tuple[dict, bool] | None:
+    target = options.get(OPT_DIRECT_TARGET)
+    trial = options.get(OPT_DIRECT_TRIAL) is True
+    mode = options.get(OPT_CONTROL_MODE)
+    if not isinstance(target, Mapping) or not (mode == CONTROL_MODE_DIRECT or trial):
+        return None
+    if mode not in (None, CONTROL_MODE_DIRECT):
+        return None                  # encje + próba = dwie drogi do jednego falownika (opcje odrzucają)
+    return dict(target), trial
+
+
+def _str_keys(raw) -> tuple[str, ...]:
+    return tuple(k for k in raw if isinstance(k, str)) if isinstance(raw, (list, tuple)) else ()
+
+
+def compose_direct(hass, entry, profiles, *, salt: bytes):
+    """(choice, DirectIO, DirectConnection) dla wpisu w trybie bezpośrednim albo próbnym; None, gdy nie.
+
+    Z celu (`direct_target`, wynik sondy) idą WYŁĄCZNIE: klucze bez odczytu zwrotnego (`unreadable`) —
+    do klienta, pisarza, celu i pamięci — oraz możliwości (`capabilities`, False = brak rejestru).
+    """
+    found = _direct_target(entry.options)
+    if found is None:
+        return None
+    target, trial = found
+    profile = next((p for p in profiles if p.id == target.get("profile_id")), None)
+    if profile is None:
+        _LOGGER.warning("Volcast direct control: the saved inverter profile is not available")
+        return None
+    unreadable = _str_keys(target.get("unreadable"))
+    caps = target.get("capabilities")
+    poll = entry.options.get(OPT_DIRECT_POLL_S)
+    poll_s = float(poll) if isinstance(poll, (int, float)) and not isinstance(poll, bool) else float(DIRECT_POLL_S)
+    poll_s = min(max(poll_s, _POLL_RANGE_S[0]), _POLL_RANGE_S[1])
+    conn = DirectConnection(hass, entry, profile, target, trial=trial, salt=salt, poll_s=poll_s,
+                            unreadable=unreadable)
+    io = DirectIO(conn, profile, trial=trial, unreadable=unreadable,
+                  capabilities=caps if isinstance(caps, Mapping) else None, salt=salt)
+    return ProfileChoice(profile, None, None), io, conn
+
+
 async def async_setup_control(hass, entry, *, report: Callable[[], dict | None]) -> ControlRuntime | None:
     backend = Backend.from_dict(entry.data.get(CONF_BACKEND))
     if backend is None:
@@ -188,14 +241,21 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     opts = entry.options
     cloud = VolcastCloud(async_get_clientsession(hass), entry.data[CONF_API_KEY], backend)
     profiles = await hass.async_add_executor_job(_load_profiles)
-    choice = _choice_for(hass, entry, profiles)
-    mapped = map_entities(hass, choice)
+    composed = None
+    if _direct_target(opts) is not None:
+        composed = compose_direct(hass, entry, profiles, salt=await async_installation_salt(hass))
+    if composed is not None:
+        choice, io, conn = composed
+        mapped = {}
+    else:
+        choice, io, conn = _choice_for(hass, entry, profiles), None, None
+        mapped = map_entities(hass, choice)
     manual_rated = opts.get(OPT_RATED_POWER_W)
     rated = float(manual_rated) if manual_rated else rated_power_from_model(choice.model if choice else None)
     executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped, rated_power_w=rated,
                                store=ControlStore(hass, entry.entry_id), writer=EntityServiceWriter(hass),
                                lock=_entry_lock(hass, entry.entry_id),
-                               mode_unique_id=mode_unique_id(hass, mapped))
+                               mode_unique_id=mode_unique_id(hass, mapped), io=io)
     await executor.async_start()
     telemetry = None
     rt = None
@@ -210,7 +270,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         await telemetry.async_start()
         rt = ControlRuntime(executor, fetcher, telemetry, cloud, choice, mapped, rated,
                             options_at_setup=dict(opts),
-                            inverter_entities=inverter_entity_ids(hass, choice, mapped))
+                            inverter_entities=inverter_entity_ids(hass, choice, mapped), direct=conn)
 
         async def _fetch(_now=None) -> None:
             # Odświeżenie planu (i zgody) — zaraz po nim cykl: cofnięta zgoda działa od razu.
@@ -225,17 +285,32 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         # Nieudane złożenie nie zostawia żywego wykonawcy (bez encji wyłącznika nikt by go
         # nie zatrzymał, a każde przeładowanie dokładałoby kolejnego).
         await _async_abort_setup(hass, entry, executor, telemetry, rt)
+        if conn is not None:
+            await conn.async_stop()
         raise
     # Pierwszy cykl i pierwsze pobranie — zadania HA, nie wpisu: unload nie anuluje ich
     # w połowie zapisu grupy (zatrzymany wykonawca i tak już nic nie zapisze).
     hass.async_create_background_task(executor.async_tick(), "volcast_first_tick")
     hass.async_create_background_task(_fetch(), "volcast_first_fetch")
+    if conn is not None:
+        entry.async_create_background_task(hass, _async_start_direct(conn, executor), "volcast_direct_start")
     entry.async_create_background_task(
         hass, async_import_history_once(hass, cloud, executor, load_entity=opts.get(OPT_LOAD_ENERGY),
                                         pv_entity=opts.get(CONF_PV_ENERGY_ENTITY) or None,
                                         now_utc=dt_util.utcnow()),
         "volcast_history_import")
     return rt
+
+
+async def _async_start_direct(conn, executor) -> None:
+    """Start połączenia w tle (kolizje, tożsamość), pierwszy odczyt i od razu cykl."""
+    try:
+        await conn.async_start()
+        if conn.refused() is None:
+            await conn.async_poll()
+            await executor.async_tick()
+    except Exception as err:  # noqa: BLE001 — połączenie nie psuje prognozy ani wpisu
+        _LOGGER.warning("Volcast direct connection start failed (%s)", type(err).__name__)
 
 
 async def _async_abort_setup(hass, entry, executor, telemetry, rt) -> None:
@@ -322,6 +397,9 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
                             type(err).__name__)
     await rt.telemetry.async_stop()
     await rt.executor.async_stop()
+    if rt.direct is not None:
+        # Po wykonawcy (powrót przy wyłączeniu wpisu szedł jeszcze tym połączeniem).
+        await rt.direct.async_stop()
 
 
 async def async_remove_control(hass, entry) -> None:
@@ -339,13 +417,26 @@ async def async_remove_control(hass, entry) -> None:
         state = None
     if state is not None and state.owned:
         profiles = await hass.async_add_executor_job(_load_profiles)
-        choice = _choice_for(hass, entry, profiles)
-        mapped = map_entities(hass, choice) if choice else {}
+        composed = None
+        if _direct_target(entry.options) is not None:
+            composed = compose_direct(hass, entry, profiles, salt=await async_installation_salt(hass))
+        conn = io = None
+        if composed is not None:
+            choice, io, conn = composed
+            mapped = {}
+        else:
+            choice = _choice_for(hass, entry, profiles)
+            mapped = map_entities(hass, choice) if choice else {}
         executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped,
                                    rated_power_w=None, store=store, writer=EntityServiceWriter(hass),
                                    lock=_entry_lock(hass, entry.entry_id),
-                                   mode_unique_id=mode_unique_id(hass, mapped))
+                                   mode_unique_id=mode_unique_id(hass, mapped), io=io)
         await executor.async_start()
+        if conn is not None:
+            try:
+                await conn.async_start()
+            except Exception as err:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić
+                _LOGGER.warning("Volcast direct connection failed on removal (%s)", type(err).__name__)
         await executor.async_restore_now()
         if executor.owned:
             # Still owned after the attempt: no profile/integration, a read-only profile,
@@ -354,5 +445,7 @@ async def async_remove_control(hass, entry) -> None:
             _LOGGER.warning("Volcast control: could not return the inverter to its settings from "
                             "before control — check its mode")
         await executor.async_stop()
+        if conn is not None:
+            await conn.async_stop(forget=True)
     await store.async_remove()
     hass.data.get(_LOCKS_KEY, {}).pop(entry.entry_id, None)
