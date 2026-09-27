@@ -1,6 +1,6 @@
 from custom_components.volcast.core.discovery.report import _MAX_TEXT, _mask_value, _serial_pattern
 
-SERIAL = "9010KETU225W0123"
+SERIAL = "9010KETU000W0123"
 
 
 def test_serial_across_cut_boundary_leaves_no_fragment():
