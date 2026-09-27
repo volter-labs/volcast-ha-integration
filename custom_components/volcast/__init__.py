@@ -5,10 +5,6 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import logging
 
-try:
-    from homeassistant.components.repairs import IssueSeverity
-except ImportError:
-    IssueSeverity = None
 import homeassistant.util.dt as dt_util
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STARTED, Platform
@@ -50,6 +46,10 @@ from .reconciler import DailyReconciler
 from .version import async_integration_version
 
 _LOGGER = logging.getLogger(__name__)
+
+# Waga zgłoszeń naprawy — z rejestru zgłoszeń (komponent `repairs` jej nie re-eksportuje).
+IssueSeverity = getattr(ir, "IssueSeverity", None)
+_ISSUE_WARNING = getattr(IssueSeverity, "WARNING", "warning")
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
 
@@ -206,15 +206,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Wyczyść ewentualny repair issue (użytkownik już skonfigurował)
         ir.async_delete_issue(hass, DOMAIN, "production_tracking_available")
     else:
-        if IssueSeverity is not None:
-            ir.async_create_issue(
-                hass,
-                DOMAIN,
-                "production_tracking_available",
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="production_tracking_available",
-            )
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            "production_tracking_available",
+            is_fixable=False,
+            severity=_ISSUE_WARNING,
+            translation_key="production_tracking_available",
+        )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
