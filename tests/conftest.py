@@ -634,6 +634,7 @@ def setup_forecast_entry(monkeypatch):
 
 import asyncio as _asyncio
 import asyncio.base_events as _base_events
+import asyncio.selector_events as _selector_events
 import ipaddress as _ipaddress
 import socket as _socket
 
@@ -653,6 +654,15 @@ def _loopback_host(host) -> bool:
     return (mapped or ip).is_loopback
 
 
+def _loopback_name(host) -> bool:
+    """Rozwiązywanie nazw: wolno tylko `localhost` i literały pętli zwrotnej (bez DNS)."""
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    if isinstance(host, str) and host.rstrip(".").lower() == "localhost":
+        return True
+    return _loopback_host(host)
+
+
 class _NetworkGuard:
     """Naruszenia są też zapamiętywane: transporty asyncio łapią każdy wyjątek z `sendto`
     (także `pytest.fail`) i tylko zamykają transport — test i tak pada przy sprzątaniu."""
@@ -669,6 +679,12 @@ class _NetworkGuard:
         self.violations.append(type(address).__name__)
         pytest.fail(_NETWORK_FAIL)
 
+    def check_name(self, host) -> None:
+        if _loopback_name(host):
+            return
+        self.violations.append("getaddrinfo")
+        pytest.fail(_NETWORK_FAIL)
+
 
 @pytest.fixture(autouse=True)
 def _no_real_network(monkeypatch):
@@ -680,6 +696,10 @@ def _no_real_network(monkeypatch):
     real_create_connection = _base_events.BaseEventLoop.create_connection
     real_create_datagram = _base_events.BaseEventLoop.create_datagram_endpoint
     real_open_connection = _asyncio.open_connection
+    real_getaddrinfo = _socket.getaddrinfo
+    real_loop_getaddrinfo = _base_events.BaseEventLoop.getaddrinfo
+    real_sock_connect = _selector_events.BaseSelectorEventLoop.sock_connect
+    real_sock_sendto = _selector_events.BaseSelectorEventLoop.sock_sendto
 
     def connect(self, address):
         _guard_address(address)
@@ -708,12 +728,39 @@ def _no_real_network(monkeypatch):
             _guard_address((host, port))
         return await real_open_connection(host, port, **kwargs)
 
+    # Rozwiązywanie nazw bez łączenia też jest ruchem sieciowym (DNS, mDNS).
+    def getaddrinfo(host, *args, **kwargs):
+        guard.check_name(host)
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    async def loop_getaddrinfo(self, host, *args, **kwargs):
+        guard.check_name(host)
+        return await real_loop_getaddrinfo(self, host, *args, **kwargs)
+
+    # Jawnie, nie przez szczegół implementacji pętli (dziś woła `socket.connect`/`sendto`).
+    async def sock_connect(self, sock, address):
+        _guard_address(address)
+        return await real_sock_connect(self, sock, address)
+
+    async def sock_sendto(self, sock, data, address):
+        _guard_address(address)
+        return await real_sock_sendto(self, sock, data, address)
+
+    wrappers = (connect, connect_ex, sendto, create_connection, create_datagram_endpoint,
+                open_connection, getaddrinfo, loop_getaddrinfo, sock_connect, sock_sendto)
+    for fn in wrappers:
+        fn._network_guard = True
+
     monkeypatch.setattr(_socket.socket, "connect", connect)
     monkeypatch.setattr(_socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(_socket.socket, "sendto", sendto)
     monkeypatch.setattr(_base_events.BaseEventLoop, "create_connection", create_connection)
     monkeypatch.setattr(_base_events.BaseEventLoop, "create_datagram_endpoint", create_datagram_endpoint)
     monkeypatch.setattr(_asyncio, "open_connection", open_connection)
+    monkeypatch.setattr(_socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(_base_events.BaseEventLoop, "getaddrinfo", loop_getaddrinfo)
+    monkeypatch.setattr(_selector_events.BaseSelectorEventLoop, "sock_connect", sock_connect)
+    monkeypatch.setattr(_selector_events.BaseSelectorEventLoop, "sock_sendto", sock_sendto)
 
     # Domyślny cel sondy 48899 (rozgłoszenie) → pętla zwrotna; jawne rozgłoszenie pada w straży.
     from custom_components.volcast.core.discovery import network as _network
