@@ -68,7 +68,7 @@ It also adds a plan card and a "Volcast" panel with the current and upcoming pla
 
 ### Inverter control (beta)
 
-Volcast can write plan-driven mode and power settings to your inverter **through your existing inverter integration's entities** (for example a select for mode and a number for power). Direct Modbus/local connection to the inverter is not available yet.
+Volcast can write plan-driven mode and power settings to your inverter **through your existing inverter integration's entities** (for example a select for mode and a number for power). A direct local connection to the inverter is described in "Direct connection (beta)" below.
 
 **In this pre-release, control is a preview.** Writing is enabled per inverter brand only once that brand's profile has been verified against real hardware — no brand ships verified in this release (GoodWe support is pending a live trial). Until a brand is verified, the status sensor always shows what Volcast *would* write, and nothing actually reaches the inverter.
 
@@ -91,6 +91,33 @@ Entity-mode control and account pairing are both beta features.
 ### Diagnostics privacy
 
 The downloadable diagnostics file masks serial numbers, MAC addresses and e-mail addresses (IP addresses are kept, since they help with troubleshooting). Once an entry is paired, its readings and control summary also go to your Volcast account, as listed above — diagnostics is no longer the only place they're visible.
+
+## Beta: Direct Connection (v2.0.0b3)
+
+### Direct connection (beta)
+
+Volcast can connect to a supported inverter directly on your local network — **GoodWe** (ET/EH/BT/BH, over UDP or Modbus TCP), **Deye** three-phase hybrids (SUN-xK-SG, through a Solarman data logger or Modbus TCP), or either behind an RS485 ↔ TCP gateway.
+
+- **Search**: **Options → Installation details → Search for the inverter on the local network** reads only the identification of devices that answer; pick your inverter from the list or enter its local IP address.
+- **Sensors**: state of charge, temperatures, voltages, power flows, lifetime energy counters (Energy dashboard), the inverter mode and diagnostic settings, refreshed every 10 s by default.
+- **Read-only test connection**: for inverters whose direct control is not verified yet, **Installation details → Read-only test connection** shows the sensors and what Volcast *would* write, and never writes.
+
+**Direct control ships disabled.** Writing is enabled per brand only after its register map has been verified on a live inverter, and both built-in direct profiles (GoodWe and Deye) are still draft — so choosing **Options → Inverter control → Directly over the local network** reports that direct control is not available yet. Once a brand is verified, nothing is written unless direct control is selected, consent is given in the Volcast app, the control switch is on, the inverter's identity at the saved address is confirmed and no other client uses the inverter.
+
+Safety rules for the direct connection:
+
+- Every write is read back; only values the inverter actually holds are recorded.
+- A daily limit on setting changes protects the inverter's memory; a forced charge or discharge returns to the inverter's normal mode when the limit is hit, and returning to baseline is never blocked by it.
+- Withdrawing consent, turning the switch off, or disabling/removing the entry returns the inverter to its settings from before Volcast (confirmed by reading back); a restart or reload does not.
+- A setting you change twice within 30 minutes pauses control for 30 minutes and stays as you set it until the plan for it changes.
+- Another integration configured for the same inverter blocks the direct connection; signs of another client while connected stop plan writes (returning to baseline still works).
+- If a different device answers at the saved address, reading and control stop until you search again.
+
+Stored in Home Assistant only: the inverter's local address, port, unit ID, Solarman logger serial, a salted device fingerprint and the search results. Sent to Volcast: the readings, the profile id, the connection type and counters, which settings can be controlled and the rated power — **never** the address, serial numbers, the fingerprint or the salt. Raw frames appear in the diagnostics file only while the read-only test connection is on, with serial numbers and the logger serial zeroed.
+
+Known limitations: single-phase Deye inverters are not identified; Solarman logger behaviour on real hardware and the Deye write details are not verified yet; on some GoodWe models the upper state-of-charge limit cannot be read back and is not set directly. No serial port (use an RS485 ↔ TCP gateway), local IP addresses only, no background scanning.
+
+**Going back to v2.0.0b2:** if you used direct control, turn off the Volcast control switch and wait until the status sensor shows the inverter was returned to its previous settings — b2 cannot do that for a direct connection. See `docs/release-notes/v2.0.0-beta3.md` for details.
 
 ## Features
 

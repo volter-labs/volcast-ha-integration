@@ -33,3 +33,35 @@ def test_no_internal_identifiers_in_user_texts():
     import re
     text = (ROOT / "strings.json").read_text(encoding="utf-8")
     assert not re.search(r"D1\d\d|[Tt]ask \d|etap|zadani", text)
+
+
+def test_direct_connection_texts_present():
+    s = _load("strings.json")
+    opts = s["options"]
+    assert "control_direct" in opts["step"]["control"]["menu_options"]
+    for reason in ("direct_unverified", "direct_conflict", "direct_not_found", "direct_in_use"):
+        assert reason in opts["abort"], reason
+    for step in ("direct_search", "direct_pick", "direct_manual"):
+        assert step in opts["step"], step
+    for err in ("trial_with_entities", "trial_while_owned", "invalid_host", "logger_serial_required"):
+        assert err in opts["error"], err
+    for issue in ("direct_conflict", "foreign_control_direct", "nvm_budget", "direct_identity_changed",
+                  "tou_snapshot_lost"):
+        assert issue in s["issues"], issue
+    assert "{reason}" in s["issues"]["direct_conflict"]["description"]
+    assert "{setting}" in s["issues"]["foreign_control_direct"]["description"]
+    for key in ("soc", "pv_power_w", "grid_power_w", "pv_energy_total_kwh", "mode", "link_quality"):
+        assert f"control_direct_{key}" in s["entity"]["sensor"], key
+
+
+def test_release_note_and_readme_describe_direct_access_honestly():
+    import re
+    repo = ROOT.parents[1]
+    note = (repo / "docs" / "release-notes" / "v2.0.0-beta3.md").read_text(encoding="utf-8")
+    readme = (repo / "README.md").read_text(encoding="utf-8")
+    assert "Direct connection (beta)" in readme
+    for text in (note, readme):
+        assert "read-only" in text and ("draft" in text.lower() or "not verified" in text.lower())
+    assert "turn off the Volcast control switch" in note
+    for text in (note,):
+        assert not re.search(r"D1\d\d|[Tt]ask \d|etap|zadani|PLAN-\d|G[123]\b", text)

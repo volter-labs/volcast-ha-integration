@@ -190,11 +190,15 @@
           "host": "A private network address, for example of the inverter's Wi-Fi or LAN module.",
           "logger_serial": "Required for Solarman data loggers (up to 10 digits)."
         }
+      },
+      "direct_search": {
+        "title": "Searching for the inverter",
+        "description": "Volcast reads only the identification of devices that answer on the local network; nothing is written."
       }
     },
     "abort": {
       "entity_mode_unavailable": "Inverter control entities not found. Control through the integration needs a supported inverter integration with an entity for every setting.",
-      "direct_unverified": "Direct control is not available for this inverter yet — its model has not been verified. You can use the read-only test connection under Installation details.",
+      "direct_unverified": "Direct control is not available for this inverter yet. You can try a read-only test connection under Installation details.",
       "direct_conflict": "Another integration ({integration}) uses this inverter. Disable it before choosing direct control, so two programs do not control the inverter at the same time.",
       "direct_not_found": "No inverter found yet. Search for it under Installation details first.",
       "direct_in_use": "Another Volcast entry already connects to this inverter."
@@ -223,7 +227,7 @@
     },
     "direct_identity_changed": {
       "title": "Volcast found a different inverter at the saved address",
-      "description": "The inverter at this address is a different device. Volcast stopped reading and controlling it. Search for your inverter again in the integration options."
+      "description": "The device answering at the saved inverter address is not the inverter Volcast was set up with. Control is stopped. Search for your inverter again in the Volcast options."
     },
     "control_error": {
       "title": "Volcast cannot control the inverter",
@@ -231,15 +235,15 @@
     },
     "foreign_control_direct": {
       "title": "Volcast inverter control paused",
-      "description": "An inverter setting controlled by Volcast ({setting}) was changed outside Volcast. Volcast paused control for 30 minutes and keeps the setting you changed. Control resumes automatically afterwards; to stop it, turn off the Volcast control switch."
+      "description": "Inverter setting {setting} was changed outside Volcast. Control is paused for 30 minutes and Volcast keeps the value you set until its plan for that setting changes. To stop control, turn off the Volcast control switch."
     },
     "direct_conflict": {
       "title": "Another client is using the inverter connection",
-      "description": "Volcast detected another client talking to the inverter over the same connection ({reason}). Volcast stopped writing its plan and reads less often; returning the inverter to its own settings still works. Disable the other integration or device that talks to the inverter; the warning clears after 30 minutes without signs of another client."
+      "description": "Another client is talking to your inverter ({reason}). Volcast stopped changing inverter settings until it stops; returning the inverter to its own settings still works. If another integration or app controls this inverter, turn it off or switch Volcast control off."
     },
     "nvm_budget": {
       "title": "Volcast inverter write budget used up",
-      "description": "Volcast reached its daily limit of writes to the inverter's memory. It holds the current settings (a forced charge or discharge returns to the inverter's own mode) until older writes leave the 24-hour window."
+      "description": "Volcast reached the daily limit of inverter setting changes. A forced charge or discharge was returned to the inverter's normal mode, and further changes wait for now. This protects the inverter memory; download diagnostics if it happens again."
     },
     "tou_snapshot_lost": {
       "title": "Volcast lost the saved copy of your inverter schedule",
