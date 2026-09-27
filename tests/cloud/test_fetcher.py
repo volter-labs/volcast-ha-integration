@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from custom_components.volcast.cloud.client import CloudAuthError
 from custom_components.volcast.cloud.fetcher import ScheduleFetcher
@@ -74,3 +75,67 @@ def test_empty_plan_with_empty_id_dedup_by_content():
     f, got = make(doc(sid="", slots=[]), doc(sid="", slots=[]))
     assert asyncio.run(f.async_refresh()) == "accepted"
     assert asyncio.run(f.async_refresh()) == "unchanged"
+
+
+def _failing(stage):
+    got = {"plans": [], "consent": []}
+
+    async def on_plan(raw, sched):
+        if stage == "plan":
+            raise OSError("disk full at /config/.storage")
+        got["plans"].append(raw["schedule_id"])
+
+    async def on_consent(v):
+        if stage == "consent":
+            raise OSError("disk full at /config/.storage")
+        got["consent"].append(v)
+
+    async def on_auth(n):
+        raise RuntimeError("boom")
+
+    return got, dict(on_plan=on_plan, on_consent=on_consent, on_auth_failure=on_auth)
+
+
+def test_callback_exceptions_do_not_escape_refresh(caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.volcast.cloud")
+    for stage in ("plan", "consent"):
+        got, cbs = _failing(stage)
+        f = ScheduleFetcher(Cloud(doc()), **cbs)
+        assert asyncio.run(f.async_refresh()) == "error"
+    got, cbs = _failing(None)
+    f = ScheduleFetcher(Cloud(CloudAuthError()), **cbs)
+    assert asyncio.run(f.async_refresh()) == "error"
+    assert "/config" not in caplog.text and "boom" not in caplog.text
+
+
+def test_unexpected_client_exception_is_error():
+    f, got = make(RecursionError())
+    assert asyncio.run(f.async_refresh()) == "error" and got["plans"] == []
+
+
+def test_failed_plan_callback_is_retried_next_poll():
+    calls = []
+
+    async def on_plan(raw, sched):
+        calls.append(raw["schedule_id"])
+        if len(calls) == 1:
+            raise OSError("x")
+
+    async def noop(*_):
+        return None
+
+    f = ScheduleFetcher(Cloud(doc(), doc()), on_plan=on_plan, on_consent=noop, on_auth_failure=noop)
+    assert asyncio.run(f.async_refresh()) == "error"
+    assert asyncio.run(f.async_refresh()) == "accepted" and calls == ["a", "a"]
+
+
+def test_rejected_plan_warning_logged_once_per_distinct_body(caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.volcast.cloud")
+    bad = doc(slots=[{"mode": "nonsense"}])
+    bad2 = doc(sid="b", slots=[{"mode": "nonsense"}])
+    f, got = make(bad, bad, bad, bad2, doc(), bad)
+    results = [asyncio.run(f.async_refresh()) for _ in range(6)]
+    assert results == ["rejected", "rejected", "rejected", "rejected", "accepted", "rejected"]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "rejected" in r.getMessage()]
+    assert len(warnings) == 3                    # bad, bad2, bad po zaakceptowanym planie
+    assert got["plans"] == ["a"]

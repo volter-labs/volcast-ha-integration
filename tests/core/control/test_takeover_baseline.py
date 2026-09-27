@@ -1,7 +1,8 @@
 import pytest
 
 from custom_components.volcast.core.control.baseline import (SNAPSHOT_KEYS, baseline_params,
-                                                             needs_restore, take_snapshot)
+                                                             needs_restore, snapshot_missing,
+                                                             take_snapshot)
 from custom_components.volcast.core.control.takeover import FOREIGN_PAUSE_S, is_foreign_change
 from custom_components.volcast.core.params import Params
 from custom_components.volcast.core.profile import load_builtin
@@ -64,3 +65,14 @@ def test_baseline_without_profile_mode_writes_nothing():
 ])
 def test_needs_restore(owned, consent, local, mode, expected):
     assert needs_restore(owned=owned, consent=consent, local_switch=local, control_mode=mode) is expected
+
+
+def test_snapshot_missing_lists_mapped_keys_without_reading_in_snapshot_order():
+    mapped = ("mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled")
+    snap = take_snapshot({"soc_max": 100.0, "export_limit_enabled": 1.0})
+    # tryb bazowy pochodzi z profilu — jego brak w migawce niczego nie wstrzymuje
+    assert snapshot_missing(snap, mapped) == ("soc_min", "export_limit_w")
+
+
+def test_snapshot_missing_ignores_unmapped_keys():
+    assert snapshot_missing({"soc_min": 10.0}, ("mode", "soc_min")) == ()

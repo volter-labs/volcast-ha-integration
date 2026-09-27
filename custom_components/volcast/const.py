@@ -38,3 +38,27 @@ ATTR_DATE = "date"
 # Wykrywanie instalacji (tylko odczyt) — sygnał po nowym raporcie i limit czasu przebiegu
 SIGNAL_DISCOVERY_UPDATED = "volcast_discovery_updated_{entry_id}"
 DISCOVERY_TIMEOUT_S = 30
+
+# Sterowanie i parowanie
+CONF_BACKEND = "backend"
+CONF_USER_ID = "user_id"
+CONF_PAIRED_AT = "paired_at"
+CONF_PAIRING = "pairing"
+OPT_CONTROL_MODE = "control_mode"
+CONTROL_MODE_ENTITIES = "entities"
+OPT_PROFILE_ID = "profile_id"
+OPT_INVERTER_DOMAIN = "inverter_domain"
+OPT_TELEMETRY_MAP = "telemetry_map"
+OPT_GRID_NEGATE = "grid_power_negate"
+OPT_RATED_POWER_W = "rated_power_w"
+OPT_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"
+OPT_LOAD_ENERGY = "load_energy_entity"
+OPT_PRICE_BUY = "entity_price_buy"
+OPT_PRICE_SELL = "entity_price_sell"
+OPT_PRICE_CURRENCY = "price_currency"
+SIGNAL_CONTROL_UPDATED = "volcast_control_updated_{entry_id}"
+EXECUTOR_INTERVAL_S = 60
+STOP_WRITE_TIMEOUT_S = 10.0
+ERROR_ISSUE_AFTER = 10
+# Pre-release backend; replaced on the stable release.
+BETA_PAIRING_URL = "https://staging.volcast.app/functions/v1/pairing-session"

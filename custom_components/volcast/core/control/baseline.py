@@ -7,7 +7,7 @@ Przywracamy tylko to, co sami przejęliśmy.
 """
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from ..params import Params
 
@@ -16,6 +16,16 @@ SNAPSHOT_KEYS = ("mode", "soc_min", "soc_max", "export_limit_w", "export_limit_e
 
 def take_snapshot(readings: Mapping[str, float | str]) -> dict[str, float | str]:
     return {k: readings[k] for k in SNAPSHOT_KEYS if k in readings}
+
+
+def snapshot_missing(snapshot: Mapping[str, float | str], mapped_keys: Iterable[str]) -> tuple[str, ...]:
+    """Klucze migawki z encją, których migawka nie ma — w kolejności `SNAPSHOT_KEYS`.
+
+    Tryb pomijamy: tryb bazowy pochodzi z profilu. Niepełna migawka = klucz, którego
+    nigdy nie przywrócimy, więc przed pierwszym zapisem musi być pusta.
+    """
+    mapped = set(mapped_keys)
+    return tuple(k for k in SNAPSHOT_KEYS if k != "mode" and k in mapped and k not in snapshot)
 
 
 def _f(v) -> float | None:
