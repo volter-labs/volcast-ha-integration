@@ -120,11 +120,21 @@ _KODY_WALUT_ISO: frozenset[str] = frozenset({
 
 
 def _kod_waluty(tekst: Any) -> str | None:
-    """Znormalizowany kod ISO 4217 albo None."""
+    """Znormalizowany kod KSZTAŁTEM ISO 4217 (trzy litery ASCII) albo None."""
     if not isinstance(tekst, str):
         return None
     kod = tekst.strip().upper()
     return kod if kod.isascii() and _KOD_WALUTY.match(kod) else None
+
+
+def _kod_waluty_iso(tekst: Any) -> str | None:
+    """Jak `_kod_waluty`, ale sprawdzony też względem REALNYCH kodów ISO 4217
+    (`_KODY_WALUT_ISO`), nie tylko kształtu. Atrybut `currency` i fallback z
+    opcji integracji to tekst wolny — obcy integrator albo ręczny wpis
+    użytkownika — więc sam kształt trzyliterowy nie odróżnia „FOO" od
+    prawdziwego kodu, tak samo jak przy liczniku jednostki."""
+    kod = _kod_waluty(tekst)
+    return kod if kod in _KODY_WALUT_ISO else None
 
 
 def _rozbierz_jednostke(attrs: Mapping[str, Any]) -> tuple[float, bool, str | None] | None:
@@ -134,17 +144,22 @@ def _rozbierz_jednostke(attrs: Mapping[str, Any]) -> tuple[float, bool, str | No
     energii kontraktu — encja jest wtedy odrzucana CAŁKOWICIE, bez względu na
     to, co mówi atrybut `currency`. Takie przypadki:
     - mianownik inny niż kWh/MWh (np. `Wh`);
-    - licznik PUSTY (np. `/kWh`) albo spoza jawnej listy dozwolonych: kod ISO
-      (regex trzyliterowy), symbol waluty (`zł`, `€`, `£`), symbol wieloznaczny
-      (`kr`, `$` — jednostka OK, ale sama waluta wymaga atrybutu) albo token
-      centowy (`ct`, `c`, `cent(s)`, `¢`, `øre`/`öre`, `p`/`pence`, `gr`/`grosz(e)`,
-      z opcjonalną kropką na końcu jak `ct.`/`gr.`). Zgadywanie nierozpoznanego
-      licznika (np. „foo/kWh") to ta sama pomyłka rzędu wielkości co centy czy
-      MWh bez kontroli — dlatego licznik spoza listy odrzuca encję, NAWET gdy
-      atrybut `currency` jest podany wprost;
+    - licznik PUSTY (np. `/kWh`) albo spoza jawnej listy dozwolonych: realny
+      kod ISO 4217 (zbiór `_KODY_WALUT_ISO` — sam KSZTAŁT trzyliterowy nie
+      wystarcza, „foo" go ma i mimo to jest odrzucany), symbol jednoznacznej
+      waluty (`zł`, `€`, `£`), symbol wieloznaczny (`kr`, `$` — jednostka OK,
+      ale sama waluta wymaga atrybutu) albo token centowy (`ct`, `c`,
+      `cent(s)`, `¢`, `øre`/`öre`, `p`/`pence`, `gr`/`grosz(e)`, z opcjonalną
+      kropką na końcu jak `ct.`/`gr.`). Zgadywanie JAKIEGOKOLWIEK innego,
+      nierozpoznanego licznika (np. „foo/kWh") to ta sama pomyłka rzędu
+      wielkości co centy czy MWh bez kontroli — dlatego licznik spoza listy
+      odrzuca encję, NAWET gdy atrybut `currency` jest podany wprost;
     - atrybut `price_in_cents` PRZECZY jednostce — jawne `True` przy liczniku,
-      który jest kodem ISO (`EUR/kWh` nie może być jednocześnie "w euro"
-      i "w centach"), albo jawne `False` przy liczniku centowym (`ct/kWh`).
+      który oznacza CAŁĄ walutę (kod ISO, symbol jednoznaczny `zł`/`€`/`£`
+      albo symbol wieloznaczny `kr`/`$`; `EUR/kWh`, `€/kWh` i `kr/kWh`+`SEK`
+      nie mogą być jednocześnie "w euro"/"w koronach" i "w centach"), albo
+      jawne `False` przy liczniku centowym (`ct/kWh`). Tokeny centowe `p`/`gr`
+      SĄ centami, więc `price_in_cents=True` obok nich nie jest sprzecznością.
 
     Brak jednostki albo jednostka bez ukośnika nie niesie informacji o
     mianowniku (nie ma z czym uzgadniać sprzeczności), ale `price_in_cents`
@@ -168,29 +183,36 @@ def _rozbierz_jednostke(attrs: Mapping[str, Any]) -> tuple[float, bool, str | No
 
     centowy = False
     kod_z_jednostki: str | None = None
-    z_kodu_iso = False  # waluta z FAKTYCZNEGO kodu ISO, nie z symbolu/mapy centów
+    # Licznik oznacza CAŁĄ walutę (kod ISO, symbol jednoznaczny albo symbol
+    # wieloznaczny) — w przeciwieństwie do tokenu centowego, to `price_in_cents
+    # =True` obok niego zawsze jest sprzecznością, niezależnie od tego, czy
+    # sama waluta jest już znana (`kod_z_jednostki`) czy dopiero czeka na atrybut.
+    jednostka_calej_waluty = False
 
     if licznik_znorm in _TOKENY_CENTOWE:
         centowy = True
         kod_z_jednostki = _TOKENY_CENTOWE[licznik_znorm]
     elif licznik_znorm in _SYMBOLE_WALUT:
         kod_z_jednostki = _SYMBOLE_WALUT[licznik_znorm]
+        jednostka_calej_waluty = True
     elif licznik_znorm in _SYMBOLE_NIEJEDNOZNACZNE:
         kod_z_jednostki = None
+        jednostka_calej_waluty = True
     elif licznik_znorm in _KODY_WALUT_ISO:
         kod_z_jednostki = licznik_znorm
-        z_kodu_iso = True
+        jednostka_calej_waluty = True
     else:
-        # Licznik ma KSZTAŁT trzyliterowy, ale to nie prawdziwy kod ISO 4217
-        # (np. „foo") ani żaden symbol/token z list wyżej — odrzucamy CAŁKOWICIE,
-        # nawet z atrybutem `currency` obecnym (ten sam błąd co centy/MWh bez
-        # kontroli: zgadywanie nierozpoznanego licznika).
+        # Licznik nierozpoznany — nie jest realnym kodem ISO 4217 (np. „foo",
+        # mimo trzyliterowego kształtu), symbolem ani tokenem centowym z list
+        # wyżej — odrzucamy CAŁKOWICIE, nawet z atrybutem `currency` obecnym
+        # (ten sam błąd co centy/MWh bez kontroli: zgadywanie nierozpoznanego
+        # licznika).
         return None
 
     centy_flaga = attrs.get("price_in_cents")
     centy_flaga = centy_flaga if isinstance(centy_flaga, bool) else None
     if centy_flaga is True:
-        if z_kodu_iso:
+        if jednostka_calej_waluty:
             return None
         centowy = True
     elif centy_flaga is False and centowy:
@@ -398,12 +420,18 @@ def currency_from_attributes(attrs: Mapping[str, Any] | None, fallback: str | No
     Jednostka jest walidowana ZAWSZE, niezależnie od tego, czy atrybut
     `currency` jest obecny — jawny atrybut nie omija sprawdzenia jednostki,
     tylko jest z nią uzgadniany:
-    - inny mianownik niż kWh/MWh (np. `Wh`) odrzuca encję CAŁKOWICIE;
-    - jednostka centowa (`ct/kWh`, `gr/kWh`, `Øre/kWh`, ...) albo jawny
-      atrybut `price_in_cents` sama nie niesie kodu waluty (licznik to nie
-      ISO 4217) — waluta musi wtedy przyjść z `currency`;
-    - jeśli licznik jednostki I atrybut `currency` są oba rozpoznawalne, ale
-      się przeczą, to dane niespójne → None, „atrybut wygrywa" nie istnieje.
+    - inny mianownik niż kWh/MWh (np. `Wh`), albo licznik spoza jawnej listy
+      dozwolonych (patrz `_rozbierz_jednostke`), odrzuca encję CAŁKOWICIE;
+    - większość tokenów centowych (`ct/kWh`, `Øre/kWh`, `¢/kWh`, ...) i oba
+      symbole wieloznaczne (`kr`, `$`) same nie wskazują JEDNEJ konkretnej
+      waluty — musi wtedy przyjść z `currency`. Dwa tokeny centowe SĄ
+      jednoznaczne (`gr`/`grosz(e)` → PLN, `p`/`pence` → GBP) i wskazują
+      walutę same, bez atrybutu;
+    - jeśli licznik jednostki (kod ISO, symbol jednoznaczny albo token centowy
+      jednoznaczny) I atrybut `currency` są oba rozpoznawalne, ale się przeczą,
+      to dane niespójne → None, „atrybut wygrywa" nie istnieje;
+    - atrybut `currency` jest sprawdzany względem REALNYCH kodów ISO 4217, nie
+      tylko kształtu — `FOO` nie przechodzi, mimo trzyliterowego kształtu.
 
     Przeliczenie samej WARTOŚCI ceny (za MWh ÷1000, w centach ÷100) robi
     `intervals_from_attributes` — ta funkcja tylko ustala walutę.
@@ -422,7 +450,7 @@ def currency_from_attributes(attrs: Mapping[str, Any] | None, fallback: str | No
         if isinstance(jawna, str) and jawna.strip():
             # Atrybut OBECNY i niezrozumiały nie schodzi do fallbacku: encja coś
             # deklaruje, a my nie mamy prawa podstawić za nią czegoś innego.
-            kod_jawny = _kod_waluty(jawna)
+            kod_jawny = _kod_waluty_iso(jawna)
             if kod_jawny is None:
                 return None
             if kod_z_jednostki is not None and kod_z_jednostki != kod_jawny:
@@ -431,11 +459,49 @@ def currency_from_attributes(attrs: Mapping[str, Any] | None, fallback: str | No
         if kod_z_jednostki is not None:
             return kod_z_jednostki
         if ma_ukosnik:
-            # Jednostka centowa (albo licznik nierozpoznany jako kod waluty)
-            # bez jawnego atrybutu `currency` — nie zgadujemy.
+            # Jednostka jest OBECNA i rozpoznana (przeszła `_rozbierz_jednostke`),
+            # ale sama waluty nie wskazuje — token centowy wieloznaczny (`ct`,
+            # `¢`, `øre`, ...) albo symbol wieloznaczny (`kr`, `$`); licznik
+            # NIEROZPOZNANY w ogóle już wcześniej dał None w `_rozbierz_jednostke`.
+            # Bez jawnego atrybutu `currency` nie zgadujemy.
             return None
     # Fallback z opcji integracji wchodzi TYLKO wtedy, gdy encja nie mówi nic.
-    return _kod_waluty(fallback)
+    return _kod_waluty_iso(fallback)
+
+
+def _sprzedaz_dopuszczalna(attrs: Mapping[str, Any], waluta: str) -> bool:
+    """Czy atrybuty SPRZEDAŻY wolno użyć obok bloku o walucie `waluta`.
+
+    Dopuszczalne w DWÓCH przypadkach:
+    (a) sprzedaż nie deklaruje NICZEGO o walucie — nie ma (niepustego)
+        atrybutu `currency`, jednostka nie daje kodu waluty, a licznik nie
+        jest nawet symbolem wieloznacznym (`kr`, `$`, który TO byłby
+        deklaracją, tylko nierozstrzygniętą) — wtedy dziedziczy walutę bloku
+        bez zastrzeżeń (np. `ct/kWh` bez atrybutu);
+    (b) sprzedaż ma własną, w pełni rozstrzygniętą walutę i ta waluta jest
+        RÓWNA `waluta`.
+
+    Każda inna kombinacja — atrybut sprzeczny z walutą bloku, atrybut
+    sprzeczny z WŁASNĄ jednostką sprzedaży, symbol wieloznaczny rozstrzygnięty
+    na inną walutę, atrybut o kształcie kodu ale nierealny — degraduje CAŁĄ
+    sprzedaż do None. `buy` tym się nie przejmuje.
+    """
+    jawna = attrs.get("currency")
+    ma_atrybut = isinstance(jawna, str) and jawna.strip() != ""
+
+    rozbior = _rozbierz_jednostke(attrs)
+    kod_z_jednostki = rozbior[2] if rozbior is not None else None
+
+    jednostka = attrs.get("unit_of_measurement")
+    licznik_wieloznaczny = False
+    if isinstance(jednostka, str) and "/" in jednostka:
+        licznik, _, _ = jednostka.partition("/")
+        licznik_wieloznaczny = _znormalizuj(licznik).rstrip(".") in _SYMBOLE_NIEJEDNOZNACZNE
+
+    if rozbior is not None and not ma_atrybut and kod_z_jednostki is None and not licznik_wieloznaczny:
+        return True  # nic nie deklaruje — dziedziczy walutę bloku
+
+    return currency_from_attributes(attrs, None) == waluta
 
 
 def intervals_from_attributes(
@@ -466,10 +532,11 @@ def intervals_from_attributes(
 
     sprzedaz: dict[datetime, float] = {}
     # Waluta sprzedaży musi zgadzać się z walutą bloku (kupna) — encja sprzedaży
-    # bez ŻADNEJ deklaracji waluty (None) jest przyjmowana bez zastrzeżeń, ale
-    # jawnie INNA waluta to dane niespójne, więc cała sprzedaż degraduje do None.
-    waluta_sprzedazy = currency_from_attributes(attrs_sell, None) if attrs_sell is not None else None
-    if attrs_sell is not None and (waluta_sprzedazy is None or waluta_sprzedazy == waluta):
+    # bez ŻADNEJ deklaracji waluty jest przyjmowana bez zastrzeżeń, ale każda
+    # deklaracja (atrybut, symbol jednoznaczny albo wieloznaczny rozstrzygnięty),
+    # która nie zgadza się z `waluta`, ALBO jest sama w sobie niespójna, degraduje
+    # całą sprzedaż do None — nigdy tylko „brak informacji" (patrz `_sprzedaz_dopuszczalna`).
+    if attrs_sell is not None and _sprzedaz_dopuszczalna(attrs_sell, waluta):
         for start, cena, _minuty in _przedzialy(attrs_sell, tz, now) or []:
             # Klucz JAWNIE w UTC — kupno i sprzedaż bywają zapisane innym
             # offsetem tej samej chwili (+02:00 kontra Z).

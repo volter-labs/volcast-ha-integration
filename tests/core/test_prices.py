@@ -495,6 +495,21 @@ def test_currency_price_in_cents_bez_ukosnika_nie_blokuje_fallbacku():
     assert currency_from_attributes(attrs, "EUR") == "EUR"
 
 
+def test_price_in_cents_bez_ukosnika_przelicza_wartosci_przez_100():
+    """`price_in_cents=True` bez ukośnika (jednostka `kWh` sama, albo brak
+    atrybutu wcale) nadal skaluje wartości ÷100 — to jedyne źródło skali,
+    kiedy jednostka nie ma licznika/mianownika do rozebrania."""
+    attrs = {
+        "unit_of_measurement": "kWh",
+        "price_in_cents": True,
+        "raw_today": _raw(_polnoc(), 2, 60, wartosc=123.45),
+    }
+
+    out = intervals_from_attributes(attrs, None, "EUR", _WAW)
+
+    assert [w["buy"] for w in out] == [pytest.approx(1.2345), pytest.approx(1.2345)]
+
+
 def test_currency_price_in_cents_true_z_kodem_waluty_w_liczniku_jest_sprzeczne():
     """`EUR/kWh` + `price_in_cents=True` się wykluczają — sensor nie może być
     jednocześnie "w euro" i "w centach euro" na tym samym liczniku."""
@@ -516,6 +531,39 @@ def test_currency_price_in_cents_true_z_jawna_waluta_dziala(waluta, jednostka):
     `price_in_cents=True` — waluta z atrybutu, wartość przeliczona w centach."""
     attrs = {"currency": waluta, "unit_of_measurement": jednostka, "price_in_cents": True}
     assert currency_from_attributes(attrs, None) == waluta
+
+
+@pytest.mark.parametrize(
+    ("jednostka", "waluta"),
+    [("€/kWh", None), ("zł/kWh", None), ("£/kWh", None),
+     ("EUR/kWh", None), ("kr/kWh", "SEK"), ("$/kWh", "AUD")],
+)
+def test_currency_price_in_cents_true_z_cala_waluta_jest_sprzeczne(jednostka, waluta):
+    """`price_in_cents=True` obok licznika, który już oznacza CAŁĄ walutę (kod
+    ISO, symbol jednoznaczny albo symbol wieloznaczny rozstrzygnięty przez
+    atrybut) jest sprzeczne — sensor nie może być jednocześnie "w euro" i
+    "w centach euro". W przeciwieństwie do `p`/`gr`, które SĄ centami, więc
+    `price_in_cents=True` im nie przeczy."""
+    attrs = {"unit_of_measurement": jednostka, "price_in_cents": True}
+    if waluta is not None:
+        attrs["currency"] = waluta
+    assert currency_from_attributes(attrs, None) is None
+
+
+@pytest.mark.parametrize(
+    ("jednostka", "waluta"),
+    [("€/kWh", None), ("zł/kWh", None), ("£/kWh", None), ("kr/kWh", "SEK")],
+)
+def test_price_in_cents_true_z_cala_waluta_odrzuca_cala_serie(jednostka, waluta):
+    attrs = {
+        "unit_of_measurement": jednostka,
+        "price_in_cents": True,
+        "raw_today": _raw(_polnoc(), 2, 60, wartosc=123.45),
+    }
+    if waluta is not None:
+        attrs["currency"] = waluta
+
+    assert intervals_from_attributes(attrs, None, waluta or "EUR", _WAW) == []
 
 
 def test_currency_mianownik_wh_daje_none():
@@ -607,6 +655,18 @@ def test_currency_zly_atrybut_lub_fallback_daje_none(zla):
 
 def test_currency_odrzuca_nie_ascii_wygladajace_na_trzyliterowe():
     assert currency_from_attributes({"currency": "PLＮ"}, None) is None
+
+
+def test_currency_atrybut_o_ksztalcie_kodu_ale_nierealny_daje_none():
+    """`FOO` ma kształt kodu ISO (trzy litery ASCII), ale nie jest realną
+    walutą — atrybut `currency` jest sprawdzany względem listy realnych
+    kodów, nie tylko kształtu (tak samo jak licznik jednostki)."""
+    assert currency_from_attributes({"currency": "FOO"}, None) is None
+    assert currency_from_attributes({"currency": "foo"}, "PLN") is None
+
+
+def test_currency_fallback_o_ksztalcie_kodu_ale_nierealny_daje_none():
+    assert currency_from_attributes({}, "FOO") is None
 
 
 def test_currency_bez_niczego_daje_fallback_albo_none():
@@ -746,6 +806,56 @@ def test_sell_z_inna_waluta_niz_blok_degraduje_do_none():
     assert [w["sell"] for w in out] == [None, None]
 
 
+def test_sell_atrybut_sprzeczny_z_jednostka_sprzedazy_degraduje_do_none():
+    """Sprzedaż sama w sobie jest niespójna (atrybut `currency` przeczy jej
+    WŁASNEJ jednostce) — to NIE jest „brak deklaracji", więc mimo że
+    `currency_from_attributes(sell)` zwraca None, sprzedaż i tak degraduje,
+    nie dziedziczy waluty bloku."""
+    buy = {"unit_of_measurement": "PLN/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"currency": "EUR", "unit_of_measurement": "PLN/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=500.0)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["buy"] for w in out] == [1.0, 1.0]
+    assert [w["sell"] for w in out] == [None, None]
+
+
+def test_sell_symbol_wieloznaczny_sprzeczny_z_atrybutem_kupna_degraduje_do_none():
+    """Sprzedaż `kr/kWh` jest wieloznaczna, ale atrybut `currency` ją
+    rozstrzyga na EUR — skoro to inna waluta niż blok (PLN), sprzedaż
+    degraduje, mimo że sam symbol jednostki „mógłby" być czymkolwiek."""
+    buy = {"unit_of_measurement": "PLN/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"currency": "EUR", "unit_of_measurement": "kr/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=500.0)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [None, None]
+
+
+def test_sell_symbol_wieloznaczny_zgodny_z_atrybutem_kupna_jest_przyjety():
+    """To samo `kr/kWh`, ale atrybut `currency` rozstrzyga je na walutę
+    bloku (PLN) — sprzedaż jest przyjęta."""
+    buy = {"unit_of_measurement": "PLN/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"currency": "PLN", "unit_of_measurement": "kr/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=50.0)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [pytest.approx(50.0), pytest.approx(50.0)]
+
+
+def test_sell_atrybut_bez_kodu_iso_degraduje_do_none():
+    """Sprzedaż DEKLARUJE walutę (atrybut `currency` obecny), ale ten atrybut
+    nie jest realnym kodem ISO (waluta jest sprawdzana względem listy, nie
+    tylko kształtu) — to nie jest „brak deklaracji", sprzedaż degraduje, nie
+    dziedziczy waluty bloku."""
+    buy = {"unit_of_measurement": "PLN/kWh", "raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"currency": "€", "raw_today": _raw(_polnoc(), 2, 60, wartosc=500.0)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [None, None]
+
+
 # ── odcisk ──────────────────────────────────────────────────────────────────
 
 
@@ -829,3 +939,13 @@ def test_has_usable_prices_now_falsz_dla_nieaktualnej_serii():
     poza_seria = _polnoc() + timedelta(days=30)
 
     assert has_usable_prices_now(attrs, "PLN", _WAW, poza_seria) is False
+
+
+def test_has_usable_prices_now_falsz_gdy_seria_zaczyna_sie_po_now():
+    """Seria jest kompletna i sięga daleko w przód, ale zaczyna się PO `now`
+    (np. encja opublikowała już jutro, a jeszcze nie dzisiaj) — nie pokrywa
+    bieżącej godziny, więc nie jest gotowa JUŻ TERAZ."""
+    jutro_10 = _polnoc() + timedelta(days=1, hours=10)
+    attrs = {"raw_today": _raw(jutro_10, 24, 60)}
+
+    assert has_usable_prices_now(attrs, "PLN", _WAW, _polnoc()) is False
