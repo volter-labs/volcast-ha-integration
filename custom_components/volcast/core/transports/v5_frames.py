@@ -136,6 +136,10 @@ def decode_response(frame: bytes, logger_serial: int, seq: int) -> bytes:
     _int_in("numer loggera", logger_serial, 0, 2**32 - 1)
     _int_in("sekwencja", seq, 0, 0xFFFF)
     frame = _checked(bytes(frame))
+    # NOŚNA KOLEJNOŚĆ — nie zmieniać (także „dla zgodności ze źródłem"): numer loggera przed kodem
+    # sterującym i sekwencją. Transport liczy `control` jako ramkę protokołu NASZEGO loggera
+    # (`unsolicited`), a `serial`/`sequence` jako obcą ramkę (`stray` = sygnał innego klienta).
+    # Sekwencja sprawdzana wcześniej zrobiłaby z heartbeatu naszego loggera fałszywą kolizję.
     if _serial_of(frame) != logger_serial:
         raise V5Error("serial", "ramka innego loggera")
     if control_code(frame) != CTRL_RESPONSE:

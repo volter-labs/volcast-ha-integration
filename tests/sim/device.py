@@ -6,7 +6,7 @@ własne składanie odpowiedzi) — symulator nie może potwierdzać sam siebie.
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Sequence
 
 UNREADABLE = -1          # `RegisterBank.read`: odczyt da ramkę niepoprawnej długości
@@ -97,6 +97,22 @@ class Faults:
     wrong_echo_value: bool = False  # echo zapisu z inną wartością
     reset_after: int = 0            # TCP: zerwij połączenie po N żądaniach na połączeniu
     max_clients: int = 0            # TCP: 0 = bez limitu; 1 = kolejny klient od razu zamykany
+    delay_only_next: int = 0        # >0: `delay_s` tylko dla N kolejnych odpowiedzi, potem bez opóźnienia
+    exception_on_write: dict = field(default_factory=dict)   # rejestr → kod: zapisz, ale odpowiedz wyjątkiem
+    chunked: bool = False           # TCP: odpowiedź w 3 kawałkach
+    oversize_next: int = 0          # TCP: N kolejnych odpowiedzi to strumień ponad limit bufora klienta
+    heartbeat_next: int = 0         # V5: N razy ramka protokołu loggera (heartbeat) przed odpowiedzią
+    asleep_next: int = 0            # V5: N odpowiedzi loggera bez ramki RTU (falownik uśpiony)
+
+    def take_delay(self) -> float:
+        """Opóźnienie następnej odpowiedzi (zużywa licznik `delay_only_next`)."""
+        if self.delay_only_next > 0:
+            self.delay_only_next -= 1
+            d = self.delay_s
+            if self.delay_only_next == 0:
+                self.delay_s = 0.0
+            return d
+        return self.delay_s
 
 
 GARBAGE = bytes.fromhex("deadbeef0bad")
@@ -118,6 +134,8 @@ def handle_pdu(bank: RegisterBank, pdu: bytes, faults: Faults) -> tuple[bytes, b
         return bytes([0x03, 2 * len(r)]) + b"".join(struct.pack(">H", w) for w in r), False
     if fc == 0x06:
         code = bank.write(addr, [second])
+        if code is None:
+            code = faults.exception_on_write.pop(addr, None)
         if code is not None:
             return bytes([0x86, code]), True
         value = (second + 1) & 0xFFFF if faults.wrong_echo_value else second
@@ -127,6 +145,8 @@ def handle_pdu(bank: RegisterBank, pdu: bytes, faults: Faults) -> tuple[bytes, b
             return bytes([0x90, 3]), True
         values = [struct.unpack(">H", pdu[6 + 2 * i:8 + 2 * i])[0] for i in range(second)]
         code = bank.write(addr, values)
+        if code is None:
+            code = faults.exception_on_write.pop(addr, None)
         if code is not None:
             return bytes([0x90, code]), True
         count = second + 1 if faults.wrong_echo_value else second

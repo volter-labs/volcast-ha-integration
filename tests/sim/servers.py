@@ -97,8 +97,9 @@ class UdpServer(SimServer):
             if self._transport is not None and not self._transport.is_closing():
                 for fr in frames:
                     self._transport.sendto(fr, addr)
-        if self.faults.delay_s > 0:
-            self._handles.append(asyncio.get_running_loop().call_later(self.faults.delay_s, send))
+        delay = self.faults.take_delay()
+        if delay > 0:
+            self._handles.append(asyncio.get_running_loop().call_later(delay, send))
         else:
             send()
 
@@ -135,6 +136,26 @@ class TcpServer(SimServer):
     def _on_frame(self, frame: bytes) -> list[bytes]:
         raise NotImplementedError
 
+    def _oversize(self, reply: bytes) -> bytes:
+        """Strumień ponad limit bufora klienta (usterka `oversize_next`)."""
+        return bytes(1100)
+
+    async def _send(self, writer: asyncio.StreamWriter, frames: list[bytes]) -> None:
+        f = self.faults
+        if frames and f.oversize_next > 0:
+            f.oversize_next -= 1
+            frames = [self._oversize(frames[-1])]
+        for fr in frames:
+            if f.chunked and len(fr) >= 3:
+                cut = (len(fr) // 3, 2 * len(fr) // 3)
+                for part in (fr[:cut[0]], fr[cut[0]:cut[1]], fr[cut[1]:]):
+                    writer.write(part)
+                    await writer.drain()
+                    await asyncio.sleep(0.01)
+            else:
+                writer.write(fr)
+        await writer.drain()
+
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.clients += 1
         if self.faults.max_clients and len(self._writers) >= self.faults.max_clients:
@@ -157,11 +178,10 @@ class TcpServer(SimServer):
                         break
                     frame, buf = buf[:n], buf[n:]
                     out = self._on_frame(frame)
-                    if out and self.faults.delay_s > 0:
-                        await asyncio.sleep(self.faults.delay_s)
-                    for fr in out:
-                        writer.write(fr)
-                    await writer.drain()
+                    delay = self.faults.take_delay() if out else 0.0
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    await self._send(writer, out)
                     served += 1
                     if self.faults.reset_after and served >= self.faults.reset_after:
                         return
@@ -171,6 +191,11 @@ class TcpServer(SimServer):
             self._writers.discard(writer)
             self._tasks.discard(task)
             writer.close()
+
+    def push(self, data: bytes) -> None:
+        """Niezamówione bajty do wszystkich połączonych klientów (np. ramka protokołu loggera)."""
+        for w in list(self._writers):
+            w.write(data)
 
     async def close(self) -> None:
         if self._closed:
@@ -189,6 +214,9 @@ class TcpServer(SimServer):
 
 
 class ModbusTcpServer(TcpServer):
+    def _oversize(self, reply: bytes) -> bytes:
+        return reply[:4] + struct.pack(">H", 2000) + bytes(1100)
+
     def _request_length(self, buf: bytes) -> int | None:
         return None if len(buf) < 6 else 6 + struct.unpack(">H", buf[4:6])[0]
 
@@ -221,6 +249,16 @@ class SolarmanV5Server(TcpServer):
         super().__init__(bank, faults, unit)
         self.logger_serial = logger_serial
         self._counter = 0x50           # drugi bajt sekwencji — licznik loggera
+        self.protocol_frames: list[bytes] = []   # ramki klienta inne niż żądanie (np. potwierdzenia)
+
+    def _oversize(self, reply: bytes) -> bytes:
+        return b"\xa5" + struct.pack("<H", 1500) + bytes(1100)
+
+    def heartbeat(self, logger_serial: int | None = None) -> bytes:
+        """Ramka protokołu loggera (heartbeat 0x4710); domyślnie z numerem tego loggera."""
+        serial = self.logger_serial if logger_serial is None else logger_serial
+        body = struct.pack("<HH", 1, 0x4710) + bytes([0x33, self._counter]) + struct.pack("<I", serial) + b"\x00"
+        return b"\xa5" + body + bytes([sum(body) & 0xFF, 0x15])
 
     def _request_length(self, buf: bytes) -> int | None:
         if len(buf) < 3:
@@ -230,11 +268,14 @@ class SolarmanV5Server(TcpServer):
         return 13 + struct.unpack("<H", buf[1:3])[0]
 
     def _on_frame(self, frame: bytes) -> list[bytes]:
-        if (len(frame) < 13 + 15 or frame[0] != 0xA5 or frame[-1] != 0x15
+        if (len(frame) < 13 or frame[0] != 0xA5 or frame[-1] != 0x15
                 or frame[-2] != sum(frame[1:-2]) & 0xFF):
             return []
         control, seq_lo, serial = struct.unpack("<HBxI", frame[3:11])
-        if control != 0x4510 or serial != self.logger_serial:
+        if control != 0x4510:
+            self.protocol_frames.append(frame)
+            return []
+        if len(frame) < 13 + 15 or serial != self.logger_serial:
             return []
         rtu_req = frame[11 + 15:-2]
         if len(rtu_req) < 4 or rtu_req[0] != self.unit or not crc_ok(rtu_req):
@@ -243,11 +284,18 @@ class SolarmanV5Server(TcpServer):
         def v5(pdu: bytes, stray: bool) -> bytes:
             self._counter = (self._counter + 1) & 0xFF
             rtu = with_crc(bytes([self.unit]) + pdu)
+            if not stray and self.faults.asleep_next > 0:
+                self.faults.asleep_next -= 1
+                rtu = b""
             payload = bytes([0x02, 0x01]) + bytes(12) + rtu
             seq = bytes([(seq_lo + 1) & 0xFF if stray else seq_lo, self._counter])
             body = struct.pack("<HH", len(payload), 0x1510) + seq + struct.pack("<I", self.logger_serial) + payload
             return b"\xa5" + body + bytes([sum(body) & 0xFF, 0x15])
-        return self._respond(rtu_req[1:-2], v5)
+        out = self._respond(rtu_req[1:-2], v5)
+        if out and self.faults.heartbeat_next > 0:
+            self.faults.heartbeat_next -= 1
+            out.insert(0, self.heartbeat())
+        return out
 
 
 async def goodwe_udp_server(bank: RegisterBank, faults: Faults, unit: int = 0xF7) -> SimServer:
