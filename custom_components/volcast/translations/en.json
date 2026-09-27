@@ -250,6 +250,65 @@
       },
       "control_status": {
         "name": "Status"
+      },
+      "control_direct_soc": {
+        "name": "Battery state of charge"
+      },
+      "control_direct_battery_temp_c": {
+        "name": "Battery temperature"
+      },
+      "control_direct_battery_voltage_v": {
+        "name": "Battery voltage"
+      },
+      "control_direct_battery_current_a": {
+        "name": "Battery current"
+      },
+      "control_direct_battery_power_w": {
+        "name": "Battery power"
+      },
+      "control_direct_pv_power_w": {
+        "name": "PV power"
+      },
+      "control_direct_active_power_w": {
+        "name": "Inverter active power"
+      },
+      "control_direct_load_power_w": {
+        "name": "House load"
+      },
+      "control_direct_grid_power_w": {
+        "name": "Grid power"
+      },
+      "control_direct_pv_energy_total_kwh": {
+        "name": "PV energy total"
+      },
+      "control_direct_grid_import_total_kwh": {
+        "name": "Grid import total"
+      },
+      "control_direct_grid_export_total_kwh": {
+        "name": "Grid export total"
+      },
+      "control_direct_mode": {
+        "name": "Inverter mode",
+        "state": {
+          "auto": "Auto",
+          "charge_pv": "Charge from PV",
+          "battery_standby": "Battery standby",
+          "sell_power": "Sell power",
+          "charge_battery": "Charge battery",
+          "discharge_battery": "Discharge battery"
+        }
+      },
+      "control_direct_power_w": {
+        "name": "Mode power setting"
+      },
+      "control_direct_export_limit_w": {
+        "name": "Export limit setting"
+      },
+      "control_direct_soc_min": {
+        "name": "Minimum state of charge setting"
+      },
+      "control_direct_link_quality": {
+        "name": "Inverter link timeouts"
       }
     },
     "binary_sensor": {

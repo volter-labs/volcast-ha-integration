@@ -9,6 +9,12 @@ i klucze parametrów, nigdy `entity_id` (obce zmiany: sam licznik).
 Ceny (`prices`) idą tylko przy zmianie treści albo co 6 h i są uznane za wysłane
 dopiero po przyjęciu odczytu przez chmurę. Błąd bloku cen nie zabiera odczytu.
 Jedna wysyłka naraz: tik zegara w trakcie trwającej wysyłki jest pomijany.
+
+Tryb bezpośredni: wartości z odczytu rejestrów (`DirectReading.values` + tryb jako nazwa), tylko
+świeże (młodsze niż 3× okres odpytywania); ręczne mapowanie z opcji dalej wygrywa. Blok `driver`
+ma `access: "direct"`, możliwości z sondy (poza próbą) i limity (`registers` albo `user`);
+`extra.volcast.direct` niesie nazwę transportu, stan łącza i liczniki. Nigdy adres, port, numer
+seryjny, odcisk urządzenia ani sól.
 """
 from __future__ import annotations
 
@@ -57,6 +63,21 @@ def driver_block(*, choice: ProfileChoice | None, control_mode: str | None, mapp
     return block
 
 
+def direct_driver_block(*, profile, access: str, capabilities: Mapping[str, bool] | None, local_switch: bool,
+                        limits: dict | None) -> dict:
+    """Deklaracja wykonawcy w trybie bezpośrednim — bez seriala i adresu."""
+    block: dict = {"id": profile.id, "model": profile.control_model, "local_switch_enabled": bool(local_switch),
+                   "access": access}
+    if capabilities is not None:
+        block["capabilities"] = dict(capabilities)
+    if limits is not None:
+        block["limits"] = limits
+    return block
+
+
+_STALE_FACTOR = 3.0
+
+
 def _number(v) -> float | None:
     if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
         return None
@@ -93,7 +114,8 @@ def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | s
 class TelemetrySender:
     def __init__(self, hass, entry, cloud, executor, *, choice: ProfileChoice | None,
                  profile_map: Mapping[str, str], manual_map: Mapping[str, str], grid_negate: bool,
-                 limits: dict | None, utcnow=dt_util.utcnow) -> None:
+                 limits: dict | None, utcnow=dt_util.utcnow, direct=None,
+                 direct_capabilities: Mapping[str, bool] | None = None) -> None:
         self._hass, self._entry, self._cloud, self._executor = hass, entry, cloud, executor
         self._choice = choice
         self._profile_map = dict(profile_map) if choice and choice.integration_domain else {}
@@ -101,6 +123,8 @@ class TelemetrySender:
         self._negate = grid_negate
         self._limits = limits
         self._utcnow = utcnow
+        self._direct = direct
+        self._direct_caps = dict(direct_capabilities) if direct_capabilities is not None else None
         self._prices_fp: str | None = None
         self._prices_at: datetime | None = None
         self._unsub = None
@@ -170,8 +194,49 @@ class TelemetrySender:
             summary = self._executor.exec_summary()
         except Exception as err:  # noqa: BLE001 — podsumowanie nie zabiera odczytu
             _LOGGER.debug("Volcast telemetry: executor summary skipped (%s)", type(err).__name__)
+            summary = {}
+        summary = dict(summary) if isinstance(summary, dict) else {}
+        if self._direct is not None:
+            stats = self._direct.stats
+            summary["direct"] = {"transport": str(self._direct.target.get("transport") or ""),
+                                 "status": self._direct_status(), "stray": int(stats.stray),
+                                 "timeouts": int(stats.timeouts),
+                                 "nvm_budget_hit": bool(getattr(self._executor, "nvm_budget_hit", False))}
+        return summary
+
+    def _direct_fresh(self):
+        conn = self._direct
+        r = conn.reading
+        if r is None or not conn.age_s() < _STALE_FACTOR * float(conn.poll_s):
+            return None
+        return r
+
+    def _direct_status(self) -> str:
+        conn = self._direct
+        if conn.trial:
+            return "trial"
+        if conn.conflict:
+            return "conflict"
+        return "ok" if self._direct_fresh() is not None else "link_down"
+
+    def _direct_readings(self) -> dict:
+        r = self._direct_fresh()
+        if r is None:
             return {}
-        return summary if isinstance(summary, dict) else {}
+        out = {k: v for k, v in r.values.items() if k in TELEMETRY_FIELDS}
+        mode = r.device.get("mode")
+        if isinstance(mode, str) and mode in self._choice.profile.modes:
+            out["mode"] = mode
+        return out
+
+    def _driver(self) -> dict | None:
+        local = bool(getattr(self._executor, "local_switch", False))
+        if self._direct is not None:
+            return direct_driver_block(profile=self._choice.profile, access="direct",
+                                       capabilities=None if self._direct.trial else self._direct_caps,
+                                       local_switch=local, limits=self._limits)
+        return driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
+                            mapped_keys=self._profile_map.keys(), local_switch=local, limits=self._limits)
 
     async def async_flush(self) -> bool:
         """Jeden odczyt do chmury; True = przyjęty. Nigdy nie rzuca."""
@@ -189,8 +254,11 @@ class TelemetrySender:
     async def _async_flush(self) -> bool:
         now = self._utcnow()
         domain = self._choice.integration_domain if self._choice else None
-        raw = {k: r for k, e in self._profile_map.items() if (r := self._raw(e)) is not None}
-        prof = normalize_readings(raw, self._choice.profile, domain) if domain else {}
+        if self._direct is not None:
+            prof = self._direct_readings()
+        else:
+            raw = {k: r for k, e in self._profile_map.items() if (r := self._raw(e)) is not None}
+            prof = normalize_readings(raw, self._choice.profile, domain) if domain else {}
         manual: dict[str, float | None] = {}
         for key, eid in self._manual_map.items():
             manual[key] = self._manual(key, eid)
@@ -201,10 +269,7 @@ class TelemetrySender:
             priced = None
         reading = build_reading(
             now_utc=now, profile_readings=prof, manual=manual,
-            driver=driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
-                                mapped_keys=self._profile_map.keys(),
-                                local_switch=bool(getattr(self._executor, "local_switch", False)),
-                                limits=self._limits),
+            driver=self._driver(),
             extra=self._extra(), prices=priced[0] if priced else None)
         if reading is None:
             return False

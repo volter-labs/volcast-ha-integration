@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import VolcastCoordinator, VolcastData
+from .control.direct_sensors import direct_sensors
 from .control_entities import VolcastControlStatusSensor, VolcastPlanSensor
 from .discovery_entities import VolcastDiscoverySensor
 
@@ -64,6 +65,10 @@ async def async_setup_entry(
     control = entry_data.get("control")
     if control is not None:
         entities.extend([VolcastPlanSensor(entry, control), VolcastControlStatusSensor(entry, control)])
+        # Tryb bezpośredni (albo próba): odczyty rejestrów falownika jako encje.
+        direct = getattr(control, "direct", None)
+        if direct is not None:
+            entities.extend(direct_sensors(entry, direct))
 
     async_add_entities(entities)
 

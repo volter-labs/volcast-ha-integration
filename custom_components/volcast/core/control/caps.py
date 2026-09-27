@@ -7,7 +7,7 @@ jednym brakującym kluczu wszystkie możliwości są fałszywe.
 """
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, Mapping
 
 _INTENT_CAPS = {"force_charge_from_grid": "charge_grid", "sell_from_battery": "sell",
                 "force_discharge": "discharge_forced", "standby": "standby"}
@@ -56,4 +56,36 @@ def capabilities_for(profile, mapped_keys: Iterable[str]) -> dict[str, bool]:
         out[cap] = complete and bool(declared.get(cap)) and isinstance(spec, dict) and need <= mapped
     for cap, keys in _KEY_CAPS.items():
         out[cap] = complete and bool(declared.get(cap)) and set(keys) <= mapped
+    return out
+
+
+def direct_capabilities(profile, probe_caps: Mapping[str, bool], unreadable: Iterable[str]) -> dict[str, bool]:
+    """Możliwości w trybie bezpośrednim: deklaracja profilu ∩ klucze z sondy (rejestr istnieje)
+    bez kluczy nieczytelnych (bez odczytu zwrotnego nie piszemy).
+
+    Tryb i moc to jedna grupa — bez którejkolwiek nie ma żadnej możliwości; klucz nieczytelny poza
+    grupą wyłącza tylko swoją możliwość (cykl traktuje go jak nieobsługiwany). Model okien czasowych:
+    wszystko zależy od bloku programów (`tou`).
+    """
+    skip = set(unreadable)
+    usable = {k for k, v in probe_caps.items() if v is True and k not in skip}
+    declared = profile.raw.get("capabilities") or {}
+    intents = profile.raw.get("intents") or {}
+    out: dict[str, bool] = {}
+    if profile.control_model == "time_window":
+        ok = "tou" in usable
+        for cap, intent in _INTENT_CAPS.items():
+            out[cap] = ok and declared.get(cap) is True and isinstance(intents.get(intent), dict)
+        for cap in _KEY_CAPS:
+            out[cap] = ok and declared.get(cap) is True
+        return out
+    complete = {"mode", "power_w"} <= usable
+    for cap, intent in _INTENT_CAPS.items():
+        spec = intents.get(intent)
+        need = {"mode"}
+        if isinstance(spec, dict) and spec.get("power") in ("slot", "zero"):
+            need.add("power_w")
+        out[cap] = complete and declared.get(cap) is True and isinstance(spec, dict) and need <= usable
+    for cap, keys in _KEY_CAPS.items():
+        out[cap] = complete and declared.get(cap) is True and set(keys) <= usable
     return out

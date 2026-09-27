@@ -194,6 +194,12 @@ class VolcastExecutor:
         return self._state.owned
 
     @property
+    def nvm_budget_hit(self) -> bool:
+        """Czy budżet zapisów NVM zatrzymał jakikolwiek zapis (licznik dla telemetrii)."""
+        budget = self._memory.budget if self._memory is not None else None
+        return bool(budget is not None and budget.hit)
+
+    @property
     def history_imported_at(self) -> str | None:
         return self._state.history_imported_at
 

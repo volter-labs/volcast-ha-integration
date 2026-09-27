@@ -42,6 +42,7 @@ from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERG
                      DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP)
+from ..core.control.caps import direct_capabilities
 from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
@@ -208,6 +209,32 @@ def _str_keys(raw) -> tuple[str, ...]:
     return tuple(k for k in raw if isinstance(k, str)) if isinstance(raw, (list, tuple)) else ()
 
 
+def _positive(v) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else None
+
+
+def direct_rated_power(options: Mapping, target: Mapping) -> float | None:
+    """Moc znamionowa w trybie bezpośrednim: ręczna z opcji wygrywa, inaczej z rejestrów (sonda)."""
+    return _positive(options.get(OPT_RATED_POWER_W)) or _positive(target.get("rated_power_w"))
+
+
+def direct_limits(options: Mapping, target: Mapping) -> dict | None:
+    manual = _positive(options.get(OPT_RATED_POWER_W))
+    return executor_limits(rated_power_w=direct_rated_power(options, target),
+                           battery_capacity_kwh=options.get(OPT_BATTERY_CAPACITY_KWH),
+                           source="user" if manual else "registers")
+
+
+def direct_caps_for(options: Mapping, profile) -> dict[str, bool] | None:
+    """Możliwości do bloku `driver` — tylko przy trybie bezpośrednim (w próbie nie sterujemy)."""
+    found = _direct_target(options)
+    if found is None or found[1] or options.get(OPT_CONTROL_MODE) != CONTROL_MODE_DIRECT:
+        return None
+    target = found[0]
+    caps = target.get("capabilities")
+    return direct_capabilities(profile, caps if isinstance(caps, Mapping) else {}, _str_keys(target.get("unreadable")))
+
+
 def compose_direct(hass, entry, profiles, *, salt: bytes):
     """(choice, DirectIO, DirectConnection) dla wpisu w trybie bezpośrednim albo próbnym; None, gdy nie.
 
@@ -252,6 +279,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         mapped = map_entities(hass, choice)
     manual_rated = opts.get(OPT_RATED_POWER_W)
     rated = float(manual_rated) if manual_rated else rated_power_from_model(choice.model if choice else None)
+    if conn is not None:
+        rated = direct_rated_power(opts, conn.target)
     executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped, rated_power_w=rated,
                                store=ControlStore(hass, entry.entry_id), writer=EntityServiceWriter(hass),
                                lock=_entry_lock(hass, entry.entry_id),
@@ -262,11 +291,15 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     try:
         fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
                                   on_auth_failure=executor.async_on_auth_failure)
-        limits = executor_limits(rated_power_w=rated, battery_capacity_kwh=opts.get(OPT_BATTERY_CAPACITY_KWH),
-                                 source="user" if manual_rated else "entities")
+        if conn is not None:
+            limits = direct_limits(opts, conn.target)
+        else:
+            limits = executor_limits(rated_power_w=rated, battery_capacity_kwh=opts.get(OPT_BATTERY_CAPACITY_KWH),
+                                     source="user" if manual_rated else "entities")
         telemetry = TelemetrySender(hass, entry, cloud, executor, choice=choice, profile_map=mapped,
                                     manual_map=opts.get(OPT_TELEMETRY_MAP) or {},
-                                    grid_negate=bool(opts.get(OPT_GRID_NEGATE)), limits=limits)
+                                    grid_negate=bool(opts.get(OPT_GRID_NEGATE)), limits=limits, direct=conn,
+                                    direct_capabilities=direct_caps_for(opts, choice.profile) if conn else None)
         await telemetry.async_start()
         rt = ControlRuntime(executor, fetcher, telemetry, cloud, choice, mapped, rated,
                             options_at_setup=dict(opts),
