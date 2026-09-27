@@ -158,6 +158,8 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         if self._session is not None or self._result is not None:
             return await self._async_step_external()
+        if self._discovery_target_disabled():
+            return self.async_abort(reason="existing_entry_disabled")
         if user_input is None:
             return self.async_show_form(step_id="pair", data_schema=self._pair_schema(None))
         url = _pairing_url_from(user_input)
@@ -173,6 +175,15 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         if section is None:
             return vol.Schema(field)
         return vol.Schema({vol.Optional(PAIR_ADVANCED): section(vol.Schema(field), {"collapsed": True})})
+
+    def _discovery_target_disabled(self) -> bool:
+        """Wpis „tylko rozpoznanie" do przejęcia przez konto jest wyłączony.
+
+        Nie przerabiamy go: właściciel dostałby „teraz używa konta", a nic by nie ruszyło,
+        dopóki sam go nie włączy — lepiej od razu powiedzieć, że najpierw trzeba go włączyć.
+        """
+        accounts, discovery = self._entries_by_kind()
+        return not accounts and bool(discovery) and bool(getattr(discovery[0], "disabled_by", None))
 
     def _entries_by_kind(self) -> tuple[list, list]:
         """(wpisy konta, wpisy „tylko rozpoznanie") — ignorowane pomijamy."""
@@ -232,6 +243,9 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         r = self._result
         if r is None or r.status != "confirmed" or r.backend is None or not r.api_key:
             return self.async_abort(reason=_ABORT_BY_STATUS.get(getattr(r, "status", ""), "pairing_failed"))
+        if self._discovery_target_disabled():
+            # Wyłączony w trakcie oczekiwania na potwierdzenie — nie przerabiamy go po cichu.
+            return self.async_abort(reason="existing_entry_disabled")
         now = dt_util.utcnow()
         data = {
             CONF_API_KEY: r.api_key,
@@ -326,6 +340,8 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                    for e in self._async_current_entries(include_ignore=False)):
                 # Wpis z tym kluczem (także sprzed skrótu w unique_id).
                 return self.async_abort(reason="already_configured")
+            if self._discovery_target_disabled():
+                return self.async_abort(reason="existing_entry_disabled")
 
             try:
                 info = await _validate_api_key(api_key, api_url)
@@ -391,15 +407,15 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
             # An existing account-less (discovery-only) entry becomes redundant the
             # moment an account is added — update it in place instead of running
             # both side by side.
+            if self._discovery_target_disabled():
+                return self.async_abort(reason="existing_entry_disabled")
             _, discovery = self._entries_by_kind()
             if discovery:
-                target = discovery[0]
-                self.hass.config_entries.async_update_entry(
-                    target,
-                    data={CONF_API_KEY: self._api_data[CONF_API_KEY], CONF_API_URL: self._api_data[CONF_API_URL]},
-                    options=options, unique_id=account_unique_id(self._api_data[CONF_API_KEY]),
-                    title=self._api_data["title"])
-                await self.hass.config_entries.async_reload(target.entry_id)
+                self._async_update_and_reload_once(discovery[0], {
+                    "data": {CONF_API_KEY: self._api_data[CONF_API_KEY],
+                             CONF_API_URL: self._api_data[CONF_API_URL]},
+                    "options": options, "unique_id": account_unique_id(self._api_data[CONF_API_KEY]),
+                    "title": self._api_data["title"]})
                 return self.async_abort(reason="converted_existing")
             return self.async_create_entry(
                 title=self._api_data["title"],

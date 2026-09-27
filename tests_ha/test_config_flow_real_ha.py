@@ -193,6 +193,21 @@ async def test_http_pair_address_override_from_advanced_section(hass: HomeAssist
     await hass.async_block_till_done()
 
 
+async def test_disabled_discovery_entry_is_not_converted(hass: HomeAssistant, pairing):
+    from homeassistant.config_entries import ConfigEntryDisabler
+
+    disc = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    created = await hass.config_entries.flow.async_configure(disc["flow_id"], {"next_step_id": "discovery_only"})
+    await hass.async_block_till_done()
+    entry = created["result"]
+    assert await hass.config_entries.async_set_disabled_by(entry.entry_id, ConfigEntryDisabler.USER)
+    await hass.async_block_till_done()
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    aborted = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "pair"})
+    assert aborted["type"] is FlowResultType.ABORT and aborted["reason"] == "existing_entry_disabled"
+    assert entry.data == {"mode": "discovery_only"} and FakePairing.instances == []
+
+
 # ── opcje ─────────────────────────────────────────────────────────────────────
 
 
