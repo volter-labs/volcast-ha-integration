@@ -6,6 +6,7 @@ przy nazwie hosta `sendto` wykonałby synchroniczne DNS w pętli zdarzeń HA.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 
 PROBE_MESSAGE = b"WIFIKIT-214028-READ"
@@ -13,6 +14,8 @@ PROBE_MESSAGE = b"WIFIKIT-214028-READ"
 # Limity ochronne przed hałaśliwym/wrogim urządzeniem w sieci LAN.
 MAX_REPLIES = 32
 MAX_DATAGRAM_BYTES = 512
+# Trzecie pole odpowiedzi loggera Solarman (LSW) to jego numer: dokładnie 10 cyfr, mieści się w u32.
+_LOGGER_SERIAL_RE = re.compile(r"[0-9]{10}")
 
 
 @dataclass
@@ -21,6 +24,8 @@ class LoggerReply:
     ip: str | None
     mac: str | None
     name: str | None
+    # numer loggera Solarman (potrzebny do ramek V5); nigdy do logów ani nieredagowanej diagnostyki
+    logger_serial: int | None = None
 
 
 @dataclass
@@ -35,13 +40,22 @@ def parse_reply(raw: bytes) -> LoggerReply:
     text = "".join(c for c in text if c.isprintable())[:128]
     parts = [p.strip() for p in text.split(",")]
     if len(parts) >= 2 and parts[0].count(".") == 3:
+        name = parts[2] if len(parts) > 2 and parts[2] else None
         return LoggerReply(
             raw=text,
             ip=parts[0],
             mac=parts[1] or None,
-            name=parts[2] if len(parts) > 2 and parts[2] else None,
+            name=name,
+            logger_serial=_logger_serial(name),
         )
     return LoggerReply(raw=text, ip=None, mac=None, name=None)
+
+
+def _logger_serial(field: str | None) -> int | None:
+    if field is None or not _LOGGER_SERIAL_RE.fullmatch(field):
+        return None
+    value = int(field)
+    return value if 0 < value <= 0xFFFFFFFF else None
 
 
 class _Collector(asyncio.DatagramProtocol):

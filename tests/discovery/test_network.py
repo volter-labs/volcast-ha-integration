@@ -103,3 +103,11 @@ async def test_probe_ignores_own_echo_and_dedups_replies():
         transport.close()
     assert res.sent and res.error is None
     assert [r.mac for r in res.replies] == ["AABBCCDDEEFF"]
+
+
+def test_logger_serial_parsed_from_ten_digit_field():
+    r = parse_reply(b"192.168.1.50,AABBCCDDEEFF,2712345678")
+    assert r.logger_serial == 2712345678
+    for raw in (b"192.168.1.50,AABBCCDDEEFF,Solar-WiFi123", b"192.168.1.50,AABBCCDDEEFF,123456789",
+                b"192.168.1.50,AABBCCDDEEFF,9999999999", b"192.168.1.50,AABBCCDDEEFF"):
+        assert parse_reply(raw).logger_serial is None          # nie 10 cyfr albo ponad u32
