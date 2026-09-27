@@ -55,6 +55,8 @@ _MODE_GROUP = frozenset({"mode", "power_w"})
 _DIRECTIONAL = ("charge", "discharge")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
 _QUANTUM = 1.0
+# Ponowienie zapisu odrzuconego przy niezmienionym planie i stanie urządzenia.
+_DENIED_RETRY_S = 3600.0
 # Odwrót grupy po cofnięciu: start nie krótszy niż 5 min, podwajany do 1 h.
 _BACKOFF_MIN_S = 300.0
 _BACKOFF_MAX_S = 3600.0
@@ -77,6 +79,15 @@ class ControlMemory:
     backoff_base_s: float = _BACKOFF_MIN_S
     # budżet ramek zapisu do NVM w oknie dobowym (z profilu); None = bez budżetu
     budget: WriteBudget | None = None
+    # klucz → (zamówiona, rzeczywista) po zapisie przyciętym przez urządzenie (OK_ADJUSTED):
+    # rzeczywista liczy się jako osiągnięta dla TEJ zamówionej — bez ponownych zapisów,
+    # dopóki plan nie zmieni wartości (albo ktoś nie zmieni jej na urządzeniu)
+    adjusted: dict[str, tuple[float | str, float | str]] = field(default_factory=dict)
+    # tryb bezpośredni: klucz → (zamówiona, wartość na urządzeniu, chwila) po odmowie (DENIED —
+    # rejestr został bez zmian, np. urządzenie już stoi na swoim limicie). Ta sama prośba przy
+    # tym samym stanie urządzenia nie jest ponawiana przez `_DENIED_RETRY_S`; klucz dalej
+    # wstrzymuje tryb (warunek niespełniony), ale nie pali pamięci nieulotnej co cykl.
+    denied: dict[str, tuple[float | str, float | str, float]] = field(default_factory=dict)
 
     @classmethod
     def for_profile(cls, profile) -> "ControlMemory":
@@ -149,6 +160,8 @@ class CycleDecision:
     takeover: bool = False
     # rodzaj celu zapisu: w trybie bezpośrednim ramki liczy pisarz rejestrów, nie `commit`
     target_kind: str = "entities"
+    # widok urządzenia, na którym decyzja stanęła (tryb bezpośredni: pamięć odmów)
+    device: dict[str, float | str] = field(default_factory=dict)
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -258,11 +271,16 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         return CycleDecision(BLOCKED, "foreign_mode", flat=flat, takeover=True, **common)
     # To, co falownik już ma, nie jedzie wcale — także po restarcie, gdy pamięć
     # throttlingu jest pusta (inaczej każdy reload = zapis wszystkich nastaw do NVM).
-    settled = {k for k in flat if k in device and same_value(device[k], flat[k])}
+    settled = {k for k in flat if k in device and (same_value(device[k], flat[k])
+                                                   or _adjusted_reached(memory, k, flat[k], device[k]))}
     due = memory.throttle.filter(flat, now_mono) - settled
     # Do zmiany na falowniku: to, co pójdzie teraz, i to, co czeka w interwale I-6.
     need = due | (memory.throttle.pending(flat, now_mono) - settled)
     notes: list[str] = []
+    refused = {k for k in due if _denied_again(memory, k, flat[k], device.get(k), now_mono)}
+    if refused:
+        due -= refused                      # zostaje w `need`: dalej wstrzymuje tryb
+        notes.append("denied_hold")
     # Budżet NVM: klucz ponad budżetem nie idzie, a jako zmieniony warunek wstrzymuje tryb
     # (jak I-6); tryb/moc ponad budżetem = grupa czeka. Wyjątek: tryb wymuszony nie może stać
     # do końca okna — wtedy powrót do trybu bazowego (poza budżetem).
@@ -330,7 +348,21 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         dropped_unsupported=tuple(sorted(memory.unsupported & set(flat))), notes=tuple(notes),
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
-                           if "mode" in restore_flat else None), target_kind=target.kind, **common)
+                           if "mode" in restore_flat else None), target_kind=target.kind,
+        device=dict(device) if target.kind == "direct" else {}, **common)
+
+
+def _denied_again(memory: ControlMemory, key: str, planned, current, now_mono: float) -> bool:
+    entry = memory.denied.get(key)
+    if entry is None or current is None:
+        return False
+    req, dev, at = entry
+    return same_value(req, planned) and same_value(dev, current) and 0.0 <= now_mono - at < _DENIED_RETRY_S
+
+
+def _adjusted_reached(memory: ControlMemory, key: str, planned, actual) -> bool:
+    entry = memory.adjusted.get(key)
+    return entry is not None and same_value(entry[0], planned) and same_value(entry[1], actual)
 
 
 def _budget_restore(device, profile, target: WriteTarget, memory: ControlMemory, gates: Gates,
@@ -450,6 +482,17 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     for key in report.written:
         if key in flat:
             memory.last_written[key] = flat[key]
+        if key in actual and key in decision.flat:
+            memory.adjusted[key] = (decision.flat[key], actual[key])
+        else:
+            memory.adjusted.pop(key, None)
+        memory.denied.pop(key, None)
+    if decision.target_kind == "direct":
+        amb = getattr(report, "ambiguous", None)
+        definite = set(report.failed) - set(report.failed if amb is None else amb)
+        for key in definite:
+            if key in decision.flat and key in decision.device:
+                memory.denied[key] = (decision.flat[key], decision.device[key], now_mono)
     if restored:
         memory.throttle.record(decision.restore_flat, restored, now_mono)
         for key in restored:

@@ -104,3 +104,14 @@ def test_tou_disabled_bit_and_bad_programs():
     assert r.device["tou_enabled"] == 1.0
     r = _read(DEYE, RegisterImage({}))
     assert r.tou_enabled is None and "tou_enabled" not in r.device
+
+
+def test_write_only_key_read_from_its_own_register():
+    from datetime import datetime, timezone
+    from custom_components.volcast.core.modbus.reading import build_reading
+    from custom_components.volcast.core.profile import load_builtin
+    from custom_components.volcast.core.registers import RegisterImage
+    gw = load_builtin("goodwe-et")
+    at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    assert build_reading(gw, RegisterImage({47760: 95}), at_mono=0.0, at_utc=at).device["soc_max"] == 95.0
+    assert "soc_max" not in build_reading(gw, RegisterImage({}), at_mono=0.0, at_utc=at).device

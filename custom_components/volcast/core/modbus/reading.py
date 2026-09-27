@@ -79,6 +79,10 @@ def build_reading(profile, image: RegisterImage, *, at_mono: float, at_utc: date
             device["mode"] = mode.name if mode is not None else f"?{int(raw)}"
     for key in _FLAT_KEYS:
         v = _num(values.get(key))
+        if v is None and key in write and key not in read_map:
+            # Klucz tylko do zapisu (np. górny próg SoC): odczyt z jego własnego rejestru.
+            word = _word(image, write[key]["addr"])
+            v = None if word is None else float(word)
         if key in write and v is not None:
             device[key] = v
     if "export_limit_enabled" in write:
