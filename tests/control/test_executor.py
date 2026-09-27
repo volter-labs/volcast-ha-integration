@@ -121,8 +121,8 @@ def test_snapshot_before_first_write_and_restore_when_consent_revoked(monkeypatc
         await ex.async_tick()
         return n, restored
     n, restored = asyncio.run(go())
-    # próg SoC i limit eksportu są już jak w migawce — jadą tylko przełącznik i tryb
-    assert [c[:2] for c in restored] == [("switch", "turn_on"), ("select", "select_option")]
+    # próg SoC i limit eksportu są już jak w migawce — jadą tylko tryb (najpierw) i przełącznik
+    assert [c[:2] for c in restored] == [("select", "select_option"), ("switch", "turn_on")]
     assert h.states.get(E["mode"]).state == "auto"
     assert h.states.get(E["export_limit_w"]).state == "4000"
     assert h.states.get(E["export_limit_enabled"]).state == "on"
@@ -491,7 +491,8 @@ def test_restore_goes_through_group_runner(monkeypatch):
         await ex.async_tick()
         return seen
     seen = asyncio.run(go())
-    assert len(seen) == 1 and "mode" in seen[0][0]
+    # tryb bazowy osobnym krokiem, przed pozostałymi nastawami
+    assert [keys for keys, _ in seen] == [{"mode"}, {"export_limit_enabled"}]
     assert ex.last_decision.status == "restore"
 
 
@@ -734,3 +735,253 @@ def test_notifies_listeners_after_tick(monkeypatch):
 def test_control_constants(name, value):
     from custom_components.volcast import const
     assert getattr(const, name) == value
+
+
+# ── powrót do trybu bazowego niezależny od pozostałych nastaw ─────────────
+
+
+def charge_plan(sid="c1"):
+    return plan(sid=sid, slots=[{
+        "from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+        "charge_source": "grid", "power_w": 3000, "soc_target": 90, "price_pln_kwh": 0.3}])
+
+
+async def _charging(ex, h):
+    await ready(ex, raw=charge_plan())
+    await ex.async_tick()
+    assert h.states.get(E["mode"]).state == "charge_battery"
+    assert h.states.get(E["soc_max"]).state == "90.0"
+
+
+def test_restore_mode_first_when_soc_max_unavailable(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _charging(ex, h)
+        await ex.async_set_local_switch(False)
+        h.states.set(E["soc_max"], "unavailable")
+        await ex.async_tick()
+        first = (h.states.get(E["mode"]).state, ex._state.owned, ex.last_decision.reason)
+        h.states.set(E["soc_max"], "90")
+        await ex.async_tick()
+        return first
+    first = asyncio.run(go())
+    # hamulec właściciela nie zależy od niedostępnej encji progu ładowania
+    assert first == ("auto", True, "restore_failed")
+    assert h.states.get(E["soc_max"]).state == "100.0"
+    assert ex._state.owned is False and ex.last_decision.reason == "baseline"
+
+
+def test_restore_mode_despite_denied_condition_keys(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _charging(ex, h)
+        h.services.fail[E["soc_max"]] = ServiceValidationError("no")
+        h.services.fail[E["export_limit_enabled"]] = ServiceValidationError("no")
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+        first = (h.states.get(E["mode"]).state, ex._state.owned)
+        await ex.async_tick()
+        second = ex._state.owned
+        h.services.fail.clear()
+        await ex.async_tick()
+        return first, second
+    first, second = asyncio.run(go())
+    assert first == ("auto", True) and second is True           # każdy tik ponawia resztę
+    assert h.states.get(E["soc_max"]).state == "100.0"
+    assert ex._state.owned is False
+
+
+def test_failed_mode_restore_still_restores_other_keys(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _charging(ex, h)
+        h.services.fail[E["mode"]] = HomeAssistantError("down")
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["soc_max"]).state == "100.0"
+    assert ex._state.owned is True and ex.last_decision.reason == "restore_failed"
+
+
+def test_restore_marks_direction_unknown(monkeypatch):
+    from custom_components.volcast.core.guard_state import _UNKNOWN_DIRECTION
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        assert ex._memory.limiter._current == "discharge"
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex._memory.limiter._current == _UNKNOWN_DIRECTION
+
+
+def test_release_with_incomplete_snapshot_is_logged(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    h = goodwe_hass(mode="sell_power", export="0")
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(consent=False, local_switch=True, owned=True, snapshot={})))
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto" and ex._state.owned is False
+    msg = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "could not" in r.getMessage()]
+    assert msg and "export_limit_w" in msg[0] and "soc_min" in msg[0]
+    assert no_entity_ids_in(caplog.text)
+
+
+# ── zatrzymanie, bramki, zgoda, magazyn, powiązanie własności ────────────
+
+
+def test_stop_during_ownership_save_prevents_writes(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        real = ex._store.async_save
+
+        async def stopping(state):
+            await real(state)
+            ex._stopped = True                       # zatrzymanie w trakcie zapisu własności
+        ex._store.async_save = stopping
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.services.calls == []
+
+
+def test_stopped_executor_does_not_overwrite_store(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_stop()
+        await ex.async_set_consent(False)
+        await ex.async_set_local_switch(False)
+        await ex.async_mark_history_imported("2026-09-23T10:00:00+00:00")
+        return await store.async_load()
+    state = asyncio.run(go())
+    assert state.consent is True and state.local_switch is True and state.history_imported_at is None
+
+
+def test_consent_withdrawn_during_ownership_save_prevents_writes(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        real = ex._store.async_save
+
+        async def withdrawing(state):
+            await real(state)
+            ex._state.consent = False                # zgoda cofnięta w trakcie zapisu
+        ex._store.async_save = withdrawing
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.services.calls == [] and ex.last_decision.reason == "gates_changed"
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", None])
+def test_consent_accepts_only_bool(monkeypatch, value):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_set_consent(value)
+    asyncio.run(go())
+    assert ex.consent is True
+
+
+def test_unreadable_store_disables_executor(monkeypatch):
+    from homeassistant.helpers import event
+    event.async_track_time_interval.reset_mock()
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(consent=True, local_switch=True, owned=True,
+                                              snapshot={"soc_min": 15.0})))
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+    saved = store._store._data
+
+    async def broken_load():
+        raise ValueError("future version")
+
+    async def go():
+        real_load = store._store.async_load
+        store._store.async_load = broken_load
+        await ex.async_start()
+        store._store.async_load = real_load
+        raw = plan()
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+        await ex.async_restore_now()
+    asyncio.run(go())
+    assert h.services.calls == [] and store._store._data is saved     # stan z dysku nietknięty
+    assert ex.last_decision.reason == "store_unreadable"
+    assert event.async_track_time_interval.call_count == 0
+
+
+def test_start_twice_registers_one_timer(monkeypatch):
+    from homeassistant.helpers import event
+    event.async_track_time_interval.reset_mock()
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        await ex.async_start()
+    asyncio.run(go())
+    assert event.async_track_time_interval.call_count == 1
+
+
+def test_ownership_bound_to_profile_and_mode_entity(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        return await store.async_load()
+    state = asyncio.run(go())
+    assert state.owner == {"profile": "goodwe-et", "domain": "goodwe", "mode_entity": E["mode"]}
+
+
+def test_mismatched_ownership_snapshot_is_not_reused(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    h = goodwe_hass(mode="sell_power")
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        consent=False, local_switch=True, owned=True, snapshot={"soc_min": 15.0, "export_limit_w": 0.0},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": "select.other_inverter_mode"})))
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        await ex.async_tick()
+        return await store.async_load()
+    state = asyncio.run(go())
+    assert h.services.calls == []                    # cudzej migawki nie wpisujemy w nowe encje
+    assert state.owned is False and state.snapshot == {} and state.owner == {}
+    assert any("different" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+    assert "select.other_inverter_mode" not in caplog.text
+
+
+def test_incomplete_restore_warning_not_repeated_every_tick(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _charging(ex, h)
+        h.states.set(E["soc_max"], "unavailable")
+        await ex.async_set_consent(False)
+        for _ in range(3):
+            await ex.async_tick()
+    asyncio.run(go())
+    assert sum("incomplete" in r.getMessage() for r in caplog.records) == 1

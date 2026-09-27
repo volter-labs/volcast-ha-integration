@@ -14,8 +14,16 @@ Zasady wykonania:
   prosi o powtórkę zaraz po bieżącym;
 * przed pierwszym zapisem migawka nastaw do trybu bazowego musi być pełna i zapisana —
   inaczej żadnego zapisu (klucza bez migawki nigdy byśmy nie przywrócili);
-* powrót do trybu bazowego nie nadpisuje czytelnej opcji trybu spoza profilu (ktoś
-  inny wybrał tryb — zostaje jego);
+* powrót do trybu bazowego: najpierw sam tryb bazowy (neutralny, nie potrzebuje
+  warunków — hamulec właściciela nie może zależeć od innej encji), potem każda
+  pozostała nastawa z migawki niezależnie; własność zostaje, dopóki wszystko nie dojdzie,
+  a każdy tik ponawia brakujące. Czytelnej opcji trybu spoza profilu nie nadpisujemy
+  (ktoś inny wybrał tryb — zostaje jego);
+* własność i migawka są związane z profilem i encją trybu (`owner`); migawki innego
+  falownika albo mapowania nie wpisujemy w nowe encje;
+* zatrzymany wykonawca nie zaczyna zapisów i nie nadpisuje magazynu (poza powrotem do
+  trybu bazowego w toku); nieczytelny magazyn wyłącza wykonawcę — start ze stanem
+  domyślnym zgubiłby własność i nigdy nie przywrócił trybu bazowego;
 * w logach tylko klucze parametrów i nazwy klas wyjątków — nigdy `entity_id` ani treść
   wyjątku (bywa w nich numer seryjny albo adres hosta);
 * wejścia (plan, zgoda, przełącznik) nie rzucają: błąd magazynu zostawia stan w pamięci
@@ -37,13 +45,13 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 
-from ..const import (DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S,
+from ..const import (CONTROL_MODE_ENTITIES, DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S,
                      OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED, STOP_WRITE_TIMEOUT_S)
 from ..core.control.baseline import baseline_params, needs_restore, snapshot_missing, take_snapshot
 from ..core.control.cycle import (BLOCKED, ERROR, WRITE, ControlMemory, CycleDecision, EntityContext,
                                   Gates, Limits, Telemetry, commit, decide_cycle, same_value)
 from ..core.control.entity_fit import control_writes, fit_params
-from ..core.control.group_writes import GroupReport, async_run_group_writes, order_group
+from ..core.control.group_writes import GROUP_KEYS, GroupReport, async_run_group_writes, order_group
 from ..core.control.readings import RawState, normalize_readings
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.engines.time_window import compress
@@ -112,6 +120,9 @@ class VolcastExecutor:
         self._lock = asyncio.Lock()
         self._rerun = False
         self._stopped = False
+        self._started = False
+        self._restore_failed: tuple[str, ...] | None = None   # ostatnio zalogowane (bez powtórek co tik)
+        self._disabled = False
         self._unsub: list[Callable[[], None]] = []
 
     # ── stan dla encji i telemetrii ───────────────────────────────────────
@@ -138,8 +149,11 @@ class VolcastExecutor:
 
     async def async_mark_history_imported(self, when_iso: str) -> None:
         # Ten sam obiekt stanu i ten sam magazyn co reszta wykonawcy — dwa niezależne
-        # zapisy do jednego `Store` nadpisywałyby sobie pola.
+        # zapisy do jednego `Store` nadpisywałyby sobie pola. Wykonawca zatrzymany albo
+        # wyłączony nie pisze do magazynu (następca po przeładowaniu ma własny stan).
         self._state.history_imported_at = when_iso
+        if self._disabled or self._stopped:
+            return
         await self._store.async_save(self._state)
 
     def exec_summary(self) -> dict:
@@ -155,7 +169,19 @@ class VolcastExecutor:
 
     # ── cykl życia ────────────────────────────────────────────────────────
     async def async_start(self) -> None:
-        self._state = await self._store.async_load()
+        if self._started:
+            return
+        self._started = True
+        try:
+            self._state = await self._store.async_load()
+        except Exception as err:  # noqa: BLE001 — zły albo przyszły format magazynu
+            self._disabled = True
+            self.last_decision = CycleDecision(ERROR, "store_unreadable")
+            _LOGGER.error("Volcast control disabled: saved control state could not be read (%s)",
+                          type(err).__name__)
+            return
+        if self._drop_foreign_owner():
+            await self._async_save("control state")
         if self._state.plan_raw is not None:
             try:
                 self.schedule = parse_schedule(self._state.plan_raw)
@@ -179,6 +205,24 @@ class VolcastExecutor:
             return
         self._lock.release()
 
+    def _owner(self) -> dict:
+        return {"profile": self._profile.id if self._profile else "", "domain": self._domain or "",
+                "mode_entity": self._mapped.get("mode", "")}
+
+    def _drop_foreign_owner(self) -> bool:
+        """Migawka z innego profilu albo innej encji trybu nie trafia w nowe encje.
+
+        Własność bez powiązania (zapisana przed jego wprowadzeniem) uznajemy za własną.
+        """
+        if not self._state.owned or not self._state.owner or self._state.owner == self._owner():
+            return False
+        _LOGGER.warning("Volcast control: saved baseline settings belong to a different inverter "
+                        "profile or mode entity — not reusing them; check the inverter settings")
+        self._state.owned = False
+        self._state.snapshot = {}
+        self._state.owner = {}
+        return True
+
     async def _async_timer(self, _now=None) -> None:
         await self.async_tick()
 
@@ -190,7 +234,8 @@ class VolcastExecutor:
         self._notify()
 
     async def async_set_consent(self, value: bool) -> None:
-        if value == self._state.consent:
+        if not isinstance(value, bool) or value == self._state.consent:
+            return       # wartość innego typu nie zmienia stanu
             return
         self._state.consent = value
         _LOGGER.warning("Volcast account consent for inverter control: %s",
@@ -209,6 +254,8 @@ class VolcastExecutor:
 
     async def async_restore_now(self) -> None:
         """Usuwanie wpisu: przywróć tryb bazowy, jeśli to my zmienialiśmy nastawy."""
+        if self._disabled:
+            return
         try:
             async with self._lock:
                 if self._state.owned and self._profile and self._domain and self._memory:
@@ -216,7 +263,10 @@ class VolcastExecutor:
         except Exception as err:  # noqa: BLE001 — usuwanie wpisu nie może się wywrócić
             _LOGGER.error("Volcast control: return to the baseline mode failed (%s)", type(err).__name__)
 
-    async def _async_save(self, what: str) -> bool:
+    async def _async_save(self, what: str, *, force: bool = False) -> bool:
+        """Zapis stanu; wyłączony wykonawca nigdy, zatrzymany tylko z `force` (powrót w toku)."""
+        if self._disabled or (self._stopped and not force):
+            return False
         try:
             await self._store.async_save(self._state)
         except Exception as err:  # noqa: BLE001 — stan zostaje w pamięci; zapis przy następnej zmianie
@@ -226,7 +276,7 @@ class VolcastExecutor:
 
     # ── cykl ──────────────────────────────────────────────────────────────
     async def async_tick(self) -> None:
-        if self._stopped:
+        if self._stopped or self._disabled:
             return
         if self._lock.locked():
             # Zapis w toku (także przywracanie przy usuwaniu): drugi cykl nie startuje
@@ -308,6 +358,9 @@ class VolcastExecutor:
             self._prev_soc = (soc, now_mono)
         if decision.status == WRITE and not self._state.owned:
             decision = await self._async_take_ownership(decision, readings)
+            if decision.status == WRITE and not self._gates_open():
+                # Zgoda, przełącznik albo zatrzymanie zmieniły się w trakcie zapisu migawki.
+                decision = replace(decision, status=BLOCKED, reason="gates_changed")
         if decision.status == WRITE:
             report = await async_run_group_writes(
                 decision.writes, self._writer.async_write, restore=decision.restore,
@@ -326,15 +379,26 @@ class VolcastExecutor:
             return replace(decision, status=BLOCKED, reason="baseline_unknown", unmapped=missing)
         self._state.snapshot = snapshot
         self._state.owned = True
+        self._state.owner = self._owner()
         if not await self._async_save("baseline snapshot"):
             # Bez trwałej migawki restart nie wiedziałby, co przywrócić — nie piszemy.
             self._state.owned = False
             self._state.snapshot = {}
+            self._state.owner = {}
             return replace(decision, status=ERROR, reason="store_failed")
         return decision
 
+    def _gates_open(self) -> bool:
+        return (self._state.consent is True and self._state.local_switch and not self._stopped
+                and self._entry.options.get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES)
+
     async def _restore(self, rd: _Reading) -> None:
-        """Powrót do trybu bazowego przez wykonawcę grupowego; obcego trybu nie nadpisuje."""
+        """Powrót do trybu bazowego: najpierw sam tryb, potem każda pozostała nastawa.
+
+        Tryb bazowy jest neutralny i nie potrzebuje warunków, więc nie czeka na żadną
+        inną encję. Obie części idą przez wykonawcę grupowego; własność zostaje, dopóki
+        wszystko nie dojdzie — każdy tik ponawia tylko to, czego falownik jeszcze nie ma.
+        """
         now_mono = self._clock()
         params = baseline_params(self._profile, self._state.snapshot)
         fitted, _, unfit = fit_params(params, self._profile, self._domain, self._mapped, rd.units, rd.attrs)
@@ -346,28 +410,38 @@ class VolcastExecutor:
         mode_kept = rd.foreign_mode and "mode" in keys
         if mode_kept:
             keys.remove("mode")          # ktoś wybrał tryb spoza profilu — zostaje jego
-        writes, _ = control_writes(fitted, self._profile, self._domain, self._mapped,
-                                   keys=keys, units=rd.units)
-        writes = order_group(writes, power_first=False)
-        report = await async_run_group_writes(writes, self._writer.async_write,
-                                              on_exception=self._log_write_exception)
-        memory = self._memory
-        memory.throttle.record(target, report.written, now_mono)
-        memory.uncertain -= set(report.written)
-        memory.uncertain |= set(report.ambiguous)
-        memory.throttle.mark_unknown(report.ambiguous, now_mono)
-        done = not (report.failed or report.unsupported or report.group_skipped)
-        if not done:
+        group_writes, _ = control_writes(fitted, self._profile, self._domain, self._mapped,
+                                         keys=[k for k in keys if k in GROUP_KEYS], units=rd.units)
+        rest_writes, _ = control_writes(fitted, self._profile, self._domain, self._mapped,
+                                        keys=[k for k in keys if k not in GROUP_KEYS], units=rd.units)
+        # Moc (gdyby profil ją kiedyś miał w stanie bazowym) po trybie: tryb bazowy ją ignoruje.
+        reports = []
+        for writes in (order_group(group_writes, power_first=False), rest_writes):
+            if writes:
+                reports.append(await async_run_group_writes(writes, self._writer.async_write,
+                                                            on_exception=self._log_write_exception))
+        self._account_restore(target, reports, now_mono)
+        writes = [*group_writes, *rest_writes]
+        failed = [k for r in reports for k in (*r.failed, *r.unsupported, *r.restore_failed)]
+        if failed or any(r.group_skipped for r in reports):
             self.last_decision = CycleDecision(ERROR, "restore_failed", writes=writes, flat=target)
-            _LOGGER.warning("Volcast control: return to the baseline mode incomplete "
-                            "(failed=%s unsupported=%s held=%s) — retrying next cycle",
-                            report.failed, report.unsupported, report.group_skipped)
+            if tuple(failed) != self._restore_failed:
+                _LOGGER.warning("Volcast control: return to the baseline incomplete (not applied: %s) "
+                                "— retrying every cycle", failed)
+            self._restore_failed = tuple(failed)
             self._count(self.last_decision)
             return
+        self._restore_failed = None
+        lost = [*snapshot_missing(self._state.snapshot, self._mapped), *unfit]
+        if lost:
+            _LOGGER.warning("Volcast control: could not return %s to the value from before control "
+                            "(no saved value or outside the entity range) — check them on the inverter",
+                            lost)
         self._state.owned = False
         self._state.snapshot = {}
-        memory.last_written.clear()
-        await self._async_save("baseline state")
+        self._state.owner = {}
+        self._memory.last_written.clear()
+        await self._async_save("baseline state", force=True)
         self.last_decision = CycleDecision(RESTORE, "baseline_mode_kept" if mode_kept else "baseline",
                                            writes=writes, flat=target, takeover=mode_kept)
         if mode_kept:
@@ -376,6 +450,20 @@ class VolcastExecutor:
         else:
             _LOGGER.warning("Volcast control: inverter returned to its baseline mode")
         self._count(self.last_decision)
+
+    def _account_restore(self, target: Mapping[str, float | str], reports: list[GroupReport],
+                         now_mono: float) -> None:
+        """Pamięć po powrocie: I-6 od zapisu, niepewne klucze, kierunek po zmianie trybu."""
+        memory = self._memory
+        for report in reports:
+            memory.throttle.record(target, report.written, now_mono)
+            memory.uncertain -= set(report.written)
+            memory.uncertain |= set(report.ambiguous)
+            memory.throttle.mark_unknown(report.ambiguous, now_mono)
+            # Tryb neutralny: ostatni kierunek na falowniku nieznany — następna zmiana
+            # kierunkowa liczy się w budżecie I-8, w którąkolwiek stronę.
+            if "mode" in report.written or "mode" in report.ambiguous:
+                memory.limiter.mark_unknown()
 
     def _log_report(self, decision: CycleDecision, report: GroupReport) -> None:
         """Wynik zapisu grupowego — każdy przypadek osobnym komunikatem, same klucze."""
