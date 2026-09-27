@@ -45,7 +45,7 @@ import homeassistant.util.dt as dt_util
 
 from .const import (CONF_PAIRING, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_LOAD_ENERGY, OPT_PRICE_BUY,
                     OPT_PRICE_CURRENCY)
-from .core.control.caps import entity_mode_ready
+from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.prices import has_usable_prices_now
 
@@ -353,7 +353,7 @@ class Onboarding:
             if rt is None:
                 pass                              # wpis się przeładowuje — spróbujemy przy następnym odpytaniu
             elif self._control_ready(rt):
-                patch[OPT_CONTROL_MODE] = CONTROL_MODE_ENTITIES
+                patch.update(entity_mode_options(rt.choice))
                 applied["control_mode"] = mode
                 steps.append(("control_mode", "done", "entities"))
             else:

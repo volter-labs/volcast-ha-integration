@@ -32,6 +32,16 @@ def entity_mode_ready(choice, mapped_keys: Iterable[str]) -> bool:
     return not missing_write_keys(choice.profile, mapped_keys or ())
 
 
+def entity_mode_options(choice) -> dict[str, str]:
+    """Opcje trybu encji — te same trzy klucze z opcji integracji i z wyboru zdalnego.
+
+    Jedna postać zapisu: inaczej ponowny wybór tego samego w opcjach wyglądałby na zmianę
+    sterowania (profil/integracja z pustego na wartość) i oddawał falownik bez potrzeby.
+    """
+    return {"control_mode": "entities", "profile_id": choice.profile.id,
+            "inverter_domain": choice.integration_domain}
+
+
 def capabilities_for(profile, mapped_keys: Iterable[str]) -> dict[str, bool]:
     mapped = set(mapped_keys)
     complete = not missing_write_keys(profile, mapped)

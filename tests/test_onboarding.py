@@ -134,6 +134,7 @@ def test_remote_entities_choice_sets_option():
     assert entry.options["control_mode"] == "entities" and last(client)["control_mode"]["state"] == "done"
     assert last(client)["control_mode"]["detail"] == "entities"
     assert entry.options["load_energy_entity"] == "sensor.house_consumption"      # reszta opcji zostaje
+    assert entry.options["profile_id"] == "goodwe-et" and entry.options["inverter_domain"] == "goodwe"
 
 
 @pytest.mark.parametrize("mapped,choice", [

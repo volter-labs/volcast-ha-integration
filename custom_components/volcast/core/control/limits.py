@@ -16,6 +16,8 @@ _RATED_MIN, _RATED_MAX = 1_000.0, MAX_POWER_W
 # Zakres mocy znamionowej (W) — także dla pola w opcjach integracji.
 RATED_POWER_RANGE_W = (_RATED_MIN, _RATED_MAX)
 _KWH_MIN, _KWH_MAX = 0.5, 200.0
+# Zakres pojemności baterii (kWh) — także dla pola w opcjach integracji.
+BATTERY_CAPACITY_RANGE_KWH = (_KWH_MIN, _KWH_MAX)
 
 
 def rated_power_from_model(model: str | None) -> float | None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -27,8 +28,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .cloud.client import Backend, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control.runtime import async_restore_if_control_changed
 from .control.telemetry import TELEMETRY_FIELDS
-from .core.control.caps import entity_mode_ready
-from .core.control.limits import RATED_POWER_RANGE_W
+from .core.control.caps import entity_mode_options, entity_mode_ready
+from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
 from .core.prices import has_usable_prices_now
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
@@ -420,6 +421,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
 _FORECAST_KEYS = (CONF_UPDATE_INTERVAL, CONF_PEAK_THRESHOLD, CONF_PV_ENERGY_ENTITY, CONF_PV_POWER_ENTITY,
                   CONF_BATTERY_SOC_ENTITY, CONF_BATTERY_CHARGE_POWER_ENTITY)
 _EMPTY = (None, "", {})
+_CURRENCY = re.compile(r"[A-Z]{3}")
 
 
 def _clean(values: dict[str, Any]) -> dict[str, Any]:
@@ -452,6 +454,12 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return (data.get(DOMAIN, {}).get(self.config_entry.entry_id) or {}).get("control")
 
     async def _finish(self, options: dict[str, Any]) -> ConfigFlowResult:
+        """Zapis opcji; zmiana sterowania najpierw oddaje falownik przez obecnego wykonawcę.
+
+        Nieudany powrót nie blokuje zapisu i jest bezpieczny: wykonawca zostaje właścicielem
+        (migawka i powiązanie z tym samym profilem i encją trybu), a nowy po przeładowaniu
+        ponawia powrót co cykl, dopóki sterowanie jest wyłączone.
+        """
         await async_restore_if_control_changed(self._runtime(), self.config_entry.options, options)
         return self.async_create_entry(data=options)
 
@@ -485,9 +493,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         choice = getattr(rt, "choice", None)
         if not entity_mode_ready(choice, getattr(rt, "mapped", None) or {}):
             return self.async_abort(reason="entity_mode_unavailable")
-        return await self._finish(self._merged({
-            OPT_CONTROL_MODE: CONTROL_MODE_ENTITIES, OPT_PROFILE_ID: choice.profile.id,
-            OPT_INVERTER_DOMAIN: choice.integration_domain}))
+        return await self._finish(self._merged(entity_mode_options(choice)))
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._finish(self._merged({OPT_CONTROL_MODE: None}))
@@ -505,14 +511,22 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     async def async_step_prices(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
+            saved = self.config_entry.options
             buy = (user_input.get(OPT_PRICE_BUY) or "").strip()
+            sell = (user_input.get(OPT_PRICE_SELL) or "").strip()
             currency = (user_input.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
-            if buy and not self._price_usable(buy, currency):
-                return self.async_show_form(step_id="prices", data_schema=self._prices_schema(),
-                                            errors={OPT_PRICE_BUY: "prices_not_usable"})
+            errors: dict[str, str] = {}
+            if currency is not None and not _CURRENCY.fullmatch(currency):
+                errors[OPT_PRICE_CURRENCY] = "currency_invalid"
+            # Błąd tylko dla encji WYBRANEJ teraz: zapisana, chwilowo bez pełnej serii (np. przed
+            # publikacją cen na jutro), nie blokuje zapisu pozostałych pól ani jej wyczyszczenia.
+            for key, eid in ((OPT_PRICE_BUY, buy), (OPT_PRICE_SELL, sell)):
+                if eid and eid != saved.get(key) and not self._price_usable(eid, currency):
+                    errors[key] = "prices_not_usable"
+            if errors:
+                return self.async_show_form(step_id="prices", data_schema=self._prices_schema(), errors=errors)
             return await self._finish(self._merged({
-                OPT_PRICE_BUY: buy or None, OPT_PRICE_SELL: (user_input.get(OPT_PRICE_SELL) or "").strip() or None,
-                OPT_PRICE_CURRENCY: currency}))
+                OPT_PRICE_BUY: buy or None, OPT_PRICE_SELL: sell or None, OPT_PRICE_CURRENCY: currency}))
         return self.async_show_form(step_id="prices", data_schema=self._prices_schema())
 
     # ── ceny ──────────────────────────────────────────────────────────────
@@ -540,27 +554,28 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _forecast_schema(self) -> vol.Schema:
         o = self.config_entry.options
 
-        def sensor(device_class: str):
-            return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class=device_class))
+        def sensor(key: str, device_class: str):
+            # Podpowiedź, nie wartość domyślna: wyczyszczone pole zostaje puste (HA wstawiłby default).
+            return (_entity_field(key, o.get(key)),
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class=device_class)))
 
-        return vol.Schema({
+        fields: dict = {
             vol.Optional(CONF_UPDATE_INTERVAL, default=o.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)):
                 vol.All(int, vol.Range(min=15, max=1440)),
             vol.Optional(CONF_PEAK_THRESHOLD, default=o.get(CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD)):
                 vol.All(int, vol.Range(min=50, max=100)),
-            vol.Optional(CONF_PV_ENERGY_ENTITY, default=o.get(CONF_PV_ENERGY_ENTITY, "")): sensor("energy"),
-            vol.Optional(CONF_PV_POWER_ENTITY, default=o.get(CONF_PV_POWER_ENTITY, "")): sensor("power"),
-            vol.Optional(CONF_BATTERY_SOC_ENTITY, default=o.get(CONF_BATTERY_SOC_ENTITY, "")): sensor("battery"),
-            vol.Optional(CONF_BATTERY_CHARGE_POWER_ENTITY, default=o.get(CONF_BATTERY_CHARGE_POWER_ENTITY, "")):
-                sensor("power"),
-        })
+        }
+        for key, dc in ((CONF_PV_ENERGY_ENTITY, "energy"), (CONF_PV_POWER_ENTITY, "power"),
+                        (CONF_BATTERY_SOC_ENTITY, "battery"), (CONF_BATTERY_CHARGE_POWER_ENTITY, "power")):
+            k, v = sensor(key, dc)
+            fields[k] = v
+        return vol.Schema(fields)
 
     def _details_schema(self) -> vol.Schema:
         o = self.config_entry.options
         tmap = o.get(OPT_TELEMETRY_MAP) or {}
         fields: dict = {
-            vol.Optional(key, default=tmap.get(key, "")):
-                selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+            _entity_field(key, tmap.get(key)): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
             for key in TELEMETRY_FIELDS
         }
         fields[vol.Optional(OPT_GRID_NEGATE, default=bool(o.get(OPT_GRID_NEGATE)))] = bool
@@ -569,8 +584,9 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                                                                  max=int(RATED_POWER_RANGE_W[1])))
         cap = vol.Optional(OPT_BATTERY_CAPACITY_KWH,
                            description={"suggested_value": o.get(OPT_BATTERY_CAPACITY_KWH)})
-        fields[cap] = vol.All(vol.Coerce(float), vol.Range(min=0.5, max=200))
-        fields[vol.Optional(OPT_LOAD_ENERGY, default=o.get(OPT_LOAD_ENERGY, ""))] = selector.EntitySelector(
+        fields[cap] = vol.All(vol.Coerce(float), vol.Range(min=BATTERY_CAPACITY_RANGE_KWH[0],
+                                                           max=BATTERY_CAPACITY_RANGE_KWH[1]))
+        fields[_entity_field(OPT_LOAD_ENERGY, o.get(OPT_LOAD_ENERGY))] = selector.EntitySelector(
             selector.EntitySelectorConfig(domain="sensor", device_class="energy"))
         return vol.Schema(fields)
 
@@ -579,15 +595,22 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         usable = self._usable_price_entities()
         buy_cfg = {"domain": "sensor"}
         if usable:
-            # Tylko encje, które już teraz dają pełną serię cen.
-            buy_cfg["include_entities"] = usable
+            # Encje, które już teraz dają pełną serię cen — i zapisana, żeby dało się zapisać
+            # resztę formularza, gdy chwilowo jej brakuje pełnej serii.
+            saved = o.get(OPT_PRICE_BUY)
+            buy_cfg["include_entities"] = sorted({*usable, *([saved] if saved else [])})
         return vol.Schema({
-            vol.Optional(OPT_PRICE_BUY, default=o.get(OPT_PRICE_BUY, "")):
+            _entity_field(OPT_PRICE_BUY, o.get(OPT_PRICE_BUY)):
                 selector.EntitySelector(selector.EntitySelectorConfig(**buy_cfg)),
-            vol.Optional(OPT_PRICE_SELL, default=o.get(OPT_PRICE_SELL, "")):
+            _entity_field(OPT_PRICE_SELL, o.get(OPT_PRICE_SELL)):
                 selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
-            vol.Optional(OPT_PRICE_CURRENCY, default=o.get(OPT_PRICE_CURRENCY, "")): str,
+            vol.Optional(OPT_PRICE_CURRENCY, description={"suggested_value": o.get(OPT_PRICE_CURRENCY)}): str,
         })
+
+
+def _entity_field(key: str, saved: Any) -> vol.Optional:
+    """Pole encji opcjonalne: zapisana wartość jako podpowiedź (nie default) — da się wyczyścić."""
+    return vol.Optional(key, description={"suggested_value": saved or None})
 
 
 class CannotConnect(Exception):

@@ -279,4 +279,100 @@ def test_strings_have_new_steps_and_errors():
         assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices"}
         assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_off"}
         assert "entity_mode_unavailable" in opts["abort"] and "prices_not_usable" in opts["error"]
+        assert "currency_invalid" in opts["error"]
         assert "later version" in opts["step"]["control"]["description"]
+
+
+# ── pola opcjonalne: wyczyszczone pole zostaje puste ───────────────────────
+
+
+def _field(schema, name):
+    for key, value in schema.schema.items():
+        if str(key) == name:
+            return key, value
+    raise KeyError(name)
+
+
+@pytest.mark.parametrize("schema_name,field", [
+    ("_details_schema", "soc"), ("_details_schema", "load_energy_entity"),
+    ("_prices_schema", "entity_price_buy"), ("_prices_schema", "entity_price_sell"),
+    ("_forecast_schema", "pv_energy_entity"),
+])
+def test_entity_fields_use_suggested_value_not_default(schema_name, field):
+    import voluptuous as vol
+    f = flow(options={"telemetry_map": {"soc": "sensor.soc"}, "load_energy_entity": "sensor.house",
+                      "entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell",
+                      "pv_energy_entity": "sensor.pv"})
+    key, _ = _field(getattr(f, schema_name)(), field)
+    assert key.default is vol.UNDEFINED
+    assert key.description["suggested_value"]
+
+
+def test_details_fields_submitted_without_key_are_cleared():
+    f = flow(options={"telemetry_map": {"soc": "sensor.soc"}, "load_energy_entity": "sensor.house",
+                      "control_mode": "entities"})
+    r = asyncio.run(f.async_step_details({"grid_power_negate": False}))
+    assert r["data"] == {"control_mode": "entities"}
+
+
+def test_prices_fields_submitted_without_key_are_cleared():
+    f = flow(options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell",
+                      "price_currency": "PLN"})
+    r = asyncio.run(f.async_step_prices({}))
+    assert r["data"] == {}
+
+
+def test_saved_but_now_unusable_buy_entity_does_not_block_saving():
+    f = flow(options={"entity_price_buy": "sensor.bad"},
+             prices={"sensor.nordpool": _price_attrs(), "sensor.bad": {"unit_of_measurement": "PLN/kWh"}})
+    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.bad", "price_currency": "eur"}))
+    assert r["data"] == {"entity_price_buy": "sensor.bad", "price_currency": "EUR"}
+    key, sel = _field(f._prices_schema(), "entity_price_buy")
+    assert sel.config["include_entities"] == ["sensor.bad", "sensor.nordpool"]
+
+
+def test_include_entities_only_usable_and_absent_when_none_usable():
+    f = flow(prices={"sensor.nordpool": _price_attrs(), "sensor.bad": {"x": 1}})
+    _, sel = _field(f._prices_schema(), "entity_price_buy")
+    assert sel.config["include_entities"] == ["sensor.nordpool"]
+    f = flow(prices={"sensor.bad": {"x": 1}})
+    _, sel = _field(f._prices_schema(), "entity_price_buy")
+    assert "include_entities" not in sel.config
+
+
+def test_newly_picked_unusable_sell_entity_and_bad_currency_are_errors():
+    f = flow(prices={"sensor.nordpool": _price_attrs(), "sensor.bad": {"x": 1}})
+    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.bad",
+                                         "price_currency": "zł"}))
+    assert r["errors"] == {"entity_price_sell": "prices_not_usable", "price_currency": "currency_invalid"}
+
+
+def test_battery_capacity_range_from_limits():
+    import voluptuous as vol
+    schema = flow()._details_schema()
+    assert schema({"battery_capacity_kwh": 0.5})["battery_capacity_kwh"] == 0.5
+    with pytest.raises(vol.Invalid):
+        schema({"battery_capacity_kwh": 200.1})
+
+
+def test_failed_restore_still_saves_and_keeps_ownership(monkeypatch):
+    h, ex = _owned_executor(monkeypatch)
+
+    async def bad_write(_w):
+        raise RuntimeError("down")
+    ex._writer.async_write = bad_write
+    f = flow(options={"control_mode": "entities", "profile_id": "goodwe-et", "inverter_domain": "goodwe"},
+             runtime=rt(executor=ex))
+    r = asyncio.run(f.async_step_control_off())
+    assert r["type"] == "create_entry" and "control_mode" not in r["data"]
+    assert ex.owned is True                                       # następny wykonawca ponowi powrót
+
+
+def test_same_choice_after_remote_choice_is_not_a_control_change(monkeypatch):
+    # Wybór zdalny zapisuje te same trzy klucze co opcje — ponowny wybór nie oddaje falownika.
+    from custom_components.volcast.core.control.caps import entity_mode_options
+    h, ex = _owned_executor(monkeypatch)
+    runtime = rt(executor=ex)
+    f = flow(options=entity_mode_options(runtime.choice), runtime=runtime)
+    asyncio.run(f.async_step_control_entities())
+    assert ex.owned and h.states.get("select.goodwe_ems_mode").state == "sell_power"

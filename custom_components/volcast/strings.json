@@ -153,7 +153,8 @@
       "entity_mode_unavailable": "Inverter control entities not found. Control through the integration needs a supported inverter integration with an entity for every setting."
     },
     "error": {
-      "prices_not_usable": "This sensor does not provide a complete price series right now."
+      "prices_not_usable": "This sensor does not provide a complete price series right now.",
+      "currency_invalid": "Use a three-letter currency code, for example PLN or EUR."
     }
   },
   "issues": {
