@@ -161,3 +161,81 @@ def test_needs_restore_active_mode_direct():
     assert needs_restore(control_mode=None, **kw) is True
     assert needs_restore(control_mode="entities", **kw) is True
     assert needs_restore(owned=True, consent=True, local_switch=True, control_mode="entities") is False
+
+
+# ── kandydaci budżetu i ograniczenie powrotów ─────────────────────────────
+
+
+def _run_at(profile, schedule, reading, memory, now_mono):
+    return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=now_mono,
+                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
+                        limits=Limits(rated_power_w=8000.0), gates=GATES, memory=memory,
+                        target=RegisterTarget(reading))
+
+
+def test_steady_state_with_exhausted_budget_never_restores(goodwe_profile, charge_schedule):
+    # Po zapisie urządzenie ma plan; 47760 bez odczytu. Budżet soc_max (albo łączny) wyczerpany
+    # — nic nie trzeba pisać, więc nie ma ani wstrzymania, ani powrotu do bazowego.
+    memory = ControlMemory.for_profile(goodwe_profile)
+    first = _run(goodwe_profile, charge_schedule, goodwe_reading(goodwe_profile, **{"37007": 80}), memory)
+    commit(first, WriteReport(written=[w.key for w in first.writes]), memory, 1000.0)
+    settled = goodwe_reading(goodwe_profile, **{"37007": 80, str(MODE_REG): 11, str(POWER_REG): 3000})
+    _exhaust(memory, "soc_max")
+    d = _run_at(goodwe_profile, charge_schedule, settled, memory, 2000.0)
+    assert (d.status, d.reason) == ("idle", "nothing_to_write") and memory.budget.hit is False
+    for _ in range(memory.budget.total):
+        memory.budget.note("other", NOW_WALL - 60)
+    d = _run_at(goodwe_profile, charge_schedule, settled, memory, 2100.0)
+    assert (d.status, d.reason) == ("idle", "nothing_to_write")
+
+
+def _forced():
+    from custom_components.volcast.core.profile import load_builtin
+    gw = load_builtin("goodwe-et")
+    return gw, goodwe_reading(gw, **{str(MODE_REG): 11, str(POWER_REG): 8000, "37007": 80})
+
+
+def test_failed_restore_not_retried_within_min_interval(sell_schedule):
+    gw, reading = _forced()
+    memory = ControlMemory.for_profile(gw)
+    _exhaust(memory, "power_w")
+    d = _run_at(gw, sell_schedule, reading, memory, 1000.0)
+    assert d.status == RESTORE
+    commit(d, GroupReport(failed=["mode"], ambiguous=["mode"]), memory, 1000.0)
+    again = _run_at(gw, sell_schedule, reading, memory, 1005.0)
+    assert again.status != RESTORE and "nvm_budget_restore_wait" in again.notes
+    assert all(w.key not in ("mode", "power_w") for w in again.writes)
+    assert _run_at(gw, sell_schedule, reading, memory, 1000.0 + 301).status == RESTORE
+
+
+def test_restore_rate_limited_over_simulated_day(sell_schedule):
+    # Urządzenie „wraca” do trybu wymuszonego po każdym powrocie: powroty rzadsze i rzadsze,
+    # najwyżej 24 na dobę, potem wstrzymanie i znacznik dla Napraw.
+    gw, reading = _forced()
+    memory = ControlMemory.for_profile(gw)
+    _exhaust(memory, "power_w")
+    times = []
+    last = None
+    for i in range(24 * 60):
+        now_mono = 1000.0 + 60.0 * i
+        d = _run_at(gw, sell_schedule, reading, memory, now_mono)
+        last = d
+        if d.status == RESTORE:
+            times.append(now_mono)
+            commit(d, WriteReport(written=["mode"]), memory, now_mono)
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert 1 < len(times) <= 24
+    assert gaps[0] >= 300 and gaps == sorted(gaps) and max(gaps) <= 3600
+    assert "nvm_budget_restore_ineffective" in last.notes and memory.budget_restore_ineffective is True
+
+
+def test_restore_backoff_resets_when_baseline_read(sell_schedule):
+    gw, reading = _forced()
+    memory = ControlMemory.for_profile(gw)
+    _exhaust(memory, "power_w")
+    d = _run_at(gw, sell_schedule, reading, memory, 1000.0)
+    commit(d, WriteReport(written=["mode"]), memory, 1000.0)
+    assert memory.restore_backoff_s > 0
+    base = goodwe_reading(gw, **{str(MODE_REG): 1, str(POWER_REG): 8000, "37007": 80})
+    _run_at(gw, sell_schedule, base, memory, 1010.0)
+    assert memory.restore_backoff_s == 0.0 and memory.restore_until is None

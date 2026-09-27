@@ -55,6 +55,9 @@ _MODE_GROUP = frozenset({"mode", "power_w"})
 _DIRECTIONAL = ("charge", "discharge")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
 _QUANTUM = 1.0
+# Powroty do trybu bazowego poza budżetem: najwyżej tyle prób w oknie doby.
+_RESTORE_CAP = 24
+_RESTORE_WINDOW_S = 86400.0
 # Ponowienie zapisu odrzuconego przy niezmienionym planie i stanie urządzenia.
 _DENIED_RETRY_S = 3600.0
 # Odwrót grupy po cofnięciu: start nie krótszy niż 5 min, podwajany do 1 h.
@@ -88,6 +91,12 @@ class ControlMemory:
     # tym samym stanie urządzenia nie jest ponawiana przez `_DENIED_RETRY_S`; klucz dalej
     # wstrzymuje tryb (warunek niespełniony), ale nie pali pamięci nieulotnej co cykl.
     denied: dict[str, tuple[float | str, float | str, float]] = field(default_factory=dict)
+    # powroty do trybu bazowego poza budżetem (wyczerpany budżet przy trybie wymuszonym):
+    # odwrót jak grupy (start max(I-6, 5 min), podwajany do 1 h), limit prób na dobę
+    restore_backoff_s: float = 0.0
+    restore_until: float | None = None
+    restore_attempts: list[float] = field(default_factory=list)
+    budget_restore_ineffective: bool = False
 
     @classmethod
     def for_profile(cls, profile) -> "ControlMemory":
@@ -284,16 +293,22 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     # Budżet NVM: klucz ponad budżetem nie idzie, a jako zmieniony warunek wstrzymuje tryb
     # (jak I-6); tryb/moc ponad budżetem = grupa czeka. Wyjątek: tryb wymuszony nie może stać
     # do końca okna — wtedy powrót do trybu bazowego (poza budżetem).
+    # Kandydaci budżetu: WYŁĄCZNIE klucze, które naprawdę trzeba zapisać (klucz bez odczytu,
+    # ale zgodny z pamięcią, nie jest zapisem — nie może wywołać wstrzymania ani powrotu).
+    base_mode = (profile.raw.get("baseline") or {}).get("mode")
+    if base_mode is not None and device.get("mode") == base_mode:
+        memory.restore_backoff_s, memory.restore_until = 0.0, None
     blocked: set[str] = set()
     if memory.budget is not None:
-        blocked = memory.budget.exhausted(set(flat) - settled - memory.unsupported, now_utc.timestamp())
+        blocked = memory.budget.exhausted(need - memory.unsupported, now_utc.timestamp())
     if blocked:
         due -= blocked
-        need |= blocked
         notes.append("nvm_budget")
-        restore = _budget_restore(device, profile, target, memory, gates, now_mono, common)
+        restore, note = _budget_restore(device, profile, target, memory, gates, now_mono, common)
         if restore is not None:
             return restore
+        if note is not None:
+            notes.append(note)
     _, runtime_unmapped = target.writes(params, profile, None)
     allowed = due - memory.unsupported - set(runtime_unmapped)
 
@@ -366,26 +381,36 @@ def _adjusted_reached(memory: ControlMemory, key: str, planned, actual) -> bool:
 
 
 def _budget_restore(device, profile, target: WriteTarget, memory: ControlMemory, gates: Gates,
-                    now_mono: float, common: Mapping[str, Any]) -> CycleDecision | None:
+                    now_mono: float, common: Mapping[str, Any]) -> tuple[CycleDecision | None, str | None]:
     """Decyzja `RESTORE` przy wyczerpanym budżecie, gdy urządzenie jest w trybie wymuszonym.
 
     Wymuszony = kierunek `charge`/`discharge` albo `idle` z mocą > 0 (albo nieznaną).
-    Tryb nieznany albo już neutralny → zwykłe wstrzymanie (None).
+    Tryb nieznany albo już neutralny → zwykłe wstrzymanie. Powrót jest poza budżetem, ale
+    nie poza ochroną przed pętlą: odwrót (od max(I-6, 5 min), podwajany do 1 h, kasowany
+    odczytem trybu bazowego) i limit prób na dobę; po limicie — wstrzymanie i znacznik
+    `nvm_budget_restore_ineffective` (urządzenie wraca do trybu wymuszonego samo).
     """
     base = (profile.raw.get("baseline") or {}).get("mode")
     prev_mode, prev_power = _previous(device, profile, memory)
     if base is None or prev_mode is None or prev_mode == base:
-        return None
+        return None, None
     direction = profile.mode_direction(prev_mode)
     forced = direction in _DIRECTIONAL or (direction == "idle" and (prev_power is None or prev_power > 0.0))
     if not forced:
-        return None
+        return None, None
+    memory.restore_attempts = [t for t in memory.restore_attempts if 0.0 <= now_mono - t < _RESTORE_WINDOW_S]
+    if len(memory.restore_attempts) >= _RESTORE_CAP:
+        memory.budget_restore_ineffective = True
+        return None, "nvm_budget_restore_ineffective"
+    until = memory.restore_until
+    if until is not None and until - memory.restore_backoff_s <= now_mono < until:
+        return None, "nvm_budget_restore_wait"
     back = Params(mode=base)
     writes, _ = target.writes(back, profile, {"mode"})
     reason = _gate_reason(gates, memory, now_mono)
     return CycleDecision(RESTORE if reason is None else DRY_RUN, reason or "nvm_budget",
                          writes=writes, flat=back.flatten(), direction=profile.mode_direction(base),
-                         notes=("nvm_budget",), target_kind=target.kind, **common)
+                         notes=("nvm_budget",), target_kind=target.kind, **common), None
 
 
 def _previous(device: Mapping[str, float | str], profile, memory: ControlMemory
@@ -471,6 +496,11 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     """
     if decision.status not in (WRITE, RESTORE):
         return
+    if decision.status == RESTORE:
+        memory.restore_attempts.append(now_mono)
+        memory.restore_backoff_s = (memory.backoff_base_s if memory.restore_backoff_s <= 0.0
+                                    else min(memory.restore_backoff_s * 2.0, _BACKOFF_MAX_S))
+        memory.restore_until = now_mono + memory.restore_backoff_s
     restored = list(getattr(report, "restored", ()))
     restore_failed = list(getattr(report, "restore_failed", ()))
     _count_budget(decision, report, memory, restored, restore_failed, now_wall)
