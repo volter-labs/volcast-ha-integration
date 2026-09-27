@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+# Symulatory falowników (serwery na pętli zwrotnej) — fixtures z `tests/sim/fixtures.py`.
+pytest_plugins = ["tests.sim.fixtures"]
+
 # ---------------------------------------------------------------------------
 # Stub out homeassistant imports so we can import the integration modules
 # without a full HA installation.
@@ -621,3 +624,101 @@ def setup_forecast_entry(monkeypatch):
 
     _setup.hass = _setup.entry = None
     return _setup
+
+
+# ---------------------------------------------------------------------------
+# Straż sieci: testy nigdy nie wychodzą poza pętlę zwrotną (ani rozgłoszeniem).
+# Pomyłka w atrapie nie może skończyć się prawdziwą sondą albo ramką Modbus do
+# urządzenia w sieci lokalnej. Wyjątków (znacznika „allow_network") nie ma.
+# ---------------------------------------------------------------------------
+
+import asyncio as _asyncio
+import asyncio.base_events as _base_events
+import ipaddress as _ipaddress
+import socket as _socket
+
+_NETWORK_FAIL = "real network I/O in tests"
+
+
+def _loopback_host(host) -> bool:
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    if not isinstance(host, str) or not host:
+        return False
+    try:
+        ip = _ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False                       # nazwa hosta = DNS i nieznany cel
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_loopback
+
+
+class _NetworkGuard:
+    """Naruszenia są też zapamiętywane: transporty asyncio łapią każdy wyjątek z `sendto`
+    (także `pytest.fail`) i tylko zamykają transport — test i tak pada przy sprzątaniu."""
+
+    def __init__(self) -> None:
+        self.violations: list[str] = []
+
+    def check(self, address) -> None:
+        if isinstance(address, (str, bytes)):  # gniazdo uniksowe (ścieżka), nie sieć
+            return
+        if isinstance(address, tuple) and address and _loopback_host(address[0]):
+            return
+        # Nigdy adresu w komunikacie — tylko rodzaj naruszenia.
+        self.violations.append(type(address).__name__)
+        pytest.fail(_NETWORK_FAIL)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network(monkeypatch):
+    guard = _NetworkGuard()
+    _guard_address = guard.check
+    real_connect = _socket.socket.connect
+    real_connect_ex = _socket.socket.connect_ex
+    real_sendto = _socket.socket.sendto
+    real_create_connection = _base_events.BaseEventLoop.create_connection
+    real_create_datagram = _base_events.BaseEventLoop.create_datagram_endpoint
+    real_open_connection = _asyncio.open_connection
+
+    def connect(self, address):
+        _guard_address(address)
+        return real_connect(self, address)
+
+    def connect_ex(self, address):
+        _guard_address(address)
+        return real_connect_ex(self, address)
+
+    def sendto(self, data, *args):
+        _guard_address(args[-1] if args else None)
+        return real_sendto(self, data, *args)
+
+    async def create_connection(self, protocol_factory, host=None, port=None, *args, **kwargs):
+        if host is not None:
+            _guard_address((host, port))
+        return await real_create_connection(self, protocol_factory, host, port, *args, **kwargs)
+
+    async def create_datagram_endpoint(self, protocol_factory, local_addr=None, remote_addr=None, **kwargs):
+        if remote_addr is not None:
+            _guard_address(remote_addr)
+        return await real_create_datagram(self, protocol_factory, local_addr, remote_addr, **kwargs)
+
+    async def open_connection(host=None, port=None, **kwargs):
+        if host is not None:
+            _guard_address((host, port))
+        return await real_open_connection(host, port, **kwargs)
+
+    monkeypatch.setattr(_socket.socket, "connect", connect)
+    monkeypatch.setattr(_socket.socket, "connect_ex", connect_ex)
+    monkeypatch.setattr(_socket.socket, "sendto", sendto)
+    monkeypatch.setattr(_base_events.BaseEventLoop, "create_connection", create_connection)
+    monkeypatch.setattr(_base_events.BaseEventLoop, "create_datagram_endpoint", create_datagram_endpoint)
+    monkeypatch.setattr(_asyncio, "open_connection", open_connection)
+
+    # Domyślny cel sondy 48899 (rozgłoszenie) → pętla zwrotna; jawne rozgłoszenie pada w straży.
+    from custom_components.volcast.core.discovery import network as _network
+    probe = _network.probe_udp_48899
+    monkeypatch.setattr(probe, "__defaults__", ("127.0.0.1",) + tuple(probe.__defaults__[1:]))
+    yield guard
+    if guard.violations:
+        pytest.fail(f"{_NETWORK_FAIL}: {len(guard.violations)} blocked attempt(s)")
