@@ -54,8 +54,8 @@ async def async_register_card(hass, version: str | None) -> str | None:
     try:
         from homeassistant.components.frontend import add_extra_js_url
         add_extra_js_url(hass, url)
-    except ImportError:
-        pass
+    except Exception:  # noqa: BLE001 — frontend niezaładowany (KeyError w HA) albo starsze HA
+        _LOGGER.debug("Volcast plan card not added as an extra frontend module", exc_info=True)
 
     try:
         resources = getattr(hass.data.get("lovelace"), "resources", None)

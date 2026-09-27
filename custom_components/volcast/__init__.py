@@ -271,22 +271,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise
 
     if control is not None:
-        version = await async_integration_version(hass)
-        if await async_register_card(hass, version) is not None:
-            plan_entity = er.async_get(hass).async_get_entity_id(
-                "sensor", DOMAIN, f"{entry.entry_id}_control_plan")
-            # Bez encji w rejestrze nie ma czym skonfigurować panelu (pusta konfiguracja
-            # nadpisywałaby domyślną encję karty wartością `null`) — pomijamy rejestrację
-            # zamiast wystawiać panel bez treści.
-            if plan_entity:
-                hass.data[DOMAIN][entry.entry_id]["panel"] = await async_register_panel(
-                    hass, plan_entity, version)
+        # Karta i panel to dodatek: błąd tutaj (platformy już załadowane, wykonawca działa)
+        # nie może wywrócić setupu — HA nie rozładowałby wtedy tego, co już wstało.
+        try:
+            await _async_register_frontend(hass, entry)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Volcast plan card or panel could not be registered (%s)", type(err).__name__)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     _schedule_discovery(hass, entry, runner)
 
     return True
+
+
+async def _async_register_frontend(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    version = await async_integration_version(hass)
+    if await async_register_card(hass, version) is None:
+        return
+    plan_entity = er.async_get(hass).async_get_entity_id(
+        "sensor", DOMAIN, f"{entry.entry_id}_control_plan")
+    # Bez encji w rejestrze nie ma czym skonfigurować panelu (pusta konfiguracja
+    # nadpisywałaby domyślną encję karty wartością `null`) — pomijamy rejestrację
+    # zamiast wystawiać panel bez treści.
+    if plan_entity:
+        hass.data[DOMAIN][entry.entry_id]["panel"] = await async_register_panel(
+            hass, plan_entity, version)
 
 
 async def _async_setup_discovery_only_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

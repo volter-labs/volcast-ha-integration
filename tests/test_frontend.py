@@ -51,6 +51,19 @@ def test_register_card_yaml_resources_still_returns_url():
     assert hass.data.get("volcast_frontend") is True
 
 
+def test_register_card_survives_frontend_not_loaded(monkeypatch):
+    """Bez załadowanego `frontend` HA rzuca KeyError z `add_extra_js_url` — to nie błąd karty."""
+    from homeassistant.components import frontend
+    monkeypatch.setattr(frontend, "add_extra_js_url", MagicMock(side_effect=KeyError("frontend_extra_module_url")))
+    res = SimpleNamespace(async_get_info=AsyncMock(), async_items=lambda: [], async_create_item=AsyncMock(),
+                          async_update_item=AsyncMock())
+    hass = SimpleNamespace(data={"lovelace": SimpleNamespace(resources=res)},
+                           http=SimpleNamespace(async_register_static_paths=AsyncMock()))
+    assert asyncio.run(fe.async_register_card(hass, "2")) == fe.card_url("2")
+    assert hass.data.get("volcast_frontend") is True
+    res.async_create_item.assert_awaited_once()
+
+
 def test_register_panel_calls_panel_custom_with_expected_kwargs(monkeypatch):
     from homeassistant.components import panel_custom
     calls = []

@@ -117,6 +117,24 @@ async def test_forecast_only_entry_never_registers_card_or_panel(monkeypatch):
     assert ok
 
 
+@pytest.mark.asyncio
+async def test_card_or_panel_failure_never_fails_setup(monkeypatch):
+    """Platformy i wykonawca już stoją — błąd dodatku (karta/panel) nie może wywrócić setupu,
+    bo HA nie rozładowałby wtedy tego, co już wstało."""
+    import custom_components.volcast as integ
+
+    async def setup_control(hass, entry, *, report):
+        return fake_runtime()
+
+    async def boom(*_a, **_k):
+        raise KeyError("frontend_extra_module_url")
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_register_card", boom)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and hass.data["volcast"][entry.entry_id]["control"] is not None
+    assert "panel" not in hass.data["volcast"][entry.entry_id]
+
+
 async def _ret(value):
     return value
 
