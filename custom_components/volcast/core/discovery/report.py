@@ -37,8 +37,10 @@ _EMAIL_RE = re.compile(
 )
 
 # Górna granica długości tekstu w raporcie. Dłuższe wartości (np. atrybut stanu z
-# całym dokumentem) są przycinane PRZED maskowaniem — ogranicza to czas przebiegu,
-# a diagnostyka nie potrzebuje pełnej treści.
+# całym dokumentem) są przycinane PO maskowaniu, nie przed — cięcie przed maskowaniem
+# potrafiło zostawić początek numeru seryjnego/MAC-a na granicy odcięcia w wynikowym
+# tekście. Same wzorce (e-mail, MAC) mają ograniczone kwantyfikatory, więc koszt
+# maskowania pełnej wartości zostaje liniowy (patrz `test_masking_of_huge_strings_...`).
 _MAX_TEXT = 2048
 
 # Klucze niosące słownik/kontrakt raportu (nasz własny kod, stałe słownictwo), nie dane
@@ -151,14 +153,13 @@ def _mask_value(value, pattern: re.Pattern[str] | None,
     omijając pola strukturalne (_STRUCTURAL_KEYS), których wartości są słownikiem/
     kontraktem raportu, nie danymi właściciela ("host"/"ip"/"unit" nie są pomijane)."""
     if isinstance(value, str):
-        truncated = len(value) > _MAX_TEXT
-        # Maskujemy z zapasem, potem tniemy — cięcie przed maskowaniem potrafiło
-        # zostawić początek numeru seryjnego na granicy.
-        work = value[:_MAX_TEXT + 512] if truncated else value
-        masked = pattern.sub("<SN>", work) if pattern else work
+        # Maskujemy CAŁY tekst, dopiero potem tniemy — bufor przed cięciem (starsza
+        # wersja) nie łapał tokenu leżącego dalej niż bufor, i mógł też zostawić
+        # fragment tokenu w wyniku, gdy wcześniejsze podstawienia skróciły tekst.
+        masked = pattern.sub("<SN>", value) if pattern else value
         masked = mac_pattern.sub(_known_mac_repl, masked) if mac_pattern else masked
         masked = _EMAIL_RE.sub("<EMAIL>", _mask_mac_in_text(masked))
-        return masked[:_MAX_TEXT] + "…" if truncated else masked
+        return masked[:_MAX_TEXT] + "…" if len(masked) > _MAX_TEXT else masked
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():

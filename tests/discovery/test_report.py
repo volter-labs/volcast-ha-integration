@@ -330,7 +330,12 @@ def test_masking_of_huge_strings_is_bounded_and_still_masks():
     t0 = time.perf_counter()
     r = _report(errors=errors)
     elapsed = time.perf_counter() - t0
-    assert elapsed < 0.1, elapsed
+    # Maskowanie biegnie teraz po CAŁYM tekście przed cięciem (nie tylko po buforze
+    # przed _MAX_TEXT), więc te sześć 50 000-znakowych ciągów kosztuje realnie więcej
+    # niż poprzednio (~0,1 s zamiast ułamka) — to jest oczekiwany, liniowy koszt, nie
+    # katastrofalny nawrót; próg zostaje z dużym zapasem, bo nawrót kwadratowy/wykładniczy
+    # i tak zajmuje sekundy, nie ułamki sekundy.
+    assert elapsed < 1.0, elapsed
     for e in r["errors"]:
         assert len(e) <= 2049 and e.endswith("…")
         assert "john.doe@example.com" not in e and "<EMAIL>" in e

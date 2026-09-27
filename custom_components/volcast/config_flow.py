@@ -392,7 +392,8 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 self.hass.config_entries.async_update_entry(
                     target,
                     data={CONF_API_KEY: self._api_data[CONF_API_KEY], CONF_API_URL: self._api_data[CONF_API_URL]},
-                    options=options, unique_id=self._api_data[CONF_API_KEY], title=self._api_data["title"])
+                    options=options, unique_id=account_unique_id(self._api_data[CONF_API_KEY]),
+                    title=self._api_data["title"])
                 await self.hass.config_entries.async_reload(target.entry_id)
                 return self.async_abort(reason="converted_existing")
             return self.async_create_entry(
