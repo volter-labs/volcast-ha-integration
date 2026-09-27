@@ -26,13 +26,14 @@ class FakeEntry:
     """Atrapa ConfigEntry z rejestrem callbacków unload."""
 
     def __init__(self, *, data: dict | None = None, options: dict | None = None,
-                 entry_id: str = ENTRY_ID, unique_id: str | None = None) -> None:
+                 entry_id: str = ENTRY_ID, unique_id: str | None = None, disabled_by: Any = None) -> None:
         self.entry_id = entry_id
         self.unique_id = unique_id
         self.data = dict(data if data is not None else {"api_key": API_KEY})
         self.options = dict(options or {})
         self.version = 1
         self.title = "Volcast"
+        self.disabled_by = disabled_by
         self.unload_callbacks: list[Callable[[], Any]] = []
         self.update_listeners: list[Any] = []
 

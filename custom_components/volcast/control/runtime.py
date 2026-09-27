@@ -292,11 +292,22 @@ def freeze_control(rt: ControlRuntime) -> None:
         freeze()
 
 
-async def async_unload_control(hass, rt: ControlRuntime) -> None:
-    """Bez przywracania (restart/przeładowanie nie oddaje falownika)."""
+async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = False) -> None:
+    """Zwykłe przeładowanie/restart nie oddaje falownika (`restore=False`, domyślnie).
+
+    `restore=True` jest dla jawnej decyzji właściciela wyłączyć wpis (`entry.disabled_by`
+    ustawione przy rozładunku) — wtedy oddajemy falownik w tryb bazowy, zanim wykonawca
+    się zatrzyma. Błąd przywrócenia nigdy nie blokuje rozładunku.
+    """
     for unsub in rt.unsubs:
         unsub()
     rt.unsubs.clear()
+    if restore:
+        try:
+            await rt.executor.async_restore_now()
+        except Exception as err:  # noqa: BLE001 — rozładunek wpisu nie może się przez to wywrócić
+            _LOGGER.warning("Volcast control: restore before disabling the entry failed (%s)",
+                            type(err).__name__)
     await rt.telemetry.async_stop()
     await rt.executor.async_stop()
 

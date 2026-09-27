@@ -273,6 +273,59 @@ async def test_unload_removes_exactly_the_forwarded_platforms_and_stops_control(
     assert len(stopped) == 1
 
 
+@pytest.mark.asyncio
+async def test_unload_restores_when_the_owner_disables_the_entry(monkeypatch):
+    import custom_components.volcast as integ
+    seen = []
+
+    async def setup_control(hass, entry, *, report):
+        return fake_runtime()
+
+    async def unload_control(hass, rt, *, restore=False):
+        seen.append(restore)
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_unload_control", unload_control)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    entry.disabled_by = "user"                      # jak HA ustawia go przed rozładunkiem wyłączanego wpisu
+    assert await integ.async_unload_entry(hass, entry)
+    assert seen == [True]
+
+
+@pytest.mark.asyncio
+async def test_unload_does_not_restore_on_plain_reload_or_restart(monkeypatch):
+    import custom_components.volcast as integ
+    seen = []
+
+    async def setup_control(hass, entry, *, report):
+        return fake_runtime()
+
+    async def unload_control(hass, rt, *, restore=False):
+        seen.append(restore)
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_unload_control", unload_control)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert entry.disabled_by is None                # reload/restart: HA nie ustawia go
+    assert await integ.async_unload_entry(hass, entry)
+    assert seen == [False]
+
+
+@pytest.mark.asyncio
+async def test_remove_entry_restores_regardless_of_disabled_by(monkeypatch):
+    """`async_remove_entry` idzie przez `async_remove_control`, który już zawsze
+    przywraca, gdy wpis był właścicielem (patrz `test_remove_entry_restores_only_when_owned`
+    w `tests/control/test_runtime.py`) — usunięcie wpisu to usunięcie, niezależnie od tego,
+    czy ktoś go wcześniej też wyłączył."""
+    import custom_components.volcast as integ
+    seen = []
+
+    async def remove_control(hass, entry):
+        seen.append(entry.disabled_by)
+    monkeypatch.setattr(integ, "async_remove_control", remove_control)
+    entry = SimpleNamespace(entry_id="e1", disabled_by="user")
+    await integ.async_remove_entry(SimpleNamespace(), entry)
+    assert seen == ["user"]
+
+
 def _listener_hass(rt, options_now):
     from .setup_harness import SetupHass, FakeEntry
     hass = SetupHass()

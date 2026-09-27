@@ -33,6 +33,50 @@ def test_map_entities_by_unique_id_and_units():
     assert rt_mod.map_entities(hass, ProfileChoice(load_builtin("deye-sg"), None, None)) == {}
 
 
+def test_unload_control_restores_only_when_requested():
+    calls = []
+
+    class Exec:
+        async def async_restore_now(self):
+            calls.append("restore")
+
+        async def async_stop(self):
+            calls.append("stop")
+
+    class Telemetry:
+        async def async_stop(self):
+            calls.append("telemetry_stop")
+
+    rt = rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=Telemetry(), cloud=None,
+                               choice=None, mapped={}, rated_power_w=None)
+    asyncio.run(rt_mod.async_unload_control(object(), rt))
+    assert calls == ["telemetry_stop", "stop"]                     # domyślnie: bez przywracania
+
+    calls.clear()
+    asyncio.run(rt_mod.async_unload_control(object(), rt, restore=True))
+    assert calls == ["restore", "telemetry_stop", "stop"]           # przywrócenie PRZED zatrzymaniem
+
+
+def test_unload_control_restore_failure_never_blocks_the_unload():
+    calls = []
+
+    class Exec:
+        async def async_restore_now(self):
+            raise RuntimeError("boom")
+
+        async def async_stop(self):
+            calls.append("stop")
+
+    class Telemetry:
+        async def async_stop(self):
+            calls.append("telemetry_stop")
+
+    rt = rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=Telemetry(), cloud=None,
+                               choice=None, mapped={}, rated_power_w=None)
+    asyncio.run(rt_mod.async_unload_control(object(), rt, restore=True))
+    assert calls == ["telemetry_stop", "stop"]
+
+
 def test_remove_entry_restores_only_when_owned(monkeypatch):
     restored = []
 

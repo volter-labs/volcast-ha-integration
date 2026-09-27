@@ -447,8 +447,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         control = entry_data.get("control")
         if control is not None:
             try:
-                # Bez przywracania; czeka na zapis w toku — nowy wykonawca i tak czeka na blokadę wpisu.
-                await async_unload_control(hass, control)
+                # Zwykłe przeładowanie/restart nie oddaje falownika (nowy wykonawca i tak
+                # czeka na blokadę wpisu). Jawne wyłączenie wpisu przez właściciela
+                # (`entry.disabled_by`) to co innego — to decyzja "wyłącz Volcast", więc
+                # oddajemy sterowanie, zanim wykonawca się zatrzyma.
+                await async_unload_control(hass, control, restore=bool(entry.disabled_by))
             finally:
                 # Usuwamy panel tylko wtedy, gdy naprawdę wystawiliśmy go przy setupie —
                 # inaczej HA loguje ostrzeżenie o nieznanym panelu przy każdym przeładowaniu.
