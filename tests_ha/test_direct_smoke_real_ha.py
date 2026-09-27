@@ -78,7 +78,7 @@ async def _setup(hass, hass_storage, options, *, state=None, profiles=None, monk
     seed_salt(hass_storage)
     store_state(hass_storage, "paired01", state or {"consent": True, "local_switch": True, "plan_raw": _plan()})
     if profiles is not None:
-        monkeypatch.setattr(rt_mod, "_load_profiles", lambda: list(profiles))
+        monkeypatch.setattr(rt_mod.ds, "load_profiles", lambda: list(profiles))
     entry = make_entry(hass, options=options)
     await setup_entry(hass, entry)
     rt = control_of(hass, entry)

@@ -96,7 +96,7 @@ def test_remove_entry_restores_only_when_owned(monkeypatch):
 
     monkeypatch.setattr(rt_mod, "VolcastExecutor", Exec)
     monkeypatch.setattr(rt_mod, "_choice_for", lambda hass, entry, profiles: None)
-    monkeypatch.setattr(rt_mod, "_load_profiles", lambda: [])
+    monkeypatch.setattr(rt_mod.ds, "load_profiles", lambda: [])
     hass = SimpleNamespace(data={}, async_add_executor_job=lambda f, *a: _ret(f(*a)))
     entry = SimpleNamespace(entry_id="e1", options={}, data={"api_key": "vk_x", "backend": BACKEND})
     store = ControlStore(hass, "e1")
@@ -135,7 +135,7 @@ def test_remove_entry_warns_whenever_restore_leaves_it_owned(monkeypatch, caplog
     monkeypatch.setattr(rt_mod, "_choice_for",
                         lambda hass, entry, profiles: None if reason == "no_profile"
                         else SimpleNamespace(integration_domain=None))
-    monkeypatch.setattr(rt_mod, "_load_profiles", lambda: [])
+    monkeypatch.setattr(rt_mod.ds, "load_profiles", lambda: [])
     hass = SimpleNamespace(data={}, async_add_executor_job=lambda f, *a: _ret(f(*a)))
     entry = SimpleNamespace(entry_id="e1", options={}, data={"api_key": "vk_x", "backend": BACKEND})
     store = ControlStore(hass, "e1")
@@ -467,7 +467,7 @@ def test_remove_entry_passes_mode_unique_id(monkeypatch):
     choice = ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET")
     monkeypatch.setattr(rt_mod, "VolcastExecutor", Exec)
     monkeypatch.setattr(rt_mod, "_choice_for", lambda hass, entry, profiles: choice)
-    monkeypatch.setattr(rt_mod, "_load_profiles", lambda: [])
+    monkeypatch.setattr(rt_mod.ds, "load_profiles", lambda: [])
     monkeypatch.setattr(rt_mod, "map_entities", lambda hass, c: {"mode": "select.gw_mode"})
     mode = _reg_entry("select.gw_mode", "goodwe", "ce1", "d1")
     mode.unique_id = "goodwe-ems_mode-X"

@@ -52,7 +52,6 @@ from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, resolve_entities
-from ..core.profile import ProfileError, builtin_ids, load_builtin
 from ..registry_compat import all_devices
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
@@ -190,16 +189,6 @@ def _entry_lock(hass, entry_id: str) -> asyncio.Lock:
     if lock is None:
         lock = locks[entry_id] = asyncio.Lock()
     return lock
-
-
-def _load_profiles() -> list:
-    out = []
-    for pid in builtin_ids():
-        try:
-            out.append(load_builtin(pid))
-        except ProfileError as err:
-            _LOGGER.warning("Volcast profile %s rejected: %s", pid, err)
-    return out
 
 
 def inverter_hints(hass) -> list[InverterHint]:
@@ -424,7 +413,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         return None
     opts = entry.options
     cloud = VolcastCloud(async_get_clientsession(hass), entry.data[CONF_API_KEY], backend)
-    profiles = await hass.async_add_executor_job(_load_profiles)
+    profiles = await hass.async_add_executor_job(ds.load_profiles)
     store = ControlStore(hass, entry.entry_id)
     composed = await _async_compose(hass, entry, profiles, store)
     choice, mapped, io, conn = composed.choice, composed.mapped, composed.io, composed.conn
@@ -608,7 +597,7 @@ async def async_remove_control(hass, entry) -> None:
         _LOGGER.warning("Volcast control: saved state unreadable on removal (%s)", type(err).__name__)
         state = None
     if state is not None and state.owned:
-        profiles = await hass.async_add_executor_job(_load_profiles)
+        profiles = await hass.async_add_executor_job(ds.load_profiles)
         composed = await _async_compose(hass, entry, profiles, store)
         choice, mapped, io, conn = composed.choice, composed.mapped, composed.io, composed.conn
         executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped,
