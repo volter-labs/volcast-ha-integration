@@ -89,6 +89,7 @@ def test_remove_entry_restores_only_when_owned(monkeypatch):
 
         async def async_restore_now(self):
             restored.append(True)
+            self.owned = False   # udany powrót do trybu bazowego
 
         async def async_stop(self):
             return None
@@ -107,10 +108,17 @@ def test_remove_entry_restores_only_when_owned(monkeypatch):
     assert restored == [True] and asyncio.run(store.async_load()) == ControlState()
 
 
-def test_remove_entry_warns_when_no_profile_can_restore(monkeypatch, caplog):
+@pytest.mark.parametrize("reason", ["no_profile", "read_only_profile", "restore_failed"])
+def test_remove_entry_warns_whenever_restore_leaves_it_owned(monkeypatch, caplog, reason):
+    """`r2`: the warning must fire for every reason `executor.owned` can stay True after the
+    attempt — no matching profile, a read-only profile (nothing to write), or the write
+    itself failing (the executor already logs its own warning for that last case too) —
+    not only the narrower "no profile" case checked before."""
     caplog.set_level("WARNING", logger="custom_components.volcast.control.runtime")
 
     class Exec:
+        owned = True   # żaden z trzech powodów nie kończy się zdjęciem własności
+
         def __init__(self, *a, **k):
             pass
 
@@ -118,13 +126,15 @@ def test_remove_entry_warns_when_no_profile_can_restore(monkeypatch, caplog):
             return None
 
         async def async_restore_now(self):
-            return None          # profil nieznany, więc wykonawca i tak nic nie robi
+            return None           # powód nie ma znaczenia dla wykonawcy runtime — sprawdzamy tylko `owned`
 
         async def async_stop(self):
             return None
 
     monkeypatch.setattr(rt_mod, "VolcastExecutor", Exec)
-    monkeypatch.setattr(rt_mod, "_choice_for", lambda hass, entry, profiles: None)
+    monkeypatch.setattr(rt_mod, "_choice_for",
+                        lambda hass, entry, profiles: None if reason == "no_profile"
+                        else SimpleNamespace(integration_domain=None))
     monkeypatch.setattr(rt_mod, "_load_profiles", lambda: [])
     hass = SimpleNamespace(data={}, async_add_executor_job=lambda f, *a: _ret(f(*a)))
     entry = SimpleNamespace(entry_id="e1", options={}, data={"api_key": "vk_x", "backend": BACKEND})

@@ -57,11 +57,12 @@ If you'd prefer to skip this beta:
 
 Choose "**Connect to your Volcast account**" during setup, or convert an existing discovery-only or API-key entry to it later. Home Assistant opens a pairing window; confirm it in the Volcast app or on the Volcast website, and the setup finishes by itself — no code to copy.
 
-During pairing, Home Assistant shares with Volcast: the inverter's make and model (no serial number and no local address — those stay in Home Assistant), and the price entity id if a usable price sensor was found. Once paired, the integration also sends:
+During pairing, Home Assistant shares with Volcast: the inverter's make and model, its rated power, and the list of settings Volcast can control on it (no serial number and no local address — those stay in Home Assistant), and the price entity id if a usable price sensor was found. Once paired, the integration also sends:
 
 - Live readings roughly once a minute
 - Up to 60 days of past consumption history, once
 - A control summary — what Volcast is doing or would do, any pause, and how many times a setting was changed outside Volcast (never entity ids or serial numbers)
+- The inverter profile id, battery capacity (if known), which settings Volcast can control, and whether the local control switch is on
 
 It also adds a plan card and a "Volcast" panel with the current and upcoming plan slots, and lets you pick a price sensor of your own in **Options → Energy prices**.
 
@@ -83,7 +84,7 @@ Entity-mode control and account pairing are both beta features.
 
 - **You change a setting yourself while control is on** — Volcast pauses control for 30 minutes, keeps the value you set, and raises a repair notification. A clock-triggered schedule you already run on your inverter is treated as ordinary drift instead — Volcast does not read it as "someone took over" — so it does **not** pause control. Instead, Volcast writes the planned value back on its next control cycle, about a minute later. If your own automation is meant to control these settings, turn the Volcast control switch off first, or the two will keep overwriting each other.
 - **Consent is revoked, the switch is turned off, or the entry is disabled/removed** — Volcast returns the inverter to how it was **before Volcast took control**: its baseline mode, export limit and SoC limits — not to the last value Volcast wrote. The one exception: if you had already taken the mode over yourself, Volcast leaves the mode alone and keeps only the last power setpoint it wrote, instead of restoring the older value there too.
-- **Before installing an older version or removing the integration:** turn off the Volcast control switch and confirm the inverter is back in its normal mode first — see "Going Back to v1.7.2" above. Neither an older version nor removing the integration undoes a write on its own.
+- **Before installing an older version, or removing the integration's files in HACS without first deleting the entry:** turn off the Volcast control switch and confirm the inverter is back in its normal mode first — see "Going Back to v1.7.2" above. Deleting the entry itself does restore (previous bullet); an older version or a files-only removal has no control logic to do that for you.
 - **Repeated write failures** — a repair notification tells you control has stopped working and what to check.
 - **Known limitation:** a 30-minute pause does not survive a Home Assistant restart — after a restart, control resumes immediately even if a pause was in effect before.
 
