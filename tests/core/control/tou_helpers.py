@@ -35,10 +35,13 @@ def daily_plan(pattern=None, days=3, start=DAY0, reserve=10):
                            "fallback": {"mode": "self_consume", "soc_reserve": reserve}})
 
 
-def reading(words=None, **over):
+FRESH_MONO = 1e9          # odczyt rozpoczęty po każdym zapisie testu (zegar monotoniczny testów < 1e9)
+
+
+def reading(words=None, *, at_mono=FRESH_MONO, **over):
     w = dict(words or deye_words())
     w.update({int(a): v for a, v in over.items()})
-    return build_reading(DEYE, RegisterImage(w), at_mono=0.0, at_utc=NOW)
+    return build_reading(DEYE, RegisterImage(w), at_mono=at_mono, at_utc=NOW)
 
 
 def decide(schedule, rd, *, memory=None, gates=GATES, now=NOW, now_mono=1000.0, soc=60.0, age=5.0,

@@ -138,8 +138,8 @@ def test_min_interval_throttles_rewrites():
     rep = run_tou_writes(d.writes, lambda w: OK, pre_held=d.pre_held)
     commit_tou(d, rep, memory, 1000.0)
     words = apply(deye_words(), d.writes)
-    # nowy plan tuż po zapisie: inny cel SoC ładowania (poza tolerancją profilu)
-    pattern = {h: ({"mode": "charge", "charge_source": "grid", "power_w": 3000, "soc_target": 70,
+    # nowy plan tuż po zapisie: większa moc ładowania (poza tolerancją, nie w stronę bezpieczną)
+    pattern = {h: ({"mode": "charge", "charge_source": "grid", "power_w": 4000, "soc_target": 90,
                     "price_pln_kwh": 0.2} if 2 <= h < 5 else SELF) for h in range(24)}
     plan2 = daily_plan(pattern)
     held, _ = decide(plan2, reading(words), memory=memory, now_mono=1100.0)
@@ -149,7 +149,7 @@ def test_min_interval_throttles_rewrites():
     assert (waiting.status, waiting.writes) == ("idle", []) and "tou_rewrite_interval" in waiting.notes
     later, _ = decide(plan2, reading(words), memory=memory, now_mono=4700.0)
     keys = [w.key for w in later.writes]
-    assert keys[0] == keys[-1] == "tou_enable" and all(k.endswith(".soc") for k in keys[1:-1])
+    assert keys[0] == keys[-1] == "tou_enable" and all(k.endswith(".power_w") for k in keys[1:-1])
 
 
 def test_budget_exhausted_enable_writes_nothing():
@@ -157,7 +157,8 @@ def test_budget_exhausted_enable_writes_nothing():
     memory = ControlMemory.for_profile(DEYE)
     for _ in range(memory.budget.per_key):
         memory.budget.note("tou_enable", NOW.timestamp() - 60)
-    d, _ = decide(daily_plan(), reading(), memory=memory)
+    # harmonogram wyłączony (nic nie działa wbrew planowi) — przy działającym patrz test_tou_safety
+    d, _ = decide(daily_plan(), reading(**{"146": 0xFE}), memory=memory)
     assert (d.status, d.reason, d.writes) == ("idle", "held", [])
     assert "tou_enable" in d.pre_held and "nvm_budget" in d.notes
 
@@ -168,7 +169,7 @@ def test_budget_exhausted_field_writes_nothing():
     first_field = d0.writes[1].key
     for _ in range(memory.budget.per_key):
         memory.budget.note(first_field, NOW.timestamp() - 60)
-    d, _ = decide(daily_plan(), reading(), memory=memory)
+    d, _ = decide(daily_plan(), reading(**{"146": 0xFE}), memory=memory)
     assert first_field in d.pre_held and (d.status, d.writes) == ("idle", [])
 
 
@@ -197,7 +198,8 @@ def test_unsupported_field_disables_tou_for_session():
     rep = run_tou_writes(d.writes, lambda w: UNSUPPORTED if w.key.startswith("tou.2") else OK)
     commit_tou(d, rep, memory, 1000.0)
     assert "tou" in memory.unsupported
-    again, _ = decide(daily_plan(), reading(), memory=memory, now_mono=5000.0)
+    # harmonogram wyłączony — nic nie działa wbrew planowi, więc zwykła blokada
+    again, _ = decide(daily_plan(), reading(**{"146": 0xFE}), memory=memory, now_mono=5000.0)
     assert (again.status, again.reason) == ("blocked", "tou_unsupported")
 
 

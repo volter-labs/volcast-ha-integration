@@ -81,12 +81,14 @@ def _decide(profile, schedule, now_utc, now_mono, tz, tele, limits, reading, gat
         return TouDecision(IDLE, "no_mode_chosen")
     if profile.control_model != "time_window":
         return TouDecision(IDLE, "not_time_window")
-    if "tou" in memory.unsupported:
-        return TouDecision(BLOCKED, "tou_unsupported")
+    unsupported = "tou" in memory.unsupported
     if schedule is None:
-        return TouDecision(IDLE, "no_plan")
+        return TouDecision(BLOCKED, "tou_unsupported") if unsupported else TouDecision(IDLE, "no_plan")
     if reading.programs is None or reading.tou_enabled is None:
-        return TouDecision(BLOCKED, "tou_unreadable")
+        return TouDecision(BLOCKED, "tou_unsupported" if unsupported else "tou_unreadable")
+    if memory.tou_write_end is not None and reading.at_mono < memory.tou_write_end:
+        # Odczyt sprzed końca naszego zapisu: ani decyzja, ani uzgadnianie pamięci na jego podstawie.
+        return TouDecision(IDLE, "stale_reading")
     en = profile.raw["write"]["tou_enable"]
     word = reading.image.words(en["addr"], 1)[0]
 
@@ -111,6 +113,13 @@ def _decide(profile, schedule, now_utc, now_mono, tz, tele, limits, reading, gat
     flat = Params(tou=programs).flatten()
     device = {k: reading.device[k] for k in (*flat, EN_KEY) if k in reading.device}
     common.update(programs=programs, guard=guard, device=device)
+    # Działający harmonogram robi gdzieś w dobie więcej niż plan (ładuje z sieci, mocniej, wyżej,
+    # rozładowuje mocniej/głębiej) — zmiana w stronę bezpieczną, której nic nie może wstrzymać.
+    safety = bool(reading.tou_enabled) and _toward_safety(reading.programs, programs, profile)
+    if unsupported:
+        if safety:
+            return _safety_off(word, profile, gates, memory, now_mono, notes, flat, common)
+        return TouDecision(BLOCKED, "tou_unsupported", notes=tuple(notes), **common)
     memory.throttle.reconcile(device)
     memory.uncertain -= {k for k in memory.uncertain if k in reading.device}
     settled = {k for k in flat if k in device and (_within_tolerance(k, flat[k], device[k], profile)
@@ -138,9 +147,13 @@ def _decide(profile, schedule, now_utc, now_mono, tz, tele, limits, reading, gat
             held |= blocked
             notes.append("nvm_budget")
     if held:
+        if safety:
+            # Przepisania w stronę bezpieczną nie da się zrobić w całości: harmonogram OFF (samokonsumpcja),
+            # poza interwałem, pamięcią odmowy i budżetem; zostaje OFF do udanego pełnego przepisania.
+            return _safety_off(word, profile, gates, memory, now_mono, notes, flat, common)
         # Sekwencja przerwana w połowie zostawiłaby harmonogram wyłączony — nic nie idzie.
         return TouDecision(IDLE, "held", flat=flat, notes=tuple(notes), pre_held=tuple(sorted(held)), **common)
-    if changed and not enable_off and not _toward_safety(changed, flat, device) \
+    if changed and not enable_off and not safety \
             and memory.tou_rewrite_at is not None and 0.0 <= now_mono - memory.tou_rewrite_at < REWRITE_INTERVAL_S:
         notes.append("tou_rewrite_interval")
         return TouDecision(IDLE, "held", flat=flat, notes=tuple(notes), **common)
@@ -174,16 +187,47 @@ def _within_tolerance(key: str, planned, current, profile) -> bool:
     return same_value(planned, current)
 
 
-def _toward_safety(changed, flat, device) -> bool:
-    """Zmiana w stronę bezpieczną: zdjęcie ładowania z sieci albo mniejsza moc programu."""
-    for key in changed:
-        cur, new = device.get(key), flat.get(key)
-        if not isinstance(cur, (int, float)) or not isinstance(new, (int, float)):
-            continue
-        name = _field(key)
-        if (name == "grid_charge" and new < cur) or (name == "power_w" and new < cur):
+def _active(programs, minute: int):
+    ordered = sorted(programs, key=lambda p: p.start_min)
+    cur = ordered[-1]
+    for p in ordered:
+        if p.start_min <= minute:
+            cur = p
+    return cur
+
+
+def _toward_safety(device_programs, planned, profile) -> bool:
+    """Po pokryciu doby (co krok profilu, programy cykliczne wg startu): czy gdziekolwiek urządzenie
+    ładuje z sieci, gdzie plan nie ładuje, albo mocniej / do wyższego SoC — albo (bez ładowania z
+    sieci) rozładowuje mocniej lub do niższej podłogi niż plan. Skrócenie lub zdjęcie okna ładowania
+    też tu wpada (zmiana startu)."""
+    if not device_programs or not planned:
+        return False
+    tol_p, tol_s = profile.power_tolerance_w, profile.soc_tolerance_pp
+    for minute in range(0, 1440, max(1, profile.time_step_min)):
+        d, p = _active(device_programs, minute), _active(planned, minute)
+        if d.grid_charge:
+            if not p.grid_charge or p.power_w < d.power_w - tol_p or p.soc < d.soc - tol_s:
+                return True
+        elif not p.grid_charge and (p.power_w < d.power_w - tol_p or p.soc > d.soc + tol_s):
             return True
     return False
+
+
+SAFETY_OFF_CAP = 24                        # wyłączeń bezpieczeństwa na dobę (poza budżetem NVM)
+_DAY_S = 86400.0
+
+
+def _safety_off(word, profile, gates, memory: ControlMemory, now_mono: float, notes: list[str], flat, common):
+    memory.tou_safety_offs = [t for t in memory.tou_safety_offs if 0.0 <= now_mono - t < _DAY_S]
+    if len(memory.tou_safety_offs) >= SAFETY_OFF_CAP:
+        notes.append("tou_safety_off_cap")
+        return TouDecision(IDLE, "held", flat=flat, notes=tuple(notes), **common)
+    notes.append("tou_safety_off")
+    reason = _gate_reason(gates, memory, now_mono)
+    status = WRITE if reason is None else DRY_RUN
+    return TouDecision(status, reason or "tou_safety_off", writes=[encode_tou_enable(False, word, profile)],
+                       flat=flat, notes=tuple(notes), **common)
 
 
 def commit_tou(decision: TouDecision, report: TouReport, memory: ControlMemory, now_mono: float, *,
@@ -216,13 +260,18 @@ def commit_tou(decision: TouDecision, report: TouReport, memory: ControlMemory, 
         if key in decision.flat and key in decision.device:
             note_denied(memory, key, decision.flat[key], decision.device[key], now_mono,
                         max_hold_s=TOU_DENIED_MAX_S)
+    if report.frames:
+        memory.tou_write_end = now_mono
+    safety_off = "tou_safety_off" in decision.notes
+    if safety_off and report.frames:
+        memory.tou_safety_offs.append(now_mono)
     # Włącznik: stan końcowy po sekwencji (ON, samo OFF albo nieznany po ERROR).
     if ENABLE in report.frames:
         memory.tou_enable_at = now_mono
     if ENABLE in ambiguous:
         memory.last_written.pop(EN_KEY, None)
     elif report.enable_written or ENABLE in report.written:
-        state = 1.0 if report.enable_written else 0.0
+        state = 1.0 if report.enable_written and not safety_off else 0.0
         memory.throttle.record({EN_KEY: state}, [EN_KEY], now_mono)
         memory.last_written[EN_KEY] = state
     unknown = [EN_KEY if k == ENABLE else k for k in report.ambiguous]

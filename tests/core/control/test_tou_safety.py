@@ -13,7 +13,7 @@ from datetime import timedelta
 
 from custom_components.volcast.core.control.conflict import DriftTracker, drifted_keys
 from custom_components.volcast.core.control.cycle import ControlMemory
-from custom_components.volcast.core.control.tou_cycle import commit_tou
+from custom_components.volcast.core.control.tou_cycle import _toward_safety, commit_tou
 from custom_components.volcast.core.control.tou_writes import (
     ENABLE, TouReport, run_tou_writes, tou_restore_writes, tou_snapshot)
 from custom_components.volcast.core.write_sequence import DENIED, OK, AdjustedOutcome
@@ -85,11 +85,19 @@ def test_stale_reading_after_own_on_never_writes_programs_while_enabled():
     words = deye_words()
     words[EN_ADDR] = 0xFE                                  # właściciel: harmonogram wyłączony
     dev = Device(words)
-    stale = reading(dict(dev.words))
+    stale = reading(dict(dev.words), at_mono=500.0)
     memory = ControlMemory.for_profile(DEYE)
     _cycle(dev, daily_plan(), memory, 1000.0, rd=stale)
     assert dev.enabled
+    # Odczyt sprzed naszego zapisu nie jest podstawą decyzji (ani pamięci interwału).
     d, _ = _cycle(dev, daily_plan(_pattern(soc=60, charge=(3, 6))), memory, 5000.0, rd=stale)
+    assert (d.status, d.reason, d.writes) == ("idle", "stale_reading", [])
+    assert memory.throttle.known("tou.1.soc") is not None
+    # Odczyt świeży, ale z włącznikiem pokazanym jako OFF: OFF i tak pierwszy.
+    wrong = dict(dev.words)
+    wrong[EN_ADDR] = 0xFE
+    fresh_but_wrong = reading(wrong)
+    d, _ = _cycle(dev, daily_plan(_pattern(soc=60, charge=(3, 6))), memory, 5000.0, rd=fresh_but_wrong)
     assert d.status == "write" and d.writes[0].key == ENABLE and not d.writes[0].value & 1
     assert dev.live_program_writes == 0 and dev.enabled
 
@@ -111,7 +119,7 @@ def test_first_program_field_held_writes_nothing():
     memory = ControlMemory.for_profile(DEYE)
     _cycle(dev, daily_plan(), memory, 1000.0)
     frames = sum(dev.frames.values())
-    d, _ = _cycle(dev, daily_plan(_pattern(soc=60)), memory, 1100.0)     # I-6 wstrzymuje pola
+    d, _ = _cycle(dev, daily_plan(_pattern(power=4000)), memory, 1100.0)  # I-6 wstrzymuje pola
     assert (d.status, d.writes) == ("idle", []) and "I-6" in d.notes
     assert sum(dev.frames.values()) == frames and dev.enabled
 
@@ -122,7 +130,7 @@ def test_budget_held_field_writes_nothing():
     last_field = d0.writes[-2].key
     for _ in range(memory.budget.per_key):
         memory.budget.note(last_field, NOW.timestamp() - 60)
-    d, _ = decide(daily_plan(), reading(), memory=memory)
+    d, _ = decide(daily_plan(), reading(**{"146": 0xFE}), memory=memory)       # harmonogram wyłączony
     assert (d.status, d.reason, d.writes) == ("idle", "held", []) and "nvm_budget" in d.notes
 
 
@@ -151,10 +159,13 @@ def test_refused_program_field_is_not_rewritten_every_cycle():
     dev = Device(words, deny_power_above=5000)
     snapshot = tou_snapshot(reading(dev.words), DEYE)
     memory = ControlMemory.for_profile(DEYE)
-    _day(dev, daily_plan(_pattern(power=8000)), memory, snapshot=snapshot)
-    assert dev.frames[ENABLE] <= 12, dev.frames                    # odwrót, nie co 5 min
+    plan = daily_plan(_pattern(power=8000))
+    _day(dev, plan, memory, snapshot=snapshot)
+    assert dev.frames[ENABLE] <= 36, dev.frames                    # odwrót + limit wyłączeń, nie co 5 min
     assert memory.budget.hit is False
-    assert dev.words[EN_ADDR] == snapshot["tou_word"]              # harmonogram właściciela działa
+    # Na koniec nic nie ładuje z sieci wbrew planowi: albo harmonogram właściciela zgodny, albo OFF.
+    programs = decide(plan, reading(dev.words))[0].programs
+    assert not (dev.enabled and _toward_safety(reading(dev.words).programs, programs, DEYE))
 
 
 # ── tolerancja i rzadkie przepisywanie ────────────────────────────────────
@@ -172,9 +183,9 @@ def test_rewrite_at_most_hourly_unless_toward_safety():
     dev = Device()
     memory = ControlMemory.for_profile(DEYE)
     _cycle(dev, daily_plan(), memory, 1000.0)
-    d, _ = _cycle(dev, daily_plan(_pattern(soc=60)), memory, 1000.0 + 600)
+    d, _ = _cycle(dev, daily_plan(_pattern(power=4000)), memory, 1000.0 + 600)
     assert (d.status, d.writes) == ("idle", []) and "tou_rewrite_interval" in d.notes
-    d, _ = _cycle(dev, daily_plan(_pattern(soc=60)), memory, 1000.0 + 3601)
+    d, _ = _cycle(dev, daily_plan(_pattern(power=4000)), memory, 1000.0 + 3601)
     assert d.status == "write"
     # Zdjęcie ładowania z sieci (strona bezpieczna) idzie od razu.
     d, _ = _cycle(dev, daily_plan({h: SELF for h in range(24)}), memory, 1000.0 + 3601 + 600)
@@ -230,3 +241,87 @@ def test_restore_ends_with_the_owner_raw_word():
         words[EN_ADDR] = 0xFF
         rw = tou_restore_writes(DEYE, snap, reading(words), soc_reserve=10.0, rated_power_w=10000.0)
         assert rw[-1].key == "tou_word" and rw[-1].value == owner
+
+
+# ── stary program ładujący z sieci nie może zostać wbrew planowi ─────────
+
+
+def _hours(charge, idle=range(17, 19)):
+    ch = {"mode": "charge", "charge_source": "grid", "power_w": 3000, "soc_target": 90, "price_pln_kwh": 0.2}
+    return daily_plan({h: ch if h in charge else {"mode": "idle", "price_pln_kwh": 1.1} if h in idle else SELF
+                       for h in range(24)})
+
+
+def _grid_charging_live(dev, plan_programs=None):
+    rd = reading(dev.words)
+    return dev.enabled and any(p.grid_charge for p in rd.programs)
+
+
+def test_budget_exhausted_safety_rewrite_switches_schedule_off():
+    dev = Device()
+    memory = ControlMemory.for_profile(DEYE)
+    _cycle(dev, _hours(range(2, 5)), memory, 1000.0)
+    for _ in range(60):
+        memory.budget.note(ENABLE, NOW.timestamp() - 60)
+    d, _ = _cycle(dev, _hours([]), memory, 5000.0)                   # plan: bez ładowania z sieci
+    assert d.status == "write" and [w.key for w in d.writes] == [ENABLE] and not d.writes[0].value & 1
+    assert "tou_safety_off" in d.notes and not dev.enabled
+    assert memory.last_written["tou_enabled"] == 0.0
+    d, _ = _cycle(dev, _hours([]), memory, 5300.0)                   # dalej wstrzymane: zostaje OFF
+    assert d.writes == [] and not dev.enabled
+
+
+def test_refusal_of_other_field_never_holds_a_safety_change():
+    from custom_components.volcast.core.control.cycle import note_denied
+    dev = Device()
+    memory = ControlMemory.for_profile(DEYE)
+    _cycle(dev, _hours(range(2, 5)), memory, 1000.0)
+    safe = _hours([], idle=range(16, 19))
+    d0, _ = decide(safe, reading(dev.words), memory=memory, now_mono=9000.0)
+    other = [w.key for w in d0.writes if w.key.startswith("tou.") and not w.key.endswith("grid_charge")][-1]
+    note_denied(memory, other, d0.flat[other], d0.device[other], 8990.0, max_hold_s=6 * 3600)
+    d, _ = _cycle(dev, safe, memory, 9000.0)
+    assert [w.key for w in d.writes] == [ENABLE] and not _grid_charging_live(dev)
+
+
+def test_shortened_charge_window_is_written_within_the_rewrite_interval():
+    dev = Device()
+    memory = ControlMemory.for_profile(DEYE)
+    _cycle(dev, _hours(range(2, 5)), memory, 1000.0)
+    d, _ = _cycle(dev, _hours(range(2, 3)), memory, 1000.0 + 600)   # ładowanie tylko 02–03
+    assert d.status == "write" and dev.enabled
+    starts = {p.start_min: p.grid_charge for p in reading(dev.words).programs}
+    assert all(not gc for s, gc in starts.items() if 180 <= s < 300)
+
+
+def test_extended_charge_window_waits_for_the_rewrite_interval():
+    dev = Device()
+    memory = ControlMemory.for_profile(DEYE)
+    _cycle(dev, _hours(range(2, 5)), memory, 1000.0)
+    d, _ = _cycle(dev, _hours(range(1, 5)), memory, 1000.0 + 600)   # dłuższe ładowanie — nie „bezpieczne”
+    assert (d.status, d.writes) == ("idle", []) and "tou_rewrite_interval" in d.notes
+
+
+def test_safety_off_writes_are_capped_per_day():
+    dev = Device()
+    memory = ControlMemory.for_profile(DEYE)
+    _cycle(dev, _hours(range(2, 5)), memory, 1000.0)
+    for _ in range(60):
+        memory.budget.note(ENABLE, NOW.timestamp() - 60)
+    offs = 0
+    for i in range(40):
+        dev.words[EN_ADDR] |= 1                                        # ktoś ciągle włącza z powrotem
+        d, _ = _cycle(dev, _hours([]), memory, 5000.0 + 300.0 * i)
+        offs += d.status == "write"
+    assert offs <= 24
+
+
+def test_unsupported_schedule_with_live_stale_charging_switches_off():
+    dev = Device()
+    memory = ControlMemory.for_profile(DEYE)
+    _cycle(dev, _hours(range(2, 5)), memory, 1000.0)
+    memory.unsupported.add("tou")
+    d, _ = _cycle(dev, _hours([]), memory, 5000.0)
+    assert [w.key for w in d.writes] == [ENABLE] and not dev.enabled
+    d, _ = _cycle(dev, _hours(range(2, 5)), memory, 5300.0)
+    assert (d.status, d.reason) == ("blocked", "tou_unsupported")

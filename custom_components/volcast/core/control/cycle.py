@@ -108,6 +108,10 @@ class ControlMemory:
     # (zegar monotoniczny) — przepisanie najwyżej raz na godzinę, ponowne włączenie po I-6
     tou_rewrite_at: float | None = None
     tou_enable_at: float | None = None
+    # koniec ostatniej naszej wymiany TOU — odczyt rozpoczęty wcześniej nie jest podstawą decyzji
+    tou_write_end: float | None = None
+    # wyłączenia harmonogramu w stronę bezpieczną (poza budżetem): limit na dobę
+    tou_safety_offs: list[float] = field(default_factory=list)
 
     @classmethod
     def for_profile(cls, profile) -> "ControlMemory":
