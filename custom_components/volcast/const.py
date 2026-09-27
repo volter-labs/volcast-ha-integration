@@ -63,3 +63,11 @@ STOP_WRITE_TIMEOUT_S = 10.0
 ERROR_ISSUE_AFTER = 10
 # Pre-release backend; replaced on the stable release.
 BETA_PAIRING_URL = "https://staging.volcast.app/functions/v1/pairing-session"
+
+# Połączenie bezpośrednie z falownikiem (Modbus)
+CONTROL_MODE_DIRECT = "direct"
+OPT_DIRECT_TARGET = "direct_target"
+OPT_DIRECT_TRIAL = "direct_trial"
+OPT_DIRECT_POLL_S = "direct_poll_s"
+DIRECT_POLL_S = 10
+DIRECT_SLOW_POLL_S = 60
