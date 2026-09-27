@@ -18,6 +18,15 @@ Pierwszy plan zawsze ma jawny wynik (`plan_outcome`), nigdy ogólne „gotowe":
 
 Encję ceny proponujemy tylko wtedy, gdy JUŻ TERAZ daje pełną serię
 (`has_usable_prices_now`); inaczej „none found" — właściciel wybiera inne źródło.
+
+Wybory zdalne:
+- stosujemy je najwyżej RAZ na sesję: zastosowany wybór (sesja, wartość, czas) trafia do
+  danych wpisu razem ze zmianą opcji, w jednej aktualizacji. Nowy przebieg (np. po
+  restarcie HA w oknie 30 min) go nie powtarza — późniejsza zmiana w opcjach wygrywa;
+- gdy wpis właśnie się przeładowuje (brak `runtime()`), wybór sposobu sterowania czeka
+  na następne odpytanie — nigdy nie przepada na stałe;
+- inne źródło cen niż HA ustawia aplikacja/chmura — krok cen kończy się bez zmian tutaj.
+Nieudana publikacja postępu jest ponawiana przy następnym obiegu pętli.
 """
 from __future__ import annotations
 
@@ -30,7 +39,8 @@ from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
 
-from .const import CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY
+from .const import (CONF_PAIRING, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_LOAD_ENERGY, OPT_PRICE_BUY,
+                    OPT_PRICE_CURRENCY)
 from .core.control.caps import entity_mode_ready
 from .core.prices import has_usable_prices_now
 
@@ -46,6 +56,8 @@ _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 _PLAN_RETRY_S = 125.0
 _PLAN_ATTEMPTS = 3
 _GONE = ("expired", "gone", "disabled")
+_APPLIED = "applied_choices"
+_PRICE_SOURCE = re.compile(r"[A-Za-z0-9_:.-]{1,64}")
 
 PLAN_UNAVAILABLE = "planner unavailable"
 QUEUED = "queued"
@@ -104,6 +116,7 @@ class Onboarding:
         self._price_candidate: str | None = None
         self._plan_attempts = 0
         self._plan_retry_at: datetime | None = None
+        self._dirty = False
         self.first_plan_outcome: str | None = None
 
     async def async_run(self) -> None:
@@ -119,7 +132,11 @@ class Onboarding:
         if self._steps.get(key) == (state, detail):
             return
         self._steps[key] = (state, detail)
-        await self._client.async_progress(self._session, progress_payload(self._steps))
+        await self._publish()
+
+    async def _publish(self) -> None:
+        ok = await self._client.async_progress(self._session, progress_payload(self._steps))
+        self._dirty = ok is not True          # nieudana publikacja — ponowimy w pętli
 
     def _state(self, key: str) -> str:
         return self._steps[key][0]
@@ -134,10 +151,33 @@ class Onboarding:
         entry = self._entry()
         return entry.options if entry is not None else {}
 
-    def _patch_options(self, patch: dict) -> None:
+    def _tz(self):
+        get_default = getattr(dt_util, "get_default_time_zone", None)
+        return get_default() if get_default is not None else ZoneInfo(self._hass.config.time_zone)
+
+    def _applied(self) -> dict[str, Any]:
+        """Wybory zdalne już zastosowane w TEJ sesji (z danych wpisu — przeżywają restart)."""
         entry = self._entry()
-        if entry is not None:
-            self._hass.config_entries.async_update_entry(entry, options={**entry.options, **patch})
+        pairing = (getattr(entry, "data", None) or {}).get(CONF_PAIRING) if entry is not None else None
+        rec = pairing.get(_APPLIED) if isinstance(pairing, dict) else None
+        if not isinstance(rec, dict) or rec.get("session_id") != self._session.session_id:
+            return {}
+        choices = rec.get("choices")
+        return dict(choices) if isinstance(choices, dict) else {}
+
+    def _commit_choices(self, patch: dict, applied: dict[str, str]) -> None:
+        """Opcje i zapis „zastosowano" w JEDNEJ aktualizacji wpisu (jedno przeładowanie)."""
+        entry = self._entry()
+        if entry is None or not patch:
+            return
+        data = dict(getattr(entry, "data", None) or {})
+        pairing = dict(data.get(CONF_PAIRING) or {})
+        choices = self._applied()
+        at = self._utcnow().isoformat()
+        choices.update({k: {"value": v, "at": at} for k, v in applied.items()})
+        pairing[_APPLIED] = {"session_id": self._session.session_id, "choices": choices}
+        data[CONF_PAIRING] = pairing
+        self._hass.config_entries.async_update_entry(entry, data=data, options={**entry.options, **patch})
 
     def _control_ready(self, rt) -> bool:
         """Ta sama reguła co w opcjach (`entity_mode_ready`)."""
@@ -151,8 +191,7 @@ class Onboarding:
             return False
         currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
         try:
-            return has_usable_prices_now(st.attributes, currency, ZoneInfo(self._hass.config.time_zone),
-                                         self._utcnow())
+            return has_usable_prices_now(st.attributes, currency, self._tz(), self._utcnow())
         except Exception as err:  # noqa: BLE001 — zła encja = nieużywalna
             _LOGGER.debug("Volcast onboarding: price entity check failed (%s)", type(err).__name__)
             return False
@@ -171,17 +210,21 @@ class Onboarding:
         report = await self._wait_report() or {}
         rt = self._runtime()
         await self._inverter_step(report)
-        await self._set("installation", "done" if getattr(rt, "rated_power_w", None) else "pending",
-                        _kw(getattr(rt, "rated_power_w", None)))
+        await self._set("installation", "done", _kw(getattr(rt, "rated_power_w", None)))
         if self._control_ready(rt):
             await self._set("capabilities", "done", ", ".join(sorted(set(rt.mapped) & _WRITE_KEYS)))
         else:
             await self._set("capabilities", "done", "read only")
         chosen = self._options().get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES
-        await self._set("control_mode", "done" if chosen else "choice", "entities" if chosen else None)
+        if chosen:
+            await self._set("control_mode", "done", "entities")
+        elif "control_mode" in self._applied():
+            await self._set("control_mode", "done")      # zastosowany wcześniej; opcje wygrywają
+        else:
+            await self._set("control_mode", "choice")
         await self._prices_step(report)
         await self._consumption_step(report)
-        await self._request_plan(rt)
+        await self._request_plan()
         await self._loop()
 
     async def _inverter_step(self, report: dict) -> None:
@@ -198,6 +241,9 @@ class Onboarding:
         current = self._options().get(OPT_PRICE_BUY)
         if self._usable_price(current):
             await self._set("prices", "done", current)
+            return
+        if "price_source" in self._applied():
+            await self._set("prices", "done")            # zastosowany wcześniej; opcje wygrywają
             return
         for cand in report.get("price_entities") or []:
             eid = cand.get("entity_id") if isinstance(cand, dict) else None
@@ -222,11 +268,13 @@ class Onboarding:
         if not isinstance(imported, dict):
             await self._set("consumption", "error", "history import failed")
             return
-        days = max((s.get("days_of_statistics") or 0 for s in report.get("energy_sensors") or []
-                    if isinstance(s, dict)), default=0)
-        await self._set("consumption", "done", f"{days} days of history" if days else "imported")
+        load = self._options().get(OPT_LOAD_ENERGY)
+        days = next((s.get("days_of_statistics") for s in report.get("energy_sensors") or []
+                     if isinstance(s, dict) and s.get("entity_id") == load), None)
+        ok = isinstance(days, int) and not isinstance(days, bool) and days > 0
+        await self._set("consumption", "done", f"{days} days of history" if ok else "imported")
 
-    async def _request_plan(self, rt=None) -> None:
+    async def _request_plan(self) -> None:
         self._plan_attempts += 1
         self._plan_retry_at = None
         if self._state("first_plan") == "pending":
@@ -237,7 +285,8 @@ class Onboarding:
         can_retry = self._plan_attempts < _PLAN_ATTEMPTS
         if outcome == "ok":
             await self._set("first_plan", "done", f"{res['slots_count']} slots")
-            fetcher = getattr(rt if rt is not None else self._runtime(), "fetcher", None)
+            # Świeży runtime: wpis mógł się w międzyczasie przeładować.
+            fetcher = getattr(self._runtime(), "fetcher", None)
             if fetcher is not None:
                 await fetcher.async_refresh()
         elif outcome == "cooldown":
@@ -255,10 +304,12 @@ class Onboarding:
 
     async def _loop(self) -> None:
         while self._live():
+            if self._dirty:
+                await self._publish()
             if self._plan_retry_at is not None and self._utcnow() >= self._plan_retry_at:
                 await self._request_plan()
             waiting = "choice" in (self._state("control_mode"), self._state("prices"))
-            if not waiting and self._plan_retry_at is None:
+            if not waiting and self._plan_retry_at is None and not self._dirty:
                 return
             if waiting:
                 result = await self._client.async_poll(self._session)
@@ -269,19 +320,34 @@ class Onboarding:
             await self._sleep(self._choice_poll_s)
 
     async def _apply(self, choices: Mapping[str, str]) -> None:
+        patch: dict[str, str] = {}
+        applied: dict[str, str] = {}
+        steps: list[tuple[str, str, str | None]] = []
         mode = choices.get("control_mode")
         if mode == CONTROL_MODE_ENTITIES and self._state("control_mode") == "choice":
-            if self._control_ready(self._runtime()):
-                self._patch_options({OPT_CONTROL_MODE: CONTROL_MODE_ENTITIES})
-                await self._set("control_mode", "done", "entities")
+            rt = self._runtime()
+            if rt is None:
+                pass                              # wpis się przeładowuje — spróbujemy przy następnym odpytaniu
+            elif self._control_ready(rt):
+                patch[OPT_CONTROL_MODE] = CONTROL_MODE_ENTITIES
+                applied["control_mode"] = mode
+                steps.append(("control_mode", "done", "entities"))
             else:
-                await self._set("control_mode", "error", NOT_READY)
+                steps.append(("control_mode", "error", NOT_READY))
         elif mode == "direct" and self._state("control_mode") == "choice":
-            await self._set("control_mode", "error", "direct control arrives in a later version")
-        if choices.get("price_source") == "ha" and self._state("prices") == "choice":
-            if self._price_candidate and self._usable_price(self._price_candidate):
-                self._patch_options({OPT_PRICE_BUY: self._price_candidate})
-                await self._set("prices", "done", self._price_candidate)
-            else:
-                # Wybór „ceny z HA", a encja (już) nie daje pełnej serii — nie udajemy sukcesu.
-                await self._set("prices", "error", NONE_FOUND)
+            steps.append(("control_mode", "error", "direct control arrives in a later version"))
+        source = choices.get("price_source")
+        if isinstance(source, str) and self._state("prices") == "choice":
+            if source == "ha":
+                if self._price_candidate and self._usable_price(self._price_candidate):
+                    patch[OPT_PRICE_BUY] = self._price_candidate
+                    applied["price_source"] = source
+                    steps.append(("prices", "done", self._price_candidate))
+                else:
+                    # Wybór „ceny z HA", a encja (już) nie daje pełnej serii — nie udajemy sukcesu.
+                    steps.append(("prices", "error", NONE_FOUND))
+            elif _PRICE_SOURCE.fullmatch(source):
+                steps.append(("prices", "done", None))   # źródło ustawia aplikacja/chmura
+        self._commit_choices(patch, applied)
+        for key, state, detail in steps:
+            await self._set(key, state, detail)

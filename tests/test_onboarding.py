@@ -59,7 +59,7 @@ class Client:
 
 
 def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, prices=None, options=None,
-         imported=None, choice=None):
+         imported=None, choice=None, entry=None, rated=8000.0):
     t = [NOW]
 
     def utcnow():
@@ -68,17 +68,18 @@ def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, p
     async def sleep(_s):
         t[0] = t[0] + timedelta(seconds=clock_step)
 
-    entry = SimpleNamespace(entry_id="e1", options=dict(
-        {"load_energy_entity": "sensor.house"} if options is None else options))
+    entry = entry or SimpleNamespace(entry_id="e1", data={"api_key": "vk_x", "pairing": {"session_id": "s1"}},
+                                     options=dict({"load_energy_entity": "sensor.house_consumption"}
+                                                  if options is None else options))
     hass = SimpleNamespace(
         config=SimpleNamespace(time_zone="Europe/Warsaw"),
         states=States({PRICE: _price_attrs()} if prices is None else prices),
         config_entries=SimpleNamespace(
             async_get_entry=lambda eid: entry,
-            async_update_entry=MagicMock(side_effect=lambda e, options: setattr(e, "options", options))))
+            async_update_entry=MagicMock(side_effect=lambda e, **kw: [setattr(e, k, v) for k, v in kw.items()])))
     fetch = SimpleNamespace(async_refresh=MagicMock(side_effect=lambda: _ret("accepted")))
     rt = SimpleNamespace(choice=choice or ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET"),
-                         mapped={k: f"x.{k}" for k in mapped}, rated_power_w=8000.0, fetcher=fetch)
+                         mapped={k: f"x.{k}" for k in mapped}, rated_power_w=rated, fetcher=fetch)
     client = Client(polls, plan)
     ob = Onboarding(hass, "e1", client=client, session=S, live_until=NOW + timedelta(minutes=30),
                     runtime=lambda: rt, report=lambda: report,
@@ -132,6 +133,7 @@ def test_remote_entities_choice_sets_option():
     asyncio.run(ob.async_run())
     assert entry.options["control_mode"] == "entities" and last(client)["control_mode"]["state"] == "done"
     assert last(client)["control_mode"]["detail"] == "entities"
+    assert entry.options["load_energy_entity"] == "sensor.house_consumption"      # reszta opcji zostaje
 
 
 @pytest.mark.parametrize("mapped,choice", [
@@ -322,12 +324,150 @@ def test_never_raises_and_logs_class_only(caplog):
     assert "10.0.0.1" not in caplog.text and "RuntimeError" in caplog.text
 
 
-def test_runtime_missing_does_not_crash():
-    ob, client, _ = make([PollResult("consumed", choices={"control_mode": "entities"})], plan=OK_PLAN)
+def test_runtime_missing_keeps_remote_choice_pending_then_applies():
+    # Wpis przeładowuje się (runtime chwilowo brak) — wybór czeka, nie przepada.
+    ob, client, entry = make([PollResult("consumed", choices={"control_mode": "entities"})], plan=OK_PLAN)
+    real = ob._runtime()
+    calls = {"n": 0}
+
+    def runtime():
+        calls["n"] += 1
+        return None if 2 <= calls["n"] <= 4 else real
+    ob._runtime = runtime
+    asyncio.run(ob.async_run())
+    states = [({s["key"]: s for s in p}.get("control_mode") or {}).get("state") for p in client.progress]
+    assert "error" not in states
+    assert entry.options["control_mode"] == "entities" and last(client)["control_mode"]["state"] == "done"
+
+
+def test_runtime_missing_for_whole_window_never_errors():
+    ob, client, entry = make([PollResult("consumed", choices={"control_mode": "entities"})], plan=OK_PLAN)
     ob._runtime = lambda: None
     asyncio.run(ob.async_run())
     st = last(client)
-    assert st["capabilities"]["detail"] == "read only" and st["control_mode"]["state"] == "error"
+    assert st["capabilities"]["detail"] == "read only" and st["control_mode"]["state"] == "choice"
+    assert "control_mode" not in entry.options
+
+
+def test_both_remote_choices_applied_in_one_entry_update():
+    ob, client, entry = make([PollResult("consumed", choices={"control_mode": "entities", "price_source": "ha"})],
+                             plan=OK_PLAN)
+    asyncio.run(ob.async_run())
+    assert ob._hass.config_entries.async_update_entry.call_count == 1
+    assert entry.options["control_mode"] == "entities" and entry.options["entity_price_buy"] == PRICE
+
+
+def test_applied_choice_is_recorded_with_session_and_time():
+    ob, client, entry = make([PollResult("consumed", choices={"control_mode": "entities"})], plan=OK_PLAN)
+    asyncio.run(ob.async_run())
+    applied = entry.data["pairing"]["applied_choices"]
+    assert applied["session_id"] == "s1"
+    assert applied["choices"]["control_mode"]["value"] == "entities"
+    assert applied["choices"]["control_mode"]["at"] == NOW.isoformat()
+    assert entry.data["api_key"] == "vk_x" and entry.data["pairing"]["session_id"] == "s1"
+
+
+def test_remote_choice_not_reapplied_after_restart_local_change_wins():
+    polls = [PollResult("consumed", choices={"control_mode": "entities", "price_source": "ha"})]
+    ob, client, entry = make(polls, plan=OK_PLAN)
+    asyncio.run(ob.async_run())
+    # właściciel wyłącza sterowanie i ceny lokalnie, potem restart HA w oknie 30 min
+    entry.options = {k: v for k, v in entry.options.items() if k not in ("control_mode", "entity_price_buy")}
+    ob2, client2, _ = make(polls, plan=OK_PLAN, entry=entry)
+    asyncio.run(ob2.async_run())
+    assert "control_mode" not in entry.options and "entity_price_buy" not in entry.options
+    st = last(client2)
+    assert st["control_mode"]["state"] == "done" and st["prices"]["state"] == "done"
+    assert ob2._hass.config_entries.async_update_entry.call_count == 0
+
+
+def test_applied_record_of_another_session_is_ignored():
+    entry = SimpleNamespace(entry_id="e1", options={"load_energy_entity": "sensor.house_consumption"},
+                            data={"pairing": {"session_id": "s1", "applied_choices": {
+                                "session_id": "old", "choices": {"control_mode": {"value": "entities", "at": "x"}}}}})
+    ob, client, _ = make([PollResult("consumed", choices={"control_mode": "entities"})], plan=OK_PLAN, entry=entry)
+    asyncio.run(ob.async_run())
+    assert entry.options["control_mode"] == "entities"
+
+
+# ── drobne: ponowienie postu, deduplikacja, dni historii, inne źródło cen ──
+
+
+def test_lost_final_post_is_resent():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    real = client.async_progress
+    state = {"fail": True}
+
+    async def progress(s, steps):
+        by_key = {x["key"]: x for x in steps}
+        if state["fail"] and by_key.get("first_plan", {}).get("detail") == "24 slots":
+            state["fail"] = False                              # ta jedna próba przepada
+            return False
+        return await real(s, steps)
+    client.async_progress = progress
+    asyncio.run(ob.async_run())
+    assert last(client)["first_plan"] == {"key": "first_plan", "state": "done", "detail": "24 slots"}
+
+
+def test_rejected_posts_do_not_stop_choices_or_first_plan():
+    ob, client, entry = make([PollResult("consumed", choices={"control_mode": "entities"})], plan=OK_PLAN)
+
+    async def rejected(s, steps):
+        return False
+    client.async_progress = rejected
+    asyncio.run(ob.async_run())
+    assert entry.options["control_mode"] == "entities" and client.plan_calls == 1
+
+
+def test_posts_only_on_state_changes():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    asyncio.run(ob.async_run())
+    snapshots = [tuple(sorted((x["key"], x["state"], x.get("detail")) for x in p)) for p in client.progress]
+    assert len(snapshots) == len(set(snapshots))
+
+
+def test_history_days_come_from_the_imported_sensor():
+    report = dict(REPORT, energy_sensors=[{"entity_id": "sensor.other", "days_of_statistics": 400},
+                                          {"entity_id": "sensor.house_consumption", "days_of_statistics": 58}])
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report)
+    asyncio.run(ob.async_run())
+    assert last(client)["consumption"]["detail"] == "58 days of history"
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report,
+                         options={"load_energy_entity": "sensor.not_in_report"})
+    asyncio.run(ob.async_run())
+    assert last(client)["consumption"]["detail"] == "imported"
+
+
+def test_other_price_source_ends_the_price_step():
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "pstryk"})], plan=OK_PLAN,
+                             prices={}, options={"load_energy_entity": "sensor.house_consumption",
+                                                 "control_mode": "entities"})
+    asyncio.run(ob.async_run())
+    assert last(client)["prices"] == {"key": "prices", "state": "done"}
+    assert "entity_price_buy" not in entry.options
+    assert ob._utcnow() < NOW + timedelta(minutes=5)          # pętla nie odpytuje do końca okna
+
+
+def test_installation_without_rated_power_is_done_without_detail():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, rated=None)
+    asyncio.run(ob.async_run())
+    assert last(client)["installation"] == {"key": "installation", "state": "done"}
+
+
+def test_first_plan_refresh_uses_current_runtime():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    old = ob._runtime()
+    new = SimpleNamespace(**{**vars(old), "fetcher": SimpleNamespace(
+        async_refresh=MagicMock(side_effect=lambda: _ret("accepted")))})
+    calls = {"n": 0}
+
+    def runtime():
+        calls["n"] += 1
+        return old if calls["n"] == 1 else new
+    ob._runtime = runtime
+    asyncio.run(ob.async_run())
+    new.fetcher.async_refresh.assert_called_once()
+    old.fetcher.async_refresh.assert_not_called()
 
 
 def test_control_runtime_fields():
