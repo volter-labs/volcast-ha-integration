@@ -254,7 +254,9 @@ class Onboarding:
         inv = inverters[0]
         dev = (inv.get("devices") or [{}])[0]
         label = " ".join(x for x in (dev.get("manufacturer"), dev.get("model")) if x) or inv.get("domain")
-        await self._set("inverter", "done", f"{label} · {inv['host']}" if inv.get("host") else label)
+        # Adres lokalny falownika zostaje w Home Assistant — chmura go nie odczytuje
+        # (pole postępu jest tylko wyświetlane), więc nie ma powodu go wysyłać.
+        await self._set("inverter", "done", label)
 
     async def _prices_step(self, report: dict) -> None:
         current = self._options().get(OPT_PRICE_BUY)

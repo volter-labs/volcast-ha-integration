@@ -118,7 +118,8 @@ def test_happy_path_publishes_all_steps_and_first_plan():
     st = last(client)
     assert list(st) == list(STEP_KEYS)
     assert st["account"]["state"] == "done"
-    assert st["inverter"]["detail"] == "GoodWe GW8KN-ET · 192.168.1.50"
+    assert st["inverter"]["detail"] == "GoodWe GW8KN-ET"
+    assert "192.168.1.50" not in str(st)  # local address never leaves HA in pairing progress
     assert st["installation"]["detail"] == "8 kW"
     assert st["capabilities"] == {"key": "capabilities", "state": "done",
                                   "detail": ", ".join(sorted(WRITE_KEYS))}
