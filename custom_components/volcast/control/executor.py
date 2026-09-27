@@ -1,4 +1,7 @@
-"""Wykonawca planu w trybie encji — jedyny pisarz do falownika w tej integracji.
+"""Wykonawca planu — jedyny pisarz do falownika w tej integracji.
+
+Odczyt, cel zapisu, pisarz, własność i obserwacja obcych zmian pochodzą z obiektu
+wejścia/wyjścia urządzenia (`device_io.DeviceIO`); domyślnie tryb encji (`EntityIO`).
 
 Cykl co 60 s (i po każdej zmianie planu/zgody/przełącznika): odczyt encji z jednostkami
 → `decide_cycle` (czysty rdzeń) → zapis usługami tylko przy statusie WRITE. Stan trwały
@@ -50,9 +53,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import timedelta
 from typing import Callable, Mapping
 from zoneinfo import ZoneInfo
@@ -60,26 +62,26 @@ from zoneinfo import ZoneInfo
 import homeassistant.util.dt as dt_util
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval
 
-from ..const import (CONTROL_MODE_ENTITIES, DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S,
-                     OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED, STOP_WRITE_TIMEOUT_S)
+from ..const import (DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S, OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED,
+                     STOP_WRITE_TIMEOUT_S)
 from ..core.control.baseline import baseline_params, needs_restore, snapshot_missing, take_snapshot
-from ..core.control.cycle import (BLOCKED, ERROR, WRITE, ControlMemory, CycleDecision, EntityContext,
-                                  Gates, Limits, Telemetry, commit, decide_cycle, same_value)
-from ..core.control.entity_fit import control_writes, fit_params
+from ..core.control.cycle import (BLOCKED, ERROR, WRITE, ControlMemory, CycleDecision, Gates, Limits, Telemetry,
+                                  commit, decide_cycle, same_value)
 from ..core.control.group_writes import GROUP_KEYS, GroupReport, async_run_group_writes, order_group
 from ..core.control.readings import RawState, normalize_readings
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.control.takeover import FOREIGN_PAUSE_S, is_foreign_change
 from ..core.engines.time_window import compress
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
+from .device_io import NO_READING, DeviceIO, EntityIO, Reading
 from .store import ControlState, ControlStore
 
 _LOGGER = logging.getLogger(__name__)
 
 RESTORE = "restore"
-_NO_READING = ("unavailable", "unknown", "")
+_NO_READING = NO_READING
 # Ile razy z rzędu cykl powtarza się po tikach zgłoszonych w jego trakcie.
 _MAX_RERUNS = 2
 # Ile ostatnich obcych zmian trzymamy w atrybutach (lokalnie).
@@ -88,45 +90,26 @@ _FOREIGN_KEEP = 20
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
 
-@dataclass(frozen=True)
-class _Reading:
-    """Odczyt encji jednego cyklu."""
-    readings: dict[str, float | str]      # znormalizowane (migawka, powrót do bazowego)
-    raw_mode: str | None                  # surowa opcja trybu (obca opcja ≠ brak odczytu)
-    units: dict[str, str | None]
-    attrs: dict[str, dict]                # atrybuty encji, także `options` wyboru trybu
-    soc_age_s: float
-
-    @property
-    def foreign_mode(self) -> bool:
-        """Czytelna opcja trybu, której profil nie zna."""
-        return self.raw_mode is not None and self.raw_mode not in _NO_READING \
-            and "mode" not in self.readings
-
-    def for_cycle(self) -> dict[str, float | str]:
-        """Odczyty dla cyklu: tryb jako surowa opcja — cykl sam rozpozna obcą."""
-        out = dict(self.readings)
-        if self.raw_mode is not None:
-            out["mode"] = self.raw_mode
-        return out
+_Reading = Reading                 # dawna nazwa (odczyt jednego cyklu)
 
 
 class VolcastExecutor:
     def __init__(self, hass, entry, *, choice: ProfileChoice | None, mapped: Mapping[str, str],
-                 rated_power_w: float | None, store: ControlStore, writer,
+                 rated_power_w: float | None, store: ControlStore, writer=None,
                  clock: Callable[[], float] = time.monotonic, utcnow=dt_util.utcnow,
                  stop_timeout_s: float = STOP_WRITE_TIMEOUT_S, lock: asyncio.Lock | None = None,
-                 mode_unique_id: str | None = None) -> None:
+                 mode_unique_id: str | None = None, io: DeviceIO | None = None) -> None:
         self._hass = hass
         self._entry = entry
         self._choice = choice
         self._profile = choice.profile if choice else None
         self._domain = choice.integration_domain if choice else None
         self._mapped = dict(mapped) if self._domain else {}
-        self._mode_uid = mode_unique_id if self._domain and "mode" in self._mapped else None
         self._rated = rated_power_w
         self._store = store
-        self._writer = writer
+        # io=None → tryb encji z (choice, mapped, writer) — dotychczasowe wywołania bez zmian
+        self.io: DeviceIO = io if io is not None else EntityIO(
+            hass, self._profile, self._domain, self._mapped, writer, mode_unique_id=mode_unique_id)
         self._clock = clock
         self._utcnow = utcnow
         self._stop_timeout_s = stop_timeout_s
@@ -232,10 +215,9 @@ class VolcastExecutor:
             self._hass, self._async_timer, timedelta(seconds=EXECUTOR_INTERVAL_S)))
         # Pauza nie przeżywa restartu — zgłoszenie z poprzedniego przebiegu jest nieaktualne.
         ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
-        watched = [self._mapped[k] for k in self._write_keys() if k in self._mapped]
-        if watched:
-            self._unsub.append(async_track_state_change_event(self._hass, watched,
-                                                              self.async_on_state_event))
+        unsub = self.io.subscribe_foreign(self.async_on_state_event)
+        if unsub is not None:
+            self._unsub.append(unsub)
 
     async def async_stop(self) -> None:
         """Bez przywracania; czeka na zapis w toku najwyżej `stop_timeout_s`."""
@@ -275,21 +257,15 @@ class VolcastExecutor:
             return ()
         return tuple((self._profile.raw.get("write_policy") or {}).get("order") or ())
 
+    @property
+    def _writer(self):
+        return self.io.writer
+
     def _owner(self) -> dict:
-        owner = {"profile": self._profile.id if self._profile else "", "domain": self._domain or ""}
-        if self._mode_uid:
-            owner["mode_uid"] = self._mode_uid
-        # entity_id zapisywany dalej obok — poprzednia wersja dopasowuje rekord po nim.
-        owner["mode_entity"] = self._mapped.get("mode", "")
-        return owner
+        return self.io.owner()
 
     def _owner_matches(self, record: Mapping[str, str]) -> bool:
-        current = self._owner()
-        if record.get("profile") != current["profile"] or record.get("domain") != current["domain"]:
-            return False
-        if record.get("mode_uid") and "mode_uid" in current:
-            return record["mode_uid"] == current["mode_uid"]
-        return record.get("mode_entity") == current["mode_entity"]
+        return self.io.owner_matches(record)
 
     def _drop_foreign_owner(self) -> bool:
         """Migawka z innego profilu albo innej encji trybu nie trafia w nowe encje.
@@ -401,19 +377,19 @@ class VolcastExecutor:
             self._state.restore_keys.extend(k for k in keys if k not in self._state.restore_keys)
         return before != (self._state.taken_over, self._state.restore_keys)
 
-    def _update_foreign_episode(self, rd: _Reading) -> None:
+    def _update_foreign_episode(self, rd: Reading) -> None:
         """Epizod trybu spoza profilu kończy dopiero odczyt trybu z profilu (brak odczytu — nic)."""
         if "mode" in rd.readings:
             self._foreign_episode = False
 
-    def _signal_foreign_mode(self, rd: _Reading, live: bool, takeover: bool) -> bool:
+    def _signal_foreign_mode(self, rd: Reading, live: bool, takeover: bool) -> bool:
         """Sygnał poziomu: raz na epizod, tylko przy otwartym sterowaniu; True, gdy wystąpił."""
         if not (rd.foreign_mode or takeover) or not live or self._foreign_episode:
             return False
         self._foreign_episode = True
         _LOGGER.warning("Volcast control paused for 30 min: the inverter mode was set to an option "
                         "outside the profile")
-        self._pause_for_foreign("mode", self._mapped.get("mode"))
+        self._pause_for_foreign("mode", self.io.entity_of("mode"))
         return True
 
     def _close_foreign_issue(self) -> None:
@@ -453,7 +429,7 @@ class VolcastExecutor:
         try:
             async with self._lock:
                 if self._state.owned and self._profile and self._domain and self._memory:
-                    await self._restore(self._read(self._utcnow()))
+                    await self._restore(self.io.read(self._utcnow()))
         except Exception as err:  # noqa: BLE001 — usuwanie wpisu nie może się wywrócić
             _LOGGER.error("Volcast control: return to the baseline mode failed (%s)", type(err).__name__)
 
@@ -502,34 +478,11 @@ class VolcastExecutor:
                 if not self._rerun or self._stopped or self._frozen:
                     break
 
-    def _read(self, now_utc) -> _Reading:
-        raw: dict[str, RawState] = {}
-        units: dict[str, str | None] = {}
-        attrs: dict[str, dict] = {}
-        soc_state = None
-        raw_mode = None
-        for key, eid in self._mapped.items():
-            st = self._hass.states.get(eid)
-            if st is None:
-                continue
-            unit = st.attributes.get("unit_of_measurement")
-            raw[key], units[key] = RawState(st.state, unit), unit
-            attrs[eid] = dict(st.attributes)
-            if key == "mode" and isinstance(st.state, str):
-                raw_mode = st.state
-            if key == "soc":
-                soc_state = st
-        readings = normalize_readings(raw, self._profile, self._domain) if self._domain else {}
-        return _Reading(readings, raw_mode, units, attrs, self._age(soc_state, now_utc))
+    def _read(self, now_utc) -> Reading:
+        return self.io.read(now_utc)
 
     def _age(self, st, now_utc) -> float:
-        if st is None:
-            return math.inf
-        ts = getattr(st, "last_reported", None) or getattr(st, "last_updated", None)
-        if ts is None:
-            return math.inf
-        age = (now_utc - ts).total_seconds()
-        return 0.0 if -5.0 < age < 0.0 else age
+        return EntityIO.age(st, now_utc)
 
     async def _tick_locked(self) -> None:
         now_mono, now_utc = self._clock(), self._utcnow()
@@ -537,7 +490,7 @@ class VolcastExecutor:
         if self._profile is None or self._memory is None:
             self.last_decision = CycleDecision("idle", "no_profile")
             return
-        rd = self._read(now_utc)
+        rd = self.io.read(now_utc)
         self._update_foreign_episode(rd)
         gates = Gates(consent=self._state.consent, local_switch=self._state.local_switch,
                       control_mode=self._entry.options.get(OPT_CONTROL_MODE),
@@ -559,9 +512,7 @@ class VolcastExecutor:
                            battery_temp_c=temp if isinstance(temp, float) else None,
                            previous_soc=prev_soc, previous_soc_gap_s=gap),
             limits=Limits(rated_power_w=float(self._rated or 0.0)),
-            ents=EntityContext(domain=self._domain or "", mapped=self._mapped, units=rd.units,
-                               attrs=rd.attrs, readings=rd.for_cycle()),
-            gates=gates, memory=self._memory)
+            gates=gates, memory=self._memory, **self.io.cycle_input(rd))
         if soc is not None:
             self._prev_soc = (soc, now_mono)
         # Z własnego odczytu, nie tylko z decyzji — wcześniejsza blokada cyklu go nie zasłoni.
@@ -589,7 +540,7 @@ class VolcastExecutor:
                                     readings: Mapping[str, float | str]) -> CycleDecision:
         """Migawka nastaw PRZED pierwszym zapisem; niepełna albo niezapisana = żadnego zapisu."""
         snapshot = take_snapshot(readings)
-        missing = snapshot_missing(snapshot, self._mapped)
+        missing = snapshot_missing(snapshot, self.io.snapshot_keys())
         if missing:
             return replace(decision, status=BLOCKED, reason="baseline_unknown", unmapped=missing)
         self._state.snapshot = snapshot
@@ -610,9 +561,9 @@ class VolcastExecutor:
     def _gates_open(self) -> bool:
         return (self._state.consent is True and self._state.local_switch and not self._stopped
                 and not self.paused
-                and self._entry.options.get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES)
+                and self._entry.options.get(OPT_CONTROL_MODE) == self.io.kind)
 
-    async def _restore(self, rd: _Reading) -> None:
+    async def _restore(self, rd: Reading) -> None:
         """Powrót do trybu bazowego: najpierw sam tryb, potem każda pozostała nastawa.
 
         Tryb bazowy jest neutralny i nie potrzebuje warunków, więc nie czeka na żadną
@@ -621,7 +572,7 @@ class VolcastExecutor:
         """
         now_mono = self._clock()
         params = baseline_params(self._profile, self._state.snapshot)
-        fitted, _, unfit = fit_params(params, self._profile, self._domain, self._mapped, rd.units, rd.attrs)
+        fitted, unfit = self.io.restore_fit(rd, params)
         target = fitted.flatten()
         readings = rd.readings
         # Tylko to, co sami zapisaliśmy i czego właściciel potem nie zmienił (None = cała migawka).
@@ -636,10 +587,8 @@ class VolcastExecutor:
         mode_kept = "mode" in owner_kept or (rd.foreign_mode and "mode" in keys)
         if "mode" in keys and rd.foreign_mode:
             keys.remove("mode")          # ktoś wybrał tryb spoza profilu — zostaje jego
-        group_writes, _ = control_writes(fitted, self._profile, self._domain, self._mapped,
-                                         keys=[k for k in keys if k in GROUP_KEYS], units=rd.units)
-        rest_writes, _ = control_writes(fitted, self._profile, self._domain, self._mapped,
-                                        keys=[k for k in keys if k not in GROUP_KEYS], units=rd.units)
+        group_writes = self.io.restore_writes(fitted, [k for k in keys if k in GROUP_KEYS], rd)
+        rest_writes = self.io.restore_writes(fitted, [k for k in keys if k not in GROUP_KEYS], rd)
         # Moc (gdyby profil ją kiedyś miał w stanie bazowym) po trybie: tryb bazowy ją ignoruje.
         reports = []
         for writes in (order_group(group_writes, power_first=False), rest_writes):
@@ -658,7 +607,7 @@ class VolcastExecutor:
             self._count(self.last_decision)
             return
         self._restore_failed = None
-        lost = [k for k in (*snapshot_missing(self._state.snapshot, self._mapped), *unfit)
+        lost = [k for k in (*snapshot_missing(self._state.snapshot, self.io.snapshot_keys()), *unfit)
                 if (allowed is None or k in allowed) and k not in owner_kept]
         if owner_kept:
             _LOGGER.info("Volcast control: %s left as set by the owner", owner_kept)
