@@ -1,4 +1,4 @@
-"""Guardy ze stanem: I-6 (throttling zapisów NVM) i I-8 (anty-oscylacja).
+"""Guardy ze stanem: I-6 (throttling zapisów NVM), I-8 (anty-oscylacja) i budżet zapisów NVM.
 
 Port `vb_throttle_*` i `vb_direction_*` z `vb_guards.c`. Pamięć I-6 przesuwa się
 WYŁĄCZNIE po udanym zapisie — nieudana próba, odmowa ani rejestr nieobsługiwany nie
@@ -6,8 +6,12 @@ mogą udawać zapisu. Właścicielem stanu jest pętla wykonawcza (jeden obiekt 
 """
 from __future__ import annotations
 
+import logging
+import math
 from collections import deque
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
+
+_LOGGER = logging.getLogger(__name__)
 
 _DIRECTIONAL = ("charge", "discharge")
 _DIRECTIONS = _DIRECTIONAL + ("idle", "neutral")
@@ -202,3 +206,98 @@ class DirectionLimiter:
         # Przejście przez tryb neutralny nie kasuje pamięci kierunku.
         if direction in _DIRECTIONAL:
             self._current = direction
+
+
+# Znacznik późniejszy niż „teraz" + tyle = skok zegara (NTP/RTC); przycinany do „teraz".
+_FUTURE_SLACK_S = 300.0
+_EXTRA_ENTRIES = 16
+
+
+class WriteBudget:
+    """Budżet ramek zapisu do pamięci nieulotnej w oknie kroczącym (zegar ścienny UTC).
+
+    Liczy się wpis z `ts ≥ now − window`. Stan przeżywa restart (`to_list`/`from_list`),
+    dlatego zegar ścienny — i dlatego odporność na jego skoki: wpis późniejszy niż
+    `now + 5 min` jest przycinany do `now` (skok do przodu nie wyłącza budżetu, a zapisany
+    znacznik „z przyszłości" nie blokuje zapisów na lata); cofnięty zegar niczego nie kasuje.
+    Klucze to klucze płaskie (`mode`, `tou.3.soc`); `total` liczy wszystkie razem.
+    """
+
+    def __init__(self, per_key: int, total: int, window_s: float = 86400.0) -> None:
+        for name, v in (("per_key", per_key), ("total", total)):
+            if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+                raise ValueError(f"{name} musi być dodatnią liczbą całkowitą")
+        if isinstance(window_s, bool) or not isinstance(window_s, (int, float)) \
+                or not math.isfinite(window_s) or window_s <= 0:
+            raise ValueError("okno budżetu musi być dodatnie")
+        self.per_key = per_key
+        self.total = total
+        self.window_s = float(window_s)
+        self._entries: deque[tuple[str, float]] = deque(maxlen=total + _EXTRA_ENTRIES)
+        self._last_now: float | None = None
+        self._warned = False
+        self.hit = False
+
+    @classmethod
+    def for_profile(cls, profile) -> "WriteBudget | None":
+        b = getattr(profile, "nvm_budget", None)
+        if b is None:
+            return None
+        return cls(per_key=b.per_key, total=b.total, window_s=b.window_s)
+
+    def _normalize(self, now_wall: float) -> None:
+        self._last_now = now_wall
+        limit = now_wall + _FUTURE_SLACK_S
+        if any(ts > limit for _, ts in self._entries):
+            if not self._warned:
+                # Bez wartości czasu w logu — wystarczy fakt skoku.
+                _LOGGER.warning("write budget: timestamps ahead of the clock clamped")
+                self._warned = True
+            entries = [(k, now_wall if ts > limit else ts) for k, ts in self._entries]
+            entries.sort(key=lambda e: e[1])
+            self._entries = deque(entries, maxlen=self._entries.maxlen)
+        # Filtr, nie ucinanie z lewej: po cofnięciu zegara wpisy nie muszą być posortowane.
+        boundary = now_wall - self.window_s
+        if any(ts < boundary for _, ts in self._entries):
+            self._entries = deque(((k, ts) for k, ts in self._entries if ts >= boundary),
+                                  maxlen=self._entries.maxlen)
+
+    def exhausted(self, keys: Iterable[str], now_wall: float) -> set[str]:
+        """Klucze, dla których kolejna ramka przekroczyłaby budżet."""
+        self._normalize(now_wall)
+        per: dict[str, int] = {}
+        for k, _ in self._entries:
+            per[k] = per.get(k, 0) + 1
+        full = len(self._entries) >= self.total
+        out = {k for k in keys if full or per.get(k, 0) >= self.per_key}
+        if out:
+            self.hit = True
+        return out
+
+    def note(self, key: str, now_wall: float) -> None:
+        """Jedna wysłana ramka zapisu (także ponowiona i cofająca)."""
+        self._normalize(now_wall)
+        self._entries.append((key, now_wall))
+
+    def to_list(self) -> list[list]:
+        limit = None if self._last_now is None else self._last_now + _FUTURE_SLACK_S
+        return [[k, ts if limit is None or ts <= limit else self._last_now] for k, ts in self._entries]
+
+    @classmethod
+    def from_list(cls, raw: Any, per_key: int, total: int, window_s: float, *,
+                  now_wall: float) -> "WriteBudget":
+        b = cls(per_key=per_key, total=total, window_s=window_s)
+        entries: list[tuple[str, float]] = []
+        for item in raw if isinstance(raw, list) else ():
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                continue
+            key, ts = item
+            if not isinstance(key, str) or not key:
+                continue
+            if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not math.isfinite(ts):
+                continue
+            entries.append((key, float(ts)))
+        entries.sort(key=lambda e: e[1])
+        b._entries.extend(entries)
+        b._normalize(now_wall)
+        return b
