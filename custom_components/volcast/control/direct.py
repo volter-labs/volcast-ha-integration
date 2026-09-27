@@ -47,6 +47,8 @@ _LOGGER = logging.getLogger(__name__)
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
 STATIC_CHECK_S = 600.0              # kolizja statyczna sprawdzana znowu co 10 min
+RETRY_MIN_S = 60.0                  # odmowa startu (kolizja, host zajęty): ponowny start po 1 min,
+RETRY_MAX_S = 600.0                 # potem co 2×, najwyżej co 10 min
 IDENTITY_RETRY_S = 600.0            # przy niezgodnej tożsamości — tylko sprawdzanie co 10 min
 IDENTITY_UDP_MAX_AGE_S = 3600.0     # UDP (bez połączenia): tożsamość co godzinę
 IDENTITY_MAX_AGE_S = 3600.0         # przed sesją zapisów: potwierdzenie nie starsze niż godzina
@@ -98,9 +100,9 @@ def _literal(host: str) -> bool:
 
 
 async def _addresses(hosts: list[str], resolve: Resolver, timeout_s: float) -> tuple[str, ...] | None:
-    """Adresy hostów wpisu; None, gdy którykolwiek nie daje się ustalić (fail-closed)."""
+    """Adresy hostów wpisu; () = wpis bez hosta (chmura); None, gdy któryś nie daje się ustalić (fail-closed)."""
     if not hosts:
-        return None
+        return ()
     out: list[str] = []
     for host in hosts:
         if _literal(host):
@@ -132,8 +134,9 @@ async def async_entry_snaps(hass, self_entry_id: str, *, resolve: Resolver | Non
                             timeout_s: float = RESOLVE_TIMEOUT_S) -> list[EntrySnap]:
     """Wpisy konfiguracji istotne dla kolizji: integracje falowników, `modbus` i inne wpisy `volcast`.
 
-    Hosty z `HOST_KEYS` w `data` i `options`; nazwy rozwiązywane (limit `timeout_s`); brak hosta,
-    nazwa nierozwiązywalna albo przekroczony czas → `addresses=None` (kolizja, fail-closed).
+    Hosty z `HOST_KEYS` w `data` i `options`; nazwy rozwiązywane (limit `timeout_s`); nazwa
+    nierozwiązywalna albo przekroczony czas → `addresses=None` (kolizja, fail-closed); brak hosta →
+    `addresses=()` (integracja chmurowa, nie kolizja).
     """
     resolve = resolve or _default_resolve
     snaps: list[EntrySnap] = []
@@ -193,6 +196,12 @@ class DirectConnection:
         # Własność z wcześniejszej sesji: kolizja statyczna przy starcie nie odcina powrotu do trybu
         # bazowego — połączenie rusza w stanie kolizji (zapisy planu stoją, powrót idzie).
         self.allow_conflicted_restore = False
+        # Ponowny start po odmowie (kolizja, host zajęty) z rosnącą przerwą; zły cel — nigdy.
+        self.retry_min_s = RETRY_MIN_S
+        self.retry_max_s = RETRY_MAX_S
+        self._retries = 0
+        self._retry_task: asyncio.Task | None = None
+        self._sleep = asyncio.sleep
 
     # ── stan ──
 
@@ -270,24 +279,22 @@ class DirectConnection:
             return
         hosts = self._hass.data.setdefault(DOMAIN, {}).setdefault("direct_hosts", {})
         if hosts.get(host) is not None:                  # inne połączenie (także tego samego wpisu) żyje
-            self._refused = "direct_in_use"
-            _LOGGER.warning("Volcast direct connection refused: the inverter address is already in use")
+            self._refuse("direct_in_use", "the inverter address is already in use")
             return
         clash = await self._static_check(host)
         if self._stopped:                                # zatrzymane w trakcie startu: nic nie zostawiamy
             return
         if hosts.get(host) is not None:
-            self._refused = "direct_in_use"
-            _LOGGER.warning("Volcast direct connection refused: the inverter address is already in use")
+            self._refuse("direct_in_use", "the inverter address is already in use")
             return
         if clash and self.allow_conflicted_restore and SELF_DOMAIN not in clash:
             self.static_conflicts = clash
             _LOGGER.warning("Volcast direct connection: another integration uses this inverter — connecting "
                             "only to return it to its own settings")
         elif clash:
-            self._refused = "direct_in_use" if SELF_DOMAIN in clash else f"direct_conflict:{clash[0]}"
             self.static_conflicts = ()
-            _LOGGER.warning("Volcast direct connection refused: another integration uses this inverter")
+            self._refuse("direct_in_use" if SELF_DOMAIN in clash else f"direct_conflict:{clash[0]}",
+                         "another integration uses this inverter")
             return
         hosts[host] = self
         self._host = host
@@ -296,6 +303,38 @@ class DirectConnection:
         except BaseException:
             await self._release()                        # nieoczekiwany wyjątek nie zostawia rejestracji hosta
             raise
+
+    def _refuse(self, reason: str, why: str) -> None:
+        """Odmowa startu, która może minąć (kolizja, host zajęty): ponowny start z rosnącą przerwą."""
+        self._refused = reason
+        if self._retries == 0:
+            _LOGGER.warning("Volcast direct connection refused: %s — checking again later", why)
+        self._schedule_retry()
+
+    def _schedule_retry(self) -> None:
+        if self._stopped or (self._retry_task is not None and not self._retry_task.done()):
+            return
+        delay = min(self.retry_min_s * (2 ** self._retries), self.retry_max_s)
+        self._retries += 1
+        coro = self._async_retry(delay)
+        create = getattr(self._entry, "async_create_background_task", None)
+        if callable(create):
+            self._retry_task = create(self._hass, coro, name="volcast_direct_retry")
+        else:
+            self._retry_task = asyncio.get_running_loop().create_task(coro)
+
+    async def _async_retry(self, delay: float) -> None:
+        await self._sleep(delay)
+        if self._stopped:
+            return
+        self._retry_task = None                          # kolejna odmowa zaplanuje następną próbę
+        self._started = False
+        self._refused = None
+        await self.async_start()
+        if self._refused is None and self.client is not None and not self._stopped:
+            _LOGGER.warning("Volcast direct connection started after an earlier refusal")
+            self._retries = 0
+            await self.async_poll()
 
     async def _start_registered(self, cfg: TransportConfig) -> None:
         try:
@@ -334,7 +373,7 @@ class DirectConnection:
             except Exception:  # noqa: BLE001
                 pass
             self._unsub_timer = None
-        for task in (self._poll_task, self._timer_task):
+        for task in (self._poll_task, self._timer_task, self._retry_task):
             if task is not None and task is not asyncio.current_task() and not task.done():
                 task.cancel()
                 try:

@@ -3,8 +3,9 @@
 Statycznie (`static_conflicts`): włączony wpis konfiguracji integracji falownika (albo integracji
 `modbus`) na tym samym adresie co cel, drugi wpis `volcast` z tym samym celem → odmowa. Adresy
 wpisów rozwiązuje warstwa HA (nazwy hostów, `data` i `options`); czysta funkcja tu tylko porównuje.
-Fail-closed: wpis domeny falownika, którego adresu nie da się ustalić (brak, nieparsowalny,
-nierozwiązywalny), jest kolizją — „nie wiemy” znaczy „ktoś może tam pisać”.
+Wpis bez żadnego adresu (`()`) to integracja chmurowa — nigdy nie jest kolizją. Fail-closed: wpis
+domeny falownika z adresem, którego nie da się ustalić (nieparsowalny, nierozwiązywalny — `None`),
+jest kolizją — „nie wiemy” znaczy „ktoś może tam pisać”.
 
 W pracy (`ContentionMonitor`, czysta maszyna stanów na licznikach transportu): obce ramki albo
 zerwania połączenia przez drugą stronę (przy działających odczytach) w oknie → stan `conflict`.
@@ -48,7 +49,8 @@ CONFLICT_DOMAINS: frozenset[str] = frozenset(INVERTER_DOMAINS) | {"modbus"}
 @dataclass(frozen=True)
 class EntrySnap:
     domain: str
-    # adresy z `data` + `options` po rozwiązaniu nazw (warstwa HA); None = nie da się ustalić.
+    # adresy z `data` + `options` po rozwiązaniu nazw (warstwa HA); None = nie da się ustalić,
+    # () = wpis bez adresu (integracja chmurowa).
     # Dla wpisu `volcast`: adres celu połączenia bezpośredniego, () = brak takiego połączenia.
     addresses: tuple[str, ...] | None
     disabled: bool
@@ -90,9 +92,12 @@ def static_conflicts(target_host: str, entries: Iterable[EntrySnap]) -> tuple[st
             continue
         if e.domain not in CONFLICT_DOMAINS:
             continue
-        if not e.addresses:
+        if e.addresses is None:
             out[e.domain] = None                         # adres nieustalony → fail-closed
             continue
+        if not e.addresses:
+            continue                                     # wpis bez adresu = integracja chmurowa
+        # Kolizja tylko z adresem równym naszemu (cel jest zawsze lokalny, więc i ten adres).
         normed = [_norm(a) for a in e.addresses]
         if None in normed or target in normed:
             out[e.domain] = None

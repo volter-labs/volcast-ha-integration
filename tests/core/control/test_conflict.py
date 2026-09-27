@@ -29,8 +29,18 @@ def test_volcast_entry_without_direct_target_does_not_conflict():
 
 def test_unknown_host_of_enabled_inverter_entry_conflicts():
     assert static_conflicts("192.168.1.50", [EntrySnap("goodwe", None, False)]) == ("goodwe",)
-    assert static_conflicts("192.168.1.50", [EntrySnap("solarman", (), False)]) == ("solarman",)
     assert static_conflicts("192.168.1.50", [EntrySnap("modbus", ("inverter.local",), False)]) == ("modbus",)
+
+
+def test_entry_without_any_host_is_a_cloud_integration_and_never_conflicts():
+    # () = wpis bez adresu w ogóle (integracja chmurowa) — nie pisze do falownika w sieci lokalnej
+    entries = [EntrySnap("growatt_server", (), False), EntrySnap("solarman", (), False)]
+    assert static_conflicts("192.168.1.50", entries) == ()
+
+
+def test_only_a_host_equal_to_ours_conflicts():
+    entries = [EntrySnap("goodwe", ("192.168.1.51",), False), EntrySnap("solax", ("203.0.113.7",), False)]
+    assert static_conflicts("192.168.1.50", entries) == ()
 
 
 def test_entry_resolving_to_several_addresses_conflicts_on_any():
