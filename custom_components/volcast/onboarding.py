@@ -28,6 +28,14 @@ Wybory zdalne:
 - inne źródło cen niż HA ustawia aplikacja/chmura — krok cen kończy się bez zmian tutaj.
 Nieudana publikacja postępu jest ponawiana z wycofaniem (5 s, podwajane do 60 s).
 
+Połączenie bezpośrednie: gdy wykrywanie nie znalazło integracji falownika w HA, onboarding szuka
+falownika w sieci (tylko odczyt); znaleziony daje kroki „<Marka> <model> (direct)”, moc i możliwości
+(rejestry, które istnieją i dają się odczytać). Krok `control_mode` w stanie `choice` niesie szczegół
+`options: entities`, `options: direct` albo `options: entities,direct` — `direct` tylko wtedy, gdy
+„Bezpośrednio” da się naprawdę zaoferować (profil i ścieżka rejestrów zweryfikowane, brak kolizji).
+Zdalny wybór `direct` jest stosowany tylko wtedy; inaczej krok `error` z jednym z trzech tekstów.
+Adres falownika nigdy nie trafia do postępu.
+
 Czujnik zużycia domu: gdy opcja jest pusta, a wśród WŁASNYCH encji zmapowanego
 falownika (`ControlRuntime.inverter_entities`) raport wykrywania ma DOKŁADNIE jeden
 jednoznaczny licznik zużycia domu (`house_load_candidate`), ustawiamy go i importujemy
@@ -45,8 +53,9 @@ from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
 
-from .const import (CONF_PAIRING, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_LOAD_ENERGY, OPT_PRICE_BUY,
-                    OPT_PRICE_CURRENCY)
+from .const import (CONF_PAIRING, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
+                    OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY)
+from .control import direct_search as ds
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.prices import has_usable_prices_now
@@ -117,7 +126,8 @@ class Onboarding:
     def __init__(self, hass, entry_id: str, *, client, session, live_until: datetime,
                  runtime: Callable[[], object | None], report: Callable[[], dict | None],
                  import_history: Callable[[], Awaitable[dict | None]], utcnow=dt_util.utcnow,
-                 sleep=asyncio.sleep, discovery_wait_s: float = 45.0, choice_poll_s: float = 5.0) -> None:
+                 sleep=asyncio.sleep, discovery_wait_s: float = 45.0, choice_poll_s: float = 5.0,
+                 search: Callable[[], Awaitable[list]] | None = None, profiles=()) -> None:
         self._hass, self._entry_id = hass, entry_id
         self._client, self._session, self._live_until = client, session, live_until
         self._runtime, self._report, self._import_history = runtime, report, import_history
@@ -131,6 +141,10 @@ class Onboarding:
         self._repost_delay = _REPOST_MIN_S
         self._repost_at: datetime | None = None
         self.first_plan_outcome: str | None = None
+        self._search = search
+        self._profiles = list(profiles)
+        self._direct_report = None             # raport sondy z rozpoznanym falownikiem (bez integracji w HA)
+        self._inverter_integration = False
 
     async def async_run(self) -> None:
         try:
@@ -196,7 +210,9 @@ class Onboarding:
         choices.update({k: {"value": v, "at": at} for k, v in applied.items()})
         pairing[_APPLIED] = {"session_id": self._session.session_id, "choices": choices}
         data[CONF_PAIRING] = pairing
-        self._hass.config_entries.async_update_entry(entry, data=data, options={**entry.options, **patch})
+        options = {**entry.options, **patch}
+        self._hass.config_entries.async_update_entry(
+            entry, data=data, options={k: v for k, v in options.items() if v is not None})
 
     def _control_ready(self, rt) -> bool:
         """Ta sama reguła co w opcjach (`entity_mode_ready`)."""
@@ -229,26 +245,57 @@ class Onboarding:
         report = await self._wait_report() or {}
         rt = self._runtime()
         await self._inverter_step(report)
-        await self._set("installation", "done", _kw(getattr(rt, "rated_power_w", None)))
+        ident = self._direct_report.identity if self._direct_report is not None else None
+        rated = getattr(rt, "rated_power_w", None) or (ident.rated_power_w if ident is not None else None)
+        await self._set("installation", "done", _kw(rated))
         if self._control_ready(rt):
             await self._set("capabilities", "done", ", ".join(sorted(set(rt.mapped) & _WRITE_KEYS)))
+        elif self._direct_report is not None:
+            caps = ds.display_capabilities(self._direct_report.capabilities, self._direct_report.unreadable)
+            await self._set("capabilities", "done", ", ".join(caps) or "read only")
         else:
             await self._set("capabilities", "done", "read only")
-        chosen = self._options().get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES
-        if chosen:
-            await self._set("control_mode", "done", "entities")
+        mode = self._options().get(OPT_CONTROL_MODE)
+        if mode in (CONTROL_MODE_ENTITIES, CONTROL_MODE_DIRECT):
+            await self._set("control_mode", "done", mode)
         elif "control_mode" in self._applied():
             await self._set("control_mode", "done")      # zastosowany wcześniej; opcje wygrywają
         else:
-            await self._set("control_mode", "choice")
+            await self._set("control_mode", "choice", self._options_token(rt))
         await self._prices_step(report)
         await self._consumption_step(report)
         await self._request_plan()
         await self._loop()
 
+    def _options_token(self, rt) -> str | None:
+        """Szczegół wyboru: które sposoby sterowania są dostępne (`direct` tylko, gdy da się go zaoferować)."""
+        tokens = []
+        if self._control_ready(rt):
+            tokens.append("entities")
+        if self._direct_report is not None and ds.offer_reason(self._direct_report, self._profiles) is None:
+            tokens.append("direct")
+        return f"options: {','.join(tokens)}" if tokens else None
+
+    async def _direct_search(self) -> None:
+        """Sonda sieci tylko bez integracji falownika w HA (inaczej to byłby drugi klient)."""
+        if self._search is None:
+            return
+        try:
+            reports = await self._search()
+        except Exception as err:  # noqa: BLE001 — sonda nigdy nie psuje onboardingu
+            _LOGGER.debug("Volcast onboarding: inverter search failed (%s)", type(err).__name__)
+            return
+        hits = ds.found(reports or [])
+        self._direct_report = hits[0] if hits else None
+
     async def _inverter_step(self, report: dict) -> None:
         inverters = report.get("inverters") or []
+        self._inverter_integration = bool(inverters)
         if not inverters:
+            await self._direct_search()
+            if self._direct_report is not None:
+                await self._set("inverter", "done", f"{ds.brand_model(self._direct_report, self._profiles)} (direct)")
+                return
             await self._set("inverter", "error", "no inverter integration found")
             return
         inv = inverters[0]
@@ -349,6 +396,13 @@ class Onboarding:
                     return
             await self._sleep(self._choice_poll_s)
 
+    async def _direct_reason(self) -> str | None:
+        rep = self._direct_report
+        if rep is None:
+            return ds.CONFLICT if self._inverter_integration else ds.NOT_FOUND
+        clash = await ds.async_clash(self._hass, self._entry_id, rep.candidate.host)
+        return ds.offer_reason(rep, self._profiles, clash)
+
     async def _apply(self, choices: Mapping[str, str]) -> None:
         patch: dict[str, str] = {}
         applied: dict[str, str] = {}
@@ -364,8 +418,17 @@ class Onboarding:
                 steps.append(("control_mode", "done", "entities"))
             else:
                 steps.append(("control_mode", "error", NOT_READY))
-        elif mode == "direct" and self._state("control_mode") == "choice":
-            steps.append(("control_mode", "error", "direct control arrives in a later version"))
+        elif mode == CONTROL_MODE_DIRECT and self._state("control_mode") == "choice":
+            if self._runtime() is not None:        # wpis się przeładowuje — następne odpytanie
+                reason = await self._direct_reason()
+                if reason is None:
+                    patch.update({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT,
+                                  OPT_DIRECT_TARGET: ds.target_from_report(self._direct_report),
+                                  OPT_DIRECT_TRIAL: None})
+                    applied["control_mode"] = mode
+                    steps.append(("control_mode", "done", CONTROL_MODE_DIRECT))
+                else:
+                    steps.append(("control_mode", "error", ds.REMOTE_TEXT[reason]))
         source = choices.get("price_source")
         if isinstance(source, str) and self._state("prices") == "choice":
             if source == "ha":

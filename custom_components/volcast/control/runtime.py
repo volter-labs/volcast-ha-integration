@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Callable, Mapping
 
@@ -49,6 +49,7 @@ from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, resolve_entities
 from ..core.profile import ProfileError, builtin_ids, load_builtin
 from ..registry_compat import all_devices
+from . import direct_search as ds
 from .device_io import DirectIO
 from .direct import DirectConnection
 from .executor import VolcastExecutor
@@ -85,10 +86,44 @@ class ControlRuntime:
     inverter_entities: frozenset = frozenset()
     # połączenie bezpośrednie z falownikiem (tryb bezpośredni albo próba), inaczej None
     direct: object | None = None
+    # ostatnie wyszukiwanie falownika (raporty sondy) — opcje i onboarding oceniają z niego „Bezpośrednio”
+    last_probe: list = field(default_factory=list)
+
+
+# Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
+_TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp")
+
+
+def _target_identity(target) -> tuple | None:
+    if not isinstance(target, Mapping):
+        return None
+    return tuple(target.get(k) for k in _TARGET_IDENTITY)
 
 
 def control_options_changed(old: Mapping, new: Mapping) -> bool:
-    return any(old.get(k) != new.get(k) for k in CONTROL_OPTION_KEYS)
+    for key in CONTROL_OPTION_KEYS:
+        if key == OPT_DIRECT_TARGET:
+            if _target_identity(old.get(key)) != _target_identity(new.get(key)):
+                return True
+        elif old.get(key) != new.get(key):
+            return True
+    return False
+
+
+async def async_direct_search(hass, entry, *, manual=None, port: int | None = None, unit_id: int | None = None,
+                              **kw) -> list:
+    """Wyszukanie falownika (albo tylko celu wpisanego ręcznie); raporty zapamiętane w runtime wpisu."""
+    profiles = await hass.async_add_executor_job(ds.load_profiles)
+    if port is not None or unit_id is not None:
+        def factory(cfg):
+            return ds.make_transport(replace(cfg, port=port if port is not None else cfg.port,
+                                             unit=unit_id if unit_id is not None else cfg.unit))
+        kw.setdefault("transport_factory", factory)
+    reports = await ds.async_search(hass, entry, profiles, manual=manual, **kw)
+    rt = (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
+    if rt is not None:
+        rt.last_probe = list(reports)
+    return reports
 
 
 def changed_option_keys(old: Mapping, new: Mapping) -> set[str]:
@@ -313,7 +348,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         rt.unsubs.append(async_track_time_interval(hass, _fetch, timedelta(seconds=SCHEDULE_FETCH_INTERVAL_S)))
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").
         hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})["control"] = rt
-        _maybe_start_onboarding(hass, entry, report)
+        _maybe_start_onboarding(hass, entry, report, profiles)
     except BaseException:
         # Nieudane złożenie nie zostawia żywego wykonawcy (bez encji wyłącznika nikt by go
         # nie zatrzymał, a każde przeładowanie dokładałoby kolejnego).
@@ -367,7 +402,7 @@ async def _async_abort_setup(hass, entry, executor, telemetry, rt) -> None:
             _LOGGER.warning("Volcast control: cleanup after a failed setup failed (%s)", type(err).__name__)
 
 
-def _maybe_start_onboarding(hass, entry, report) -> None:
+def _maybe_start_onboarding(hass, entry, report, profiles=()) -> None:
     from ..onboarding import Onboarding   # późny import: onboarding nie jest potrzebny po oknie 30 min
     p = entry.data.get(CONF_PAIRING)
     if not isinstance(p, dict):
@@ -396,8 +431,13 @@ def _maybe_start_onboarding(hass, entry, report) -> None:
                                                pv_entity=e.options.get(CONF_PV_ENERGY_ENTITY) or None,
                                                now_utc=dt_util.utcnow())
 
+    async def search():
+        e = hass.config_entries.async_get_entry(entry.entry_id) or entry
+        return await async_direct_search(hass, e)
+
     ob = Onboarding(hass, entry.entry_id, client=client, session=session, live_until=live_until,
-                    runtime=runtime, report=report, import_history=import_history)
+                    runtime=runtime, report=report, import_history=import_history, search=search,
+                    profiles=list(profiles))
     running[entry.entry_id] = hass.async_create_background_task(ob.async_run(), "volcast_onboarding")
 
 

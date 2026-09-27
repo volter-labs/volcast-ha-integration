@@ -98,8 +98,9 @@ def test_paired_entry_shows_menu_without_default():
     r = asyncio.run(flow().async_step_init())
     assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices"]}
     c = asyncio.run(flow().async_step_control())
-    # dwie pozycje, żadnej domyślnej; połączenie bezpośrednie nie jest dostępne w tej wersji
-    assert c == {"type": "menu", "step_id": "control", "menu_options": ["control_entities", "control_off"]}
+    # trzy pozycje, żadnej domyślnej („Bezpośrednio” sprawdza dostępność dopiero po wyborze)
+    assert c == {"type": "menu", "step_id": "control",
+                 "menu_options": ["control_entities", "control_direct", "control_off"]}
 
 
 def test_forecast_step_merges_options_keeps_control():
@@ -277,10 +278,10 @@ def test_strings_have_new_steps_and_errors():
         opts = json.loads((root / name).read_text(encoding="utf-8"))["options"]
         assert {"init", "forecast", "control", "details", "prices"} <= set(opts["step"])
         assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices"}
-        assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_off"}
+        assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_direct", "control_off"}
         assert "entity_mode_unavailable" in opts["abort"] and "prices_not_usable" in opts["error"]
         assert "currency_invalid" in opts["error"]
-        assert "later version" in opts["step"]["control"]["description"]
+        assert "verified" in opts["step"]["control"]["description"]
 
 
 # ── pola opcjonalne: wyczyszczone pole zostaje puste ───────────────────────

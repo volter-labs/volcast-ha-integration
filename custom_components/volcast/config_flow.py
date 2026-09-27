@@ -31,11 +31,14 @@ except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w for
     section = None
 
 from .cloud.client import Backend, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
-from .control.runtime import async_restore_if_control_changed
+from .control import direct_search as ds
+from .control.runtime import async_direct_search, async_restore_if_control_changed
 from .control.telemetry import TELEMETRY_FIELDS
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
+from .core.discovery.identify import Candidate
 from .core.prices import has_usable_prices_now
+from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
 from .version import async_integration_version
@@ -54,6 +57,7 @@ from .const import (
     CONF_BATTERY_SOC_ENTITY,
     CONF_PV_POWER_ENTITY,
     CONF_UPDATE_INTERVAL,
+    CONTROL_MODE_DIRECT,
     CONTROL_MODE_ENTITIES,
     DEFAULT_API_URL,
     DEFAULT_PEAK_THRESHOLD,
@@ -71,6 +75,9 @@ from .const import (
     OPT_PROFILE_ID,
     OPT_RATED_POWER_W,
     OPT_TELEMETRY_MAP,
+    OPT_DIRECT_POLL_S,
+    OPT_DIRECT_TARGET,
+    OPT_DIRECT_TRIAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -554,8 +561,29 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return self.async_show_form(step_id="forecast", data_schema=self._forecast_schema())
 
     async def async_step_control(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        # Dwie pozycje, żadnej domyślnej. Połączenie bezpośrednie nie jest dostępne w tej wersji.
-        return self.async_show_menu(step_id="control", menu_options=["control_entities", "control_off"])
+        # Trzy pozycje, żadnej domyślnej; „Bezpośrednio” sprawdza dostępność dopiero po wyborze.
+        return self.async_show_menu(step_id="control",
+                                    menu_options=["control_entities", "control_direct", "control_off"])
+
+    async def async_step_control_direct(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """„Bezpośrednio”: tylko z ostatniego wyszukiwania — falownik rozpoznany, próba udana, profil i jego
+        ścieżka rejestrów zweryfikowane, brak innej integracji na tym adresie."""
+        rt = self._runtime()
+        reports = list(getattr(rt, "last_probe", None) or [])
+        hits = ds.found(reports)
+        report = hits[0] if hits else next((r for r in reports if r.candidate is not None), None)
+        clash: tuple[str, ...] = ()
+        if report is not None and report.candidate is not None:
+            clash = await ds.async_clash(self.hass, self.config_entry.entry_id, report.candidate.host)
+        reason = ds.offer_reason(report, await self._async_profiles(), clash)
+        if reason == ds.CONFLICT:
+            other = next((d for d in clash if d != "volcast"), "unknown")
+            return self.async_abort(reason=reason, description_placeholders={"integration": other})
+        if reason is not None:
+            return self.async_abort(reason=reason)
+        target = ds.target_from_report(report)
+        return await self._finish(self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
+                                                OPT_DIRECT_TRIAL: None}))
 
     async def async_step_control_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         rt = self._runtime()
@@ -568,15 +596,148 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return await self._finish(self._merged({OPT_CONTROL_MODE: None}))
 
     async def async_step_details(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        await self._async_profiles()
         if user_input is not None:
+            errors = self._direct_errors(user_input)
+            if errors:
+                return self.async_show_form(step_id="details", data_schema=self._details_schema(), errors=errors)
             tmap = {k: v for k in TELEMETRY_FIELDS if (v := (user_input.get(k) or "").strip())}
-            return await self._finish(self._merged({
+            patch = {
                 OPT_TELEMETRY_MAP: tmap,
                 OPT_GRID_NEGATE: bool(user_input.get(OPT_GRID_NEGATE)) or None,
                 OPT_RATED_POWER_W: user_input.get(OPT_RATED_POWER_W),
                 OPT_BATTERY_CAPACITY_KWH: user_input.get(OPT_BATTERY_CAPACITY_KWH),
-                OPT_LOAD_ENERGY: user_input.get(OPT_LOAD_ENERGY)}))
+                OPT_LOAD_ENERGY: user_input.get(OPT_LOAD_ENERGY)}
+            if self._trial_offered():
+                patch[OPT_DIRECT_TRIAL] = True if user_input.get(OPT_DIRECT_TRIAL) else None
+            if isinstance(self.config_entry.options.get(OPT_DIRECT_TARGET), dict):
+                patch[OPT_DIRECT_POLL_S] = user_input.get(OPT_DIRECT_POLL_S)
+            if user_input.get(_SEARCH):
+                self._pending = self._merged(patch)
+                return await self.async_step_direct_search()
+            return await self._finish(self._merged(patch))
         return self.async_show_form(step_id="details", data_schema=self._details_schema())
+
+    # ── połączenie bezpośrednie: wyszukiwanie, wybór, cel ręczny ──────────
+    async def _async_profiles(self) -> list:
+        cached = getattr(self, "_profiles_cache", None)
+        if cached is None:
+            job = getattr(self.hass, "async_add_executor_job", None)
+            cached = await job(ds.load_profiles) if job is not None else ds.load_profiles()
+            self._profiles_cache = cached
+        return cached
+
+    def _profiles_now(self) -> list:
+        cached = getattr(self, "_profiles_cache", None)
+        if cached is None:
+            cached = self._profiles_cache = ds.load_profiles()
+        return cached
+
+    def _trial_offered(self) -> bool:
+        """Połączenie próbne tylko dla celu, którego ścieżka rejestrów nie jest jeszcze zweryfikowana."""
+        o = self.config_entry.options
+        target = o.get(OPT_DIRECT_TARGET)
+        if not isinstance(target, dict):
+            return False
+        if o.get(OPT_DIRECT_TRIAL) is True:
+            return True                       # wyłączenie próby zawsze możliwe
+        profile = next((p for p in self._profiles_now() if p.id == target.get("profile_id")), None)
+        return profile is not None and profile.modbus.status == "draft"
+
+    def _direct_errors(self, user_input: dict[str, Any]) -> dict[str, str]:
+        o = self.config_entry.options
+        if not (self._trial_offered() and user_input.get(OPT_DIRECT_TRIAL)):
+            return {}
+        if o.get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES:
+            return {OPT_DIRECT_TRIAL: "trial_with_entities"}      # dwie drogi do jednego falownika
+        executor = getattr(self._runtime(), "executor", None)
+        if o.get(OPT_DIRECT_TRIAL) is not True and getattr(executor, "owned", False):
+            return {OPT_DIRECT_TRIAL: "trial_while_owned"}        # najpierw powrót do trybu bazowego
+        return {}
+
+    def _pending_options(self) -> dict[str, Any]:
+        pending = getattr(self, "_pending", None)
+        return dict(pending) if pending is not None else dict(self.config_entry.options)
+
+    async def async_step_direct_search(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        task = getattr(self, "_search_task", None)
+        if task is None:
+            task = self._search_task = self.hass.async_create_task(
+                async_direct_search(self.hass, self.config_entry))
+        if not task.done():
+            return self.async_show_progress(step_id="direct_search", progress_action="direct_search",
+                                            progress_task=task)
+        try:
+            self._reports = list(task.result() or [])
+        except Exception:  # noqa: BLE001 — wyszukiwanie nigdy nie wywraca opcji
+            self._reports = []
+        self._search_task = None
+        return self.async_show_progress_done(next_step_id="direct_pick")
+
+    def _pick_labels(self) -> dict[str, str]:
+        """Kandydaci do wyboru — etykiety BEZ adresu (marka, model, profil, status ścieżki rejestrów)."""
+        profiles = self._profiles_now()
+        labels = {str(i): ds.label(r, profiles) for i, r in enumerate(ds.found(getattr(self, "_reports", [])))}
+        labels[_MANUAL] = "Enter the inverter address manually"
+        return labels
+
+    async def async_step_direct_pick(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        labels = self._pick_labels()
+        if user_input is not None:
+            pick = user_input.get("candidate")
+            if pick == _MANUAL:
+                return await self.async_step_direct_manual()
+            hits = ds.found(getattr(self, "_reports", []))
+            index = int(pick) if isinstance(pick, str) and pick.isdigit() else -1
+            target = ds.target_from_report(hits[index]) if 0 <= index < len(hits) else None
+            if target is None:
+                return self.async_abort(reason=ds.NOT_FOUND)
+            return await self._finish({**self._pending_options(), OPT_DIRECT_TARGET: target})
+        errors = {} if len(labels) > 1 else {"base": ds.NOT_FOUND}
+        return self.async_show_form(step_id="direct_pick", errors=errors,
+                                    data_schema=vol.Schema({vol.Required("candidate"): vol.In(labels)}))
+
+    async def async_step_direct_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            errors: dict[str, str] = {}
+            host = str(user_input.get("host") or "").strip()
+            transport = user_input.get("transport")
+            try:
+                host = check_target(host)
+            except (ValueError, TypeError):
+                errors["host"] = "invalid_host"
+            serial = str(user_input.get("logger_serial") or "").strip()
+            logger_serial = None
+            if transport == "solarman_v5":
+                if _LOGGER_SERIAL.fullmatch(serial) and int(serial) <= 0xFFFFFFFF:
+                    logger_serial = int(serial)
+                else:
+                    errors["logger_serial"] = "logger_serial_required"
+            if not errors:
+                port, unit = int(user_input.get("port")), int(user_input.get("unit_id"))
+                reports = await async_direct_search(
+                    self.hass, self.config_entry, manual=Candidate(host, "manual", logger_serial,
+                                                                   transports=(transport,)),
+                    port=port, unit_id=unit)
+                hits = ds.found(reports)
+                target = ds.target_from_report(hits[0]) if hits else None
+                if target is None:
+                    errors["base"] = ds.NOT_FOUND           # cel ręczny też musi przejść sondę (odcisk urządzenia)
+                else:
+                    target.update(port=port, unit_id=unit)
+                    return await self._finish({**self._pending_options(), OPT_DIRECT_TARGET: target})
+            return self.async_show_form(step_id="direct_manual", data_schema=self._manual_schema(), errors=errors)
+        return self.async_show_form(step_id="direct_manual", data_schema=self._manual_schema())
+
+    def _manual_schema(self) -> vol.Schema:
+        transports = sorted({k for p in self._profiles_now() for k in p.modbus.transport_options})
+        return vol.Schema({
+            vol.Required("host"): str,
+            vol.Required("transport"): vol.In(transports),
+            vol.Required("port"): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+            vol.Required("unit_id"): vol.All(vol.Coerce(int), vol.Range(min=0, max=247)),
+            vol.Optional("logger_serial"): str,
+        })
 
     async def async_step_prices(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -657,6 +818,14 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                                                            max=BATTERY_CAPACITY_RANGE_KWH[1]))
         fields[_entity_field(OPT_LOAD_ENERGY, o.get(OPT_LOAD_ENERGY))] = selector.EntitySelector(
             selector.EntitySelectorConfig(domain="sensor", device_class="energy"))
+        # Połączenie bezpośrednie: wyszukanie falownika, próba (tylko ścieżka rejestrów w wersji testowej),
+        # okres odczytu (gdy jest cel).
+        fields[vol.Optional(_SEARCH, default=False)] = bool
+        if self._trial_offered():
+            fields[vol.Optional(OPT_DIRECT_TRIAL, default=o.get(OPT_DIRECT_TRIAL) is True)] = bool
+        if isinstance(o.get(OPT_DIRECT_TARGET), dict):
+            poll = vol.Optional(OPT_DIRECT_POLL_S, description={"suggested_value": o.get(OPT_DIRECT_POLL_S)})
+            fields[poll] = vol.All(vol.Coerce(int), vol.Range(min=5, max=60))
         return vol.Schema(fields)
 
     def _prices_schema(self) -> vol.Schema:
@@ -675,6 +844,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             vol.Optional(OPT_PRICE_CURRENCY, description={"suggested_value": o.get(OPT_PRICE_CURRENCY)}): str,
         })
+
+
+_SEARCH = "direct_search"
+_MANUAL = "manual"
+_LOGGER_SERIAL = re.compile(r"\d{1,10}")
 
 
 def _entity_field(key: str, saved: Any) -> vol.Optional:
