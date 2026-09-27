@@ -17,7 +17,7 @@ Numer seryjny urządzenia nigdy nie wychodzi z tego modułu (tylko odcisk z sol�
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Sequence
 
 from ..modbus.client import RegisterClient
@@ -54,7 +54,8 @@ class Identity:
     unit_id: int
     model: str | None
     rated_power_w: float | None
-    device_fp: str                             # HMAC-SHA256(sól, profil|serial)[:16] (bez seriala: model|moc)
+    # HMAC-SHA256(sól, profil|serial)[:16] (bez seriala: model|moc) — poza repr (logi, diagnostyka)
+    device_fp: str = field(repr=False)
 
 
 def candidates_from(replies: Sequence[Any], ha_hosts: Iterable[str], manual: str | None,

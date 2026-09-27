@@ -13,8 +13,11 @@ sygnałem innego klienta. Skutek kolizji (warstwa wykonawcy): zero nowych zapis�
 rzadziej; powrót do trybu bazowego pozostaje dozwolony. Stan czyści się po `CLEAR_AFTER_S` bez sygnałów.
 
 Rozjazd nastaw (`DriftTracker`) to osobny mechanizm — przejęcie (pauza), nie kolizja: pojedynczy
-rozjazd to uzgodnienie, drugi rozjazd tego samego klucza w oknie bez naszego zapisu w międzyczasie
-to przejęcie. Liczy się wyłącznie odczyt rozpoczęty po końcu naszego ostatniego zapisu.
+rozjazd to uzgodnienie, drugi rozjazd tego samego klucza od naszej ostatniej wartości w oknie —
+także gdy w międzyczasie uzgodniliśmy go zapisem — to przejęcie (właściciel walczy ze sterowaniem).
+Nasz zapis NIE kasuje historii rozjazdów; kasuje ją zmiana wartości planu (`forget`). Liczy się
+wyłącznie odczyt rozpoczęty po końcu naszego ostatniego zapisu. Wołający zgłasza rozjazd raz na
+odczyt, dopóki trwa.
 
 Moduł nie loguje adresów.
 """
@@ -169,10 +172,13 @@ class DriftTracker:
         return False
 
     def note_own_write(self, key: str, end_mono: float) -> None:
-        """Nasz zapis klucza (koniec wymiany): kasuje jego licznik rozjazdów."""
-        self._drifts.pop(key, None)
+        """Nasz zapis klucza (koniec wymiany): przesuwa barierę `usable`; historii rozjazdów nie kasuje."""
         if self._last_write_end is None or end_mono > self._last_write_end:
             self._last_write_end = end_mono
+
+    def forget(self, key: str) -> None:
+        """Wartość planu klucza się zmieniła — poprzednie rozjazdy nie dotyczą nowej wartości."""
+        self._drifts.pop(key, None)
 
     def usable(self, reading_started_mono: float) -> bool:
         """Czy odczyt może świadczyć o rozjeździe — rozpoczęty PO końcu naszego ostatniego zapisu."""

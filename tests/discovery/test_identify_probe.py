@@ -273,6 +273,41 @@ async def test_probe_respects_request_budget(goodwe_udp_sim, profiles):
 
 
 @pytest.mark.asyncio
+async def test_incomplete_probe_is_not_available(goodwe_udp_sim, profiles):
+    rep, _ = await _discover_goodwe(goodwe_udp_sim, profiles, budget=3)
+    assert rep.capabilities.get("mode") is True and rep.capabilities.get("power_w") is True
+    assert rep.direct_available is False and "budget" in rep.errors
+
+
+class _DropsAfter:
+    """Transport, który po N odczytach traci łącze."""
+
+    def __init__(self, inner, n=3):
+        self.inner, self.n, self.reads = inner, n, 0
+        self.kind, self.cfg, self.stats = inner.kind, inner.cfg, inner.stats
+        self.closed = False
+
+    async def read(self, addr, count, *, tries=None):
+        self.reads += 1
+        if self.reads > self.n:
+            raise LinkDown("gone")
+        return await self.inner.read(addr, count, tries=tries)
+
+    async def reset_channel(self):
+        await self.inner.reset_channel()
+
+    async def close(self):
+        self.closed = True
+        await self.inner.close()
+
+
+@pytest.mark.asyncio
+async def test_link_drop_mid_probe_is_not_available(goodwe_udp_sim, profiles):
+    rep, _ = await _discover_goodwe(goodwe_udp_sim, profiles, wrap=_DropsAfter)
+    assert rep.identity is not None and rep.direct_available is False and "LinkDown" in rep.errors
+
+
+@pytest.mark.asyncio
 async def test_default_budget_is_24_frames(goodwe_udp_sim, goodwe_bank, profiles):
     goodwe_bank.unreadable.update({47509, 47510, 47511, 47512, 45356})   # każdy klucz: pełne próby
     rep, _ = await _discover_goodwe(goodwe_udp_sim, profiles)
@@ -293,6 +328,7 @@ async def test_probe_report_has_no_serial(goodwe_udp_sim, v5_sim, profiles):
         for s in secrets:
             assert s not in text
         assert LOCAL not in repr(r) and str(V5_LOGGER_SERIAL) not in repr(r)
+        assert r.identity.device_fp not in repr(r)
 
 
 @pytest.mark.asyncio

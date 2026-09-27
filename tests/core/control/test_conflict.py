@@ -170,10 +170,18 @@ def test_drift_of_other_key_or_outside_window_is_not_takeover():
     assert d.note_drift("mode", DRIFT_WINDOW_S + 1.0) is False
 
 
-def test_own_write_resets_drift_count():
+def test_own_write_does_not_clear_drift_history():
+    # Właściciel zmienia klucz, my uzgadniamy (zapis), właściciel zmienia znowu w 30 min — przejęcie.
+    d = DriftTracker()
+    assert d.note_drift("mode", 0.0) is False
+    d.note_own_write("mode", 10.0)
+    assert d.note_drift("mode", 60.0) is True
+
+
+def test_forget_clears_drift_history_when_the_plan_changes():
     d = DriftTracker()
     d.note_drift("mode", 0.0)
-    d.note_own_write("mode", 10.0)
+    d.forget("mode")                                    # nowa wartość planu — nowa historia
     assert d.note_drift("mode", 60.0) is False
 
 

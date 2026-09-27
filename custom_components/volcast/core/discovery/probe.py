@@ -12,7 +12,8 @@ harmonogramu: programy i włącznik). Wynik klucza:
 * zerwanie łącza, uśpiony falownik, cisza albo wyczerpany limit ramek → klucz bez werdyktu
   (nie ma go ani w `capabilities`, ani w `echo_only`), dalsza próba przerwana.
 
-`direct_available`: dla profilu trybu i nastawy — `mode` i `power_w` czytelne i obsługiwane;
+`direct_available`: werdykt dla każdego klucza próby, a do tego dla profilu trybu i nastawy —
+`mode` i `power_w` czytelne i obsługiwane;
 dla profilu okien czasowych — blok harmonogramu czytelny, a kod `device_type` urządzenia na
 liście profilu (profil opisuje mapę trójfazową; inny kod = inna mapa, harmonogram nieobsługiwany).
 
@@ -184,10 +185,13 @@ async def probe(client: RegisterClient, profile, identity: Identity, *, budget: 
             echo_only.append(key)
         if key == "tou":
             tou_readable = out == _OK
+    # Werdykt dla KAŻDEGO klucza próby — próba ucięta (budżet, zerwanie łącza, cisza) nie wystarcza,
+    # „Bezpośrednio” wraca po ponownym wyszukaniu.
+    complete = all(k in caps for k in profile.modbus.probe_keys)
     if has_tou:
-        available = tou_readable is True           # None = próba przerwana przed harmonogramem
+        available = complete and tou_readable is True
     else:
-        available = all(caps.get(k) is True and k not in echo_only for k in _GROUP)
+        available = complete and all(caps.get(k) is True and k not in echo_only for k in _GROUP)
     return ProbeReport(identity, caps, tuple(echo_only), available, tou_readable, profile.modbus.status,
                        p.used(), tuple(p.errors))
 
