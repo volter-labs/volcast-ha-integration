@@ -230,6 +230,21 @@ def _safety_off(word, profile, gates, memory: ControlMemory, now_mono: float, no
                        flat=flat, notes=tuple(notes), **common)
 
 
+def safety_off_decision(decision: TouDecision, reading, profile, gates, memory: ControlMemory,
+                        now_mono: float) -> TouDecision | None:
+    """Wyłączenie harmonogramu w stronę bezpieczną zamiast przepisania, którego nie da się zrobić w całości
+    (np. pole przejęte przez właściciela): tylko gdy działający harmonogram robi więcej niż plan.
+    None = nie ma potrzeby (harmonogram wyłączony albo zmiana nie idzie w stronę bezpieczną)."""
+    if not reading.tou_enabled or reading.programs is None or not decision.programs:
+        return None
+    if not _toward_safety(reading.programs, decision.programs, profile):
+        return None
+    word = reading.image.words(profile.raw["write"]["tou_enable"]["addr"], 1)[0]
+    common = dict(programs=decision.programs, guard=decision.guard, device=decision.device,
+                  lost_value_pln=decision.lost_value_pln)
+    return _safety_off(word, profile, gates, memory, now_mono, list(decision.notes), decision.flat, common)
+
+
 def commit_tou(decision: TouDecision, report: TouReport, memory: ControlMemory, now_mono: float, *,
                now_wall: float | None = None) -> None:
     """Pamięć po sekwencji: throttling i ostatni zapis tylko dla zapisanych pól (wartość rzeczywista

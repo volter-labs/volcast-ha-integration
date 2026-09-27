@@ -84,13 +84,13 @@ from ..const import (DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S, OPT_CONTROL
                      STOP_WRITE_TIMEOUT_S)
 from ..core.control.baseline import baseline_params, needs_restore, snapshot_missing, take_snapshot
 from ..core.control.conflict import drifted_keys
-from ..core.control.cycle import (BLOCKED, ERROR, IDLE, WRITE, ControlMemory, CycleDecision, Gates, Limits,
+from ..core.control.cycle import (BLOCKED, DRY_RUN, ERROR, IDLE, WRITE, ControlMemory, CycleDecision, Gates, Limits,
                                   Telemetry, commit, decide_cycle, same_value)
 from ..core.control.group_writes import GROUP_KEYS, GroupReport, async_run_group_writes, order_group
 from ..core.control.readings import RawState, normalize_readings
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.control.takeover import FOREIGN_PAUSE_S, is_foreign_change
-from ..core.control.tou_cycle import EN_KEY, commit_tou, decide_tou_cycle
+from ..core.control.tou_cycle import EN_KEY, commit_tou, decide_tou_cycle, safety_off_decision
 from ..core.control.tou_writes import (ENABLE, TOU_WORD, TouReport, _snapshot_programs, async_run_tou_writes,
                                        tou_restore_writes, tou_snapshot)
 from ..core.engines.time_window import baseline_programs, compress
@@ -704,10 +704,18 @@ class VolcastExecutor:
             old, new = self._planned.get(key), flat.get(key)
             if old is None or new is None or not same_value(old, new):
                 self._direct.drift.forget(key)
+        def changed(key: str) -> bool:
+            old, new = self._planned.get(key), flat.get(key)
+            return (old is None) != (new is None) or (old is not None and not same_value(old, new))
+
+        group_changed = any(changed(k) for k in GROUP_KEYS)
         for key in list(self._owner_held):
             held, new = self._owner_held[key], flat.get(key)
-            if held is None or new is None or not same_value(held, new):
-                del self._owner_held[key]          # plan zmienił wartość — klucz znów nasz
+            if held is None or new is None or not same_value(held, new) \
+                    or (key in GROUP_KEYS and group_changed):
+                # plan zmienił wartość — klucz znów nasz; moc znaczy coś tylko razem z trybem, więc
+                # zmiana planu KTÓREGOKOLWIEK członka grupy zwalnia całą grupę
+                del self._owner_held[key]
         self._planned = dict(flat)
 
     def _held_keys(self) -> set[str]:
@@ -770,6 +778,9 @@ class VolcastExecutor:
 
     def _update_conflict_issue(self) -> None:
         conn = self._direct.conn
+        refused_owned = conn.refused() is not None and self._state.owned
+        if refused_owned:
+            return                          # zgłoszenie odmowy przy własności prowadzi powrót (bez migotania)
         if conn.conflict and not self._conflict_issue_open:
             self._conflict_issue_open = True
             reason = conn.monitor.reason if conn.monitor.state == "conflict" else \
@@ -823,7 +834,7 @@ class VolcastExecutor:
         if tele.soc is not None:
             self._prev_soc = (tele.soc, now_mono)
         self._forget_changed(d.flat)
-        d = self._tou_without_owner_held(d)
+        d = self._tou_without_owner_held(d, rd.source, gates, now_mono)
         d = self._gate_write(d)
         if d.status == WRITE and not self._state.owned:
             d = await self._async_take_tou_ownership(d, rd)
@@ -848,15 +859,31 @@ class VolcastExecutor:
         self._finish(d)
         await self._after_direct_cycle(d)
 
-    def _tou_without_owner_held(self, d):
-        """Przepisanie programów wstrzymane, gdy zmieniłoby pole przejęte przez właściciela (poza
-        wyłączeniem harmonogramu w stronę bezpieczną)."""
-        if d.status != WRITE or not self._owner_held or "tou_safety_off" in d.notes:
+    def _tou_without_owner_held(self, d, reading, gates: Gates, now_mono: float):
+        """Pola programów przejęte przez właściciela nie są pisane (zostaje jego wartość), reszta przepisania
+        idzie. Gdy tego nie da się zrobić bezpiecznie (przejęty start programu — kolejność startów), a zmiana
+        idzie w stronę bezpieczną: wyłączenie harmonogramu (poza budżetem, z limitem); nigdy żywy, nieaktualny
+        program ładowania z sieci."""
+        if d.status not in (WRITE, DRY_RUN) or not self._owner_held or "tou_safety_off" in d.notes:
             return d
-        keys = {EN_KEY if w.key in (ENABLE, TOU_WORD) else w.key for w in d.writes}
-        if keys & self._held_keys():
+
+        def key(w) -> str:
+            return EN_KEY if w.key in (ENABLE, TOU_WORD) else w.key
+
+        held = {key(w) for w in d.writes} & self._held_keys()
+        if not held:
+            return d
+        programs = [w for w in d.writes if w.key not in (ENABLE, TOU_WORD)]
+        if any(k.endswith(".start") for k in held):
+            safe = safety_off_decision(d, reading, self._profile, gates, self._memory, now_mono)
+            if safe is not None:
+                return replace(safe, notes=(*safe.notes, "owner_kept"))
             return replace(d, status=IDLE, reason="owner_kept", writes=[], notes=(*d.notes, "owner_kept"))
-        return d
+        writes = [w for w in d.writes if key(w) not in held or (w.key == ENABLE and w is d.writes[0])]
+        kept = [w for w in writes if w.key not in (ENABLE, TOU_WORD)]
+        if programs and not kept:
+            return replace(d, status=IDLE, reason="owner_kept", writes=[], notes=(*d.notes, "owner_kept"))
+        return replace(d, writes=writes, notes=(*d.notes, "owner_kept"))
 
     def _snapshot_lost(self) -> None:
         if self._snapshot_issue_open:
@@ -1098,6 +1125,12 @@ class VolcastExecutor:
         self._state.tou_snapshot = None
         self._memory.last_written.clear()
         await self._async_save("baseline state", force=True)
+        conn = self._direct.conn if self._direct is not None else None
+        if conn is not None and conn.allow_conflicted_restore and conn.static_conflicts:
+            # Połączenie istniało tylko po to, żeby oddać falownik — inna integracja go używa.
+            _LOGGER.warning("Volcast direct connection closed: the inverter is back in its own settings and "
+                            "another integration uses it")
+            await conn.async_stop()
 
     async def _restore_tou(self, rd: Reading) -> None:
         """Utrata prawa w trybie okien czasowych: programy i włącznik właściciela z migawki."""

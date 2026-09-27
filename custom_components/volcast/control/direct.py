@@ -404,15 +404,18 @@ class DirectConnection:
             return None
         try:
             if not fresh(self.reading) and not self._stopped:
-                self._poll_task = asyncio.current_task()
+                # Osobne zadanie: zatrzymanie połączenia anuluje odczyt, nigdy zadanie wołającego (wykonawcy).
+                task = asyncio.get_running_loop().create_task(self._poll())
+                self._poll_task = task
                 try:
-                    await self._poll()
+                    await asyncio.wait({task})
                 except asyncio.CancelledError:
+                    task.cancel()
                     raise
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.debug("Volcast direct fresh read failed: %s", type(err).__name__)
                 finally:
                     self._poll_task = None
+                if not task.cancelled() and task.exception() is not None:
+                    _LOGGER.debug("Volcast direct fresh read failed: %s", type(task.exception()).__name__)
         finally:
             self._poll_lock.release()
         return self.reading if fresh(self.reading) else None
