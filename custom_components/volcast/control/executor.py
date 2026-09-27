@@ -17,8 +17,10 @@ Zasady wykonania:
 * powrót do trybu bazowego: najpierw sam tryb bazowy (neutralny, nie potrzebuje
   warunków — hamulec właściciela nie może zależeć od innej encji), potem każda
   pozostała nastawa z migawki niezależnie; własność zostaje, dopóki wszystko nie dojdzie,
-  a każdy tik ponawia brakujące. Czytelnej opcji trybu spoza profilu nie nadpisujemy
-  (ktoś inny wybrał tryb — zostaje jego);
+  a każdy tik ponawia brakujące. Wracają tylko klucze, które zapisaliśmy (`restore_keys`),
+  bez tych, które właściciel potem zmienił — jego zmiany zawsze wygrywają, a tryb, który
+  ustawił (także opcja spoza profilu), nigdy nie jest nadpisany. Dlatego powrót rusza od
+  razu po cofnięciu zgody albo wyłączeniu przełącznika, także w pauzie;
 * własność i migawka są związane z profilem i encją trybu (`owner`); migawki innego
   falownika albo mapowania nie wpisujemy w nowe encje;
 * zatrzymany wykonawca nie zaczyna zapisów i nie nadpisuje magazynu (poza powrotem do
@@ -33,7 +35,7 @@ Obca zmiana nastaw (przejęcie): zdarzenie zmiany stanu encji klucza zapisu z ak
 (użytkownik, automatyzacja), nie z naszym kontekstem, z wartością inną niż nasz ostatni
 zapis — albo tryb falownika ustawiony na czytelną opcję spoza profilu (sygnał poziomu,
 także bez aktora i także gdy cykl zatrzymał się wcześniej na innej blokadzie). Skutek:
-pauza 30 min (bez zapisów i bez powrotu do trybu bazowego), wpis w `foreign_changes`
+pauza 30 min (bez zapisów planu), klucz wypada z `restore_keys`, wpis w `foreign_changes`
 (lokalnie, z `entity_id`), zgłoszenie w Naprawach (z `entity_id` jako parametrem tekstu),
 w logu sam klucz. Sygnał poziomu działa raz na epizod i tylko przy otwartym sterowaniu
 (nie w próbie na sucho); epizod kończy odczyt trybu z profilu. Zgłoszenie znika po
@@ -171,10 +173,18 @@ class VolcastExecutor:
             return
         await self._store.async_save(self._state)
 
+    def _paused_for_s(self) -> int:
+        """Ile sekund pauzy zostało (częste zmiany właściciela ją przedłużają)."""
+        if not self.paused:
+            return 0
+        return max(0, round(self._memory.paused_until - self._clock()))
+
     def exec_summary(self) -> dict:
         d = self.last_decision
         out = {"decision": d.summary() if d else None, "consent": self._state.consent,
                "local_switch": self._state.local_switch, "paused": self.paused,
+               "paused_for_s": self._paused_for_s(),
+               "last_foreign_key": self.foreign_changes[-1]["key"] if self.foreign_changes else None,
                "foreign_changes": len(self.foreign_changes),
                "profile": self._profile.id if self._profile else None}
         if self.tou_preview is not None:
@@ -219,6 +229,10 @@ class VolcastExecutor:
         for unsub in self._unsub:
             unsub()
         self._unsub.clear()
+        # Wpis rozładowany albo wyłączony: zgłoszenia tego przebiegu nie mają już właściciela.
+        self._foreign_issue_open = False
+        ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
+        ir.async_delete_issue(self._hass, DOMAIN, f"control_error_{self._entry.entry_id}")
         if not self._lock.locked():
             return
         try:
@@ -253,6 +267,8 @@ class VolcastExecutor:
         self._state.owned = False
         self._state.snapshot = {}
         self._state.owner = {}
+        self._state.restore_keys = None
+        self._state.taken_over = []
         return True
 
     async def _async_timer(self, _now=None) -> None:
@@ -262,19 +278,21 @@ class VolcastExecutor:
     async def async_on_state_event(self, event) -> None:
         """Zmiana stanu encji klucza zapisu — przejęcie, jeśli zmienił ją ktoś inny."""
         try:
-            self._on_state_event(event)
+            if self._on_state_event(event):
+                await self._async_save("control state")
         except Exception as err:  # noqa: BLE001 — obserwator nie może wywrócić pętli zdarzeń HA
             _LOGGER.warning("Volcast control: settings change check failed (%s)", type(err).__name__)
 
-    def _on_state_event(self, event) -> None:
+    def _on_state_event(self, event) -> bool:
+        """True, gdy zmiana była obca (stan do zapisania)."""
         if self._memory is None or not self._domain or self._stopped or self._disabled:
-            return
+            return False
         data = event.data or {}
         eid = data.get("entity_id")
         new = data.get("new_state")
         key = next((k for k in self._write_keys() if self._mapped.get(k) == eid), None)
         if key is None or new is None:
-            return
+            return False
         ctx = getattr(new, "context", None) or getattr(event, "context", None)
         raw_state = new.state
         value = normalize_readings(
@@ -288,14 +306,16 @@ class VolcastExecutor:
                                  has_actor=bool(getattr(ctx, "user_id", None)
                                                 or getattr(ctx, "parent_id", None)),
                                  new_value=value, last_written=self._memory.last_written.get(key)):
-            return
+            return False
         if foreign_option:
             self._foreign_episode = True     # sygnał poziomu nie powtórzy tego epizodu
         _LOGGER.warning("Volcast control paused for 30 min: %s changed outside Volcast", key)
         self._pause_for_foreign(key, eid)
+        return True
 
     def _pause_for_foreign(self, key: str, eid: str | None) -> None:
         self._memory.paused_until = self._clock() + FOREIGN_PAUSE_S
+        self._take_over_key(key)
         self.foreign_changes = (self.foreign_changes + [
             {"key": key, "entity_id": eid, "at": self._utcnow().isoformat()}])[-_FOREIGN_KEEP:]
         if not self._foreign_issue_open:
@@ -304,19 +324,38 @@ class VolcastExecutor:
             self._create_issue(self._foreign_issue_id, "foreign_control", {"entity_id": eid or ""})
         self._notify()
 
+    def _take_over_key(self, key: str) -> None:
+        """Klucz zmieniony przez właściciela: do końca tej własności nie wraca do migawki."""
+        if not self._state.owned:
+            return
+        if key not in self._state.taken_over:
+            self._state.taken_over.append(key)
+        if self._state.restore_keys is not None and key in self._state.restore_keys:
+            self._state.restore_keys.remove(key)
+
+    def _note_written(self, keys) -> bool:
+        """Klucze zapisane (albo może zapisane) w tej własności; True, gdy zbiór się zmienił."""
+        if self._state.restore_keys is None:
+            return False                 # stan sprzed pola: powrót obejmuje całą migawkę
+        new = [k for k in dict.fromkeys(keys)
+               if k not in self._state.restore_keys and k not in self._state.taken_over]
+        self._state.restore_keys.extend(new)
+        return bool(new)
+
     def _update_foreign_episode(self, rd: _Reading) -> None:
         """Epizod trybu spoza profilu kończy dopiero odczyt trybu z profilu (brak odczytu — nic)."""
         if "mode" in rd.readings:
             self._foreign_episode = False
 
-    def _signal_foreign_mode(self, rd: _Reading, live: bool, takeover: bool) -> None:
-        """Sygnał poziomu: raz na epizod, tylko przy otwartym sterowaniu."""
+    def _signal_foreign_mode(self, rd: _Reading, live: bool, takeover: bool) -> bool:
+        """Sygnał poziomu: raz na epizod, tylko przy otwartym sterowaniu; True, gdy wystąpił."""
         if not (rd.foreign_mode or takeover) or not live or self._foreign_episode:
-            return
+            return False
         self._foreign_episode = True
         _LOGGER.warning("Volcast control paused for 30 min: the inverter mode was set to an option "
                         "outside the profile")
         self._pause_for_foreign("mode", self._mapped.get("mode"))
+        return True
 
     def _close_foreign_issue(self) -> None:
         if self._foreign_issue_open and not self.paused and not self._foreign_episode:
@@ -435,7 +474,8 @@ class VolcastExecutor:
                       verified=control_verified(self._profile, self._domain))
         if needs_restore(owned=self._state.owned, consent=gates.consent,
                          local_switch=gates.local_switch, control_mode=gates.control_mode) \
-                and not self.paused and self._domain:
+                and self._domain:
+            # Także w pauzie: powrót nie rusza kluczy, które zmienił właściciel.
             await self._restore(rd)
             return
         readings = rd.readings
@@ -455,7 +495,8 @@ class VolcastExecutor:
         if soc is not None:
             self._prev_soc = (soc, now_mono)
         # Z własnego odczytu, nie tylko z decyzji — wcześniejsza blokada cyklu go nie zasłoni.
-        self._signal_foreign_mode(rd, self._gates_open() and gates.verified, decision.takeover)
+        if self._signal_foreign_mode(rd, self._gates_open() and gates.verified, decision.takeover):
+            await self._async_save("control state")
         if decision.status == WRITE and self.paused:
             decision = replace(decision, status=BLOCKED, reason="paused")
         if decision.status == WRITE and not self._state.owned:
@@ -469,6 +510,8 @@ class VolcastExecutor:
                 ambiguous_safe=decision.restore_ambiguous_safe, on_exception=self._log_write_exception)
             commit(decision, report, self._memory, now_mono)
             self._log_report(decision, report)
+            if self._note_written([*report.written, *report.ambiguous, *report.restored]):
+                await self._async_save("control state")
         self.last_decision = decision
         self._count(decision)
 
@@ -482,11 +525,15 @@ class VolcastExecutor:
         self._state.snapshot = snapshot
         self._state.owned = True
         self._state.owner = self._owner()
+        self._state.restore_keys = []
+        self._state.taken_over = []
         if not await self._async_save("baseline snapshot"):
             # Bez trwałej migawki restart nie wiedziałby, co przywrócić — nie piszemy.
             self._state.owned = False
             self._state.snapshot = {}
             self._state.owner = {}
+            self._state.restore_keys = None
+            self._state.taken_over = []
             return replace(decision, status=ERROR, reason="store_failed")
         return decision
 
@@ -507,11 +554,15 @@ class VolcastExecutor:
         fitted, _, unfit = fit_params(params, self._profile, self._domain, self._mapped, rd.units, rd.attrs)
         target = fitted.flatten()
         readings = rd.readings
+        # Tylko to, co sami zapisaliśmy i czego właściciel potem nie zmienił (None = cała migawka).
+        allowed = None if self._state.restore_keys is None else set(self._state.restore_keys)
+        owner_kept = [k for k in target if k in self._state.taken_over]
         # To, co falownik już ma, nie jedzie (NVM) — ta sama zasada co w cyklu.
         keys = [k for k, v in target.items()
-                if k not in unfit and not (k in readings and same_value(readings[k], v))]
-        mode_kept = rd.foreign_mode and "mode" in keys
-        if mode_kept:
+                if k not in unfit and (allowed is None or k in allowed) and k not in owner_kept
+                and not (k in readings and same_value(readings[k], v))]
+        mode_kept = "mode" in owner_kept or (rd.foreign_mode and "mode" in keys)
+        if "mode" in keys and rd.foreign_mode:
             keys.remove("mode")          # ktoś wybrał tryb spoza profilu — zostaje jego
         group_writes, _ = control_writes(fitted, self._profile, self._domain, self._mapped,
                                          keys=[k for k in keys if k in GROUP_KEYS], units=rd.units)
@@ -535,7 +586,10 @@ class VolcastExecutor:
             self._count(self.last_decision)
             return
         self._restore_failed = None
-        lost = [*snapshot_missing(self._state.snapshot, self._mapped), *unfit]
+        lost = [k for k in (*snapshot_missing(self._state.snapshot, self._mapped), *unfit)
+                if (allowed is None or k in allowed) and k not in owner_kept]
+        if owner_kept:
+            _LOGGER.info("Volcast control: %s left as set by the owner", owner_kept)
         if lost:
             _LOGGER.warning("Volcast control: could not return %s to the value from before control "
                             "(no saved value or outside the entity range) — check them on the inverter",
@@ -543,6 +597,8 @@ class VolcastExecutor:
         self._state.owned = False
         self._state.snapshot = {}
         self._state.owner = {}
+        self._state.restore_keys = None
+        self._state.taken_over = []
         self._memory.last_written.clear()
         await self._async_save("baseline state", force=True)
         self.last_decision = CycleDecision(RESTORE, "baseline_mode_kept" if mode_kept else "baseline",

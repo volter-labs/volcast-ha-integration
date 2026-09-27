@@ -263,19 +263,18 @@ def test_auth_failures_revoke_consent_after_two(monkeypatch):
     assert asyncio.run(go()) is True and ex.consent is False
 
 
-def test_no_restore_while_paused(monkeypatch):
+def test_restore_runs_while_paused(monkeypatch):
+    # Hamulec właściciela działa od razu — pauza nie wstrzymuje powrotu do trybu bazowego.
     h, ex = make(monkeypatch=monkeypatch)
 
     async def go():
         await ready(ex)
         await ex.async_tick()
-        n = len(h.services.calls)
         ex._memory.paused_until = ex._clock() + 1800
         await ex.async_set_consent(False)
         await ex.async_tick()
-        return n
-    n = asyncio.run(go())
-    assert len(h.services.calls) == n
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto" and ex._state.owned is False
 
 
 def test_tou_preview_for_time_window_profile():

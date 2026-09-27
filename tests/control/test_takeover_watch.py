@@ -242,14 +242,17 @@ def test_pause_during_ownership_save_prevents_writes(monkeypatch):
     assert h.services.calls == [] and ex.last_decision.reason == "gates_changed"
 
 
-def test_foreign_change_holds_baseline_restore(monkeypatch):
+def test_restore_skips_mode_taken_over_by_owner(monkeypatch):
     h, ex = _written(monkeypatch)
     n = len(h.services.calls)
     h.states.set(E["mode"], "charge_pv")
     asyncio.run(ex.async_on_state_event(event(E["mode"], "charge_pv", Context(user_id="u1"))))
     asyncio.run(ex.async_set_consent(False))
     asyncio.run(ex.async_tick())
-    assert len(h.services.calls) == n and h.states.get(E["mode"]).state == "charge_pv"
+    # nasz przełącznik limitu eksportu wraca, tryb właściciela zostaje
+    assert [c[:2] for c in h.services.calls[n:]] == [("switch", "turn_on")]
+    assert h.states.get(E["mode"]).state == "charge_pv" and ex._state.owned is False
+    assert ex.last_decision.reason == "baseline_mode_kept"
 
 
 def test_unreadable_store_raises_control_error_issue(monkeypatch):
@@ -314,3 +317,150 @@ def test_foreign_mode_lasting_past_the_pause_is_not_signalled_again(monkeypatch)
     assert not ex.paused and len(ex.foreign_changes) == 1 and len(_created()) == 1
     assert ISSUE not in [c.args[2] for c in ir.async_delete_issue.call_args_list]
     assert ex.last_decision.reason == "foreign_mode"
+
+
+# ── powrót do trybu bazowego a zmiany właściciela ─────────────────────────
+
+
+def test_owner_power_change_then_revoke_restores_mode_at_once(monkeypatch):
+    h, ex = _written(monkeypatch)                                 # sell_power 2000 W
+    h.states.set(E["power_w"], "500")
+    asyncio.run(ex.async_on_state_event(event(E["power_w"], "500", Context(user_id="u1"), "W")))
+    assert ex.paused
+    asyncio.run(ex.async_set_consent(False))
+    asyncio.run(ex.async_tick())                                 # pierwszy tik po cofnięciu zgody
+    assert h.states.get(E["mode"]).state == "auto"
+    assert h.states.get(E["power_w"]).state == "500"             # nastawa właściciela zostaje
+
+
+def test_owner_mode_survives_switch_off_and_end_of_pause(monkeypatch):
+    h, ex = _written(monkeypatch)
+    h.states.set(E["mode"], "charge_battery")
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "charge_battery", Context(user_id="u1"))))
+    asyncio.run(ex.async_set_local_switch(False))
+    asyncio.run(ex.async_tick())
+    ex._clock.t += 1801
+    asyncio.run(ex.async_tick())
+    assert h.states.get(E["mode"]).state == "charge_battery"
+    assert ex._state.owned is False
+
+
+def test_owner_edits_of_keys_we_never_wrote_survive_revoke(monkeypatch):
+    h, ex = _written(monkeypatch)
+    written = {c[2]["entity_id"] for c in h.services.calls}
+    assert E["soc_min"] not in written and E["export_limit_w"] not in written
+    h.states.set(E["soc_min"], "50")                              # DoD 50 = próg 50 %
+    h.states.set(E["export_limit_w"], "1000")
+    asyncio.run(ex.async_set_consent(False))
+    asyncio.run(ex.async_tick())
+    assert h.states.get(E["soc_min"]).state == "50"
+    assert h.states.get(E["export_limit_w"]).state == "1000"
+    assert h.states.get(E["mode"]).state == "auto" and ex._state.owned is False
+
+
+def test_taken_over_key_stays_excluded_after_we_write_it_again(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        h.states.set(E["export_limit_enabled"], "on")
+        await ex.async_on_state_event(event(E["export_limit_enabled"], "on", Context(user_id="u1")))
+        ex._clock.t += 1801
+        await ex.async_tick()                                    # po pauzie plan pisze klucz znowu
+        return await store.async_load()
+    state = asyncio.run(go())
+    assert h.states.get(E["export_limit_enabled"]).state == "off"
+    assert "export_limit_enabled" in state.taken_over
+    assert "export_limit_enabled" not in state.restore_keys and "mode" in state.restore_keys
+
+
+def test_restore_keys_persisted_with_ownership(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        return await store.async_load()
+    state = asyncio.run(go())
+    by_entity = {eid: key for key, eid in E.items()}
+    written = {by_entity[c[2]["entity_id"]] for c in h.services.calls}
+    assert set(state.restore_keys) == written and "mode" in written
+    assert state.taken_over == []
+
+
+def test_legacy_owned_state_without_restore_keys_restores_all_snapshot_keys(monkeypatch):
+    h = goodwe_hass(mode="sell_power", dod="50", export="0", export_on="off")
+    store = ControlStore(h, "e1")
+    asyncio.run(store._store.async_save({
+        "consent": False, "local_switch": True, "owned": True,
+        "snapshot": {"soc_min": 15.0, "soc_max": 100.0, "export_limit_w": 4000.0,
+                     "export_limit_enabled": 1.0}}))
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto"
+    assert h.states.get(E["soc_min"]).state == "85.0"
+    assert h.states.get(E["export_limit_w"]).state == "4000.0"
+    assert h.states.get(E["export_limit_enabled"]).state == "on"
+    assert ex._state.owned is False
+
+
+def test_stop_clears_open_issues(monkeypatch):
+    _, ex = _written(monkeypatch)
+    asyncio.run(ex.async_on_state_event(event(E["power_w"], "500", Context(user_id="u1"), "W")))
+    ir.async_delete_issue.reset_mock()
+    asyncio.run(ex.async_stop())
+    deleted = [c.args[2] for c in ir.async_delete_issue.call_args_list]
+    assert ISSUE in deleted and "control_error_e1" in deleted
+
+
+def test_exec_summary_reports_last_foreign_key_and_pause(monkeypatch):
+    _, ex = _written(monkeypatch)
+    asyncio.run(ex.async_on_state_event(event(E["power_w"], "500", Context(user_id="u1"), "W")))
+    s = ex.exec_summary()
+    assert s["last_foreign_key"] == "power_w" and 1790 < s["paused_for_s"] <= 1800
+    assert no_entity_ids_in(str(s))
+
+
+def test_level_signal_takes_mode_over_for_restore(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        h.states.set(E["mode"], "export_ac")               # zmiana bez aktora, opcja spoza profilu
+        await ex.async_tick()
+        saved = await store.async_load()
+        h.states.set(E["mode"], "charge_pv")               # właściciel dalej steruje trybem
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+        return saved
+    saved = asyncio.run(go())
+    assert "mode" in saved.taken_over and "mode" not in saved.restore_keys
+    assert h.states.get(E["mode"]).state == "charge_pv" and ex._state.owned is False
+
+
+def test_release_clears_restore_bookkeeping(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        await ex.async_on_state_event(event(E["power_w"], "500", Context(user_id="u1"), "W"))
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+        return await store.async_load()
+    state = asyncio.run(go())
+    assert state.owned is False and state.restore_keys is None and state.taken_over == []
