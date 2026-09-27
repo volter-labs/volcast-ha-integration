@@ -35,11 +35,19 @@ def _dev(i, **kw):
     return SimpleNamespace(**{**base, **kw})
 
 
-def test_all_devices_from_mapping_view_and_missing():
+def test_all_devices_from_mapping_view_and_missing(monkeypatch, caplog):
+    from custom_components.volcast import registry_compat
+
+    monkeypatch.setattr(registry_compat, "_warned_missing", False)
     a, b = _dev(1), _dev(2)
     assert all_devices(SimpleNamespace(devices={"d1": a, "d2": b})) == [a, b]
     assert all_devices(SimpleNamespace(devices=DeviceView([a, b]))) == [a, b]
+    assert caplog.records == []
+    # Brak listy urządzeń: pusta lista, ale jedno ostrzeżenie (nie przy każdym wywołaniu).
     assert all_devices(SimpleNamespace()) == []
+    assert all_devices(SimpleNamespace()) == []
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1 and "device registry" in warnings[0].getMessage()
 
 
 def test_inverter_hints_iterate_the_new_view(monkeypatch):
