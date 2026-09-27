@@ -126,14 +126,22 @@ class RegisterWriter:
         self.unreadable: frozenset[str] = frozenset(unreadable)
 
     async def async_write(self, w: RegisterWrite) -> str:
+        return await self._guarded(w, skip_equal=False)
+
+    async def async_write_restore(self, w: RegisterWrite) -> str:
+        """Zapis powrotu do trybu bazowego: o tym, czy ramka w ogóle idzie, rozstrzyga świeży odczyt
+        PRZED zapisem (rejestr już ma wartość bazową → OK bez ramki), nie odczyt z cyklu."""
+        return await self._guarded(w, skip_equal=True)
+
+    async def _guarded(self, w: RegisterWrite, *, skip_equal: bool) -> str:
         try:
             async with self._lock:
-                return await self._write(w)
+                return await self._write(w, skip_equal=skip_equal)
         except Exception as err:  # noqa: BLE001 — pisarz nie rzuca; zapis niepewny
             _LOGGER.warning("direct write of %s failed: %s", w.key, type(err).__name__)
             return ERROR
 
-    async def _write(self, w: RegisterWrite) -> str:
+    async def _write(self, w: RegisterWrite, *, skip_equal: bool = False) -> str:
         if expected_address(self.profile, w.key) != w.addr or isinstance(w.value, bool) \
                 or not isinstance(w.value, int) or not 0 <= w.value <= 0xFFFF:
             _LOGGER.error("direct write of %s refused: address or value outside the profile", w.key)
@@ -150,8 +158,8 @@ class RegisterWriter:
             _LOGGER.debug("pre-write read of %s failed: %s", w.key, type(err).__name__)
             return ERROR                   # nic nie wysłano; chwilowa awaria, nie odmowa
         w = RegisterWrite(w.key, w.addr, _fresh_value(self.profile, w.key, w.value, before))
-        if w.key in _TOU_WORD_KEYS and w.value == before:
-            return OK                      # włącznik już w tym stanie (świeży odczyt) — bez ramki NVM
+        if (skip_equal or w.key in _TOU_WORD_KEYS) and w.value == before:
+            return OK                      # rejestr już w tym stanie (świeży odczyt) — bez ramki NVM
         echo = await self._send(w)
         if echo == UNSUPPORTED:
             return UNSUPPORTED

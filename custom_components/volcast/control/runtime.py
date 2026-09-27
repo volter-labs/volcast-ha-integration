@@ -338,6 +338,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
 async def _async_start_direct(conn, executor) -> None:
     """Start połączenia w tle (kolizje, tożsamość), pierwszy odczyt i od razu cykl."""
     try:
+        # Własność z wcześniejszej sesji: kolizja statyczna nie odcina powrotu do trybu bazowego.
+        conn.allow_conflicted_restore = bool(getattr(executor, "owned", False))
         await conn.async_start()
         if conn.refused() is None:
             await conn.async_poll()
@@ -466,6 +468,7 @@ async def async_remove_control(hass, entry) -> None:
                                    mode_unique_id=mode_unique_id(hass, mapped), io=io)
         await executor.async_start()
         if conn is not None:
+            conn.allow_conflicted_restore = True        # usuwamy wpis przy własności: tylko powrót
             try:
                 await conn.async_start()
             except Exception as err:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić

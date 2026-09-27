@@ -85,10 +85,18 @@ def issues(monkeypatch):
                            keys=lambda: [k for _, k, _ in created])
 
 
+class TickClock(FakeClock):
+    """Zegar monotoniczny testów, który — jak prawdziwy — rośnie przy każdym odczycie (1 ms)."""
+
+    def __call__(self) -> float:
+        self.now += 0.001
+        return self.now
+
+
 class Harness:
     def __init__(self, make_hass, profile, target, *, options=None, trial=False, store=None, clock=None,
                  utc=None, rated=8000.0, entry_id="e1") -> None:
-        self.clock = clock or FakeClock()
+        self.clock = clock or TickClock()
         self.options = options if options is not None else {"control_mode": "direct", "direct_target": target}
         self.entry = SimpleNamespace(domain=DOMAIN, entry_id=entry_id, options=self.options, data={},
                                      disabled_by=None)
@@ -506,7 +514,8 @@ async def test_drift_ignored_for_reading_started_before_write_end(make_hass, goo
     h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
     try:
         stale = h.conn.reading
-        for started in (h.clock() - 1.0, h.clock()):          # dwa odczyty rozpoczęte przed końcem zapisu
+        end = h.ex._last_write_end
+        for started in (end - 1.0, end):                      # dwa odczyty rozpoczęte przed końcem zapisu
             h.conn.reading = SimpleNamespace(**{**stale.__dict__, "at_mono": started,
                                                 "device": {**stale.device, "power_w": 8846.0}})
             await h.ex.async_tick()
@@ -658,15 +667,17 @@ async def test_tou_failed_rewrite_restores_owner_programs(make_hass, rtu_tcp_sim
 async def test_tou_commit_uses_time_after_the_write_sequence(make_hass, rtu_tcp_sim, deye_bank, issues):
     h = await _deye(make_hass, rtu_tcp_sim).start(raw=TOU_RAW)
     try:
-        started = h.clock()
         real = h.io.writer.async_write
+        sent_at = []
 
         async def slow(w):
             h.clock.advance(1.0)                              # sekwencja zapisów trwa
-            return await real(w)
+            out = await real(w)
+            sent_at.append(h.clock.now)
+            return out
         h.io.writer.async_write = slow
         await h.ex.async_tick()
-        assert h.ex._memory.tou_write_end == h.clock() > started
+        assert sent_at and h.ex._memory.tou_write_end >= sent_at[-1]
     finally:
         await h.close()
 
@@ -681,12 +692,14 @@ async def test_owner_program_edit_twice_pauses_and_is_not_restored(make_hass, rt
         deye_bank.poke(soc_reg, 55)
         await h.cycle(400.0)
         assert not h.ex.paused
-        deye_bank.poke(soc_reg, 55)
+        await h.cycle(400.0)                                  # ta sama wartość trwa — liczy się raz
+        assert not h.ex.paused
+        deye_bank.poke(soc_reg, 60)                           # druga ZMIANA właściciela w 30 min
         await h.cycle(400.0)
         assert h.ex.paused and "tou.1.soc" in h.ex._state.taken_over
         await h.ex.async_set_consent(False)
         await h.cycle()
-        assert deye_bank.read(soc_reg, 1)[0] == 55 and ours != 55
+        assert deye_bank.read(soc_reg, 1)[0] == 60 and ours != 60
     finally:
         await h.close()
 

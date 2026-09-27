@@ -169,6 +169,12 @@ class VolcastExecutor:
         self.last_tou_report: TouReport | None = None
         self._conflict_issue_open = False
         self._budget_issue_open = False
+        self._snapshot_issue_open = False
+        # rozjazd policzony, ale jeszcze nieusunięty: ta sama wartość na urządzeniu nie liczy się drugi raz
+        self._drift_values: dict[str, float | str] = {}
+        # klucze przejęte przez właściciela → nasza wartość planu z chwili przejęcia; nie piszemy ich,
+        # dopóki plan nie zmieni tej wartości (reszta planu działa dalej)
+        self._owner_held: dict[str, float | str | None] = {}
 
     # ── stan dla encji i telemetrii ───────────────────────────────────────
     @property
@@ -610,6 +616,7 @@ class VolcastExecutor:
         if tele.soc is not None:
             self._prev_soc = (tele.soc, now_mono)
         self._forget_changed(decision.flat)
+        decision = self._without_owner_held(decision)
         # Z własnego odczytu, nie tylko z decyzji — wcześniejsza blokada cyklu go nie zasłoni.
         if self._signal_foreign_mode(rd, self._gates_open() and gates.verified, decision.takeover):
             await self._async_save("control state")
@@ -683,8 +690,11 @@ class VolcastExecutor:
         if self._direct is None:
             return
         end = self._clock()
-        if self._direct.end_writes(end):
+        sent = self._direct.end_writes(end)
+        if sent:
             self._last_write_end = end
+        for key in sent:
+            self._drift_values.pop(EN_KEY if key in (ENABLE, TOU_WORD) else key, None)
 
     def _forget_changed(self, flat: Mapping[str, float | str]) -> None:
         """Zmieniona wartość planu klucza kasuje jego historię rozjazdów (nowa wartość, nowa historia)."""
@@ -694,10 +704,41 @@ class VolcastExecutor:
             old, new = self._planned.get(key), flat.get(key)
             if old is None or new is None or not same_value(old, new):
                 self._direct.drift.forget(key)
+        for key in list(self._owner_held):
+            held, new = self._owner_held[key], flat.get(key)
+            if held is None or new is None or not same_value(held, new):
+                del self._owner_held[key]          # plan zmienił wartość — klucz znów nasz
         self._planned = dict(flat)
 
+    def _held_keys(self) -> set[str]:
+        return set(self._owner_held)
+
+    def _without_owner_held(self, decision):
+        """Zapisy planu bez kluczy przejętych przez właściciela; grupa tryb+moc idzie razem albo wcale."""
+        if self._direct is None or decision.status != WRITE or not self._owner_held:
+            return decision
+        keys = {w.key for w in decision.writes}
+        drop = keys & self._held_keys()
+        if not drop:
+            return decision
+        if drop & set(GROUP_KEYS):
+            drop |= set(GROUP_KEYS)
+        writes = [w for w in decision.writes if w.key not in drop]
+        decision = replace(decision, writes=writes, restore={k: v for k, v in decision.restore.items()
+                                                            if k not in drop},
+                           notes=(*decision.notes, "owner_kept"))
+        if not writes:
+            decision = replace(decision, status=IDLE, reason="owner_kept")
+        return decision
+
     def _note_drift(self, rd: Reading, now_mono: float) -> bool:
-        """Raz na cykl i raz na odczyt: rozjazd względem naszego ostatniego zapisu; True = przejęcie."""
+        """Raz na cykl i raz na odczyt: ZMIANA wartości na urządzeniu względem naszego ostatniego zapisu.
+
+        Ta sama, trwająca wartość liczy się raz (do naszego następnego zapisu). Przejęcie (drugi rozjazd
+        w 30 min przy niezmienionym planie) czyni wartość właściciela punktem odniesienia klucza —
+        kolejne przejęcie tylko przy NOWEJ zmianie; klucz nie jest pisany, dopóki plan nie zmieni
+        jego wartości. True = przejęcie.
+        """
         reading = rd.source
         if reading is None or reading.at_mono == self._drift_seen:
             return False
@@ -705,12 +746,24 @@ class VolcastExecutor:
         drift = self._direct.drift
         if not drift.usable(reading.at_mono):
             return False
+        memory = self._memory
+        drifted = drifted_keys(memory.last_written, reading.device)
+        for key in [k for k in self._drift_values if k not in drifted]:
+            del self._drift_values[key]            # wartość wróciła do naszej — epizod skończony
         taken = False
-        for key in drifted_keys(self._memory.last_written, reading.device):
-            if key in self._memory.uncertain:
+        for key in drifted:
+            if key in memory.uncertain:
                 continue                    # nasz zapis o nieznanym wyniku — to nie zmiana właściciela
+            value = reading.device[key]
+            seen = self._drift_values.get(key)
+            if seen is not None and same_value(seen, value):
+                continue                    # ta sama wartość co w policzonym już rozjeździe
+            self._drift_values[key] = value
             if drift.note_drift(key, now_mono):
                 _LOGGER.warning("Volcast control paused for 30 min: %s changed outside Volcast", key)
+                memory.last_written[key] = value          # wartość właściciela = punkt odniesienia
+                self._drift_values.pop(key, None)
+                self._owner_held[key] = self._planned.get(key)
                 self._pause_for_foreign(key, None)
                 taken = True
         return taken
@@ -748,13 +801,14 @@ class VolcastExecutor:
                 self._state.nvm_log = log
                 await self._async_save("write budget")
 
-    async def _fresh_direct_reading(self, rd: Reading) -> Reading:
-        """Odczyt do powrotu: nowy, gdy go nie ma albo zaczął się przed końcem naszego ostatniego zapisu."""
+    async def _fresh_direct_reading(self, rd: Reading) -> Reading | None:
+        """Odczyt do powrotu: rozpoczęty po końcu naszego ostatniego zapisu. Czeka na odpytywanie w toku
+        (ograniczony czas); bez świeżego odczytu None — powrót nie decyduje na starych danych."""
         src = rd.source
         if src is not None and (self._last_write_end is None or src.at_mono > self._last_write_end):
             return rd
-        await self._direct.conn.async_poll()
-        return self.io.read(self._utcnow())
+        fresh = await self._direct.conn.async_read_fresh(self._last_write_end)
+        return self.io.read(self._utcnow()) if fresh is not None else None
 
     # ── okna czasowe (tryb bezpośredni) ───────────────────────────────────
     async def _tou_tick(self, rd: Reading, gates: Gates, tele: Telemetry, now_mono: float, now_utc) -> None:
@@ -769,9 +823,14 @@ class VolcastExecutor:
         if tele.soc is not None:
             self._prev_soc = (tele.soc, now_mono)
         self._forget_changed(d.flat)
+        d = self._tou_without_owner_held(d)
         d = self._gate_write(d)
-        if d.status == WRITE and (not self._state.owned or self._state.tou_snapshot is None):
+        if d.status == WRITE and not self._state.owned:
             d = await self._async_take_tou_ownership(d, rd)
+            if d.status == WRITE and not self._gates_open():
+                d = replace(d, status=BLOCKED, reason="gates_changed")
+        elif d.status == WRITE and self._state.tou_snapshot is None:
+            self._snapshot_lost()               # nigdy nowa migawka przy własności — powrót do programów bazowych
         if d.status == WRITE:
             report = await async_run_tou_writes(d.writes, self._writer.async_write, pre_held=d.pre_held,
                                                 on_exception=self._log_write_exception)
@@ -789,6 +848,24 @@ class VolcastExecutor:
         self._finish(d)
         await self._after_direct_cycle(d)
 
+    def _tou_without_owner_held(self, d):
+        """Przepisanie programów wstrzymane, gdy zmieniłoby pole przejęte przez właściciela (poza
+        wyłączeniem harmonogramu w stronę bezpieczną)."""
+        if d.status != WRITE or not self._owner_held or "tou_safety_off" in d.notes:
+            return d
+        keys = {EN_KEY if w.key in (ENABLE, TOU_WORD) else w.key for w in d.writes}
+        if keys & self._held_keys():
+            return replace(d, status=IDLE, reason="owner_kept", writes=[], notes=(*d.notes, "owner_kept"))
+        return d
+
+    def _snapshot_lost(self) -> None:
+        if self._snapshot_issue_open:
+            return
+        self._snapshot_issue_open = True
+        _LOGGER.warning("Volcast control: the saved copy of the owner's time-of-use programs is missing — "
+                        "returning control will restore baseline programs with the schedule off")
+        self._create_issue(f"tou_snapshot_lost_{self._entry.entry_id}", "tou_snapshot_lost")
+
     def _tz(self):
         name = getattr(getattr(self._hass, "config", None), "time_zone", None)
         try:
@@ -797,21 +874,21 @@ class VolcastExecutor:
             return ZoneInfo("Europe/Warsaw")
 
     async def _async_take_tou_ownership(self, d, rd: Reading):
-        """Migawka programów właściciela (surowe słowa) PRZED pierwszym zapisem okien czasowych."""
+        """Migawka programów właściciela (surowe słowa) PRZED pierwszym zapisem okien czasowych —
+        tylko przy przejęciu (przy własności falownik ma już NASZE programy)."""
         snap = tou_snapshot(rd.source, self._profile)
-        if snap is None:
+        if snap is None or self._state.owned:
             return replace(d, status=BLOCKED, reason="baseline_unknown")
         prev = (self._state.owned, dict(self._state.snapshot), dict(self._state.owner),
                 self._state.restore_keys, list(self._state.taken_over), self._state.tou_snapshot)
-        if not self._state.owned:
-            snapshot = take_snapshot(rd.readings)
-            if snapshot_missing(snapshot, self.io.snapshot_keys()):
-                return replace(d, status=BLOCKED, reason="baseline_unknown")
-            self._state.snapshot = snapshot
-            self._state.owned = True
-            self._state.owner = self._owner()
-            self._state.restore_keys = []
-            self._state.taken_over = []
+        snapshot = take_snapshot(rd.readings)
+        if snapshot_missing(snapshot, self.io.snapshot_keys()):
+            return replace(d, status=BLOCKED, reason="baseline_unknown")
+        self._state.snapshot = snapshot
+        self._state.owned = True
+        self._state.owner = self._owner()
+        self._state.restore_keys = []
+        self._state.taken_over = []
         self._state.tou_snapshot = snap
         if not await self._async_save("baseline snapshot"):
             (self._state.owned, self._state.snapshot, self._state.owner, self._state.restore_keys,
@@ -822,7 +899,7 @@ class VolcastExecutor:
     async def _tou_restore_after_failure(self, *, record_decision: bool = True) -> None:
         """Przerwana sekwencja: od razu programy właściciela z migawki (własność zostaje)."""
         rd = await self._fresh_direct_reading(self.io.read(self._utcnow()))
-        report = await self._run_tou_restore(rd)
+        report = await self._run_tou_restore(rd) if rd is not None else None
         done = report is not None and self._tou_restore_complete(report)
         if done:
             self._tou_restore_pending = False
@@ -924,14 +1001,32 @@ class VolcastExecutor:
         nie blokuje), na świeżym odczycie; okna czasowe wracają do programów właściciela.
         """
         if self._direct is not None:
+            conn = self._direct.conn
+            self._update_conflict_issue()          # kolizja powrotu nie blokuje, ale właściciel ma wiedzieć
             if not await self._direct.async_identity_ok():
-                if not (self.last_decision and self.last_decision.reason == "identity"):
-                    _LOGGER.warning("Volcast control: return to the baseline waits — the inverter at the "
-                                    "saved address is not confirmed")
-                self._finish(CycleDecision(BLOCKED, "identity"))
+                refused = conn.refused()
+                reason = "identity" if refused is None else "direct_refused"
+                if not (self.last_decision and self.last_decision.reason == reason):
+                    if refused is None:
+                        _LOGGER.warning("Volcast control: return to the baseline waits — the inverter at the "
+                                        "saved address is not confirmed")
+                    else:
+                        _LOGGER.warning("Volcast control: return to the baseline waits — the direct connection "
+                                        "was refused (%s)", refused)
+                if refused is not None and not self._conflict_issue_open:
+                    self._conflict_issue_open = True
+                    self._create_issue(self._conflict_issue_id, "direct_conflict", {"reason": refused})
+                self._finish(CycleDecision(BLOCKED, reason))
                 return
-            rd = await self._fresh_direct_reading(rd)
+            fresh = await self._fresh_direct_reading(rd)
+            if fresh is None:
+                # Bez odczytu rozpoczętego po naszym zapisie nie wiemy, co falownik ma — własność zostaje.
+                self._finish(CycleDecision(ERROR, "no_fresh_reading"))
+                return
+            rd = fresh
             if self._profile.control_model == "time_window":
+                if self._state.tou_snapshot is None:
+                    self._snapshot_lost()
                 await self._restore_tou(rd)
                 return
         now_mono = self._clock()
@@ -945,9 +1040,12 @@ class VolcastExecutor:
             allowed.add("mode")          # tryb i moc to jedna grupa — nasza moc = nasz tryb
         owner_kept = [k for k in target if k in self._state.taken_over]
         # To, co falownik już ma, nie jedzie (NVM) — ta sama zasada co w cyklu.
+        # Tryb bezpośredni: o każdym kluczu rozstrzyga świeży odczyt pisarza przed zapisem (bez ramki,
+        # gdy rejestr już ma wartość bazową) — nigdy odczyt z cyklu.
+        direct = self._direct is not None
         keys = [k for k, v in target.items()
                 if k not in unfit and (allowed is None or k in allowed) and k not in owner_kept
-                and not (k in readings and same_value(readings[k], v))]
+                and (direct or not (k in readings and same_value(readings[k], v)))]
         mode_kept = "mode" in owner_kept or (rd.foreign_mode and "mode" in keys)
         if "mode" in keys and rd.foreign_mode:
             keys.remove("mode")          # ktoś wybrał tryb spoza profilu — zostaje jego
@@ -955,9 +1053,10 @@ class VolcastExecutor:
         rest_writes = self.io.restore_writes(fitted, [k for k in keys if k not in GROUP_KEYS], rd)
         # Moc (gdyby profil ją kiedyś miał w stanie bazowym) po trybie: tryb bazowy ją ignoruje.
         reports = []
+        write = getattr(self._writer, "async_write_restore", None) if direct else None
         for writes in (order_group(group_writes, power_first=False), rest_writes):
             if writes:
-                reports.append(await async_run_group_writes(writes, self._writer.async_write,
+                reports.append(await async_run_group_writes(writes, write or self._writer.async_write,
                                                             on_exception=self._log_write_exception))
         self._end_direct_writes()
         self._account_restore(target, reports, now_mono)

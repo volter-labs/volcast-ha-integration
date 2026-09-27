@@ -190,7 +190,7 @@
     },
     "foreign_control_direct": {
       "title": "Volcast inverter control paused",
-      "description": "An inverter setting controlled by Volcast ({setting}) was changed outside Volcast twice within 30 minutes. Volcast paused control for 30 minutes and keeps the setting you changed. Control resumes automatically afterwards; to stop it, turn off the Volcast control switch."
+      "description": "An inverter setting controlled by Volcast ({setting}) was changed outside Volcast. Volcast paused control for 30 minutes and keeps the setting you changed. Control resumes automatically afterwards; to stop it, turn off the Volcast control switch."
     },
     "direct_conflict": {
       "title": "Another client is using the inverter connection",
@@ -199,6 +199,10 @@
     "nvm_budget": {
       "title": "Volcast inverter write budget used up",
       "description": "Volcast reached its daily limit of writes to the inverter's memory. It holds the current settings (a forced charge or discharge returns to the inverter's own mode) until older writes leave the 24-hour window."
+    },
+    "tou_snapshot_lost": {
+      "title": "Volcast lost the saved copy of your inverter schedule",
+      "description": "Volcast could not read its saved copy of the time-of-use programs you had before Volcast took control. When control ends, Volcast will set simple self-consumption programs and turn the inverter's time-of-use schedule off. Check and re-enter your own schedule on the inverter afterwards."
     }
   },
   "services": {

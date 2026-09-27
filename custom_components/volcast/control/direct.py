@@ -52,6 +52,7 @@ IDENTITY_UDP_MAX_AGE_S = 3600.0     # UDP (bez połączenia): tożsamość co go
 IDENTITY_MAX_AGE_S = 3600.0         # przed sesją zapisów: potwierdzenie nie starsze niż godzina
 TIMEOUT_STREAK = 3
 RESOLVE_TIMEOUT_S = 2.0
+FRESH_WAIT_S = 10.0                 # powrót czeka na odpytywanie w toku najwyżej tyle
 _FP_HEX = frozenset("0123456789abcdef")
 
 Resolver = Callable[[str], Awaitable[Iterable[str] | None]]
@@ -188,6 +189,10 @@ class DirectConnection:
         self._seen_reconnects = 0
         self._seen_peer_resets = 0
         self._identity_issue = f"direct_identity_changed_{getattr(entry, 'entry_id', '')}"
+        self.fresh_wait_s = FRESH_WAIT_S
+        # Własność z wcześniejszej sesji: kolizja statyczna przy starcie nie odcina powrotu do trybu
+        # bazowego — połączenie rusza w stanie kolizji (zapisy planu stoją, powrót idzie).
+        self.allow_conflicted_restore = False
 
     # ── stan ──
 
@@ -275,7 +280,11 @@ class DirectConnection:
             self._refused = "direct_in_use"
             _LOGGER.warning("Volcast direct connection refused: the inverter address is already in use")
             return
-        if clash:
+        if clash and self.allow_conflicted_restore and SELF_DOMAIN not in clash:
+            self.static_conflicts = clash
+            _LOGGER.warning("Volcast direct connection: another integration uses this inverter — connecting "
+                            "only to return it to its own settings")
+        elif clash:
             self._refused = "direct_in_use" if SELF_DOMAIN in clash else f"direct_conflict:{clash[0]}"
             self.static_conflicts = ()
             _LOGGER.warning("Volcast direct connection refused: another integration uses this inverter")
@@ -283,12 +292,18 @@ class DirectConnection:
         hosts[host] = self
         self._host = host
         try:
+            await self._start_registered(cfg)
+        except BaseException:
+            await self._release()                        # nieoczekiwany wyjątek nie zostawia rejestracji hosta
+            raise
+
+    async def _start_registered(self, cfg: TransportConfig) -> None:
+        try:
             transport = self._factory(cfg, allow_loopback=self._allow_loopback)
         except Exception as err:  # noqa: BLE001 — zła konfiguracja: bez połączenia
             _LOGGER.warning("Volcast direct connection not started: %s", type(err).__name__)
             self._refused = "bad_target"
-            hosts.pop(host, None)
-            self._host = None
+            await self._release()
             return
         self.client = RegisterClient(transport, self.profile, clock=self._clock, utcnow=self._utcnow, salt=self._salt,
                                      unreadable=self.unreadable)
@@ -371,6 +386,35 @@ class DirectConnection:
                 return self.reading
             finally:
                 self._poll_task = None
+
+    async def async_read_fresh(self, after_mono: float | None) -> DirectReading | None:
+        """Odczyt rozpoczęty PO `after_mono` (np. po końcu naszego zapisu): czeka na odpytywanie w toku
+        (najwyżej `fresh_wait_s`), potem czyta sam. None = brak świeżego odczytu (nie zgadujemy)."""
+        def fresh(r):
+            return r is not None and (after_mono is None or r.at_mono > after_mono)
+
+        if self._stopped or self._refused is not None or self.client is None:
+            return None
+        if fresh(self.reading):
+            return self.reading
+        try:
+            await asyncio.wait_for(self._poll_lock.acquire(), self.fresh_wait_s)
+        except asyncio.TimeoutError:
+            return None
+        try:
+            if not fresh(self.reading) and not self._stopped:
+                self._poll_task = asyncio.current_task()
+                try:
+                    await self._poll()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.debug("Volcast direct fresh read failed: %s", type(err).__name__)
+                finally:
+                    self._poll_task = None
+        finally:
+            self._poll_lock.release()
+        return self.reading if fresh(self.reading) else None
 
     async def _poll(self) -> DirectReading | None:
         now = self._clock()
