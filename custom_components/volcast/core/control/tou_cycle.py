@@ -1,10 +1,20 @@
 """Cykl okien czasowych (programy TOU, Deye) w trybie bezpośrednim.
 
-plan → `compress(anchor="day")` (stała siatka doby: starty zmieniają się tylko ze zmianą planu)
-→ strażnicy (I-9 świeżość, I-10 kształt programów — m.in. zdublowane starty w dniu zmiany
-czasu: fail-closed, programy w falowniku jadą dalej) → porównanie z odczytem (tylko zmienione
-pola) → interwał I-6 i budżet NVM (pola wstrzymane idą do sekwencji jako `pre_held`) →
-sekwencja: włącznik OFF (gdy ON) → programy → włącznik ON na końcu.
+plan → `compress(anchor="day")` (stała siatka doby na zegarze ściennym: starty zmieniają się
+tylko ze zmianą planu) → strażnicy (I-9 świeżość, I-10 kształt programów) → porównanie z
+odczytem (tylko zmienione pola; moc i SoC w tolerancji profilu, wartość przycięta przez
+urządzenie po OK_ADJUSTED to wartość osiągnięta) → wstrzymania → sekwencja:
+włącznik OFF → programy → włącznik ON na końcu.
+
+Zasady oszczędzania harmonogramu właściciela i pamięci nieulotnej:
+* pole wstrzymane (interwał I-6, budżet NVM, pamięć prawdziwej odmowy) = ŻADNEJ sekwencji —
+  harmonogram nie jest wyłączany na darmo, a programy w falowniku jadą dalej;
+* przepisanie działającego harmonogramu najwyżej raz na `REWRITE_INTERVAL_S`, chyba że zmiana
+  idzie w stronę bezpieczną (zdjęcie ładowania z sieci, mniejsza moc);
+* OFF jest w sekwencji zawsze, gdy zmieniają się programy — stan włącznika rozstrzyga świeży
+  odczyt pisarza (bez ramki, gdy już wyłączony), nie odczyt z cyklu, który mógł być sprzed
+  naszego ostatniego zapisu;
+* włącznik jest kluczem pamięci (`tou_enabled`): ostatni zapis, interwał, niepewność, rozjazd.
 
 Czysta decyzja; każdy wyjątek = decyzja `error` bez zapisów (fail-closed).
 """
@@ -18,8 +28,15 @@ from ..guards import GuardContext, GuardResult, apply_guards, temperature_ok
 from ..params import Params, TouProgram
 from ..registers import RegisterWrite, encode_tou_enable, encode_writes
 from ..slot import effective_action
-from .cycle import BLOCKED, DRY_RUN, ERROR, IDLE, WRITE, ControlMemory, _gate_reason, same_value
+from .cycle import (
+    BLOCKED, DRY_RUN, ERROR, IDLE, WRITE, ControlMemory, _adjusted_reached, _denied_again, _gate_reason,
+    note_denied, same_value)
 from .tou_writes import ENABLE, TouReport
+
+EN_KEY = "tou_enabled"                     # włącznik w widoku urządzenia i w pamięci (1.0 / 0.0)
+REWRITE_INTERVAL_S = 3600.0
+# prawdziwa odmowa pola programu: odwrót do 6 h (każda próba to OFF i powrót do programów właściciela)
+TOU_DENIED_MAX_S = 6 * 3600.0
 
 
 @dataclass
@@ -34,6 +51,8 @@ class TouDecision:
     guard: GuardResult | None = None
     # pola wstrzymane z góry (interwał I-6, budżet NVM) — dla `run_tou_writes(pre_held=…)`
     pre_held: tuple[str, ...] = ()
+    # widok urządzenia użyty w decyzji (pamięć odmowy w `commit_tou`)
+    device: dict[str, float | str] = field(default_factory=dict)
 
     def summary(self) -> dict:
         return {
@@ -89,48 +108,90 @@ def _decide(profile, schedule, now_utc, now_mono, tz, tele, limits, reading, gat
     if not guard.write_allowed:
         return TouDecision(BLOCKED, f"guard:{guard.invariant}", guard=guard, notes=tuple(notes), **common)
     programs = guard.params.tou
-    common.update(programs=programs, guard=guard)
     flat = Params(tou=programs).flatten()
-    device = {k: reading.device[k] for k in flat if k in reading.device}
+    device = {k: reading.device[k] for k in (*flat, EN_KEY) if k in reading.device}
+    common.update(programs=programs, guard=guard, device=device)
     memory.throttle.reconcile(device)
     memory.uncertain -= {k for k in memory.uncertain if k in reading.device}
-    settled = {k for k in flat if k in device and same_value(device[k], flat[k])}
+    settled = {k for k in flat if k in device and (_within_tolerance(k, flat[k], device[k], profile)
+                                                   or _adjusted_reached(memory, k, flat[k], device[k]))}
     changed = set(flat) - settled
-    due = memory.throttle.filter(flat, now_mono) - settled
-    held = changed - due
-    if held:
-        notes.append("I-6")
     enable_off = not reading.tou_enabled
+    if not changed and not enable_off:
+        return TouDecision(IDLE, "nothing_to_write", flat=flat, notes=tuple(notes), **common)
+    held: set[str] = set()
+    if changed:
+        waiting = changed - (memory.throttle.filter(flat, now_mono) - settled)
+        if waiting:
+            held |= waiting
+            notes.append("I-6")
+        refused = {k for k in changed if _denied_again(memory, k, flat[k], device.get(k), now_mono)}
+        if refused:
+            held |= refused
+            notes.append("denied_hold")
+    elif memory.tou_enable_at is not None and 0.0 <= now_mono - memory.tou_enable_at < profile.min_interval_s:
+        held.add(ENABLE)                        # ponowne włączenie po wyłączeniu z zewnątrz: po I-6
+        notes.append("I-6")
     if memory.budget is not None:
-        blocked = memory.budget.exhausted(changed | ({ENABLE} if changed or enable_off else set()),
-                                          now_utc.timestamp())
+        blocked = memory.budget.exhausted(changed | {ENABLE}, now_utc.timestamp())
         if blocked:
             held |= blocked
             notes.append("nvm_budget")
-    if not changed and not enable_off:
-        return TouDecision(IDLE, "nothing_to_write", flat=flat, notes=tuple(notes), **common)
-    if changed and not (changed - held):
-        # Nic z programów nie może iść w tym cyklu — nie wyłączamy harmonogramu na darmo.
+    if held:
+        # Sekwencja przerwana w połowie zostawiłaby harmonogram wyłączony — nic nie idzie.
         return TouDecision(IDLE, "held", flat=flat, notes=tuple(notes), pre_held=tuple(sorted(held)), **common)
+    if changed and not enable_off and not _toward_safety(changed, flat, device) \
+            and memory.tou_rewrite_at is not None and 0.0 <= now_mono - memory.tou_rewrite_at < REWRITE_INTERVAL_S:
+        notes.append("tou_rewrite_interval")
+        return TouDecision(IDLE, "held", flat=flat, notes=tuple(notes), **common)
     writes: list[RegisterWrite] = []
     after = word
-    program_writes = encode_writes(Params(tou=programs), profile, keys=changed, current=reading.image)
-    if program_writes and reading.tou_enabled:
-        off = encode_tou_enable(False, word, profile, owner_word)
+    if changed:
+        off = encode_tou_enable(False, word, profile)
         writes.append(off)
         after = off.value
-    writes.extend(program_writes)
-    writes.append(encode_tou_enable(True, after, profile, owner_word))
+        writes.extend(encode_writes(Params(tou=programs), profile, keys=changed, current=reading.image))
+    writes.append(encode_tou_enable(True, after, profile))
     reason = _gate_reason(gates, memory, now_mono)
     status = WRITE if reason is None else DRY_RUN
-    return TouDecision(status, reason or "ok", writes=writes, flat=flat, notes=tuple(notes),
-                       pre_held=tuple(k for k in (w.key for w in writes) if k in held), **common)
+    return TouDecision(status, reason or "ok", writes=writes, flat=flat, notes=tuple(notes), **common)
+
+
+def _field(key: str) -> str:
+    return key.rsplit(".", 1)[-1]
+
+
+def _within_tolerance(key: str, planned, current, profile) -> bool:
+    """Pole programu zgodne z planem: moc w tolerancji mocy profilu, SoC nie niżej niż plan
+    (podłoga rezerwy) i najwyżej o tolerancję SoC wyżej; start i ładowanie z sieci dokładnie."""
+    if isinstance(planned, str) or isinstance(current, str):
+        return planned == current
+    name = _field(key)
+    if name == "power_w":
+        return abs(float(current) - float(planned)) <= profile.power_tolerance_w
+    if name == "soc":
+        return float(planned) - 1.0 < float(current) <= float(planned) + profile.soc_tolerance_pp
+    return same_value(planned, current)
+
+
+def _toward_safety(changed, flat, device) -> bool:
+    """Zmiana w stronę bezpieczną: zdjęcie ładowania z sieci albo mniejsza moc programu."""
+    for key in changed:
+        cur, new = device.get(key), flat.get(key)
+        if not isinstance(cur, (int, float)) or not isinstance(new, (int, float)):
+            continue
+        name = _field(key)
+        if (name == "grid_charge" and new < cur) or (name == "power_w" and new < cur):
+            return True
+    return False
 
 
 def commit_tou(decision: TouDecision, report: TouReport, memory: ControlMemory, now_mono: float, *,
                now_wall: float | None = None) -> None:
-    """Pamięć po sekwencji: throttling tylko dla zapisanych pól (wartość rzeczywista przy
-    OK_ADJUSTED), niepewność dla ERROR, `tou` nieobsługiwane do końca sesji po wyjątku 2.
+    """Pamięć po sekwencji: throttling i ostatni zapis tylko dla zapisanych pól (wartość rzeczywista
+    przy OK_ADJUSTED — `adjusted`, żeby nie przepisywać co cykl), prawdziwa odmowa → `denied`
+    (odwrót), niepewność dla ERROR, włącznik jako `tou_enabled`, `tou` nieobsługiwane do końca
+    sesji po wyjątku 2.
 
     `now_wall` — liczenie ramek w budżecie NVM tutaj (pisarz bez własnego licznika); przy
     pisarzu rejestrów ramki liczy jego `on_send`, więc wtedy `None`.
@@ -143,9 +204,31 @@ def commit_tou(decision: TouDecision, report: TouReport, memory: ControlMemory, 
     memory.throttle.record(flat, fields, now_mono)
     for key in fields:
         memory.last_written[key] = flat[key]
-    memory.uncertain -= set(report.written)
-    memory.uncertain |= set(report.ambiguous)
-    memory.throttle.mark_unknown([k for k in report.ambiguous if k in flat], now_mono)
+        if key in actual:
+            memory.adjusted[key] = (decision.flat[key], actual[key])
+        else:
+            memory.adjusted.pop(key, None)
+        memory.denied.pop(key, None)
+    if fields:
+        memory.tou_rewrite_at = now_mono
+    ambiguous = set(report.ambiguous)
+    for key in set(report.failed) - ambiguous:
+        if key in decision.flat and key in decision.device:
+            note_denied(memory, key, decision.flat[key], decision.device[key], now_mono,
+                        max_hold_s=TOU_DENIED_MAX_S)
+    # Włącznik: stan końcowy po sekwencji (ON, samo OFF albo nieznany po ERROR).
+    if ENABLE in report.frames:
+        memory.tou_enable_at = now_mono
+    if ENABLE in ambiguous:
+        memory.last_written.pop(EN_KEY, None)
+    elif report.enable_written or ENABLE in report.written:
+        state = 1.0 if report.enable_written else 0.0
+        memory.throttle.record({EN_KEY: state}, [EN_KEY], now_mono)
+        memory.last_written[EN_KEY] = state
+    unknown = [EN_KEY if k == ENABLE else k for k in report.ambiguous]
+    memory.uncertain -= {EN_KEY if k == ENABLE else k for k in report.written}
+    memory.uncertain |= set(unknown)
+    memory.throttle.mark_unknown([k for k in unknown if k in flat or k == EN_KEY], now_mono)
     if report.unsupported:
         memory.unsupported.add("tou")
     if now_wall is not None and memory.budget is not None:

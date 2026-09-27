@@ -316,15 +316,15 @@ async def test_bit_field_uses_fresh_pre_write_word(deye_writer, deye_bank):
 
 
 @pytest.mark.asyncio
-async def test_enable_bit_on_fresh_word_keeps_or_fills_days(deye_writer, deye_bank):
+async def test_enable_bit_on_fresh_word_sets_every_day(deye_writer, deye_bank):
     deye_bank.poke(146, 0b0111110)                     # dni właściciela, włącznik OFF
     assert await deye_writer.async_write(RegisterWrite("tou_enable", 146, 0x01)) == OK
-    assert deye_bank.read(146, 1) == [0b0111111]
+    assert deye_bank.read(146, 1) == [0xFF]            # dopóki sterujemy — każdy dzień
     assert await deye_writer.async_write(RegisterWrite("tou_enable", 146, 0x00)) == OK
-    assert deye_bank.read(146, 1) == [0b0111110]       # OFF nie rusza dni
-    deye_bank.poke(146, 0)
+    assert deye_bank.read(146, 1) == [0xFE]            # OFF nie rusza dni
+    deye_bank.poke(146, 0x100)
     assert await deye_writer.async_write(RegisterWrite("tou_enable", 146, 0x01)) == OK
-    assert deye_bank.read(146, 1) == [0xFF]            # bez dni → cały tydzień
+    assert deye_bank.read(146, 1) == [0x1FF]           # bity spoza maski zostają
 
 
 # ── odmowa (DENIED) tylko po prawdziwej odmowie urządzenia ────────────────

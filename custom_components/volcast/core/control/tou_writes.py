@@ -1,9 +1,11 @@
 """Sekwencja zapisów okien czasowych (programy TOU) i powrót do programów właściciela.
 
-Kolejność przepisania: (1) włącznik harmonogramu OFF, gdy jest ON i coś się zmienia —
-wyłączony harmonogram to zwykła samokonsumpcja, więc każdy stan pośredni jest bezpieczny,
-a na urządzeniu nigdy nie działa program z polami pół starymi, pół nowymi; (2) programy
-1..N, pola wg `tou.field_order`; (3) włącznik ON na końcu, tylko gdy nic nie zostało wstrzymane.
+Kolejność przepisania: (1) włącznik harmonogramu OFF — zawsze, gdy zmieniają się programy
+(pisarz sprawdza stan świeżym odczytem i nie wysyła ramki, gdy harmonogram już jest wyłączony;
+odczyt z cyklu mógł być sprzed naszego ostatniego zapisu) — wyłączony harmonogram to zwykła
+samokonsumpcja, więc każdy stan pośredni jest bezpieczny, a na urządzeniu nigdy nie działa
+program z polami pół starymi, pół nowymi; (2) programy 1..N, pola wg `tou.field_order`;
+(3) włącznik ON na końcu, tylko gdy nic nie zostało wstrzymane.
 
 Pierwsze pole programu `i`, które nie poszło (ERROR, DENIED, UNSUPPORTED albo wstrzymane
 z góry przez interwał/budżet — `pre_held`), wstrzymuje resztę pól `i`, programy `> i` i
@@ -23,6 +25,8 @@ from ..registers import RegisterWrite, encode_tou_enable, encode_writes
 from ..write_sequence import ERROR, OK, OK_ADJUSTED, OnException, WriteReport, _account, _swallow
 
 ENABLE = "tou_enable"
+# surowe słowo włącznika właściciela (powrót) — pisarz nie składa bitów, porównuje całe słowo
+TOU_WORD = "tou_word"
 
 
 @dataclass
@@ -174,8 +178,10 @@ def _snapshot_programs(profile, snapshot: Mapping[str, Any]) -> tuple[TouProgram
 
 def tou_restore_writes(profile, snapshot: Mapping[str, Any] | None, reading, *, soc_reserve: float,
                        rated_power_w: float) -> list[RegisterWrite]:
-    """Powrót do programów właściciela: włącznik OFF (gdy ON) → różnice programów → słowo
-    włącznika właściciela na końcu. Bez migawki: programy bazowe (samokonsumpcja) i włącznik OFF."""
+    """Powrót do programów właściciela: włącznik OFF (gdy zmieniają się programy — pisarz nie
+    wysyła ramki, gdy już wyłączony) → różnice programów → SUROWE słowo włącznika właściciela na
+    końcu (`tou_word`: jego bit włącznika i jego dni, dokładnie). Bez migawki: programy bazowe
+    (samokonsumpcja) i włącznik OFF."""
     en = profile.raw["write"]["tou_enable"]
     ebit = 1 << en["enable_bit"]
     word = _word(reading, en["addr"])
@@ -190,11 +196,11 @@ def tou_restore_writes(profile, snapshot: Mapping[str, Any] | None, reading, *, 
     diff = program_diff(target, reading.programs)
     out: list[RegisterWrite] = []
     after = word
-    if word & ebit and (diff or owner_word is None or owner_word != word):
-        off = encode_tou_enable(False, word, profile, owner_word)
+    if diff or (owner_word is None and word & ebit):
+        off = encode_tou_enable(False, word, profile)
         out.append(off)
         after = off.value
     out.extend(encode_writes(Params(tou=target), profile, keys=diff, current=reading.image))
     if owner_word is not None and owner_word != after:
-        out.append(RegisterWrite(ENABLE, en["addr"], owner_word))
+        out.append(RegisterWrite(TOU_WORD, en["addr"], owner_word))
     return out

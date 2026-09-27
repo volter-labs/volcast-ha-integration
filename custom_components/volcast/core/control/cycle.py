@@ -104,6 +104,10 @@ class ControlMemory:
     restore_until: float | None = None
     restore_attempts: list[float] = field(default_factory=list)
     budget_restore_ineffective: bool = False
+    # okna czasowe (TOU): chwila ostatniego przepisania programów i ostatniej ramki włącznika
+    # (zegar monotoniczny) — przepisanie najwyżej raz na godzinę, ponowne włączenie po I-6
+    tou_rewrite_at: float | None = None
+    tou_enable_at: float | None = None
 
     @classmethod
     def for_profile(cls, profile) -> "ControlMemory":
@@ -403,6 +407,17 @@ def _toward_safety(key: str, planned, current) -> bool:
     return abs(planned) < abs(current)
 
 
+def note_denied(memory: ControlMemory, key: str, requested, device_value, now_mono: float, *,
+                max_hold_s: float = _BACKOFF_MAX_S) -> None:
+    """Pamięć prawdziwej odmowy: wstrzymanie `backoff_base_s` (max(I-6, 5 min)), podwajane przy
+    identycznej, powtórzonej odmowie (ta sama prośba, ten sam stan urządzenia) do `max_hold_s`."""
+    prev = memory.denied.get(key)
+    hold = memory.backoff_base_s
+    if prev is not None and same_value(prev[0], requested) and same_value(prev[1], device_value):
+        hold = min(max(prev[3] * 2.0, hold), max_hold_s)
+    memory.denied[key] = (requested, device_value, now_mono, hold)
+
+
 def _adjusted_reached(memory: ControlMemory, key: str, planned, actual) -> bool:
     entry = memory.adjusted.get(key)
     return entry is not None and same_value(entry[0], planned) and same_value(entry[1], actual)
@@ -550,12 +565,7 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
         definite = set(report.failed) - set(report.failed if amb is None else amb)
         for key in definite:
             if key in decision.flat and key in decision.device:
-                req, dev = decision.flat[key], decision.device[key]
-                prev = memory.denied.get(key)
-                hold = memory.backoff_base_s
-                if prev is not None and same_value(prev[0], req) and same_value(prev[1], dev):
-                    hold = min(max(prev[3] * 2.0, hold), _BACKOFF_MAX_S)
-                memory.denied[key] = (req, dev, now_mono, hold)
+                note_denied(memory, key, decision.flat[key], decision.device[key], now_mono)
     if restored:
         memory.throttle.record(decision.restore_flat, restored, now_mono)
         for key in restored:

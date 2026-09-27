@@ -101,10 +101,12 @@ def test_async_twin_matches_sync():
 # ── włącznik (słowo 146) ──────────────────────────────────────────────────
 
 
-def test_tou_enable_rmw_preserves_or_sets_day_bits():
-    assert encode_tou_enable(True, 0b0111110, DEYE, None) == RegisterWrite("tou_enable", 146, 0b0111111)
+def test_tou_enable_on_sets_every_day_off_keeps_days():
+    # Dopóki sterujemy, plan działa codziennie; dni właściciela wracają surowym słowem przy powrocie.
+    assert encode_tou_enable(True, 0b0111110, DEYE, None) == RegisterWrite("tou_enable", 146, 0xFF)
     assert encode_tou_enable(True, 0, DEYE, None).value == 0xFF
-    assert encode_tou_enable(True, 0, DEYE, 0b1010).value == 0b1011          # dni właściciela z migawki
+    assert encode_tou_enable(True, 0, DEYE, 0b1010).value == 0xFF
+    assert encode_tou_enable(True, 0x100, DEYE, None).value == 0x1FF         # bity spoza maski zostają
     assert encode_tou_enable(False, 0b0111111, DEYE, None).value == 0b0111110
     assert encode_tou_enable(False, 0xFF, DEYE, 0b10).value == 0xFE
 
@@ -134,7 +136,7 @@ def test_tou_restore_order_off_programs_owner_word():
     assert writes[0].key == "tou_enable" and writes[0].value & 1 == 0
     assert [w.key for w in writes[1:-1]] == ["tou.2.soc", "tou.2.power_w"]
     assert [w.value for w in writes[1:-1]] == [20, 5000]
-    assert writes[-1] == RegisterWrite("tou_enable", 146, snap["tou_word"])
+    assert writes[-1] == RegisterWrite("tou_word", 146, snap["tou_word"])      # surowe słowo właściciela
 
 
 def test_tou_restore_nothing_when_already_owner_state():

@@ -21,7 +21,11 @@ zostać zapamiętana jako odmowa (rdzeń wstrzymuje ponowienie odmówionej proś
 | brak / wyjątek 5          | ≠ zamówiona                    | ERROR (zapis mógł jeszcze dojść) |
 
 Pola bitowe (bit ładowania z sieci programu, włącznik harmonogramu) są składane na słowie
-z odczytu PRZED zapisem, nie z obrazu ostatniego odpytania.
+z odczytu PRZED zapisem, nie z obrazu ostatniego odpytania. Włącznik harmonogramu, który już
+jest w żądanym stanie według tego świeżego odczytu, nie jest wysyłany (OK bez ramki) — dzięki
+temu wyłączenie przed przepisaniem programów jest zawsze w sekwencji, a kosztuje ramkę tylko
+wtedy, gdy harmonogram naprawdę działa. `tou_word` to surowe słowo włącznika (powrót do słowa
+właściciela, bez składania bitów).
 
 Ponowną wysyłkę (tylko UDP, przy całkowitej ciszy) i reset kanału po przekroczeniu czasu
 robi transport — odczyt zwrotny idzie świeżym kanałem. Odczyt porównuje całe słowo (pola
@@ -46,9 +50,12 @@ _EXC_ACKNOWLEDGE = 5                   # „przyjęte, w trakcie” — jak brak
 _NUMERIC_ENCODINGS = ("watts", "percent")
 
 
+_TOU_WORD_KEYS = ("tou_enable", "tou_word")
+
+
 def _matches(key: str, keys: frozenset[str]) -> bool:
-    """Klucz w zbiorze; `tou` obejmuje pola programów (`tou.<i>.<pole>`) i włącznik."""
-    return key in keys or ("tou" in keys and (key.startswith("tou.") or key == "tou_enable"))
+    """Klucz w zbiorze; `tou` obejmuje pola programów (`tou.<i>.<pole>`) i słowo włącznika."""
+    return key in keys or ("tou" in keys and (key.startswith("tou.") or key in _TOU_WORD_KEYS))
 
 
 def expected_address(profile, key: str) -> int | None:
@@ -61,6 +68,8 @@ def expected_address(profile, key: str) -> int | None:
                 or not 1 <= int(parts[1]) <= tp["count"]:
             return None
         return tp[parts[2]]["addr"] + int(parts[1]) - 1
+    if key == "tou_word":                  # surowe słowo włącznika (powrót do słowa właściciela)
+        key = "tou_enable"
     s = spec.get(key)
     return s.get("addr") if isinstance(s, dict) else None
 
@@ -98,12 +107,9 @@ def _fresh_value(profile, key: str, value: int, before: int) -> int:
         ebit = 1 << spec["enable_bit"]
         if not value & ebit:
             return before & ~ebit & 0xFFFF
-        days = spec.get("day_mask", 0)
-        out = before | ebit
-        if before & days == 0:
-            out |= (value & days) or days          # harmonogram „w żadnym dniu” byłby martwy
-        return out & 0xFFFF
-    return value
+        # ON: bit włącznika i wszystkie dni maski (plan działa codziennie); pozostałe bity zostają
+        return (before | ebit | spec.get("day_mask", 0)) & 0xFFFF
+    return value                                   # `tou_word`: surowe słowo właściciela
 
 
 class RegisterWriter:
@@ -144,6 +150,8 @@ class RegisterWriter:
             _LOGGER.debug("pre-write read of %s failed: %s", w.key, type(err).__name__)
             return ERROR                   # nic nie wysłano; chwilowa awaria, nie odmowa
         w = RegisterWrite(w.key, w.addr, _fresh_value(self.profile, w.key, w.value, before))
+        if w.key in _TOU_WORD_KEYS and w.value == before:
+            return OK                      # włącznik już w tym stanie (świeży odczyt) — bez ramki NVM
         echo = await self._send(w)
         if echo == UNSUPPORTED:
             return UNSUPPORTED

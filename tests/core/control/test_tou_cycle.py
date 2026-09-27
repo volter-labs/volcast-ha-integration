@@ -47,12 +47,15 @@ def test_enable_on_rewrite_disables_first():
     assert d.writes[0].value == 0xFE and d.writes[-1].value == 0xFF
 
 
-def test_enable_off_rewrite_does_not_touch_enable_until_end():
+def test_enable_off_rewrite_still_starts_with_off():
+    # Odczyt mówi OFF, ale mógł być sprzed naszego zapisu — OFF zawsze pierwszy (pisarz nie
+    # wysyła ramki, gdy świeży odczyt potwierdza, że harmonogram jest wyłączony).
     plan = daily_plan()
     words = _settled_words(plan)
     words[166], words[146] = 55, 0xFE
     d, _ = decide(plan, reading(words))
-    assert [w.key for w in d.writes] == ["tou.1.soc", "tou_enable"] and d.writes[-1].value == 0xFF
+    assert [w.key for w in d.writes] == ["tou_enable", "tou.1.soc", "tou_enable"]
+    assert d.writes[0].value == 0xFE and d.writes[-1].value == 0xFF
 
 
 def test_enable_off_with_settled_programs_turns_it_on():
@@ -63,12 +66,12 @@ def test_enable_off_with_settled_programs_turns_it_on():
     assert [w.key for w in d.writes] == ["tou_enable"] and d.writes[0].value == 0xFF
 
 
-def test_owner_days_used_when_enabling():
+def test_enabling_sets_every_day_even_with_owner_weekdays():
     plan = daily_plan()
     words = _settled_words(plan)
     words[146] = 0                                       # OFF, bez dni
     d, _ = decide(plan, reading(words), owner_word=0b0111110)
-    assert d.writes[-1].value == 0b0111111
+    assert d.writes[-1].value == 0xFF                    # plan działa codziennie, nie tylko w dni właściciela
 
 
 def _hourly_plan(pattern, first_local_day, days=6):
@@ -135,37 +138,38 @@ def test_min_interval_throttles_rewrites():
     rep = run_tou_writes(d.writes, lambda w: OK, pre_held=d.pre_held)
     commit_tou(d, rep, memory, 1000.0)
     words = apply(deye_words(), d.writes)
-    # nowy plan tuż po zapisie: inny cel SoC ładowania
-    pattern = {h: ({"mode": "charge", "charge_source": "grid", "power_w": 3000, "soc_target": 85,
+    # nowy plan tuż po zapisie: inny cel SoC ładowania (poza tolerancją profilu)
+    pattern = {h: ({"mode": "charge", "charge_source": "grid", "power_w": 3000, "soc_target": 70,
                     "price_pln_kwh": 0.2} if 2 <= h < 5 else SELF) for h in range(24)}
     plan2 = daily_plan(pattern)
     held, _ = decide(plan2, reading(words), memory=memory, now_mono=1100.0)
     assert (held.status, held.reason, held.writes) == ("idle", "held", []) and "I-6" in held.notes
-    later, _ = decide(plan2, reading(words), memory=memory, now_mono=1400.0)
+    # po I-6, ale przed upływem godziny od przepisania — działający harmonogram czeka
+    waiting, _ = decide(plan2, reading(words), memory=memory, now_mono=1400.0)
+    assert (waiting.status, waiting.writes) == ("idle", []) and "tou_rewrite_interval" in waiting.notes
+    later, _ = decide(plan2, reading(words), memory=memory, now_mono=4700.0)
     keys = [w.key for w in later.writes]
     assert keys[0] == keys[-1] == "tou_enable" and all(k.endswith(".soc") for k in keys[1:-1])
 
 
-def test_budget_exhausted_holds_enable():
+def test_budget_exhausted_enable_writes_nothing():
+    # Bez budżetu na ON sekwencja zostawiłaby harmonogram wyłączony — nie zaczyna się wcale.
     memory = ControlMemory.for_profile(DEYE)
     for _ in range(memory.budget.per_key):
         memory.budget.note("tou_enable", NOW.timestamp() - 60)
     d, _ = decide(daily_plan(), reading(), memory=memory)
+    assert (d.status, d.reason, d.writes) == ("idle", "held", [])
     assert "tou_enable" in d.pre_held and "nvm_budget" in d.notes
-    rep = run_tou_writes(d.writes, lambda w: OK, pre_held=d.pre_held)
-    assert rep.held == ["tou_enable"] and rep.enable_written is False and rep.restore_needed is False
 
 
-def test_budget_exhausted_field_holds_rest():
+def test_budget_exhausted_field_writes_nothing():
     memory = ControlMemory.for_profile(DEYE)
     d0, _ = decide(daily_plan(), reading())
     first_field = d0.writes[1].key
     for _ in range(memory.budget.per_key):
         memory.budget.note(first_field, NOW.timestamp() - 60)
     d, _ = decide(daily_plan(), reading(), memory=memory)
-    assert first_field in d.pre_held
-    rep = run_tou_writes(d.writes, lambda w: OK, pre_held=d.pre_held)
-    assert rep.held[0] == first_field and rep.held[-1] == "tou_enable"
+    assert first_field in d.pre_held and (d.status, d.writes) == ("idle", [])
 
 
 def test_unverified_is_dry_run_with_programs_in_summary():
