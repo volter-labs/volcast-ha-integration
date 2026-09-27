@@ -26,7 +26,11 @@ Wybory zdalne:
 - gdy wpis właśnie się przeładowuje (brak `runtime()`), wybór sposobu sterowania czeka
   na następne odpytanie — nigdy nie przepada na stałe;
 - inne źródło cen niż HA ustawia aplikacja/chmura — krok cen kończy się bez zmian tutaj.
-Nieudana publikacja postępu jest ponawiana przy następnym obiegu pętli.
+Nieudana publikacja postępu jest ponawiana z wycofaniem (5 s, podwajane do 60 s).
+
+Czujnik zużycia domu: gdy opcja jest pusta, a raport wykrywania ma DOKŁADNIE jeden
+jednoznaczny licznik zużycia domu (`house_load_candidate`), ustawiamy go i importujemy
+historię; inaczej krok zostaje wyborem właściciela.
 """
 from __future__ import annotations
 
@@ -42,6 +46,7 @@ import homeassistant.util.dt as dt_util
 from .const import (CONF_PAIRING, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_LOAD_ENERGY, OPT_PRICE_BUY,
                     OPT_PRICE_CURRENCY)
 from .core.control.caps import entity_mode_ready
+from .core.control.history import house_load_candidate
 from .core.prices import has_usable_prices_now
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,6 +62,8 @@ _PLAN_RETRY_S = 125.0
 _PLAN_ATTEMPTS = 3
 _GONE = ("expired", "gone", "disabled")
 _APPLIED = "applied_choices"
+_REPOST_MIN_S = 5.0
+_REPOST_MAX_S = 60.0
 _PRICE_SOURCE = re.compile(r"[A-Za-z0-9_:.-]{1,64}")
 
 PLAN_UNAVAILABLE = "planner unavailable"
@@ -117,6 +124,8 @@ class Onboarding:
         self._plan_attempts = 0
         self._plan_retry_at: datetime | None = None
         self._dirty = False
+        self._repost_delay = _REPOST_MIN_S
+        self._repost_at: datetime | None = None
         self.first_plan_outcome: str | None = None
 
     async def async_run(self) -> None:
@@ -136,7 +145,13 @@ class Onboarding:
 
     async def _publish(self) -> None:
         ok = await self._client.async_progress(self._session, progress_payload(self._steps))
-        self._dirty = ok is not True          # nieudana publikacja — ponowimy w pętli
+        if ok is True:
+            self._dirty, self._repost_at, self._repost_delay = False, None, _REPOST_MIN_S
+            return
+        # Nieudana publikacja — ponowimy w pętli, coraz rzadziej, gdy chmura ciągle odrzuca.
+        self._dirty = True
+        self._repost_at = self._utcnow() + timedelta(seconds=self._repost_delay)
+        self._repost_delay = min(self._repost_delay * 2, _REPOST_MAX_S)
 
     def _state(self, key: str) -> str:
         return self._steps[key][0]
@@ -164,6 +179,11 @@ class Onboarding:
             return {}
         choices = rec.get("choices")
         return dict(choices) if isinstance(choices, dict) else {}
+
+    def _patch_options(self, patch: dict) -> None:
+        entry = self._entry()
+        if entry is not None:
+            self._hass.config_entries.async_update_entry(entry, options={**entry.options, **patch})
 
     def _commit_choices(self, patch: dict, applied: dict[str, str]) -> None:
         """Opcje i zapis „zastosowano" w JEDNEJ aktualizacji wpisu (jedno przeładowanie)."""
@@ -257,8 +277,12 @@ class Onboarding:
 
     async def _consumption_step(self, report: dict) -> None:
         if not self._options().get(OPT_LOAD_ENERGY):
-            await self._set("consumption", "choice", "no house energy sensor selected")
-            return
+            candidate = house_load_candidate(report.get("energy_sensors"))
+            if candidate is None:
+                await self._set("consumption", "choice", "no house energy sensor selected")
+                return
+            # Zmiana samego czujnika zużycia nie przeładowuje wpisu (słuchacz aktualizacji).
+            self._patch_options({OPT_LOAD_ENERGY: candidate})
         await self._set("consumption", "active")
         try:
             imported = await self._import_history()
@@ -304,7 +328,7 @@ class Onboarding:
 
     async def _loop(self) -> None:
         while self._live():
-            if self._dirty:
+            if self._dirty and (self._repost_at is None or self._utcnow() >= self._repost_at):
                 await self._publish()
             if self._plan_retry_at is not None and self._utcnow() >= self._plan_retry_at:
                 await self._request_plan()

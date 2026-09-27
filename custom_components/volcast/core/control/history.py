@@ -95,3 +95,33 @@ def batches(hours: list[dict], *, max_hours: int = MAX_HOURS,
     if cur:
         out.append(cur)
     return out
+
+
+# Słowa wykluczające czujnik z roli „zużycie domu": to energia PV, sieci albo baterii.
+_NOT_HOUSE_LOAD = ("pv", "solar", "grid", "export", "import", "battery", "charge", "feed",
+                   "production", "generation", "yield", "backup", "ups")
+_SUM_STATE_CLASSES = ("total", "total_increasing")
+
+
+def house_load_candidate(energy_sensors) -> str | None:
+    """Jedyny jednoznaczny czujnik energii zużycia domu z raportu wykrywania, inaczej None.
+
+    Jednoznaczny = `sensor.` z jednostką energii i statystyką sumy, w nazwie słowo zużycia
+    (`LOAD_HINTS`) i żadne słowo PV/sieci/baterii. Zero albo kilka takich — None: wybór
+    zostaje dla właściciela (lepiej brak historii niż historia z niewłaściwego licznika).
+    """
+    from ..discovery.known import LOAD_HINTS
+
+    found: list[str] = []
+    for row in energy_sensors or ():
+        if not isinstance(row, dict):
+            continue
+        eid = row.get("entity_id")
+        if not isinstance(eid, str) or not eid.startswith("sensor."):
+            continue
+        if row.get("unit") not in _TO_KWH or row.get("state_class") not in _SUM_STATE_CLASSES:
+            continue
+        name = eid.lower()
+        if any(h in name for h in LOAD_HINTS) and not any(x in name for x in _NOT_HOUSE_LOAD):
+            found.append(eid)
+    return found[0] if len(found) == 1 else None

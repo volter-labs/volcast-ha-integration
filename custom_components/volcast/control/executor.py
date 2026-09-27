@@ -11,7 +11,9 @@ Zasady wykonania:
   (`async_run_group_writes`) — tryb i moc razem albo wcale, z cofnięciem pierwszego
   członka, gdy drugi się nie zapisał;
 * jeden cykl naraz: tik zgłoszony w trakcie cyklu nie startuje drugiego zapisu, tylko
-  prosi o powtórkę zaraz po bieżącym;
+  prosi o powtórkę zaraz po bieżącym. Blokada bywa wspólna dla kolejnych wykonawców tego
+  samego wpisu (`lock`): po przeładowaniu nowy wykonawca czeka, aż stary skończy zapis
+  w toku — nawet gdy `async_stop` starego już się poddał;
 * przed pierwszym zapisem migawka nastaw do trybu bazowego musi być pełna i zapisana —
   inaczej żadnego zapisu (klucza bez migawki nigdy byśmy nie przywrócili);
 * powrót do trybu bazowego: najpierw sam tryb bazowy (neutralny, nie potrzebuje
@@ -112,7 +114,7 @@ class VolcastExecutor:
     def __init__(self, hass, entry, *, choice: ProfileChoice | None, mapped: Mapping[str, str],
                  rated_power_w: float | None, store: ControlStore, writer,
                  clock: Callable[[], float] = time.monotonic, utcnow=dt_util.utcnow,
-                 stop_timeout_s: float = STOP_WRITE_TIMEOUT_S) -> None:
+                 stop_timeout_s: float = STOP_WRITE_TIMEOUT_S, lock: asyncio.Lock | None = None) -> None:
         self._hass = hass
         self._entry = entry
         self._choice = choice
@@ -134,7 +136,8 @@ class VolcastExecutor:
         self._prev_soc: tuple[float, float] | None = None
         self._errors = 0
         self._logged: tuple[str, str] | None = None
-        self._lock = asyncio.Lock()
+        self._lock = lock if lock is not None else asyncio.Lock()
+        self._running = False
         self._rerun = False
         self._stopped = False
         self._started = False
@@ -432,12 +435,24 @@ class VolcastExecutor:
     async def async_tick(self) -> None:
         if self._stopped or self._disabled:
             return
-        if self._lock.locked():
-            # Zapis w toku (także przywracanie przy usuwaniu): drugi cykl nie startuje
-            # równolegle — bieżący powtórzy się zaraz po sobie.
+        if self._running:
+            # Cykl tego wykonawcy w toku: drugi nie startuje równolegle — bieżący
+            # powtórzy się zaraz po sobie.
             self._rerun = True
             return
+        self._running = True
+        try:
+            await self._async_tick_locked()
+        finally:
+            self._running = False
+        self._notify()
+
+    async def _async_tick_locked(self) -> None:
+        # Blokadę może trzymać przywracanie przy usuwaniu albo poprzedni wykonawca
+        # tego wpisu (zapis w toku po przeładowaniu) — czekamy, nie piszemy równolegle.
         async with self._lock:
+            if self._stopped:
+                return
             for _ in range(1 + _MAX_RERUNS):
                 self._rerun = False
                 try:
@@ -449,7 +464,6 @@ class VolcastExecutor:
                 self._close_foreign_issue()
                 if not self._rerun or self._stopped:
                     break
-        self._notify()
 
     def _read(self, now_utc) -> _Reading:
         raw: dict[str, RawState] = {}

@@ -90,3 +90,36 @@ def test_full_60_days_with_all_series_fits_one_request():
     out = batches(hours)
     assert len(out) == 1
     assert len(json.dumps({"source": "ha_recorder", "hours": out[0]}).encode()) < MAX_BATCH_BYTES
+
+
+# ── czujnik zużycia domu z raportu wykrywania ──────────────────────────────
+
+
+def _es(eid, unit="kWh", state_class="total_increasing"):
+    return {"entity_id": eid, "platform": "x", "unit": unit, "state_class": state_class, "days_of_statistics": 30}
+
+
+def test_house_load_candidate_exactly_one_clear_sensor():
+    from custom_components.volcast.core.control.history import house_load_candidate
+    rows = [_es("sensor.house_consumption"), _es("sensor.pv_energy_total"), _es("sensor.grid_import_total")]
+    assert house_load_candidate(rows) == "sensor.house_consumption"
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("rows", [
+    [],
+    None,
+    [_es("sensor.house_consumption"), _es("sensor.home_load_energy")],          # dwa — niejasne
+    [_es("sensor.pv_load_total")],                                                 # PV
+    [_es("sensor.battery_load_energy")],                                           # bateria
+    [_es("sensor.grid_consumption")],                                              # sieć
+    [_es("sensor.house_consumption", unit="W")],                                   # nie energia
+    [_es("sensor.house_consumption", state_class="measurement")],                  # brak statystyk sumy
+    [_es("switch.house_consumption")],
+    [{"entity_id": 5}, "x"],
+])
+def test_house_load_candidate_none_when_not_clear(rows):
+    from custom_components.volcast.core.control.history import house_load_candidate
+    assert house_load_candidate(rows) is None

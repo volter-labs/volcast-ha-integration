@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import VolcastCoordinator, VolcastData
+from .control_entities import VolcastControlStatusSensor, VolcastPlanSensor
 from .discovery_entities import VolcastDiscoverySensor
 
 
@@ -58,6 +59,11 @@ async def async_setup_entry(
     # Wykrywanie instalacji — w każdym trybie wpisu.
     if runner is not None:
         entities.append(VolcastDiscoverySensor(runner, entry.entry_id))
+
+    # Sterowanie — tylko wpis sparowany z kontem, gdy sterowanie się złożyło.
+    control = entry_data.get("control")
+    if control is not None:
+        entities.extend([VolcastPlanSensor(entry, control), VolcastControlStatusSensor(entry, control)])
 
     async_add_entities(entities)
 

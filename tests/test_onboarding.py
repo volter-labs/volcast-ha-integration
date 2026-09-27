@@ -478,3 +478,41 @@ def test_control_runtime_fields():
 def test_module_has_no_logger_exception_calls():
     import inspect
     assert "_LOGGER.exception" not in inspect.getsource(ob_mod)
+
+
+# ── czujnik zużycia domu z wykrywania, wycofanie ponowień postępu ──────────
+
+
+def test_single_clear_house_load_sensor_is_selected_and_imported():
+    report = dict(REPORT, energy_sensors=[
+        {"entity_id": "sensor.house_consumption", "unit": "kWh", "state_class": "total_increasing",
+         "days_of_statistics": 58},
+        {"entity_id": "sensor.pv_energy_total", "unit": "kWh", "state_class": "total_increasing",
+         "days_of_statistics": 90}])
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={})
+    asyncio.run(ob.async_run())
+    assert entry.options["load_energy_entity"] == "sensor.house_consumption"
+    assert last(client)["consumption"] == {"key": "consumption", "state": "done", "detail": "58 days of history"}
+
+
+def test_ambiguous_house_load_sensors_leave_consumption_as_choice():
+    report = dict(REPORT, energy_sensors=[
+        {"entity_id": "sensor.house_consumption", "unit": "kWh", "state_class": "total_increasing"},
+        {"entity_id": "sensor.home_load", "unit": "kWh", "state_class": "total_increasing"}])
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={})
+    asyncio.run(ob.async_run())
+    assert "load_energy_entity" not in entry.options
+    assert last(client)["consumption"]["state"] == "choice"
+
+
+def test_rejected_progress_posts_back_off():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, clock_step=5, prices={})
+    calls = {"n": 0}
+
+    async def rejected(s, steps):
+        calls["n"] += 1
+        return False
+    client.async_progress = rejected
+    asyncio.run(ob.async_run())
+    # 30 min okna co 5 s = 360 obiegów; z wycofaniem 5→60 s ponowień jest kilkadziesiąt
+    assert calls["n"] < 60

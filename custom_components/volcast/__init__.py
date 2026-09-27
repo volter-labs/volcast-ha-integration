@@ -9,6 +9,7 @@ try:
     from homeassistant.components.repairs import IssueSeverity
 except ImportError:
     IssueSeverity = None
+import homeassistant.util.dt as dt_util
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -16,9 +17,11 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_change
 
+from .cloud.client import Backend
 from .const import (
     ATTR_DATE,
     CONF_API_URL,
+    CONF_BACKEND,
     CONF_BATTERY_CHARGE_POWER_ENTITY,
     CONF_BATTERY_SOC_ENTITY,
     CONF_MODE,
@@ -30,8 +33,12 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     MODE_DISCOVERY_ONLY,
+    OPT_LOAD_ENERGY,
     SERVICE_SYNC_PRODUCTION,
 )
+from .control.history_import import async_import_history_once
+from .control.runtime import (RELOAD_FREE_KEYS, async_remove_control, async_restore_if_control_changed,
+                              async_setup_control, async_unload_control, changed_option_keys)
 from .coordinator import VolcastCoordinator
 from .discovery_runner import DiscoveryRunner
 from .key_format import account_unique_id, is_legacy_unique_id
@@ -46,6 +53,9 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.B
 # Wpis bez konta (tylko wykrywanie) — bez koordynatora/trackera/reconcilera,
 # więc tylko encje, które czytają raport wykrywania.
 DISCOVERY_ONLY_PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
+
+# Wpis sparowany z kontem, gdy sterowanie się złożyło — dochodzi lokalny wyłącznik.
+PAIRED_PLATFORMS: list[Platform] = [*PLATFORMS, Platform.SWITCH]
 
 # Klucz w hass.data[DOMAIN][entry_id]: platformy faktycznie przekazane przy setupie.
 # Unload zdejmuje dokładnie je — dane wpisu mogą się zmienić przed przeładowaniem
@@ -165,6 +175,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         submit_url = DEFAULT_SUBMIT_URL
         if coordinator.data and coordinator.data.submit_url:
             submit_url = coordinator.data.submit_url
+        backend = Backend.from_dict(entry.data.get(CONF_BACKEND))
+        if backend is not None:
+            # Wpis sparowany zawsze woła backend swojego konta.
+            submit_url = backend.submit_production
 
         tracker = VolcastProductionTracker(
             hass=hass,
@@ -224,7 +238,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _async_register_services(hass)
 
-    await _async_forward_platforms(hass, entry, PLATFORMS)
+    control = None
+    if entry.data.get(CONF_BACKEND):
+        try:
+            control = await async_setup_control(hass, entry, report=lambda: runner.report)
+        except Exception as err:  # noqa: BLE001 — sterowanie nigdy nie psuje prognozy
+            _LOGGER.error("Volcast control could not be set up (%s) — forecast continues",
+                          type(err).__name__)
+            control = None
+    hass.data[DOMAIN][entry.entry_id]["control"] = control
+
+    await _async_forward_platforms(hass, entry, PAIRED_PLATFORMS if control else PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
@@ -387,6 +411,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         tracker = entry_data.get("tracker")
         if tracker is not None:
             await tracker.async_stop()
+        control = entry_data.get("control")
+        if control is not None:
+            # Bez przywracania; czeka na zapis w toku — nowy wykonawca i tak czeka na blokadę wpisu.
+            await async_unload_control(hass, control)
         if not hass.data[DOMAIN] and hass.services.has_service(
             DOMAIN, SERVICE_SYNC_PRODUCTION
         ):
@@ -397,5 +425,32 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update — reload the integration."""
+    """Handle options update — reload the integration.
+
+    Zmiana sterowania (sposób, profil, integracja falownika) najpierw oddaje falownik
+    przez OBECNEGO wykonawcę. Zmiana samego czujnika zużycia domu nie przeładowuje
+    wpisu — uruchamia tylko jednorazowy import historii.
+    """
+    control = (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
+    if control is not None:
+        old, new = control.options_at_setup, dict(entry.options)
+        changed = changed_option_keys(old, new)
+        if changed and changed <= RELOAD_FREE_KEYS:
+            control.options_at_setup = new
+            if new.get(OPT_LOAD_ENERGY):
+                entry.async_create_background_task(
+                    hass, async_import_history_once(
+                        hass, control.cloud, control.executor, load_entity=new[OPT_LOAD_ENERGY],
+                        pv_entity=new.get(CONF_PV_ENERGY_ENTITY) or None, now_utc=dt_util.utcnow()),
+                    "volcast_history_import")
+            return
+        await async_restore_if_control_changed(control, old, new)
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Usunięcie wpisu: sterowanie oddaje falownik w tryb bazowy (jeśli je przejęło)."""
+    try:
+        await async_remove_control(hass, entry)
+    except Exception as err:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić
+        _LOGGER.error("Volcast: control cleanup on removal failed (%s)", type(err).__name__)

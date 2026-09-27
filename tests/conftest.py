@@ -176,8 +176,17 @@ _helpers_mod.instance_id = _make_module("homeassistant.helpers.instance_id", {"a
 # --- homeassistant.util.dt ---
 FAKE_UTCNOW = datetime(2026, 9, 23, 10, 0, tzinfo=timezone.utc)
 _util_mod = _make_module("homeassistant.util")
+def _fake_parse_datetime(value):
+    """Jak `dt_util.parse_datetime`: napis ISO → datetime, zły napis → None."""
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 _util_mod.dt = _make_module("homeassistant.util.dt", {
     "utcnow": lambda: FAKE_UTCNOW,
+    "parse_datetime": _fake_parse_datetime,
 })
 
 
@@ -257,6 +266,17 @@ class _FakeButtonEntity:
 
 _make_module("homeassistant.components.button", {
     "ButtonEntity": _FakeButtonEntity,
+})
+
+# --- homeassistant.components.switch ---
+class _FakeSwitchEntity:
+    _attr_has_entity_name = False
+    _attr_unique_id = None
+    _attr_device_info = None
+
+
+_make_module("homeassistant.components.switch", {
+    "SwitchEntity": _FakeSwitchEntity,
 })
 
 

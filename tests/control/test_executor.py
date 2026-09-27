@@ -984,3 +984,37 @@ def test_incomplete_restore_warning_not_repeated_every_tick(monkeypatch, caplog)
             await ex.async_tick()
     asyncio.run(go())
     assert sum("incomplete" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_executors_sharing_a_lock_never_write_at_the_same_time(monkeypatch):
+    # Przeładowanie wpisu: stary wykonawca kończy zapis w toku, nowy czeka na niego.
+    h = goodwe_hass()
+    lock = asyncio.Lock()
+    inflight = {"now": 0, "max": 0}
+    real_call = h.services.async_call
+
+    async def tracked(*a, **k):
+        inflight["now"] += 1
+        inflight["max"] = max(inflight["max"], inflight["now"])
+        try:
+            await asyncio.sleep(0.02)
+            return await real_call(*a, **k)
+        finally:
+            inflight["now"] -= 1
+    h.services.async_call = tracked
+    _, old = make(h, monkeypatch=monkeypatch)
+    _, new = make(h, monkeypatch=monkeypatch)
+    old._lock = new._lock = lock
+    old._stop_timeout_s = 0.01
+
+    async def go():
+        await ready(old)
+        await ready(new)
+        running = asyncio.ensure_future(old.async_tick())
+        await asyncio.sleep(0.005)
+        await old.async_stop()                                    # oddaje po limicie czasu
+        await new.async_tick()                                    # czeka na zapis starego
+        await running
+    asyncio.run(go())
+    assert inflight["max"] == 1
+    assert new.last_decision is not None                          # tik nowego nie przepadł, tylko poczekał

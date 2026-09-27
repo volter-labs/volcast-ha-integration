@@ -87,6 +87,7 @@ def _platform_name(platform: Any) -> str:
         id(stub.SENSOR): "sensor",
         id(stub.BINARY_SENSOR): "binary_sensor",
         id(stub.BUTTON): "button",
+        id(stub.SWITCH): "switch",
     }
     return names[id(platform)]
 
