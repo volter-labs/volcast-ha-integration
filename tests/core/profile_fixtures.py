@@ -43,6 +43,9 @@ _MS = {
         "soc_min": {"domain": "number", "unique_id_regex": "^goodwe-battery_discharge_depth-",
                     "transform": "invert_percent"}}}]},
     "capabilities": {**_CAPS, "time_windows": 0},
+    "modbus": {"status": "draft", "write_function": 6, "max_read_registers": 125,
+               "transport_options": {"goodwe_udp": {"port": 8899, "timeout_ms": 2000, "gap_ms": 50}},
+               "identify_reads": [{"addr": 35000, "count": 33}], "probe_keys": ["mode", "power_w"]},
 }
 
 _TW = {
@@ -70,6 +73,9 @@ _TW = {
     "ha": {"integrations": []},
     "capabilities": {**_CAPS, "sell_from_battery": False, "force_discharge": False,
                      "time_windows": 6},
+    "modbus": {"status": "draft", "write_function": 16, "max_read_registers": 100,
+               "transport_options": {"solarman_v5": {"port": 8899, "timeout_ms": 3000, "gap_ms": 200}},
+               "identify_reads": [{"addr": 0, "count": 1}], "probe_keys": ["tou"]},
 }
 
 

@@ -59,3 +59,16 @@ def test_goodwe_policy_is_box_policy():
     assert {m.name: m.value for m in p.modes.values()} == {
         "auto": 1, "charge_pv": 2, "battery_standby": 8, "sell_power": 10,
         "charge_battery": 11, "discharge_battery": 12}
+
+
+def test_goodwe_modbus_is_draft_with_fc6():
+    p = load_builtin("goodwe-et")
+    m = p.modbus
+    assert (m.status, m.write_function, m.max_read_registers) == ("draft", 6, 125)
+    assert set(m.transport_options) == {"goodwe_udp", "modbus_tcp", "modbus_rtu"}
+    assert m.transport_options["goodwe_udp"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 50}
+    assert m.transport_options["modbus_tcp"] == {"port": 502, "timeout_ms": 2000, "gap_ms": 50}
+    assert m.transport_options["modbus_rtu"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 100}
+    assert m.identify_reads == ((35000, 33),)
+    assert m.probe_keys == ("mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled")
+    assert (p.nvm_budget.window_s, p.nvm_budget.per_key, p.nvm_budget.total) == (86400.0, 144, 600)

@@ -77,3 +77,29 @@ def test_load_builtin_rejects_non_id(bad):
 def test_builtin_profiles_have_no_duplicate_keys():
     for pid in builtin_ids():
         assert load_builtin(pid).id == pid
+
+
+@pytest.mark.parametrize("profile_status,modbus_status,expected", [
+    ("draft", "draft", False), ("verified", "draft", False),
+    ("draft", "verified", False), ("verified", "verified", True),
+])
+def test_direct_verified_needs_both_statuses(profile_status, modbus_status, expected):
+    from custom_components.volcast.core.profile import direct_verified
+    raw = ms_profile()
+    raw["status"] = profile_status
+    raw["modbus"]["status"] = modbus_status
+    assert direct_verified(profile_from_dict(raw)) is expected
+
+
+def test_modbus_spec_and_nvm_budget_parsed():
+    from custom_components.volcast.core.profile import ModbusSpec, NvmBudget
+    raw = ms_profile()
+    raw["write_policy"]["nvm_budget"] = {"window_h": 12, "per_key": 10, "total": 30}
+    p = profile_from_dict(raw)
+    assert isinstance(p.modbus, ModbusSpec)
+    assert p.modbus.transport_options["goodwe_udp"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 50}
+    assert p.modbus.identify_reads == ((35000, 33),)
+    assert p.nvm_budget == NvmBudget(window_s=12 * 3600.0, per_key=10, total=30)
+    assert profile_from_dict(ms_profile()).nvm_budget is None
+    with pytest.raises(TypeError):
+        p.modbus.transport_options["goodwe_udp"]["port"] = 1       # tylko do odczytu

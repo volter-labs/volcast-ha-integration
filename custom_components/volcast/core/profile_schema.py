@@ -33,10 +33,14 @@ TOU_ENCODE = {"start": "hhmm", "power_w": "watts", "soc": "percent"}
 TRANSPORTS = ("goodwe_udp", "solarman_v5", "modbus_tcp", "modbus_rtu")
 _ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _HA_TOU_KEY = re.compile(r"^tou_[1-9]_(start|power_w|soc|grid_charge)$")
+# Odczyt włącznika harmonogramu TOU — tylko dostęp bezpośredni, nie encja HA.
+TOU_ENABLED_READ = "tou_enabled"
+WRITE_FUNCTIONS = (6, 16)
+MAX_READ_REGISTERS = 125
 
 _TOP_REQ = ("schema_version", "id", "label", "status", "control_model", "sources", "unit_id",
             "transports", "identify", "read", "write", "intents", "baseline", "write_policy",
-            "limits", "ha", "capabilities")
+            "limits", "ha", "capabilities", "modbus")
 _TOP_OPT = ("modes", "neutral_mode", "tou", "status_note")
 
 
@@ -148,7 +152,7 @@ def _read(v: _V, raw: Any) -> None:
     edges: dict[str, list[str]] = {}
     for key, spec in raw.items():
         path = f"$.read.{key}"
-        if key not in READ_KEYS:
+        if key not in READ_KEYS and key != TOU_ENABLED_READ:
             v.err(path, "nieznany klucz odczytu")
             continue
         if isinstance(spec, dict) and "sum" in spec:
@@ -200,9 +204,11 @@ def _ref_cycles(v: _V, edges: dict[str, list[str]]) -> None:
 
 
 def _write(v: _V, raw: Any, model: str, tou: dict | None) -> set[str]:
-    w = v.obj(raw, "$.write", (), WRITE_PARAMS + ("tou_program",))
+    w = v.obj(raw, "$.write", (), WRITE_PARAMS + ("tou_program", "tou_enable"))
     if w is None:
         return set()
+    if "tou_enable" in w:
+        _tou_enable(v, w)
     for key in WRITE_PARAMS:
         if key in w:
             s = v.obj(w[key], f"$.write.{key}", ("addr", "type", "encode"))
@@ -229,7 +235,85 @@ def _write(v: _V, raw: Any, model: str, tou: dict | None) -> set[str]:
             if g is not None:
                 v.int_(g.get("addr"), "$.write.tou_program.grid_charge.addr", 0, 65535)
                 v.int_(g.get("bit"), "$.write.tou_program.grid_charge.bit", 0, 15)
-    return {("tou" if k == "tou_program" else k) for k in w}
+    # Włącznik jest częścią sekwencji TOU (wyłączenie na początku, włączenie na końcu),
+    # nie osobnym kluczem kolejności zapisu.
+    return {("tou" if k == "tou_program" else k) for k in w if k != "tou_enable"}
+
+
+def _tou_enable(v: _V, w: dict) -> None:
+    path = "$.write.tou_enable"
+    if "tou_program" not in w:
+        v.err(path, "dozwolone tylko razem z tou_program")
+    e = v.obj(w["tou_enable"], path, ("addr", "enable_bit", "day_mask"))
+    if e is None:
+        return
+    v.int_(e.get("addr"), f"{path}.addr", 0, 65535)
+    bit_ok = v.int_(e.get("enable_bit"), f"{path}.enable_bit", 0, 15)
+    if v.int_(e.get("day_mask"), f"{path}.day_mask", 0, 65535) and bit_ok \
+            and e["day_mask"] & (1 << e["enable_bit"]):
+        v.err(f"{path}.day_mask", "maska dni nie może zawierać bitu włącznika")
+
+
+def _modbus(v: _V, raw: Any, transports: Any, written: set[str]) -> None:
+    """Parametry dostępu bezpośredniego: status ścieżki rejestrów, funkcja zapisu, łącza."""
+    m = v.obj(raw, "$.modbus", ("status", "write_function", "max_read_registers", "transport_options",
+                                "identify_reads", "probe_keys"), ("status_note",))
+    if m is None:
+        return
+    v.enum(m.get("status"), "$.modbus.status", ("draft", "verified"))
+    if "status_note" in m:
+        v.str_(m["status_note"], "$.modbus.status_note")
+    wf = m.get("write_function")
+    if isinstance(wf, bool) or wf not in WRITE_FUNCTIONS:
+        v.err("$.modbus.write_function", f"{wf!r} spoza {list(WRITE_FUNCTIONS)}")
+    v.int_(m.get("max_read_registers"), "$.modbus.max_read_registers", 1, MAX_READ_REGISTERS)
+    known = set(transports) if isinstance(transports, list) else set()
+    opts = m.get("transport_options")
+    if not isinstance(opts, dict):
+        v.err("$.modbus.transport_options", "oczekiwano obiektu")
+    else:
+        for name, o in opts.items():
+            tp = f"$.modbus.transport_options.{name}"
+            if name not in known:
+                v.err(tp, "transport spoza $.transports")
+                continue
+            t = v.obj(o, tp, ("port", "timeout_ms", "gap_ms"))
+            if t is not None:
+                v.int_(t.get("port"), f"{tp}.port", 1, 65535)
+                v.int_(t.get("timeout_ms"), f"{tp}.timeout_ms", 200, 10000)
+                v.int_(t.get("gap_ms"), f"{tp}.gap_ms", 0, 2000)
+    reads = m.get("identify_reads")
+    if not isinstance(reads, list) or not reads:
+        v.err("$.modbus.identify_reads", "oczekiwano niepustej listy")
+    else:
+        for i, r in enumerate(reads):
+            rp = f"$.modbus.identify_reads[{i}]"
+            o = v.obj(r, rp, ("addr", "count"))
+            if o is None:
+                continue
+            a_ok = v.int_(o.get("addr"), f"{rp}.addr", 0, 65535)
+            c_ok = v.int_(o.get("count"), f"{rp}.count", 1, MAX_READ_REGISTERS)
+            if a_ok and c_ok and o["addr"] + o["count"] > 65536:
+                v.err(rp, "blok wychodzi poza przestrzeń adresów")
+    keys = v.str_list(m.get("probe_keys"), "$.modbus.probe_keys")
+    if keys is not None:
+        if len(set(keys)) != len(keys):
+            v.err("$.modbus.probe_keys", "klucze powtórzone")
+        extra = sorted(set(keys) - written)
+        if extra:
+            v.err("$.modbus.probe_keys", f"klucze spoza zapisów profilu: {extra}")
+
+
+def _nvm_budget(v: _V, raw: Any) -> None:
+    path = "$.write_policy.nvm_budget"
+    b = v.obj(raw, path, ("window_h", "per_key", "total"))
+    if b is None:
+        return
+    v.int_(b.get("window_h"), f"{path}.window_h", 1, 168)
+    if v.int_(b.get("per_key"), f"{path}.per_key", 1, 1_000_000):
+        v.int_(b.get("total"), f"{path}.total", b["per_key"], 1_000_000)
+    else:
+        v.int_(b.get("total"), f"{path}.total", 1, 1_000_000)
 
 
 def _intents(v: _V, raw: Any, model: str, modes: dict) -> None:
@@ -427,6 +511,16 @@ def validate_profile(raw: object) -> list[str]:
             v.err("$.modes", "tylko dla mode_setpoint")
 
     written = _write(v, top.get("write"), model, tou)
+    rd, wr = top.get("read"), top.get("write")
+    if isinstance(rd, dict) and TOU_ENABLED_READ in rd:
+        enable = wr.get("tou_enable") if isinstance(wr, dict) else None
+        spec = rd[TOU_ENABLED_READ]
+        if not isinstance(enable, dict):
+            v.err(f"$.read.{TOU_ENABLED_READ}", "dozwolone tylko przy write.tou_enable")
+        elif not isinstance(spec, dict) or spec.get("addr") != enable.get("addr"):
+            v.err(f"$.read.{TOU_ENABLED_READ}.addr", "musi równać się write.tou_enable.addr")
+    if "modbus" in top:                      # brak sekcji zgłasza już `v.obj` na `$`
+        _modbus(v, top["modbus"], tr, written)
     _intents(v, top.get("intents"), model, modes)
 
     base = top.get("baseline")
@@ -446,8 +540,11 @@ def validate_profile(raw: object) -> list[str]:
             v.enum(b.get("intent"), "$.baseline.intent", ("self_consume",))
 
     wp = v.obj(top.get("write_policy"), "$.write_policy",
-               ("order", "min_interval_s", "nvm", "max_direction_changes_per_hour", "max_state_age_s"))
+               ("order", "min_interval_s", "nvm", "max_direction_changes_per_hour", "max_state_age_s"),
+               ("nvm_budget",))
     if wp is not None:
+        if "nvm_budget" in wp:
+            _nvm_budget(v, wp["nvm_budget"])
         order = v.str_list(wp.get("order"), "$.write_policy.order")
         if order is not None:
             if sorted(order) != sorted(written) or len(set(order)) != len(order):

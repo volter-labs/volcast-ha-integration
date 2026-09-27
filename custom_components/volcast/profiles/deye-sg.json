@@ -8,7 +8,10 @@
   "sources": [
     {"what": "register map (three-phase battery/PV/grid/load block)", "ref": "kellerza/sunsynk three_phase_lv.py and three_phase_common.py sensor definitions, unverified"},
     {"what": "device identification (register 0 device-type codes)", "ref": "kellerza/sunsynk identity.py DEVICE_TYPES table, unverified"},
-    {"what": "time-of-use semantics", "ref": "Deye system work mode manual (program time/power/SOC/grid charge), unverified"}
+    {"what": "time-of-use semantics", "ref": "Deye system work mode manual (program time/power/SOC/grid charge), unverified"},
+    {"what": "time-of-use block 146-177 of the three-phase map (146 enable bit 0 + weekday bits 1-7, 148-153 start, 154-159 power, 166-171 SoC, 172-177 charge bits)", "ref": "kellerza/sunsynk src/sunsynk/definitions/three_phase_common.py and PROG_CHARGE_OPTIONS/PROG_MODE_OPTIONS in src/sunsynk/definitions/__init__.py (https://github.com/kellerza/sunsynk/blob/main/src/sunsynk/definitions/three_phase_common.py)"},
+    {"what": "time-of-use register 0x0092 with weekday mask (0x00FF = whole week), program time/power/SOC/charging registers", "ref": "davidrapan/ha-solarman inverter_definitions/deye_p3.yaml (https://github.com/davidrapan/ha-solarman/blob/main/custom_components/solarman/inverter_definitions/deye_p3.yaml)"},
+    {"what": "three-phase time-of-use windows at 146-177; register 146 is a bit mask (preserve the other bits when writing)", "ref": "MarkLabs Deye Modbus register list (https://marklabs.pl/en/deye-modbus-complete-register-list/)"}
   ],
   "unit_id": 1,
   "transports": ["solarman_v5", "modbus_tcp", "modbus_rtu"],
@@ -27,7 +30,8 @@
     "pv_power_w": {"sum": [{"addr": 672, "type": "i16"}, {"addr": 673, "type": "i16"}]},
     "grid_power_w": {"addr": 625, "type": "i16"},
     "load_power_w": {"addr": 653, "type": "i16"},
-    "pv_energy_total_kwh": {"addr": 534, "type": "u32", "scale": 0.1, "word_order": "lo_hi"}
+    "pv_energy_total_kwh": {"addr": 534, "type": "u32", "scale": 0.1, "word_order": "lo_hi"},
+    "tou_enabled": {"addr": 146, "type": "u16"}
   },
   "write": {
     "tou_program": {
@@ -36,7 +40,8 @@
       "power_w": {"addr": 154, "encode": "watts"},
       "soc": {"addr": 166, "encode": "percent"},
       "grid_charge": {"addr": 172, "bit": 0}
-    }
+    },
+    "tou_enable": {"addr": 146, "enable_bit": 0, "day_mask": 254}
   },
   "intents": {
     "charge_grid": {"grid_charge": true, "soc": "target_or_max", "power": "slot"},
@@ -50,12 +55,26 @@
           "field_order": ["soc", "power_w", "grid_charge", "start"]},
   "baseline": {"intent": "self_consume"},
   "write_policy": {"order": ["tou"], "min_interval_s": 300, "nvm": true,
-                   "max_direction_changes_per_hour": 0, "max_state_age_s": 300},
+                   "max_direction_changes_per_hour": 0, "max_state_age_s": 300,
+                   "nvm_budget": {"window_h": 24, "per_key": 48, "total": 400}},
   "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
   "ha": {"integrations": []},
   "capabilities": {
     "force_charge_from_grid": true, "sell_from_battery": false, "force_discharge": false,
     "standby": true, "set_power_w": true, "limit_export": false, "set_soc_floor": true,
     "set_soc_ceiling": true, "time_windows": 6
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Community register map; write function 16 and the time-of-use enable bit are unconfirmed on hardware. The time-of-use block 146-177 matches the three-phase map of the cited sources; single-phase units use a different block and are not covered.",
+    "write_function": 16,
+    "max_read_registers": 100,
+    "transport_options": {
+      "solarman_v5": {"port": 8899, "timeout_ms": 3000, "gap_ms": 200},
+      "modbus_tcp": {"port": 502, "timeout_ms": 2000, "gap_ms": 100},
+      "modbus_rtu": {"port": 8899, "timeout_ms": 2000, "gap_ms": 100}
+    },
+    "identify_reads": [{"addr": 0, "count": 1}, {"addr": 20, "count": 2}],
+    "probe_keys": ["tou"]
   }
 }

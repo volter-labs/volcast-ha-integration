@@ -33,6 +33,25 @@ class ModeDef:
 
 
 @dataclass(frozen=True)
+class ModbusSpec:
+    """Dostęp bezpośredni do rejestrów: status ścieżki, funkcja zapisu, parametry łączy."""
+    status: str                                         # "draft" | "verified"
+    write_function: int                                 # 6 | 16
+    max_read_registers: int                             # 1..125
+    transport_options: Mapping[str, Mapping[str, int]]  # nazwa → {port, timeout_ms, gap_ms}
+    identify_reads: tuple[tuple[int, int], ...]         # (adres, liczba)
+    probe_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NvmBudget:
+    """Budżet zapisów do pamięci nieulotnej w oknie kroczącym."""
+    window_s: float
+    per_key: int
+    total: int
+
+
+@dataclass(frozen=True)
 class Profile:
     raw: Mapping[str, Any]
     id: str
@@ -52,6 +71,8 @@ class Profile:
     soc_tolerance_pp: float
     power_tolerance_w: float
     tou_field_order: tuple[str, ...]
+    modbus: ModbusSpec
+    nvm_budget: NvmBudget | None
 
     def intent(self, name: str) -> Mapping[str, Any] | None:
         return self.raw["intents"][name]
@@ -89,7 +110,31 @@ def profile_from_dict(raw: dict) -> Profile:
         soc_tolerance_pp=float(tou.get("soc_tolerance_pp", 0)),
         power_tolerance_w=float(tou.get("power_tolerance_w", 0)),
         tou_field_order=tuple(tou.get("field_order", ())),
+        modbus=_modbus_spec(raw["modbus"]),
+        nvm_budget=_nvm_budget(wp.get("nvm_budget")),
     )
+
+
+def _modbus_spec(m: Mapping[str, Any]) -> ModbusSpec:
+    return ModbusSpec(
+        status=m["status"], write_function=m["write_function"],
+        max_read_registers=m["max_read_registers"],
+        transport_options=MappingProxyType({name: MappingProxyType(dict(o))
+                                            for name, o in m["transport_options"].items()}),
+        identify_reads=tuple((r["addr"], r["count"]) for r in m["identify_reads"]),
+        probe_keys=tuple(m["probe_keys"]),
+    )
+
+
+def _nvm_budget(b: Mapping[str, Any] | None) -> NvmBudget | None:
+    if b is None:
+        return None
+    return NvmBudget(window_s=float(b["window_h"]) * 3600.0, per_key=b["per_key"], total=b["total"])
+
+
+def direct_verified(profile: Profile) -> bool:
+    """Ścieżka rejestrów dopuszczona do zapisu: i profil, i jego sekcja `modbus` zweryfikowane."""
+    return profile.status == "verified" and profile.modbus.status == "verified"
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:

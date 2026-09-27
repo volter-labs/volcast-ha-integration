@@ -51,3 +51,19 @@ def test_day_plan_encodes_into_program_registers():
     assert ws[f"tou.{i}.grid_charge"].addr == 172 + i - 1
     assert {w.addr for w in ws.values()} <= set(range(148, 154)) | set(range(154, 160)) | \
         set(range(166, 172)) | set(range(172, 178))
+
+
+def test_deye_modbus_is_draft_with_fc16_and_tou_enable_146():
+    m = DEYE.modbus
+    assert (m.status, m.write_function, m.max_read_registers) == ("draft", 16, 100)
+    assert m.transport_options["solarman_v5"] == {"port": 8899, "timeout_ms": 3000, "gap_ms": 200}
+    assert m.transport_options["modbus_tcp"] == {"port": 502, "timeout_ms": 2000, "gap_ms": 100}
+    assert m.transport_options["modbus_rtu"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 100}
+    assert m.identify_reads == ((0, 1), (20, 2))
+    assert m.probe_keys == ("tou",)
+    assert DEYE.raw["write"]["tou_enable"] == {"addr": 146, "enable_bit": 0, "day_mask": 254}
+    assert DEYE.raw["read"]["tou_enabled"] == {"addr": 146, "type": "u16"}
+    assert DEYE.raw["write"]["tou_program"]["grid_charge"] == {"addr": 172, "bit": 0}
+    assert (DEYE.nvm_budget.window_s, DEYE.nvm_budget.per_key, DEYE.nvm_budget.total) == (86400.0, 48, 400)
+    refs = " ".join(s["ref"] for s in DEYE.raw["sources"])
+    assert "three_phase_common.py" in refs and "deye_p3.yaml" in refs and "marklabs" in refs.lower()

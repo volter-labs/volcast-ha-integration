@@ -203,3 +203,198 @@ def test_write_policy_boundary_values_accepted(field, value):
     p = ms_profile()
     p["write_policy"][field] = value
     assert validate_profile(p) == []
+
+
+# ── sekcja dostępu bezpośredniego (`modbus`), budżet zapisów, włącznik TOU ──
+
+
+def test_builtin_profiles_validate():
+    from custom_components.volcast.core.profile import PROFILES_DIR, builtin_ids
+    for pid in builtin_ids():
+        raw = json.loads((PROFILES_DIR / f"{pid}.json").read_text(encoding="utf-8"))
+        assert validate_profile(raw) == [], pid
+
+
+def test_modbus_section_required():
+    for p in (ms_profile(), tw_profile()):
+        p.pop("modbus")
+        assert "$.modbus: brak wymaganego pola" in _errs(p)
+
+
+def test_modbus_status_enum():
+    p = ms_profile()
+    p["modbus"]["status"] = "tested"
+    assert "$.modbus.status" in _errs(p)
+    for ok in ("draft", "verified"):
+        p["modbus"]["status"] = ok
+        assert validate_profile(p) == []
+
+
+@pytest.mark.parametrize("bad", [3, 5, 15, 17, True, "6", None])
+def test_write_function_enum(bad):
+    p = ms_profile()
+    p["modbus"]["write_function"] = bad
+    assert "$.modbus.write_function" in _errs(p)
+
+
+@pytest.mark.parametrize("bad", [0, 126, True, "10"])
+def test_max_read_registers_bounds(bad):
+    p = ms_profile()
+    p["modbus"]["max_read_registers"] = bad
+    assert "$.modbus.max_read_registers" in _errs(p)
+
+
+def test_transport_options_subset_of_transports():
+    p = ms_profile()                                   # transports: tylko goodwe_udp
+    p["modbus"]["transport_options"]["modbus_tcp"] = {"port": 502, "timeout_ms": 2000, "gap_ms": 50}
+    assert "$.modbus.transport_options.modbus_tcp" in _errs(p)
+    p = ms_profile()
+    p["modbus"]["transport_options"]["serial"] = {"port": 1, "timeout_ms": 2000, "gap_ms": 50}
+    assert "$.modbus.transport_options.serial" in _errs(p)
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("port", 0), ("port", 65536), ("port", "502"), ("port", True),
+    ("timeout_ms", 199), ("timeout_ms", 10001), ("timeout_ms", 2000.5),
+    ("gap_ms", -1), ("gap_ms", 2001),
+])
+def test_transport_options_ranges(field, bad):
+    p = ms_profile()
+    p["modbus"]["transport_options"]["goodwe_udp"][field] = bad
+    assert f"$.modbus.transport_options.goodwe_udp.{field}" in _errs(p)
+
+
+def test_transport_options_shape():
+    p = ms_profile()
+    p["modbus"]["transport_options"]["goodwe_udp"]["host"] = "x"
+    assert "$.modbus.transport_options.goodwe_udp.host: nieznane pole" in _errs(p)
+    p = ms_profile()
+    p["modbus"]["transport_options"]["goodwe_udp"].pop("gap_ms")
+    assert "$.modbus.transport_options.goodwe_udp.gap_ms: brak wymaganego pola" in _errs(p)
+    p = ms_profile()
+    p["modbus"]["transport_options"] = []
+    assert "$.modbus.transport_options" in _errs(p)
+
+
+@pytest.mark.parametrize("reads,needle", [
+    ([], "$.modbus.identify_reads"),
+    ("35000", "$.modbus.identify_reads"),
+    ([{"addr": -1, "count": 1}], "$.modbus.identify_reads[0].addr"),
+    ([{"addr": 65536, "count": 1}], "$.modbus.identify_reads[0].addr"),
+    ([{"addr": 0, "count": 0}], "$.modbus.identify_reads[0].count"),
+    ([{"addr": 0, "count": 126}], "$.modbus.identify_reads[0].count"),
+    ([{"addr": 65500, "count": 37}], "$.modbus.identify_reads[0]"),
+    ([{"addr": 1, "count": 1, "type": "u16"}], "$.modbus.identify_reads[0].type"),
+    ([{"addr": 1}], "$.modbus.identify_reads[0].count"),
+])
+def test_identify_reads_bounds(reads, needle):
+    p = ms_profile()
+    p["modbus"]["identify_reads"] = reads
+    assert needle in _errs(p)
+
+
+def test_identify_reads_upper_edge_is_valid():
+    p = ms_profile()
+    p["modbus"]["identify_reads"] = [{"addr": 65535, "count": 1}, {"addr": 65411, "count": 125}]
+    assert validate_profile(p) == []
+
+
+def test_probe_keys_subset_of_write():
+    p = ms_profile()                                   # bez zapisu soc_max
+    p["modbus"]["probe_keys"] = ["mode", "soc_max"]
+    assert "$.modbus.probe_keys" in _errs(p)
+    p = ms_profile()
+    p["modbus"]["probe_keys"] = ["mode", "mode"]
+    assert "$.modbus.probe_keys" in _errs(p)
+    p = ms_profile()
+    p["modbus"]["probe_keys"] = ["tou"]                # „tou" tylko przy tou_program
+    assert "$.modbus.probe_keys" in _errs(p)
+    p = ms_profile()
+    p["modbus"]["probe_keys"] = "mode"
+    assert "$.modbus.probe_keys" in _errs(p)
+    p = tw_profile()
+    p["modbus"]["probe_keys"] = ["tou"]
+    assert validate_profile(p) == []
+
+
+def test_modbus_unknown_field_and_status_note():
+    p = ms_profile()
+    p["modbus"]["host"] = "x"
+    assert "$.modbus.host: nieznane pole" in _errs(p)
+    p = ms_profile()
+    p["modbus"]["status_note"] = ""
+    assert "$.modbus.status_note" in _errs(p)
+    p["modbus"]["status_note"] = "note"
+    assert validate_profile(p) == []
+
+
+def test_nvm_budget_total_at_least_per_key():
+    p = ms_profile()
+    p["write_policy"]["nvm_budget"] = {"window_h": 24, "per_key": 144, "total": 100}
+    assert "$.write_policy.nvm_budget.total" in _errs(p)
+    p["write_policy"]["nvm_budget"] = {"window_h": 24, "per_key": 144, "total": 144}
+    assert validate_profile(p) == []
+
+
+@pytest.mark.parametrize("budget,needle", [
+    ({"window_h": 0, "per_key": 1, "total": 1}, "$.write_policy.nvm_budget.window_h"),
+    ({"window_h": 169, "per_key": 1, "total": 1}, "$.write_policy.nvm_budget.window_h"),
+    ({"window_h": 24, "per_key": 0, "total": 1}, "$.write_policy.nvm_budget.per_key"),
+    ({"window_h": 24, "per_key": 1}, "$.write_policy.nvm_budget.total"),
+    ({"window_h": 24, "per_key": 1, "total": 1, "x": 1}, "$.write_policy.nvm_budget.x"),
+    ([24, 1, 1], "$.write_policy.nvm_budget"),
+])
+def test_nvm_budget_shape(budget, needle):
+    p = ms_profile()
+    p["write_policy"]["nvm_budget"] = budget
+    assert needle in _errs(p)
+
+
+def test_nvm_budget_is_optional():
+    p = ms_profile()
+    assert "nvm_budget" not in p["write_policy"] and validate_profile(p) == []
+
+
+def _tw_with_enable(**enable):
+    p = tw_profile()
+    p["write"]["tou_enable"] = {"addr": 146, "enable_bit": 0, "day_mask": 254, **enable}
+    return p
+
+
+def test_tou_enable_valid_with_tou_program():
+    p = _tw_with_enable()
+    p["read"]["tou_enabled"] = {"addr": 146, "type": "u16"}
+    assert validate_profile(p) == []
+
+
+def test_tou_enable_requires_tou_program():
+    p = ms_profile()
+    p["write"]["tou_enable"] = {"addr": 146, "enable_bit": 0, "day_mask": 254}
+    assert "$.write.tou_enable" in _errs(p)
+
+
+def test_tou_enable_day_mask_excludes_enable_bit():
+    assert "$.write.tou_enable.day_mask" in _errs(_tw_with_enable(day_mask=255))
+    assert "$.write.tou_enable.day_mask" in _errs(_tw_with_enable(enable_bit=3, day_mask=0x08))
+    assert validate_profile(_tw_with_enable(enable_bit=15, day_mask=0x7FFF)) == []
+
+
+@pytest.mark.parametrize("field,bad", [("addr", 70000), ("enable_bit", 16), ("day_mask", 65536),
+                                       ("day_mask", -1), ("enable_bit", True)])
+def test_tou_enable_ranges(field, bad):
+    assert f"$.write.tou_enable.{field}" in _errs(_tw_with_enable(**{field: bad}))
+
+
+def test_tou_enable_is_not_a_separate_write_order_entry():
+    # Włącznik należy do sekwencji TOU — kolejność zapisów zostaje ["tou"].
+    p = _tw_with_enable()
+    assert p["write_policy"]["order"] == ["tou"] and validate_profile(p) == []
+
+
+def test_read_tou_enabled_needs_tou_enable_at_same_address():
+    p = tw_profile()
+    p["read"]["tou_enabled"] = {"addr": 146, "type": "u16"}
+    assert "$.read.tou_enabled" in _errs(p)
+    p = _tw_with_enable()
+    p["read"]["tou_enabled"] = {"addr": 147, "type": "u16"}
+    assert "$.read.tou_enabled" in _errs(p)
