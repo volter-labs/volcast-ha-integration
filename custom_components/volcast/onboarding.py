@@ -28,9 +28,11 @@ Wybory zdalne:
 - inne źródło cen niż HA ustawia aplikacja/chmura — krok cen kończy się bez zmian tutaj.
 Nieudana publikacja postępu jest ponawiana z wycofaniem (5 s, podwajane do 60 s).
 
-Czujnik zużycia domu: gdy opcja jest pusta, a raport wykrywania ma DOKŁADNIE jeden
+Czujnik zużycia domu: gdy opcja jest pusta, a wśród WŁASNYCH encji zmapowanego
+falownika (`ControlRuntime.inverter_entities`) raport wykrywania ma DOKŁADNIE jeden
 jednoznaczny licznik zużycia domu (`house_load_candidate`), ustawiamy go i importujemy
-historię; inaczej krok zostaje wyborem właściciela.
+historię; inaczej krok zostaje wyborem właściciela. Wybór zapisujemy jak wybór zdalny —
+raz na sesję, więc wyczyszczony przez właściciela nie wraca po restarcie HA.
 """
 from __future__ import annotations
 
@@ -62,6 +64,8 @@ _PLAN_RETRY_S = 125.0
 _PLAN_ATTEMPTS = 3
 _GONE = ("expired", "gone", "disabled")
 _APPLIED = "applied_choices"
+# Zapis „zastosowano" dla automatycznie wybranego licznika zużycia domu.
+_AUTO_LOAD = "load_energy"
 _REPOST_MIN_S = 5.0
 _REPOST_MAX_S = 60.0
 _PRICE_SOURCE = re.compile(r"[A-Za-z0-9_:.-]{1,64}")
@@ -180,11 +184,6 @@ class Onboarding:
         choices = rec.get("choices")
         return dict(choices) if isinstance(choices, dict) else {}
 
-    def _patch_options(self, patch: dict) -> None:
-        entry = self._entry()
-        if entry is not None:
-            self._hass.config_entries.async_update_entry(entry, options={**entry.options, **patch})
-
     def _commit_choices(self, patch: dict, applied: dict[str, str]) -> None:
         """Opcje i zapis „zastosowano" w JEDNEJ aktualizacji wpisu (jedno przeładowanie)."""
         entry = self._entry()
@@ -277,12 +276,17 @@ class Onboarding:
 
     async def _consumption_step(self, report: dict) -> None:
         if not self._options().get(OPT_LOAD_ENERGY):
-            candidate = house_load_candidate(report.get("energy_sensors"))
+            candidate = None
+            if _AUTO_LOAD not in self._applied():
+                # Tylko z własnych encji zmapowanego falownika; po wyczyszczeniu przez
+                # właściciela (restart w oknie sesji) nie wybieramy ponownie.
+                own = getattr(self._runtime(), "inverter_entities", None) or ()
+                candidate = house_load_candidate(report.get("energy_sensors"), inverter_entities=own)
             if candidate is None:
                 await self._set("consumption", "choice", "no house energy sensor selected")
                 return
             # Zmiana samego czujnika zużycia nie przeładowuje wpisu (słuchacz aktualizacji).
-            self._patch_options({OPT_LOAD_ENERGY: candidate})
+            self._commit_choices({OPT_LOAD_ENERGY: candidate}, {_AUTO_LOAD: candidate})
         await self._set("consumption", "active")
         try:
             imported = await self._import_history()

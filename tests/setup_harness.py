@@ -153,6 +153,15 @@ class SetupHass:
         self.tasks.append(task)
         return task
 
+    def async_create_background_task(self, coro, name, **_kwargs):
+        self.events.append(f"hass_background:{name}")
+        task = asyncio.get_running_loop().create_task(coro)
+        self.tasks.append(task)
+        return task
+
+    async def async_add_executor_job(self, fn, *args):
+        return fn(*args)
+
 
 class FakeCoordinator:
     def __init__(self, hass, api_key, api_url, update_interval, entry_id=None, **_kw):
@@ -165,6 +174,9 @@ class FakeCoordinator:
         return None
 
     async def async_config_entry_first_refresh(self) -> None:
+        return None
+
+    async def async_refresh(self) -> None:
         return None
 
 

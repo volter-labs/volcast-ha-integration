@@ -95,14 +95,20 @@ def test_full_60_days_with_all_series_fits_one_request():
 # ── czujnik zużycia domu z raportu wykrywania ──────────────────────────────
 
 
-def _es(eid, unit="kWh", state_class="total_increasing"):
-    return {"entity_id": eid, "platform": "x", "unit": unit, "state_class": state_class, "days_of_statistics": 30}
+def _es(eid, unit="kWh", state_class="total_increasing", platform="goodwe"):
+    return {"entity_id": eid, "platform": platform, "unit": unit, "state_class": state_class,
+            "days_of_statistics": 30}
+
+
+def _pick(rows, own=None):
+    from custom_components.volcast.core.control.history import house_load_candidate
+    ids = [r["entity_id"] for r in rows or () if isinstance(r, dict) and isinstance(r.get("entity_id"), str)]
+    return house_load_candidate(rows, inverter_entities=set(ids) if own is None else own)
 
 
 def test_house_load_candidate_exactly_one_clear_sensor():
-    from custom_components.volcast.core.control.history import house_load_candidate
     rows = [_es("sensor.house_consumption"), _es("sensor.pv_energy_total"), _es("sensor.grid_import_total")]
-    assert house_load_candidate(rows) == "sensor.house_consumption"
+    assert _pick(rows) == "sensor.house_consumption"
 
 
 import pytest  # noqa: E402
@@ -121,5 +127,38 @@ import pytest  # noqa: E402
     [{"entity_id": 5}, "x"],
 ])
 def test_house_load_candidate_none_when_not_clear(rows):
+    assert _pick(rows) is None
+
+
+@pytest.mark.parametrize("eid", [
+    "sensor.heat_pump_consumption",
+    "sensor.washing_machine_consumption",
+    "sensor.greenhouse_heater_energy",
+    "sensor.homewizard_socket_total_energy",
+    "sensor.shelly_plug_home_office_energy",
+    "sensor.boiler_load_energy",
+    "sensor.dishwasher_consumption",
+    "sensor.ev_charger_load",
+    "sensor.garage_consumption",
+    "sensor.housekeeping_energy",                  # słowo zużycia tylko jako fragment innego słowa
+])
+def test_house_load_candidate_rejects_single_appliance_meters(eid):
+    # nawet gdyby należał do wpisu falownika — odbiornik to nie cały dom
+    assert _pick([_es(eid)]) is None
+
+
+def test_house_load_candidate_only_from_the_inverter_entities():
+    rows = [_es("sensor.house_consumption", platform="shelly")]
+    assert _pick(rows, own=set()) is None                                          # spoza falownika
+    assert _pick(rows, own={"sensor.other"}) is None
+
+
+def test_house_load_candidate_inverter_row_wins_over_appliance_row():
+    rows = [_es("sensor.goodwe_total_load"), _es("sensor.heat_pump_consumption", platform="shelly")]
+    assert _pick(rows, own={"sensor.goodwe_total_load"}) == "sensor.goodwe_total_load"
+
+
+def test_house_load_candidate_requires_the_inverter_scope_argument():
     from custom_components.volcast.core.control.history import house_load_candidate
-    assert house_load_candidate(rows) is None
+    with pytest.raises(TypeError):
+        house_load_candidate([_es("sensor.house_consumption")])

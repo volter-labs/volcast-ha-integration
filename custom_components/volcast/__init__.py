@@ -39,7 +39,8 @@ from .const import (
 )
 from .control.history_import import async_import_history_once
 from .control.runtime import (RELOAD_FREE_KEYS, async_remove_control, async_restore_if_control_changed,
-                              async_setup_control, async_unload_control, changed_option_keys)
+                              async_setup_control, async_unload_control, changed_option_keys,
+                              control_options_changed, freeze_control)
 from .coordinator import VolcastCoordinator
 from .discovery_runner import DiscoveryRunner
 from .frontend import async_register_card, async_register_panel, async_remove_panel
@@ -163,7 +164,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Load retained past-day forecast history before the first poll so the Energy
     # Dashboard keeps showing previous days even if that first refresh fails.
     await coordinator.async_load_forecast_history()
-    await coordinator.async_config_entry_first_refresh()
+    backend = Backend.from_dict(entry.data.get(CONF_BACKEND))
+    if backend is None:
+        await coordinator.async_config_entry_first_refresh()
+    else:
+        # Wpis sparowany: sterowanie nie może czekać na prognozę. Bez chmury (brak sieci,
+        # 401, 503…) wykonawca i tak startuje z planu z magazynu i potrafi oddać falownik;
+        # encje prognozy są niedostępne, a koordynator ponawia sam co `update_interval`.
+        await coordinator.async_refresh()
 
     # Production tracker — opcjonalny (wymaga skonfigurowanych sensorów)
     energy_entity = entry.options.get(CONF_PV_ENERGY_ENTITY, "")
@@ -177,7 +185,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         submit_url = DEFAULT_SUBMIT_URL
         if coordinator.data and coordinator.data.submit_url:
             submit_url = coordinator.data.submit_url
-        backend = Backend.from_dict(entry.data.get(CONF_BACKEND))
         if backend is not None:
             # Wpis sparowany zawsze woła backend swojego konta.
             submit_url = backend.submit_production
@@ -243,6 +250,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     control = None
     if entry.data.get(CONF_BACKEND):
         try:
+            # Nieudane złożenie samo zatrzymuje wykonawcę (`async_setup_control`).
             control = await async_setup_control(hass, entry, report=lambda: runner.report)
         except Exception as err:  # noqa: BLE001 — sterowanie nigdy nie psuje prognozy
             _LOGGER.error("Volcast control could not be set up (%s) — forecast continues",
@@ -250,7 +258,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             control = None
     hass.data[DOMAIN][entry.entry_id]["control"] = control
 
-    await _async_forward_platforms(hass, entry, PAIRED_PLATFORMS if control else PLATFORMS)
+    try:
+        await _async_forward_platforms(hass, entry, PAIRED_PLATFORMS if control else PLATFORMS)
+    except BaseException:
+        # HA nie woła `async_unload_entry` po nieudanym setupie — wykonawca nie może zostać.
+        if control is not None:
+            hass.data[DOMAIN][entry.entry_id]["control"] = None
+            try:
+                await async_unload_control(hass, control)
+            except Exception as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
+                _LOGGER.warning("Volcast control: cleanup after a failed setup failed (%s)",
+                                type(err).__name__)
+        raise
 
     if control is not None:
         version = await async_integration_version(hass)
@@ -454,6 +473,10 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
                         pv_entity=new.get(CONF_PV_ENERGY_ENTITY) or None, now_utc=dt_util.utcnow()),
                     "volcast_history_import")
             return
+        if control_options_changed(old, new):
+            # Najpierw zamrożenie: cykl startujący między powrotem a zatrzymaniem
+            # (licznik, pobranie planu, wyłącznik) pisałby jeszcze przez STARE mapowanie.
+            freeze_control(control)
         await async_restore_if_control_changed(control, old, new)
     await hass.config_entries.async_reload(entry.entry_id)
 

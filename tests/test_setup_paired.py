@@ -200,3 +200,283 @@ async def test_remove_entry_never_raises(monkeypatch):
         raise RuntimeError("x")
     monkeypatch.setattr(integ, "async_remove_control", boom)
     await integ.async_remove_entry(SimpleNamespace(), SimpleNamespace(entry_id="e1"))
+
+
+# ── sterowanie niezależne od pierwszego odświeżenia prognozy ───────────────
+
+
+class NotReady(Exception):
+    """Jak `ConfigEntryNotReady` z `async_config_entry_first_refresh`."""
+
+
+def _failing_coordinator(error: BaseException, calls: list):
+    from .setup_harness import FakeCoordinator
+
+    class Coordinator(FakeCoordinator):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.data = None
+
+        async def _async_update_data(self):
+            raise error
+
+        async def async_config_entry_first_refresh(self):
+            calls.append("first_refresh")
+            try:
+                await self._async_update_data()
+            except Exception as err:
+                raise NotReady from err
+
+        async def async_refresh(self):
+            # jak DataUpdateCoordinator.async_refresh: błąd tylko w stanie, nigdy wyjątek
+            calls.append("refresh")
+            try:
+                self.data = await self._async_update_data()
+                self.last_update_success = True
+            except Exception:
+                self.last_update_success = False
+    return Coordinator
+
+
+FORECAST_FAILURES = {
+    "offline": (OSError("unreachable"), None),
+    "unauthorized": (Exception("Invalid API key"), "auth"),
+    "unavailable": (Exception("Forecast not yet available — cache being populated"), None),
+}
+
+
+def _control_hass():
+    from .control.ha_fakes import goodwe_hass
+    from .setup_harness import SetupHass
+
+    class Hass(SetupHass):
+        def __init__(self):
+            super().__init__()
+            fake = goodwe_hass()
+            self.states = fake.states
+            services = fake.services
+            registered = self.services.registered
+            services.registered = registered
+            services.has_service = lambda d, s: (d, s) in registered or d != "volcast"
+            services.async_register = lambda d, s, h, schema=None: registered.__setitem__((d, s), h)
+            services.async_remove = lambda d, s: registered.pop((d, s), None)
+            self.services = services
+    return Hass()
+
+
+def _patch_control(monkeypatch, store, schedule):
+    from custom_components.volcast.cloud.client import CloudAuthError
+    from custom_components.volcast.control import executor as ex_mod
+    from custom_components.volcast.core.control.select import ProfileChoice
+    from custom_components.volcast.core.profile import load_builtin
+
+    from .control.ha_fakes import GOODWE_ENTITIES
+
+    class Cloud:
+        def __init__(self, session, key, backend):
+            self.backend = backend
+
+        async def async_get_schedule(self):
+            if schedule == "auth":
+                raise CloudAuthError
+            return None                                              # chmura nieosiągalna
+
+        async def async_post_telemetry(self, reading):
+            return False
+
+        async def async_import_history(self, hours):
+            return None
+    gw = ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET")
+    monkeypatch.setattr(rt_mod, "VolcastCloud", Cloud)
+    monkeypatch.setattr(rt_mod, "async_get_clientsession", lambda hass: None)
+    monkeypatch.setattr(rt_mod, "_choice_for", lambda hass, entry, profiles: gw)
+    monkeypatch.setattr(rt_mod, "map_entities", lambda hass, choice: dict(GOODWE_ENTITIES))
+    monkeypatch.setattr(rt_mod, "ControlStore", lambda hass, entry_id: store)
+    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+
+
+async def _setup(monkeypatch, hass, coordinator, *, data=PAIRED, options=None):
+    import custom_components.volcast as integ
+
+    from .setup_harness import FakeEntry, FakeReconciler, FakeTracker, drain
+    monkeypatch.setattr(integ, "VolcastCoordinator", coordinator)
+    monkeypatch.setattr(integ, "VolcastProductionTracker", FakeTracker)
+    monkeypatch.setattr(integ, "DailyReconciler", FakeReconciler)
+    entry = FakeEntry(data=data, options={"control_mode": "entities"} if options is None else options)
+    ok = await integ.async_setup_entry(hass, entry)
+    await drain(hass)
+    return entry, ok
+
+
+def _stored_plan():
+    from custom_components.volcast.control.store import ControlState, ControlStore
+
+    from .control.test_executor import plan
+    store = ControlStore(object(), "test_entry_id")
+    asyncio.run(store.async_save(ControlState(plan_raw=plan(), consent=True, local_switch=True)))
+    return store
+
+
+@pytest.mark.parametrize("case", sorted(FORECAST_FAILURES))
+def test_forecast_failure_at_setup_never_blocks_control(monkeypatch, case):
+    from .control.ha_fakes import GOODWE_ENTITIES as E
+    error, schedule = FORECAST_FAILURES[case]
+    store, calls = _stored_plan(), []
+    _patch_control(monkeypatch, store, schedule)
+    hass = _control_hass()
+
+    async def go():
+        entry, ok = await _setup(monkeypatch, hass, _failing_coordinator(error, calls))
+        rt = hass.data["volcast"][entry.entry_id]["control"]
+        after_setup = hass.states.get(E["mode"]).state
+        if schedule == "auth":
+            # drugie 401 z get-schedule = cofnięta zgoda → powrót do trybu bazowego w cyklu
+            await rt.fetcher.async_refresh()
+            await rt.executor.async_tick()
+        else:
+            await rt.executor.async_restore_now()
+        return entry, ok, rt, after_setup
+    entry, ok, rt, after_setup = asyncio.run(go())
+    assert ok and calls == ["refresh"]                     # bez first_refresh → bez ConfigEntryNotReady
+    assert "switch" in hass.config_entries.forwarded
+    assert FORECAST_IDS <= unique_ids(hass.entities)
+    assert after_setup == "sell_power"                     # cykl z planu z magazynu, bez chmury
+    assert hass.states.get(E["mode"]).state == "auto" and not rt.executor.owned
+    asyncio.run(rt_mod.async_unload_control(hass, rt))
+
+
+def test_forecast_only_entry_still_fails_setup_on_first_refresh(monkeypatch):
+    # regresja: wpis bez konta (tylko prognoza) zachowuje się jak dotąd — ConfigEntryNotReady
+    calls = []
+    hass = _control_hass()
+    with pytest.raises(NotReady):
+        asyncio.run(_setup(monkeypatch, hass, _failing_coordinator(OSError("x"), calls),
+                           data={"api_key": API_KEY}, options={}))
+    assert calls == ["first_refresh"] and hass.config_entries.forwarded == []
+
+
+def test_paired_entry_with_working_forecast_uses_non_raising_refresh(monkeypatch):
+    from .setup_harness import FakeCoordinator
+    calls = []
+
+    class Coordinator(FakeCoordinator):
+        async def async_config_entry_first_refresh(self):
+            calls.append("first_refresh")
+
+        async def async_refresh(self):
+            calls.append("refresh")
+    _patch_control(monkeypatch, _stored_plan(), None)
+    hass = _control_hass()
+    entry, ok = asyncio.run(_setup(monkeypatch, hass, Coordinator))
+    assert ok and calls == ["refresh"]
+    asyncio.run(rt_mod.async_unload_control(hass, hass.data["volcast"][entry.entry_id]["control"]))
+
+
+# ── nieudany setup i przeładowania nie mnożą wykonawców ────────────────────
+
+
+def _recording_executors(monkeypatch):
+    made = []
+
+    class Rec(rt_mod.VolcastExecutor):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made.append(self)
+    monkeypatch.setattr(rt_mod, "VolcastExecutor", Rec)
+    return made
+
+
+def _live(made):
+    return [ex for ex in made if ex._started and not ex._stopped]
+
+
+def test_failed_control_setup_and_reloads_never_accumulate_executors(monkeypatch):
+    import custom_components.volcast as integ
+
+    from .setup_harness import FakeCoordinator
+    _patch_control(monkeypatch, _stored_plan(), None)
+    made = _recording_executors(monkeypatch)
+    fail = {"on": True}
+
+    class Telemetry(rt_mod.TelemetrySender):
+        async def async_start(self):
+            if fail["on"]:
+                raise RuntimeError("x")
+            await super().async_start()
+    monkeypatch.setattr(rt_mod, "TelemetrySender", Telemetry)
+    hass = _control_hass()
+
+    async def go():
+        for _ in range(3):                                       # setup z błędem + przeładowanie
+            entry, ok = await _setup(monkeypatch, hass, FakeCoordinator)
+            assert ok and hass.data["volcast"][entry.entry_id]["control"] is None
+            assert "switch" not in hass.config_entries.forwarded
+            assert _live(made) == []
+            assert await integ.async_unload_entry(hass, entry)
+        fail["on"] = False
+        entry, ok = await _setup(monkeypatch, hass, FakeCoordinator)
+        assert len(_live(made)) == 1
+        assert await integ.async_unload_entry(hass, entry)
+        assert _live(made) == []
+    asyncio.run(go())
+    assert len(made) == 4
+
+
+def test_platform_forward_failure_after_control_stops_the_executor(monkeypatch):
+    from .setup_harness import FakeCoordinator
+    _patch_control(monkeypatch, _stored_plan(), None)
+    made = _recording_executors(monkeypatch)
+    hass = _control_hass()
+    real_forward = hass.config_entries.async_forward_entry_setups
+    fail = {"on": True}
+
+    async def forward(entry, platforms):
+        if fail["on"]:
+            raise RuntimeError("platform setup failed")
+        await real_forward(entry, platforms)
+    hass.config_entries.async_forward_entry_setups = forward
+
+    async def go():
+        with pytest.raises(RuntimeError):
+            await _setup(monkeypatch, hass, FakeCoordinator)
+        assert _live(made) == []
+        assert hass.data["volcast"]["test_entry_id"]["control"] is None
+        fail["on"] = False
+        entry, ok = await _setup(monkeypatch, hass, FakeCoordinator)   # HA ponawia setup
+        assert ok and len(_live(made)) == 1
+        await rt_mod.async_unload_control(hass, hass.data["volcast"][entry.entry_id]["control"])
+    asyncio.run(go())
+
+
+# ── zamrożenie starego wykonawcy przed powrotem i przeładowaniem ───────────
+
+
+def test_update_listener_freezes_old_executor_before_restore(monkeypatch):
+    # Cykl, który wystartuje między powrotem a zatrzymaniem (stare mapowanie), nic nie zapisze.
+    import custom_components.volcast as integ
+
+    from .control.ha_fakes import GOODWE_ENTITIES as E
+    from .setup_harness import FakeCoordinator
+    _patch_control(monkeypatch, _stored_plan(), None)
+    hass = _control_hass()
+    order = []
+
+    async def go():
+        entry, ok = await _setup(monkeypatch, hass, FakeCoordinator)
+        rt = hass.data["volcast"][entry.entry_id]["control"]
+        assert hass.states.get(E["mode"]).state == "sell_power" and rt.executor.owned
+        unsubbed = []
+        rt.unsubs.append(lambda: unsubbed.append(True))
+
+        async def reload(entry_id):
+            n = len(hass.services.calls)
+            await rt.executor.async_tick()                        # np. licznik albo wyłącznik
+            order.append(("reload", len(hass.services.calls) - n))
+        hass.config_entries.async_reload = reload
+        entry.options = {**entry.options, "profile_id": "goodwe-et", "inverter_domain": "goodwe_other"}
+        await integ._async_update_listener(hass, entry)
+        return rt, unsubbed
+    rt, unsubbed = asyncio.run(go())
+    assert hass.states.get(E["mode"]).state == "auto" and not rt.executor.owned   # powrót zrobiony
+    assert order == [("reload", 0)]                                                # po powrocie: zero zapisów
+    assert unsubbed == [True] and rt.unsubs == []

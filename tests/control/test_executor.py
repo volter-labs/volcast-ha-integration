@@ -1018,3 +1018,57 @@ def test_executors_sharing_a_lock_never_write_at_the_same_time(monkeypatch):
     asyncio.run(go())
     assert inflight["max"] == 1
     assert new.last_decision is not None                          # tik nowego nie przepadł, tylko poczekał
+
+
+def _hold_lock_with_slow_write(h, a, b):
+    # A trzyma blokadę (wolny zapis), cykl B czeka na nią w kolejce
+    real_call = h.services.async_call
+
+    async def slow(*args, **kw):
+        await asyncio.sleep(0.02)
+        return await real_call(*args, **kw)
+    h.services.async_call = slow
+    a._lock = b._lock = asyncio.Lock()
+
+
+@pytest.mark.parametrize("how", ["stop", "freeze"])
+def test_queued_tick_rechecks_stop_and_freeze_inside_the_lock(monkeypatch, how):
+    h = goodwe_hass()
+    _, a = make(h, monkeypatch=monkeypatch)
+    _, b = make(h, monkeypatch=monkeypatch)
+    _hold_lock_with_slow_write(h, a, b)
+
+    async def go():
+        await ready(a)
+        await ready(b, raw=plan(power=3000, sid="p2"))           # B zapisałby inną moc
+        running = asyncio.ensure_future(a.async_tick())
+        await asyncio.sleep(0.005)
+        queued = asyncio.ensure_future(b.async_tick())           # minął sprawdzenie przed blokadą
+        await asyncio.sleep(0)
+        if how == "stop":
+            await b.async_stop()                                 # czeka na blokadę (FIFO: najpierw cykl B)
+        else:
+            b.freeze()
+        await running
+        await queued
+    asyncio.run(go())
+    assert h.states.get(E["power_w"]).state == "2000.0"         # tylko zapis A
+    assert b.last_decision is None
+
+
+def test_frozen_executor_never_ticks_but_still_restores(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        assert h.states.get(E["mode"]).state == "sell_power" and ex.owned
+        ex.freeze()
+        n = len(h.services.calls)
+        await ex.async_tick()
+        ticked = len(h.services.calls) - n
+        await ex.async_restore_now()
+        return ticked
+    assert asyncio.run(go()) == 0
+    assert h.states.get(E["mode"]).state == "auto" and not ex.owned
+    assert ex._unsub == []

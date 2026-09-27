@@ -59,7 +59,7 @@ class Client:
 
 
 def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, prices=None, options=None,
-         imported=None, choice=None, entry=None, rated=8000.0):
+         imported=None, choice=None, entry=None, rated=8000.0, inverter_entities=()):
     t = [NOW]
 
     def utcnow():
@@ -79,7 +79,8 @@ def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, p
             async_update_entry=MagicMock(side_effect=lambda e, **kw: [setattr(e, k, v) for k, v in kw.items()])))
     fetch = SimpleNamespace(async_refresh=MagicMock(side_effect=lambda: _ret("accepted")))
     rt = SimpleNamespace(choice=choice or ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET"),
-                         mapped={k: f"x.{k}" for k in mapped}, rated_power_w=rated, fetcher=fetch)
+                         mapped={k: f"x.{k}" for k in mapped}, rated_power_w=rated, fetcher=fetch,
+                         inverter_entities=frozenset(inverter_entities))
     client = Client(polls, plan)
     ob = Onboarding(hass, "e1", client=client, session=S, live_until=NOW + timedelta(minutes=30),
                     runtime=lambda: rt, report=lambda: report,
@@ -484,23 +485,74 @@ def test_module_has_no_logger_exception_calls():
 # ── czujnik zużycia domu z wykrywania, wycofanie ponowień postępu ──────────
 
 
+def _load_row(eid, **kw):
+    return {"entity_id": eid, "unit": "kWh", "state_class": "total_increasing", **kw}
+
+
 def test_single_clear_house_load_sensor_is_selected_and_imported():
     report = dict(REPORT, energy_sensors=[
-        {"entity_id": "sensor.house_consumption", "unit": "kWh", "state_class": "total_increasing",
-         "days_of_statistics": 58},
-        {"entity_id": "sensor.pv_energy_total", "unit": "kWh", "state_class": "total_increasing",
-         "days_of_statistics": 90}])
-    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={})
+        _load_row("sensor.goodwe_total_load", days_of_statistics=58),
+        _load_row("sensor.pv_energy_total", days_of_statistics=90)])
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={},
+                             inverter_entities={"sensor.goodwe_total_load", "sensor.pv_energy_total"})
     asyncio.run(ob.async_run())
-    assert entry.options["load_energy_entity"] == "sensor.house_consumption"
+    assert entry.options["load_energy_entity"] == "sensor.goodwe_total_load"
     assert last(client)["consumption"] == {"key": "consumption", "state": "done", "detail": "58 days of history"}
+    # zapamiętany jako zastosowany w tej sesji (restart go nie powtórzy)
+    assert "load_energy" in entry.data["pairing"]["applied_choices"]["choices"]
 
 
 def test_ambiguous_house_load_sensors_leave_consumption_as_choice():
-    report = dict(REPORT, energy_sensors=[
-        {"entity_id": "sensor.house_consumption", "unit": "kWh", "state_class": "total_increasing"},
-        {"entity_id": "sensor.home_load", "unit": "kWh", "state_class": "total_increasing"}])
-    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={})
+    report = dict(REPORT, energy_sensors=[_load_row("sensor.house_consumption"), _load_row("sensor.home_load")])
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={},
+                             inverter_entities={"sensor.house_consumption", "sensor.home_load"})
+    asyncio.run(ob.async_run())
+    assert "load_energy_entity" not in entry.options
+    assert last(client)["consumption"]["state"] == "choice"
+
+
+@pytest.mark.parametrize("eid", ["sensor.heat_pump_consumption", "sensor.washing_machine_consumption",
+                                 "sensor.shelly_plug_home_office_energy", "sensor.house_consumption"])
+def test_house_load_outside_the_inverter_is_never_auto_picked(eid):
+    report = dict(REPORT, energy_sensors=[_load_row(eid, platform="shelly")])
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={},
+                             inverter_entities={"select.goodwe_ems_mode"})
+    asyncio.run(ob.async_run())
+    assert "load_energy_entity" not in entry.options
+    assert last(client)["consumption"]["state"] == "choice"
+
+
+def test_single_appliance_meter_of_the_inverter_is_not_auto_picked():
+    report = dict(REPORT, energy_sensors=[_load_row("sensor.goodwe_heat_pump_consumption")])
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={},
+                             inverter_entities={"sensor.goodwe_heat_pump_consumption"})
+    asyncio.run(ob.async_run())
+    assert "load_energy_entity" not in entry.options
+    assert last(client)["consumption"]["state"] == "choice"
+
+
+def test_auto_picked_load_sensor_cleared_by_owner_is_not_reapplied_after_restart():
+    report = dict(REPORT, energy_sensors=[_load_row("sensor.goodwe_total_load", days_of_statistics=58)])
+    own = {"sensor.goodwe_total_load"}
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={},
+                             inverter_entities=own)
+    asyncio.run(ob.async_run())
+    assert entry.options["load_energy_entity"] == "sensor.goodwe_total_load"
+    entry.options = {k: v for k, v in entry.options.items() if k != "load_energy_entity"}   # właściciel czyści
+    imports = []
+    ob2, client2, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, entry=entry,
+                           inverter_entities=own, imported={"accepted": 0})
+    ob2._import_history = lambda: imports.append(1) or _ret({"accepted": 0})
+    asyncio.run(ob2.async_run())                                        # nowy przebieg po restarcie HA
+    assert "load_energy_entity" not in entry.options and imports == []
+    assert last(client2)["consumption"]["state"] == "choice"
+
+
+def test_no_runtime_means_no_auto_pick():
+    report = dict(REPORT, energy_sensors=[_load_row("sensor.goodwe_total_load")])
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, report=report, options={},
+                             inverter_entities={"sensor.goodwe_total_load"})
+    ob._runtime = lambda: None                                          # wpis właśnie się przeładowuje
     asyncio.run(ob.async_run())
     assert "load_energy_entity" not in entry.options
     assert last(client)["consumption"]["state"] == "choice"

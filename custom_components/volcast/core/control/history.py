@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Mapping
+from typing import Collection, Mapping
 
 HISTORY_DAYS = 60
 MAX_HOURS = 1500
@@ -97,31 +98,44 @@ def batches(hours: list[dict], *, max_hours: int = MAX_HOURS,
     return out
 
 
-# Słowa wykluczające czujnik z roli „zużycie domu": to energia PV, sieci albo baterii.
-_NOT_HOUSE_LOAD = ("pv", "solar", "grid", "export", "import", "battery", "charge", "feed",
-                   "production", "generation", "yield", "backup", "ups")
+# Słowa wykluczające czujnik z roli „zużycie domu": energia PV, sieci albo baterii
+# oraz pojedyncze odbiorniki (pompa ciepła, pralka, gniazdko, ładowarka…).
+_NOT_HOUSE_LOAD = frozenset({
+    "pv", "solar", "grid", "export", "import", "battery", "charge", "feed", "production",
+    "generation", "yield", "backup", "ups",
+    "pump", "heater", "heating", "boiler", "washer", "washing", "dryer", "dishwasher", "fridge",
+    "freezer", "plug", "socket", "outlet", "ev", "car", "charger", "wallbox", "office", "greenhouse",
+    "garage", "light", "lights", "lighting", "tv", "oven", "cooker", "kettle", "aircon", "ac"})
 _SUM_STATE_CLASSES = ("total", "total_increasing")
 
 
-def house_load_candidate(energy_sensors) -> str | None:
-    """Jedyny jednoznaczny czujnik energii zużycia domu z raportu wykrywania, inaczej None.
+def _tokens(entity_id: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9]+", entity_id.lower().partition(".")[2]) if t}
 
-    Jednoznaczny = `sensor.` z jednostką energii i statystyką sumy, w nazwie słowo zużycia
-    (`LOAD_HINTS`) i żadne słowo PV/sieci/baterii. Zero albo kilka takich — None: wybór
-    zostaje dla właściciela (lepiej brak historii niż historia z niewłaściwego licznika).
+
+def house_load_candidate(energy_sensors, *, inverter_entities: Collection[str]) -> str | None:
+    """Jedyny jednoznaczny licznik zużycia domu Z WŁASNYCH encji falownika, inaczej None.
+
+    `inverter_entities` — encje wpisu konfiguracji / urządzenia zmapowanego falownika;
+    czujnik spoza nich (gniazdko, pompa ciepła, inny licznik) nigdy nie jest wybierany.
+    Jednoznaczny = `sensor.` z jednostką energii i statystyką sumy, słowo zużycia
+    (`LOAD_HINTS`) jako całe słowo nazwy i żadne słowo PV/sieci/baterii/odbiornika.
+    Zero albo kilka takich — None: wybór zostaje dla właściciela. Import historii jest
+    nieodwracalny, więc lepiej brak historii niż historia z niewłaściwego licznika.
     """
     from ..discovery.known import LOAD_HINTS
 
+    own = set(inverter_entities or ())
     found: list[str] = []
     for row in energy_sensors or ():
         if not isinstance(row, dict):
             continue
         eid = row.get("entity_id")
-        if not isinstance(eid, str) or not eid.startswith("sensor."):
+        if not isinstance(eid, str) or not eid.startswith("sensor.") or eid not in own:
             continue
         if row.get("unit") not in _TO_KWH or row.get("state_class") not in _SUM_STATE_CLASSES:
             continue
-        name = eid.lower()
-        if any(h in name for h in LOAD_HINTS) and not any(x in name for x in _NOT_HOUSE_LOAD):
+        words = _tokens(eid)
+        if words & set(LOAD_HINTS) and not words & _NOT_HOUSE_LOAD:
             found.append(eid)
     return found[0] if len(found) == 1 else None

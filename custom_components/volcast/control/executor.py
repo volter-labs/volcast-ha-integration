@@ -140,6 +140,7 @@ class VolcastExecutor:
         self._running = False
         self._rerun = False
         self._stopped = False
+        self._frozen = False                          # przed przeładowaniem: bez cykli, powrót dozwolony
         self._started = False
         self._foreign_issue_open = False
         self._foreign_episode = False                 # tryb spoza profilu na falowniku
@@ -251,6 +252,16 @@ class VolcastExecutor:
             _LOGGER.error("Volcast control: write still in progress at stop — giving up waiting")
             return
         self._lock.release()
+
+    def freeze(self) -> None:
+        """Koniec cykli przed przeładowaniem po zmianie mapowania; `async_restore_now` działa dalej.
+
+        Zdejmuje licznik i obserwatora; cykl już czekający na blokadę też nic nie zapisze.
+        """
+        self._frozen = True
+        for unsub in self._unsub:
+            unsub()
+        self._unsub.clear()
 
     @property
     def _foreign_issue_id(self) -> str:
@@ -433,7 +444,7 @@ class VolcastExecutor:
 
     # ── cykl ──────────────────────────────────────────────────────────────
     async def async_tick(self) -> None:
-        if self._stopped or self._disabled:
+        if self._stopped or self._disabled or self._frozen:
             return
         if self._running:
             # Cykl tego wykonawcy w toku: drugi nie startuje równolegle — bieżący
@@ -451,7 +462,7 @@ class VolcastExecutor:
         # Blokadę może trzymać przywracanie przy usuwaniu albo poprzedni wykonawca
         # tego wpisu (zapis w toku po przeładowaniu) — czekamy, nie piszemy równolegle.
         async with self._lock:
-            if self._stopped:
+            if self._stopped or self._frozen:
                 return
             for _ in range(1 + _MAX_RERUNS):
                 self._rerun = False
@@ -462,7 +473,7 @@ class VolcastExecutor:
                     self.last_decision = CycleDecision(ERROR, "exception:tick")
                     self._count(self.last_decision)
                 self._close_foreign_issue()
-                if not self._rerun or self._stopped:
+                if not self._rerun or self._stopped or self._frozen:
                     break
 
     def _read(self, now_utc) -> _Reading:
