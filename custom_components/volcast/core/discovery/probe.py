@@ -59,7 +59,8 @@ class ProbeReport:
         ident = None
         if self.identity is not None:
             i = self.identity
-            ident = {"profile_id": i.profile_id, "transport": i.transport, "port": i.port,
+            # Bez portu (część adresu) — słownik trafia do diagnostyki.
+            ident = {"profile_id": i.profile_id, "transport": i.transport,
                      "unit_id": i.unit_id, "model": i.model, "rated_power_w": i.rated_power_w}
         return {"identity": ident, "capabilities": dict(self.capabilities), "echo_only": list(self.echo_only),
                 "direct_available": self.direct_available, "tou_readable": self.tou_readable,

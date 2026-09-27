@@ -571,6 +571,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         rt = self._runtime()
         reports = list(getattr(rt, "last_probe", None) or [])
         hits = ds.found(reports)
+        # Bez rozpoznanego falownika bierzemy dowolny raport z adresem — tylko po to, żeby podać właściwy
+        # powód odmowy (kolizja albo „nie znaleziono”).
         report = hits[0] if hits else next((r for r in reports if r.candidate is not None), None)
         clash: tuple[str, ...] = ()
         if report is not None and report.candidate is not None:
@@ -651,6 +653,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         if o.get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES:
             return {OPT_DIRECT_TRIAL: "trial_with_entities"}      # dwie drogi do jednego falownika
         executor = getattr(self._runtime(), "executor", None)
+        # Próba sama nigdy nie przejmuje falownika (pisarz bez zapisu), więc włączona już próba nie jest
+        # blokowana; odmawiamy tylko NOWEGO włączenia, dopóki trwa własność z wcześniejszego sterowania.
         if o.get(OPT_DIRECT_TRIAL) is not True and getattr(executor, "owned", False):
             return {OPT_DIRECT_TRIAL: "trial_while_owned"}        # najpierw powrót do trybu bazowego
         return {}

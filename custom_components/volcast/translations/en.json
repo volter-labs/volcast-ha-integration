@@ -248,6 +248,10 @@
     "tou_snapshot_lost": {
       "title": "Volcast lost the saved copy of your inverter schedule",
       "description": "Volcast could not read its saved copy of the time-of-use programs you had before Volcast took control. When control ends, Volcast will set simple self-consumption programs and turn the inverter's time-of-use schedule off. Check and re-enter your own schedule on the inverter afterwards."
+    },
+    "tou_safety_off_cap": {
+      "title": "Volcast inverter schedule needs attention",
+      "description": "Volcast had to switch the inverter's time-of-use schedule off for safety many times today and has reached its daily limit for doing so. The schedule is left as it is now. Check the inverter's time-of-use programs and whether another app changes them; download diagnostics if it happens again."
     }
   },
   "services": {

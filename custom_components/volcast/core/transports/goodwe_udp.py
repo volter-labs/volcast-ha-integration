@@ -14,11 +14,13 @@ from .base import BaseTransport, LinkDown, Request, Stray, match_rtu
 from .modbus_frames import rtu
 
 _CLOSE_WAIT_S = 1.0
+# Niezamówione datagramy czekające na odbiór — z limitem (zalew obcymi ramkami nie rośnie bez końca).
+MAX_QUEUED_DATAGRAMS = 64
 
 
 class _Datagrams(asyncio.DatagramProtocol):
     def __init__(self) -> None:
-        self.queue: deque[tuple[bytes, object]] = deque()
+        self.queue: deque[tuple[bytes, object]] = deque(maxlen=MAX_QUEUED_DATAGRAMS)
         self.event = asyncio.Event()
         self.lost = False
         self.closed = asyncio.get_running_loop().create_future()

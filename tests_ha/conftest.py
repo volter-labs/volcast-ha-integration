@@ -188,3 +188,11 @@ async def goodwe_sim(socket_enabled, monkeypatch):
 def seed_salt(hass_storage) -> None:
     hass_storage["volcast.installation"] = {"version": 1, "minor_version": 1, "key": "volcast.installation",
                                             "data": {"salt": SALT.hex()}}
+
+
+def make_poll_due(conn) -> None:
+    """Następny tik zegara HA odpyta falownik: zegar monotoniczny połączenia nie przesuwa się razem
+    z `async_fire_time_changed`, więc ostatni odczyt oznaczamy jako dawno temu (tylko testy)."""
+    last = conn._last_poll
+    if last is not None:
+        conn._last_poll = last - 2 * max(conn.poll_s, 60.0)

@@ -22,7 +22,7 @@ from custom_components.volcast.core.modbus.identity import device_fingerprint
 from custom_components.volcast.core.profile import load_builtin, profile_from_dict
 from custom_components.volcast.core.registers import RegisterImage
 
-from .conftest import SALT, control_of, make_entry, seed_salt, setup_entry, store_state
+from .conftest import SALT, control_of, make_entry, make_poll_due, seed_salt, setup_entry, store_state
 
 MODE, POWER = 47511, 47512
 
@@ -96,7 +96,7 @@ async def test_real_ha_trial_sensors_polling_and_dry_run(hass: HomeAssistant, ne
     assert soc and float(hass.states.get(soc).state) == 83.0
     assert rt.executor.last_decision.status == "dry_run" and rt.executor.last_decision.summary()["would_write"]
     before = goodwe_sim.requests
-    rt.direct._last_poll -= 20.0                            # zegar monotoniczny połączenia: odczyt należny
+    make_poll_due(rt.direct)
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=11))
     for _ in range(20):
         await asyncio.sleep(0.02)

@@ -33,6 +33,7 @@ from ..core.control.caps import capabilities_for
 from ..core.control.readings import RawState, manual_reading, normalize_readings
 from ..core.control.select import ProfileChoice
 from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
+from .direct_sensors import STALE_FACTOR as _STALE_FACTOR   # jedna reguła świeżości z sensorami
 
 _LOGGER = logging.getLogger(__name__)
 TELEMETRY_INTERVAL_S = 60
@@ -75,7 +76,6 @@ def direct_driver_block(*, profile, access: str, capabilities: Mapping[str, bool
     return block
 
 
-_STALE_FACTOR = 3.0
 
 
 def _number(v) -> float | None:

@@ -26,6 +26,7 @@ Sól instalacji (odciski urządzenia i celu połączenia bezpośredniego) jest w
 własnym kształtem i zgubiłaby pole — a nowa sól unieważniłaby zapisane odciski."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import secrets
@@ -41,6 +42,7 @@ STORAGE_VERSION = 1
 _OWNER_MODE_UID = "owner_mode_uid"
 _INSTALLATION_KEY = "volcast.installation"
 _SALT_CACHE = "volcast_installation_salt"
+_SALT_LOCK = "volcast_installation_salt_lock"
 _SALT_BYTES = 16
 
 
@@ -133,6 +135,15 @@ async def async_installation_salt(hass) -> bytes:
     cache = hass.data.get(_SALT_CACHE)
     if isinstance(cache, bytes) and len(cache) == _SALT_BYTES:
         return cache
+    lock = hass.data.setdefault(_SALT_LOCK, asyncio.Lock())
+    async with lock:                     # dwa wpisy przy pierwszym tworzeniu — jedna sól
+        cache = hass.data.get(_SALT_CACHE)
+        if isinstance(cache, bytes) and len(cache) == _SALT_BYTES:
+            return cache
+        return await _load_or_create_salt(hass)
+
+
+async def _load_or_create_salt(hass) -> bytes:
     store = Store(hass, STORAGE_VERSION, _INSTALLATION_KEY)
     raw = await store.async_load()
     salt = None

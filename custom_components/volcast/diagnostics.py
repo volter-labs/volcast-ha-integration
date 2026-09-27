@@ -27,6 +27,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .const import CONF_BACKEND, CONF_MODE, DOMAIN
 from .core.discovery.report import _known_mac_pattern, _mac_hex, _mask_value, _serial_pattern, _valid_serial
+from .core.control.tou_cycle import SAFETY_OFF_CAP
 from .core.modbus.frame_redact import redact_frames
 from .registry_compat import all_devices
 
@@ -114,6 +115,7 @@ def _direct(rt: Any, conn: Any) -> dict:
         "echo_only": sorted(conn.unreadable),
         "nvm": {"keys": keys, "total": sum(keys.values()), "hit": bool(getattr(budget, "hit", False)),
                 "safety_offs": len(getattr(memory, "tou_safety_offs", ()) or ()),
+                "safety_off_capped": len(getattr(memory, "tou_safety_offs", ()) or ()) >= SAFETY_OFF_CAP,
                 "restore_ineffective": bool(getattr(memory, "budget_restore_ineffective", False))},
         "last_decision": decision.summary() if decision is not None else None,
     }

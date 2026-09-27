@@ -18,7 +18,7 @@ from ..entity_map import entity_value
 from ..params import Params
 from ..registers import RegisterWrite, encode_writes
 from .caps import missing_write_keys
-from .entity_fit import _SAFE_DIRECTION, control_writes, fit_params
+from .entity_fit import SAFE_DIRECTION, control_writes, fit_params
 
 if TYPE_CHECKING:
     from ..modbus.reading import DirectReading
@@ -151,7 +151,7 @@ class RegisterTarget:
         spec = profile.raw["write"]
         changes: dict[str, float] = {}
         adjusted: list[str] = []
-        for key, direction in _SAFE_DIRECTION.items():
+        for key, direction in SAFE_DIRECTION.items():
             value = getattr(params, key)
             enc = (spec.get(key) or {}).get("encode")
             if value is None or enc not in _REGISTER_RANGE:

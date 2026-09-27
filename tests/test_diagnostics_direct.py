@@ -49,6 +49,7 @@ async def test_diagnostics_direct_redacts_serial_and_host(make_hass, goodwe_udp_
         assert d["refused"] is None and d["identity"] == "confirmed" and d["echo_only"] == ["soc_max"]
         assert d["stats"]["requests"] > 0 and d["monitor"] == {"state": "ok", "reason": None}
         assert d["probe"]["identity"]["profile_id"] == "goodwe-et" and "device_fp" not in json.dumps(d["probe"])
+        assert '"port"' not in blob and str(goodwe_udp_sim.port) not in json.dumps(d)
         assert set(d["nvm"]) >= {"keys", "total", "hit", "safety_offs", "restore_ineffective"}
         assert d["last_decision"]["status"] == "dry_run"
     finally:
@@ -152,5 +153,19 @@ async def test_recorded_trial_frames_pass_the_import_guard(make_hass, goodwe_udp
         imp.main([str(src), "--profile", "goodwe-et", "--out", str(out)])
         doc = json.loads(out.read_text())
         assert doc and all(v["valid"] for v in doc.values())
+    finally:
+        await h.close()
+
+
+
+@pytest.mark.asyncio
+async def test_safety_off_cap_visible_in_diagnostics(make_hass, goodwe_udp_sim, issues):
+    from custom_components.volcast.core.control.tou_cycle import SAFETY_OFF_CAP
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
+    try:
+        await h.ex.async_tick()
+        h.ex._memory.tou_safety_offs.extend([h.clock()] * SAFETY_OFF_CAP)
+        d = (await _diag(h))["control"]["direct"]
+        assert d["nvm"]["safety_offs"] == SAFETY_OFF_CAP and d["nvm"]["safety_off_capped"] is True
     finally:
         await h.close()

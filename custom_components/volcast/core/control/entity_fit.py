@@ -24,7 +24,8 @@ from ..params import Params
 
 _NUMERIC_KEYS = ("power_w", "soc_min", "soc_max", "export_limit_w")
 # kierunek bezpieczny w jednostkach kanonicznych: +1 = w górę, -1 = w dół
-_SAFE_DIRECTION = {"power_w": -1, "export_limit_w": -1, "soc_min": 1, "soc_max": -1}
+SAFE_DIRECTION = {"power_w": -1, "export_limit_w": -1, "soc_min": 1, "soc_max": -1}
+_SAFE_DIRECTION = SAFE_DIRECTION             # dawna nazwa
 _ROUNDING = ("nearest", "down", "up")
 # transformacje profilu odwracające kierunek (kanoniczny ↔ encja)
 _FLIPPING_TRANSFORMS = ("invert_percent", "negate")

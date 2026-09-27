@@ -170,6 +170,7 @@ class VolcastExecutor:
         self._conflict_issue_open = False
         self._budget_issue_open = False
         self._snapshot_issue_open = False
+        self._safety_cap_issue_open = False
         # rozjazd policzony, ale jeszcze nieusunięty: ta sama wartość na urządzeniu nie liczy się drugi raz
         self._drift_values: dict[str, float | str] = {}
         # klucze przejęte przez właściciela → nasza wartość planu z chwili przejęcia; nie piszemy ich,
@@ -295,7 +296,8 @@ class VolcastExecutor:
         ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
         ir.async_delete_issue(self._hass, DOMAIN, f"control_error_{self._entry.entry_id}")
         if self._direct is not None:
-            self._conflict_issue_open = self._budget_issue_open = False
+            self._conflict_issue_open = self._budget_issue_open = self._safety_cap_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._safety_cap_issue_id)
             ir.async_delete_issue(self._hass, DOMAIN, self._conflict_issue_id)
             ir.async_delete_issue(self._hass, DOMAIN, self._budget_issue_id)
         if not self._lock.locked():
@@ -515,6 +517,7 @@ class VolcastExecutor:
             async with self._lock:
                 if self._state.owned and self._profile and self._io_ready() and self._memory:
                     await self._restore(self.io.read(self._utcnow()))
+                    await self._persist_budget(force=True)
         except Exception as err:  # noqa: BLE001 — usuwanie wpisu nie może się wywrócić
             _LOGGER.error("Volcast control: return to the baseline mode failed (%s)", type(err).__name__)
 
@@ -592,6 +595,7 @@ class VolcastExecutor:
                          control_mode=gates.control_mode, active_mode=self.io.kind) and self._io_ready():
             # Także w pauzie i przy kolizji: powrót nie rusza kluczy, które zmienił właściciel.
             await self._restore(rd)
+            await self._persist_budget()
             return
         if direct is not None:
             self._update_conflict_issue()
@@ -602,6 +606,7 @@ class VolcastExecutor:
                 await self._async_save("control state")
             if self._tou_restore_pending:
                 await self._tou_restore_after_failure()
+                await self._persist_budget()
                 return
         # Próba: decyzja liczona tak, jakby wybrano tryb bezpośredni, ale zawsze bez zapisu.
         dgates = replace(gates, control_mode=self.io.kind, verified=False) if trial else gates
@@ -673,8 +678,10 @@ class VolcastExecutor:
     async def _run_budget_restore(self, decision: CycleDecision, now_mono: float) -> CycleDecision:
         """`RESTORE` z cyklu (wyczerpany budżet przy trybie wymuszonym): tryb bazowy przez wykonawcę
         grupowego, tylko przy własności i otwartych bramkach; kolizja go nie blokuje. Własność zostaje."""
-        if not self._state.owned or not self._gates_open():
+        if not self._state.owned:
             return replace(decision, status=BLOCKED, reason="restore_not_owned")
+        if not self._gates_open():
+            return replace(decision, status=BLOCKED, reason="paused" if self.paused else "gates_closed")
         report = await async_run_group_writes(decision.writes, self._writer.async_write,
                                               on_exception=self._log_write_exception)
         self._end_direct_writes()
@@ -805,12 +812,30 @@ class VolcastExecutor:
                 and decision.status in (WRITE, IDLE):
             self._budget_issue_open = False
             ir.async_delete_issue(self._hass, DOMAIN, self._budget_issue_id)
+        capped = "tou_safety_off_cap" in notes
+        if live and capped and not self._safety_cap_issue_open:
+            self._safety_cap_issue_open = True
+            _LOGGER.warning("Volcast direct control: the time-of-use schedule was switched off for safety too "
+                            "often today — no more switch-offs until the daily count drops")
+            self._create_issue(self._safety_cap_issue_id, "tou_safety_off_cap")
+        elif self._safety_cap_issue_open and live and not capped:
+            self._safety_cap_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._safety_cap_issue_id)
+        await self._persist_budget()
+
+    @property
+    def _safety_cap_issue_id(self) -> str:
+        return f"tou_safety_off_cap_{self._entry.entry_id}"
+
+    async def _persist_budget(self, *, force: bool = False) -> None:
+        """Budżet NVM do magazynu, gdy przybyło ramek (także po powrocie do trybu bazowego)."""
         budget = self._memory.budget if self._memory is not None else None
-        if budget is not None:
-            log = budget.to_list()
-            if log != self._state.nvm_log:
-                self._state.nvm_log = log
-                await self._async_save("write budget")
+        if self._direct is None or budget is None:
+            return
+        log = budget.to_list()
+        if log != self._state.nvm_log:
+            self._state.nvm_log = log
+            await self._async_save("write budget", force=force)
 
     async def _fresh_direct_reading(self, rd: Reading) -> Reading | None:
         """Odczyt do powrotu: rozpoczęty po końcu naszego ostatniego zapisu. Czeka na odpytywanie w toku
@@ -1029,6 +1054,10 @@ class VolcastExecutor:
         """
         if self._direct is not None:
             conn = self._direct.conn
+            if conn.client is None and conn.refused() is None:
+                # Połączenie jeszcze startuje (w tle) — powrót ruszy w następnym cyklu, bez ostrzeżeń.
+                self._finish(CycleDecision(BLOCKED, "connecting"))
+                return
             self._update_conflict_issue()          # kolizja powrotu nie blokuje, ale właściciel ma wiedzieć
             if not await self._direct.async_identity_ok():
                 refused = conn.refused()
