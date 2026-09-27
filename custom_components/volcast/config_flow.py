@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from datetime import timedelta
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -32,7 +32,7 @@ except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w for
 
 from .cloud.client import Backend, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control import direct_search as ds
-from .control.runtime import async_direct_search, async_restore_if_control_changed
+from .control.runtime import async_control_change_allowed, async_direct_search
 from .control.telemetry import TELEMETRY_FIELDS
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
@@ -529,14 +529,19 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         data = getattr(self.hass, "data", None) or {}
         return (data.get(DOMAIN, {}).get(self.config_entry.entry_id) or {}).get("control")
 
-    async def _finish(self, options: dict[str, Any]) -> ConfigFlowResult:
+    async def _finish(self, options: dict[str, Any], *,
+                      retry_form: Callable[[dict[str, str]], ConfigFlowResult] | None = None) -> ConfigFlowResult:
         """Zapis opcji; zmiana sterowania najpierw oddaje falownik przez obecnego wykonawcę.
 
-        Nieudany powrót nie blokuje zapisu i jest bezpieczny: wykonawca zostaje właścicielem
-        (migawka i powiązanie z tym samym profilem i encją trybu), a nowy po przeładowaniu
-        ponawia powrót co cykl, dopóki sterowanie jest wyłączone.
+        Nieudany powrót blokuje zapis (nic nie zapisane: błąd formularza `retry_form` albo przerwanie),
+        gdy wykonawca po przeładowaniu nie przejąłby własności — inny sposób sterowania, cel albo
+        mapowanie. Przy tym samym powiązaniu (np. wyłączenie sterowania przez encje) zapis idzie, a nowy
+        wykonawca ponawia powrót co cykl, dopóki sterowanie jest wyłączone.
         """
-        await async_restore_if_control_changed(self._runtime(), self.config_entry.options, options)
+        if not await async_control_change_allowed(self._runtime(), self.config_entry.options, options):
+            if retry_form is not None:
+                return retry_form({"base": RESTORE_FAILED})
+            return self.async_abort(reason=RESTORE_FAILED)
         return self.async_create_entry(data=options)
 
     def _forecast_options(self, user_input: dict[str, Any]) -> dict[str, Any]:
@@ -617,7 +622,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             if user_input.get(_SEARCH):
                 self._pending = self._merged(patch)
                 return await self.async_step_direct_search()
-            return await self._finish(self._merged(patch))
+            return await self._finish(self._merged(patch), retry_form=lambda errors: self.async_show_form(
+                step_id="details", data_schema=self._details_schema(), errors=errors))
         return self.async_show_form(step_id="details", data_schema=self._details_schema())
 
     # ── połączenie bezpośrednie: wyszukiwanie, wybór, cel ręczny ──────────
@@ -696,8 +702,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             target = ds.target_from_report(hits[index]) if 0 <= index < len(hits) else None
             if target is None:
                 return self.async_abort(reason=ds.NOT_FOUND)
-            return await self._finish({**self._pending_options(), OPT_DIRECT_TARGET: target})
-        errors = {} if len(labels) > 1 else {"base": ds.NOT_FOUND}
+            return await self._finish({**self._pending_options(), OPT_DIRECT_TARGET: target},
+                                      retry_form=lambda errors: self._pick_form(labels, errors))
+        return self._pick_form(labels, {} if len(labels) > 1 else {"base": ds.NOT_FOUND})
+
+    def _pick_form(self, labels: dict[str, str], errors: dict[str, str]) -> ConfigFlowResult:
         return self.async_show_form(step_id="direct_pick", errors=errors,
                                     data_schema=vol.Schema({vol.Required("candidate"): vol.In(labels)}))
 
@@ -729,7 +738,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                     errors["base"] = ds.NOT_FOUND           # cel ręczny też musi przejść sondę (odcisk urządzenia)
                 else:
                     target.update(port=port, unit_id=unit)
-                    return await self._finish({**self._pending_options(), OPT_DIRECT_TARGET: target})
+                    return await self._finish(
+                        {**self._pending_options(), OPT_DIRECT_TARGET: target},
+                        retry_form=lambda errors: self.async_show_form(
+                            step_id="direct_manual", data_schema=self._manual_schema(), errors=errors))
             return self.async_show_form(step_id="direct_manual", data_schema=self._manual_schema(), errors=errors)
         return self.async_show_form(step_id="direct_manual", data_schema=self._manual_schema())
 
@@ -852,6 +864,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
 _SEARCH = "direct_search"
 _MANUAL = "manual"
+RESTORE_FAILED = "restore_failed"
 _LOGGER_SERIAL = re.compile(r"\d{1,10}")
 
 

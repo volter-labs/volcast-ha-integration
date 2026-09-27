@@ -5,7 +5,11 @@ zależy mapowanie encji) przeładowuje wpis. Nowy wykonawca nie może bezpieczni
 przywrócić migawki przez NOWE mapowanie, więc powrót do trybu bazowego robi STARY
 wykonawca, zanim wpis się przeładuje: `async_restore_if_control_changed`. Woła go
 przepływ opcji przed zapisem i słuchacz aktualizacji wpisu przed przeładowaniem
-(względem kopii opcji z chwili złożenia — `ControlRuntime.options_at_setup`).
+(względem kopii opcji z chwili złożenia — `ControlRuntime.options_at_setup`). Przepływ opcji
+odmawia zapisu, gdy powrót się nie udał, a nowy wykonawca nie przejąłby własności
+(`async_control_change_allowed`). Gdy mimo to magazyn ma własność innego sposobu sterowania
+(np. opcje zmienione inną drogą), setup składa najpierw wykonawcę TAMTEGO sposobu — tylko do
+powrotu; rekord zostaje, dopóki powrót nie dojdzie, potem przeładowanie wpisu.
 
 Kolejni wykonawcy tego samego wpisu dzielą jedną blokadę zapisu: po przeładowaniu nowy
 czeka, aż stary skończy zapis w toku, także gdy `async_stop` starego się poddał.
@@ -33,13 +37,14 @@ import homeassistant.util.dt as dt_util
 from homeassistant.const import CONF_API_KEY
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
 from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
-                     DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
+                     CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP)
 from ..core.control.caps import direct_capabilities
@@ -50,7 +55,7 @@ from ..core.entity_map import EntityCandidate, resolve_entities
 from ..core.profile import ProfileError, builtin_ids, load_builtin
 from ..registry_compat import all_devices
 from . import direct_search as ds
-from .device_io import DirectIO
+from .device_io import DirectIO, EntityIO
 from .direct import DirectConnection
 from .executor import VolcastExecutor
 from .ha_writer import EntityServiceWriter
@@ -146,6 +151,37 @@ async def async_restore_if_control_changed(runtime, old: Mapping, new: Mapping) 
                         type(err).__name__)
         return False
     return not getattr(executor, "owned", False)
+
+
+def _binding(options: Mapping) -> tuple:
+    """Z czym wiąże się własność wykonawcy złożonego dla tych opcji (sposób sterowania + cel/mapowanie)."""
+    found = _direct_target(options)
+    if found is not None:
+        return CONTROL_MODE_DIRECT, _target_identity(found[0])
+    return CONTROL_MODE_ENTITIES, options.get(OPT_PROFILE_ID), options.get(OPT_INVERTER_DOMAIN)
+
+
+async def async_control_change_allowed(runtime, old: Mapping, new: Mapping) -> bool:
+    """Czy zmianę opcji wolno zapisać: najpierw powrót przez obecnego wykonawcę (`async_restore_if_control_changed`).
+
+    Nieudany powrót blokuje zapis (False), gdy wykonawca złożony po przeładowaniu nie przejąłby rekordu
+    własności — inny sposób sterowania, inny cel albo inne mapowanie encji; ten sam sposób i to samo
+    powiązanie (np. wyłączenie sterowania przez encje) ponawia powrót co cykl, więc zapis jest bezpieczny.
+    """
+    if await async_restore_if_control_changed(runtime, old, new):
+        return True
+    executor = getattr(runtime, "executor", None)
+    if not control_options_changed(old, new) or not getattr(executor, "owned", False):
+        return True
+    return _binding(old) == _binding(new)
+
+
+def _schedule_reload(hass, entry_id: str) -> None:
+    schedule = getattr(hass.config_entries, "async_schedule_reload", None)
+    if callable(schedule):
+        schedule(entry_id)
+    else:  # HA sprzed async_schedule_reload
+        hass.async_create_task(hass.config_entries.async_reload(entry_id))
 
 
 def _entry_lock(hass, entry_id: str) -> asyncio.Lock:
@@ -271,13 +307,15 @@ def direct_caps_for(options: Mapping, profile) -> dict[str, bool] | None:
     return direct_capabilities(profile, caps if isinstance(caps, Mapping) else {}, _str_keys(target.get("unreadable")))
 
 
-def compose_direct(hass, entry, profiles, *, salt: bytes):
+def compose_direct(hass, entry, profiles, *, salt: bytes, found: tuple[dict, bool] | None = None):
     """(choice, DirectIO, DirectConnection) dla wpisu w trybie bezpośrednim albo próbnym; None, gdy nie.
 
     Z celu (`direct_target`, wynik sondy) idą WYŁĄCZNIE: klucze bez odczytu zwrotnego (`unreadable`) —
     do klienta, pisarza, celu i pamięci — oraz możliwości (`capabilities`, False = brak rejestru).
+    `found` = (cel, próba) podane wprost — powrót przez tryb bezpośredni po zmianie sposobu sterowania.
     """
-    found = _direct_target(entry.options)
+    if found is None:
+        found = _direct_target(entry.options)
     if found is None:
         return None
     target, trial = found
@@ -297,6 +335,89 @@ def compose_direct(hass, entry, profiles, *, salt: bytes):
     return ProfileChoice(profile, None, None), io, conn
 
 
+@dataclass
+class _Composed:
+    choice: ProfileChoice | None
+    mapped: dict[str, str]
+    io: DirectIO | None
+    conn: DirectConnection | None
+    # True = wykonawca sposobu sterowania z rekordu własności, tylko do powrotu (potem przeładowanie)
+    returning: bool = False
+
+
+async def _async_owner_record(store: ControlStore) -> dict | None:
+    """Rekord własności z magazynu; nieczytelny magazyn rozstrzyga sam wykonawca (wyłącza się)."""
+    try:
+        state = await store.async_load()
+    except Exception:  # noqa: BLE001
+        return None
+    return dict(state.owner) if state.owned and state.owner else None
+
+
+def _entity_owner_matches(hass, choice, mapped, record: Mapping) -> bool:
+    profile = choice.profile if choice else None
+    domain = choice.integration_domain if choice else None
+    probe = EntityIO(hass, profile, domain, mapped if domain else {}, None,
+                     mode_unique_id=mode_unique_id(hass, mapped))
+    return probe.owner_matches(record)
+
+
+def _compose_return(hass, entry, profiles, record: Mapping, salt: bytes | None) -> _Composed | None:
+    """Wykonawca sposobu sterowania, w którym zapisano własność — gdy opcje wskazują już inny.
+
+    Bezpośrednio: cel z opcji (zmiana sposobu go nie kasuje) i tylko przy zgodnym odcisku celu i urządzenia.
+    Encje: profil i integracja z rekordu. None = nie ma którędy wrócić.
+    """
+    if record.get("mode") == CONTROL_MODE_DIRECT:
+        target = entry.options.get(OPT_DIRECT_TARGET)
+        if not isinstance(target, Mapping) or salt is None:
+            return None
+        composed = compose_direct(hass, entry, profiles, salt=salt, found=(dict(target), False))
+        if composed is None or not composed[1].owner_matches(record):
+            return None
+        choice, io, conn = composed
+        return _Composed(choice, {}, io, conn, returning=True)
+    profile = next((p for p in profiles if p.id == record.get("profile")), None)
+    domain = record.get("domain")
+    if profile is None or not isinstance(domain, str) or not domain:
+        return None
+    choice = ProfileChoice(profile, domain, None)
+    mapped = map_entities(hass, choice)
+    if not _entity_owner_matches(hass, choice, mapped, record):
+        return None
+    return _Composed(choice, mapped, None, None, returning=True)
+
+
+async def _async_compose(hass, entry, profiles, store: ControlStore) -> _Composed:
+    """Złożenie wykonawcy dla opcji wpisu — chyba że magazyn ma własność, której ten wykonawca nie przejmie.
+
+    Wtedy najpierw wykonawca sposobu z rekordu (powrót przez STARY sposób); rekord zostaje, dopóki
+    powrót nie dojdzie. Bez drogi powrotu — zwykłe złożenie (wykonawca porzuca rekord ze zgłoszeniem).
+    """
+    record = await _async_owner_record(store)
+    need_salt = _direct_target(entry.options) is not None or (record or {}).get("mode") == CONTROL_MODE_DIRECT
+    salt = await async_installation_salt(hass) if need_salt else None
+    composed = None
+    if _direct_target(entry.options) is not None:
+        composed = compose_direct(hass, entry, profiles, salt=salt)
+    if composed is not None:
+        choice, io, conn = composed
+        out = _Composed(choice, {}, io, conn)
+        matches = record is None or io.owner_matches(record)
+    else:
+        choice = _choice_for(hass, entry, profiles)
+        out = _Composed(choice, map_entities(hass, choice), None, None)
+        matches = record is None or _entity_owner_matches(hass, choice, out.mapped, record)
+    if matches:
+        return out
+    back = _compose_return(hass, entry, profiles, record, salt)
+    if back is None:
+        return out
+    _LOGGER.warning("Volcast control: the inverter still has settings from the previous control method — "
+                    "returning them through that method first")
+    return back
+
+
 async def async_setup_control(hass, entry, *, report: Callable[[], dict | None]) -> ControlRuntime | None:
     backend = Backend.from_dict(entry.data.get(CONF_BACKEND))
     if backend is None:
@@ -304,23 +425,18 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     opts = entry.options
     cloud = VolcastCloud(async_get_clientsession(hass), entry.data[CONF_API_KEY], backend)
     profiles = await hass.async_add_executor_job(_load_profiles)
-    composed = None
-    if _direct_target(opts) is not None:
-        composed = compose_direct(hass, entry, profiles, salt=await async_installation_salt(hass))
-    if composed is not None:
-        choice, io, conn = composed
-        mapped = {}
-    else:
-        choice, io, conn = _choice_for(hass, entry, profiles), None, None
-        mapped = map_entities(hass, choice)
+    store = ControlStore(hass, entry.entry_id)
+    composed = await _async_compose(hass, entry, profiles, store)
+    choice, mapped, io, conn = composed.choice, composed.mapped, composed.io, composed.conn
     manual_rated = opts.get(OPT_RATED_POWER_W)
     rated = float(manual_rated) if manual_rated else rated_power_from_model(choice.model if choice else None)
     if conn is not None:
         rated = direct_rated_power(opts, conn.target)
+    released = (lambda: _schedule_reload(hass, entry.entry_id)) if composed.returning else None
     executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped, rated_power_w=rated,
-                               store=ControlStore(hass, entry.entry_id), writer=EntityServiceWriter(hass),
+                               store=store, writer=EntityServiceWriter(hass),
                                lock=_entry_lock(hass, entry.entry_id),
-                               mode_unique_id=mode_unique_id(hass, mapped), io=io)
+                               mode_unique_id=mode_unique_id(hass, mapped), io=io, on_released=released)
     await executor.async_start()
     telemetry = None
     rt = None
@@ -493,16 +609,8 @@ async def async_remove_control(hass, entry) -> None:
         state = None
     if state is not None and state.owned:
         profiles = await hass.async_add_executor_job(_load_profiles)
-        composed = None
-        if _direct_target(entry.options) is not None:
-            composed = compose_direct(hass, entry, profiles, salt=await async_installation_salt(hass))
-        conn = io = None
-        if composed is not None:
-            choice, io, conn = composed
-            mapped = {}
-        else:
-            choice = _choice_for(hass, entry, profiles)
-            mapped = map_entities(hass, choice) if choice else {}
+        composed = await _async_compose(hass, entry, profiles, store)
+        choice, mapped, io, conn = composed.choice, composed.mapped, composed.io, composed.conn
         executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped,
                                    rated_power_w=None, store=store, writer=EntityServiceWriter(hass),
                                    lock=_entry_lock(hass, entry.entry_id),
@@ -526,3 +634,7 @@ async def async_remove_control(hass, entry) -> None:
             await conn.async_stop(forget=True)
     await store.async_remove()
     hass.data.get(_LOCKS_KEY, {}).pop(entry.entry_id, None)
+    try:
+        ir.async_delete_issue(hass, DOMAIN, f"control_record_dropped_{entry.entry_id}")
+    except Exception:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić
+        pass

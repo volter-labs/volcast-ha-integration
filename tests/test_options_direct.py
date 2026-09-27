@@ -148,6 +148,7 @@ def test_switch_to_direct_restores_entities_first(monkeypatch):
 
     async def restore():
         calls.append("restore")
+        runtime.executor.owned = False                          # powrót doszedł
     runtime = rt(reports=[report()])
     runtime.executor = SimpleNamespace(owned=True, async_restore_now=restore)
     f = flow(options={"control_mode": "entities", "profile_id": "goodwe-et", "inverter_domain": "goodwe"},

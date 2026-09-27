@@ -125,7 +125,8 @@ class VolcastExecutor:
                  rated_power_w: float | None, store: ControlStore, writer=None,
                  clock: Callable[[], float] = time.monotonic, utcnow=dt_util.utcnow,
                  stop_timeout_s: float = STOP_WRITE_TIMEOUT_S, lock: asyncio.Lock | None = None,
-                 mode_unique_id: str | None = None, io: DeviceIO | None = None) -> None:
+                 mode_unique_id: str | None = None, io: DeviceIO | None = None,
+                 on_released: Callable[[], None] | None = None) -> None:
         self._hass = hass
         self._entry = entry
         self._choice = choice
@@ -176,6 +177,9 @@ class VolcastExecutor:
         # klucze przejęte przez właściciela → nasza wartość planu z chwili przejęcia; nie piszemy ich,
         # dopóki plan nie zmieni tej wartości (reszta planu działa dalej)
         self._owner_held: dict[str, float | str | None] = {}
+        # wykonawca złożony tylko do powrotu przez poprzedni sposób sterowania: po oddaniu falownika
+        # składający przeładowuje wpis (nowy sposób sterowania)
+        self._on_released = on_released
 
     # ── stan dla encji i telemetrii ───────────────────────────────────────
     @property
@@ -324,6 +328,10 @@ class VolcastExecutor:
         return f"foreign_control_{self._entry.entry_id}"
 
     @property
+    def _record_dropped_issue_id(self) -> str:
+        return f"control_record_dropped_{self._entry.entry_id}"
+
+    @property
     def _conflict_issue_id(self) -> str:
         return f"direct_conflict_{self._entry.entry_id}"
 
@@ -370,6 +378,8 @@ class VolcastExecutor:
             return True
         _LOGGER.warning("Volcast control: saved baseline settings belong to a different inverter "
                         "profile or mode entity — not reusing them; check the inverter settings")
+        # Falownik mógł zostać przy naszej ostatniej komendzie — sam log to za mało.
+        self._create_issue(self._record_dropped_issue_id, "control_record_dropped")
         self._state.owned = False
         self._state.snapshot = {}
         self._state.owner = {}
@@ -1035,6 +1045,8 @@ class VolcastExecutor:
             self._state.restore_keys = None
             self._state.taken_over = []
             return replace(decision, status=ERROR, reason="store_failed")
+        # Nowa migawka z bieżących nastaw — zgłoszenie o porzuconym rekordzie jest nieaktualne.
+        ir.async_delete_issue(self._hass, DOMAIN, self._record_dropped_issue_id)
         return decision
 
     def _gates_open(self) -> bool:
@@ -1154,6 +1166,11 @@ class VolcastExecutor:
         self._state.tou_snapshot = None
         self._memory.last_written.clear()
         await self._async_save("baseline state", force=True)
+        if self._on_released is not None:
+            try:
+                self._on_released()
+            except Exception as err:  # noqa: BLE001 — powrót już się udał
+                _LOGGER.warning("Volcast control: reload after the return failed (%s)", type(err).__name__)
         conn = self._direct.conn if self._direct is not None else None
         if conn is not None and conn.allow_conflicted_restore and conn.static_conflicts:
             # Połączenie istniało tylko po to, żeby oddać falownik — inna integracja go używa.
