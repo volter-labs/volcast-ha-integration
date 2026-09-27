@@ -28,6 +28,7 @@ from .core.discovery import (Classification, ConfigEntrySnap, DeviceSnap,
 from .core.discovery.history import HISTORY_WINDOW_DAYS, days_with_statistics
 from .core.discovery.known import HOST_KEYS
 from .core.discovery.network import NetworkProbeResult, probe_udp_48899
+from .registry_compat import all_devices
 from .core.discovery.report import ERROR_TIMEOUT, REPORT_SCHEMA, build_report
 
 _LOGGER = logging.getLogger(__name__)
@@ -188,10 +189,9 @@ class DiscoveryRunner:
         nie są działającą instalacją — bez nich nie wracają ścieżką producenta. Ich
         identyfikatory zwracamy, bo encje takich urządzeń też trzeba pominąć.
         """
-        registry = dr.async_get(self.hass)
-        active = [d for d in registry.devices.values() if not getattr(d, "disabled_by", None)]
-        skipped = frozenset(
-            d.id for d in registry.devices.values() if getattr(d, "disabled_by", None))
+        devices = all_devices(dr.async_get(self.hass))
+        active = [d for d in devices if not getattr(d, "disabled_by", None)]
+        skipped = frozenset(d.id for d in devices if getattr(d, "disabled_by", None))
         return [
             DeviceSnap(
                 id=d.id, manufacturer=d.manufacturer, model=d.model, name=d.name,

@@ -18,6 +18,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .const import CONF_BACKEND, CONF_MODE, DOMAIN
 from .core.discovery.report import _mask_value, _serial_pattern
+from .registry_compat import all_devices
 
 # Wpis bez `mode` (sprzed trybu „tylko rozpoznanie") to klasyczny wpis prognozy
 # z kluczem API.
@@ -27,8 +28,7 @@ _MODE_FORECAST = "forecast"
 def _serials(hass: HomeAssistant) -> set[str]:
     """Numery seryjne znane rejestrowi urządzeń — do maskowania sekcji `control`."""
     out: set[str] = set()
-    reg = dr.async_get(hass)
-    for dev in getattr(reg, "devices", {}).values():
+    for dev in all_devices(dr.async_get(hass)):
         if getattr(dev, "serial_number", None):
             out.add(str(dev.serial_number))
         for ident in getattr(dev, "identifiers", ()) or ():

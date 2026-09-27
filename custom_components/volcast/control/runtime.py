@@ -40,6 +40,7 @@ from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, resolve_entities
 from ..core.profile import ProfileError, builtin_ids, load_builtin
+from ..registry_compat import all_devices
 from .executor import VolcastExecutor
 from .ha_writer import EntityServiceWriter
 from .history_import import async_import_history_once
@@ -118,7 +119,7 @@ def _load_profiles() -> list:
 
 def inverter_hints(hass) -> list[InverterHint]:
     out: list[InverterHint] = []
-    for dev in dr.async_get(hass).devices.values():
+    for dev in all_devices(dr.async_get(hass)):
         if getattr(dev, "disabled_by", None):
             continue
         for ce_id in sorted(getattr(dev, "config_entries", None) or ()):
