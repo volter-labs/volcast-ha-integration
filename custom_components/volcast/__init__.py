@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_change
 
@@ -41,6 +42,7 @@ from .control.runtime import (RELOAD_FREE_KEYS, async_remove_control, async_rest
                               async_setup_control, async_unload_control, changed_option_keys)
 from .coordinator import VolcastCoordinator
 from .discovery_runner import DiscoveryRunner
+from .frontend import async_register_card, async_register_panel, async_remove_panel
 from .key_format import account_unique_id, is_legacy_unique_id
 from .production import VolcastProductionTracker
 from .reconciler import DailyReconciler
@@ -250,6 +252,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await _async_forward_platforms(hass, entry, PAIRED_PLATFORMS if control else PLATFORMS)
 
+    if control is not None:
+        version = await async_integration_version(hass)
+        if await async_register_card(hass, version) is not None:
+            plan_entity = er.async_get(hass).async_get_entity_id(
+                "sensor", DOMAIN, f"{entry.entry_id}_control_plan")
+            await async_register_panel(hass, plan_entity, version)
+
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     _schedule_discovery(hass, entry, runner)
@@ -415,6 +424,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if control is not None:
             # Bez przywracania; czeka na zapis w toku — nowy wykonawca i tak czeka na blokadę wpisu.
             await async_unload_control(hass, control)
+            async_remove_panel(hass)
         if not hass.data[DOMAIN] and hass.services.has_service(
             DOMAIN, SERVICE_SYNC_PRODUCTION
         ):

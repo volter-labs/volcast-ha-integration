@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -299,6 +299,30 @@ _make_module("homeassistant.components.recorder", {
 _make_module("homeassistant.components.recorder.statistics", {
     # Default returns no entries; tests override via patch().
     "statistics_during_period": MagicMock(return_value={}),
+})
+
+
+# --- homeassistant.components.http (static path registration for the card) ---
+class _FakeStaticPathConfig:
+    def __init__(self, url_path, path, cache_headers=True):
+        self.url_path = url_path
+        self.path = path
+        self.cache_headers = cache_headers
+
+
+_make_module("homeassistant.components.http", {
+    "StaticPathConfig": _FakeStaticPathConfig,
+})
+
+# --- homeassistant.components.frontend (extra JS + panel removal) ---
+_make_module("homeassistant.components.frontend", {
+    "add_extra_js_url": MagicMock(),
+    "async_remove_panel": MagicMock(),
+})
+
+# --- homeassistant.components.panel_custom (sidebar panel) ---
+_make_module("homeassistant.components.panel_custom", {
+    "async_register_panel": AsyncMock(),
 })
 
 

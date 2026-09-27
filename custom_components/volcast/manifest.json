@@ -1,7 +1,7 @@
 {
   "domain": "volcast",
   "name": "Volcast Solar Forecast",
-  "after_dependencies": ["recorder"],
+  "after_dependencies": ["recorder", "http", "frontend", "panel_custom", "lovelace"],
   "codeowners": ["@volter-labs"],
   "config_flow": true,
   "dependencies": ["repairs"],
