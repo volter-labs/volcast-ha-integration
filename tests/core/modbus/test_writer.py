@@ -286,3 +286,41 @@ async def test_no_write_writer_never_sends(goodwe_client, goodwe_bank, caplog):
         assert await w.async_write(RegisterWrite("mode", 47511, 10)) == DENIED
     assert goodwe_bank.writes == [] and w.blocked_attempts == 1
     assert "mode" in caplog.text and "47511" not in caplog.text and " 10" not in caplog.text
+
+
+# ── odchylenie w stronę groźną, pola bitowe na świeżym słowie ─────────────
+
+
+@pytest.mark.asyncio
+async def test_power_raised_above_request_is_error(goodwe_writer, goodwe_bank):
+    goodwe_bank.clamp[47512] = (3000, 65535)           # minimalna moc urządzenia ponad zamówioną
+    assert await goodwe_writer.async_write(RegisterWrite("power_w", 47512, 1000)) == ERROR
+
+
+@pytest.mark.asyncio
+async def test_floor_raised_is_adjusted_lowered_is_error(goodwe_writer, goodwe_bank):
+    goodwe_bank.clamp[45356] = (30, 100)
+    out = await goodwe_writer.async_write(RegisterWrite("soc_min", 45356, 20))
+    assert out == OK_ADJUSTED and out.actual == 30.0          # wyższy próg dolny = bezpieczniej
+    goodwe_bank.clamp[45356] = (0, 10)
+    assert await goodwe_writer.async_write(RegisterWrite("soc_min", 45356, 25)) == ERROR
+
+
+@pytest.mark.asyncio
+async def test_bit_field_uses_fresh_pre_write_word(deye_writer, deye_bank):
+    # Wartość zakodowana ze starego odpytania (bit 1 nieznany); właściciel ustawił bit 2 w międzyczasie.
+    deye_bank.poke(172, 0b100)
+    assert await deye_writer.async_write(RegisterWrite("tou.1.grid_charge", 172, 0b01)) == OK
+    assert deye_bank.read(172, 1) == [0b101]
+
+
+@pytest.mark.asyncio
+async def test_enable_bit_on_fresh_word_keeps_or_fills_days(deye_writer, deye_bank):
+    deye_bank.poke(146, 0b0111110)                     # dni właściciela, włącznik OFF
+    assert await deye_writer.async_write(RegisterWrite("tou_enable", 146, 0x01)) == OK
+    assert deye_bank.read(146, 1) == [0b0111111]
+    assert await deye_writer.async_write(RegisterWrite("tou_enable", 146, 0x00)) == OK
+    assert deye_bank.read(146, 1) == [0b0111110]       # OFF nie rusza dni
+    deye_bank.poke(146, 0)
+    assert await deye_writer.async_write(RegisterWrite("tou_enable", 146, 0x01)) == OK
+    assert deye_bank.read(146, 1) == [0xFF]            # bez dni → cały tydzień

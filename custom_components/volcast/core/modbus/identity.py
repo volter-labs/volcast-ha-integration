@@ -92,6 +92,10 @@ def device_fingerprint(salt: bytes, profile, image: RegisterImage) -> str | None
         return None
     if f["serial"]:
         msg = f"{profile.id}|{f['serial']}"
+    elif "serial" in profile.raw.get("identify", {}).get("registers", {}):
+        # Profil ma serial, ale odczyt go nie dał (np. start falownika): tożsamość NIEZNANA —
+        # odcisk z modelu różniłby się od zapisanego i dałby fałszywe „inne urządzenie”.
+        return None
     elif f["model"] and f["rated_power_w"] is not None:
         msg = f"{profile.id}|{f['model']}|{round(f['rated_power_w'])}"
     else:

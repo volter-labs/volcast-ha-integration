@@ -171,12 +171,25 @@ def test_degenerate_identity_is_unknown(goodwe_profile, deye_profile):
     assert device_fingerprint(SALT, deye_profile, deye_zero) is None
 
 
-def test_non_printable_serial_not_used(goodwe_profile):
-    # Serial z bajtów 0xFF → nie serial; odcisk z modelu i mocy (urządzenie pasuje do profilu).
-    img = _goodwe_identity_image({a: 0xFFFF for a in range(35003, 35011)})
-    fp = device_fingerprint(SALT, goodwe_profile, img)
-    img2 = _goodwe_identity_image({a: 0x0000 for a in range(35003, 35011)})
-    assert fp is not None and fp == device_fingerprint(SALT, goodwe_profile, img2)
+def test_invalid_serial_is_unknown_not_a_different_device(goodwe_profile):
+    # Profil deklaruje serial, odczyt dał śmieci (start falownika) → tożsamość nieznana, nie
+    # odcisk z modelu (ten różniłby się od zapisanego i wyglądał jak „inne urządzenie”).
+    for junk in (0xFFFF, 0x0000, 0x0102):
+        img = _goodwe_identity_image({a: junk for a in range(35003, 35011)})
+        assert device_fingerprint(SALT, goodwe_profile, img) is None
+
+
+def test_profile_without_serial_uses_model_and_power(deye_profile):
+    import copy
+    from custom_components.volcast.core.profile import profile_from_dict
+    raw = copy.deepcopy(dict(deye_profile.raw))
+    raw = __import__("json").loads(__import__("json").dumps(raw, default=dict))
+    del raw["identify"]["registers"]["serial"]
+    raw["modbus"]["identify_reads"] = [r for r in raw["modbus"]["identify_reads"] if r["addr"] != 3]
+    no_serial = profile_from_dict(raw)
+    img = RegisterImage({0: 1280, 20: 34464, 21: 1})
+    fp = device_fingerprint(SALT, no_serial, img)
+    assert fp is not None and fp == device_fingerprint(SALT, no_serial, RegisterImage({0: 1280, 20: 34464, 21: 1}))
 
 
 def test_wrong_device_is_unknown(goodwe_profile, deye_profile):
@@ -260,10 +273,35 @@ async def test_cycle_time_budget_caps_tries_and_stops(goodwe_profile):
     client = RegisterClient(fake, goodwe_profile, clock=clock)
     with pytest.raises(TransportError):
         await client.read_state()
-    # 5 s budżetu przy 2 s na próbę: pierwszy blok dostaje 2 próby (4 s), zostaje 1 s < 2 s,
-    # więc kolejne bloki nie idzie już żaden — cykl nie trzyma łącza dłużej niż budżet.
-    assert fake.tries_seen == [2]
+    # Limit = max(5 s, 3 próby × 2 s) = 6 s straty: pierwszy blok ma pełne 3 próby (6 s straty),
+    # kolejne bloki nie idą już wcale — cykl nie traci na przekroczeniach więcej niż limit.
+    assert fake.tries_seen == [3]
     assert [f["ok"] for f in client.last_frames] == [False] * len(plan)
+
+
+@pytest.mark.asyncio
+async def test_slow_healthy_link_reads_everything_and_identifies(rtu_tcp_sim, deye_profile, sim_faults):
+    # Każda odpowiedź spóźniona o 0,15 s przy limicie cyklu 0,5 s: odpowiedzi nie zjadają limitu.
+    sim_faults.delay_s = 0.15
+    client = RegisterClient(sim_transport(rtu_tcp_sim, "modbus_rtu", 1, timeout_s=0.5, read_tries=3),
+                            deye_profile, salt=SALT, cycle_budget_s=0.5)
+    try:
+        r = await client.read_state()
+        assert all(f["ok"] for f in client.last_frames) and r.values["soc"] is not None
+        assert await client.read_identity() is not None
+    finally:
+        await client.transport.close()
+
+
+@pytest.mark.asyncio
+async def test_long_profile_timeout_still_reads(rtu_tcp_sim, deye_profile):
+    client = RegisterClient(sim_transport(rtu_tcp_sim, "modbus_rtu", 1, timeout_s=6.0), deye_profile, salt=SALT)
+    try:
+        await client.read_state()
+        assert all(f["ok"] for f in client.last_frames)
+        assert await client.read_identity() is not None
+    finally:
+        await client.transport.close()
 
 
 @pytest.mark.asyncio

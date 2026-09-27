@@ -13,8 +13,12 @@ od „ustawił inaczej” — odmowa (DENIED) znaczy dla rdzenia „na pewno nie
 | dowolne                   | = zamówiona                    | OK |
 | dowolne                   | brak                           | ERROR |
 | zgodne / wyjątek ≠ 2, 5   | = sprzed zapisu                | DENIED |
-| zgodne / wyjątek ≠ 2, 5   | inna (np. przycięta)           | OK_ADJUSTED z wartością rzeczywistą (tylko liczby) |
+| zgodne / wyjątek ≠ 2, 5   | inna, w stronę bezpieczną      | OK_ADJUSTED z wartością rzeczywistą (tylko liczby) |
+| zgodne / wyjątek ≠ 2, 5   | inna, w stronę groźną / nie-liczba | ERROR |
 | brak / wyjątek 5          | ≠ zamówiona                    | ERROR (zapis mógł jeszcze dojść) |
+
+Pola bitowe (bit ładowania z sieci programu, włącznik harmonogramu) są składane na słowie
+z odczytu PRZED zapisem, nie z obrazu ostatniego odpytania.
 
 Ponowną wysyłkę (tylko UDP, przy całkowitej ciszy) i reset kanału po przekroczeniu czasu
 robi transport — odczyt zwrotny idzie świeżym kanałem. Odczyt porównuje całe słowo (pola
@@ -37,7 +41,6 @@ _ECHO_OK, _ECHO_EXCEPTION, _ECHO_NONE = "ok", "exception", "none"
 _EXC_ACKNOWLEDGE = 5                   # „przyjęte, w trakcie” — jak brak potwierdzenia
 # Klucze liczbowe, dla których wartość przycięta przez urządzenie ma sens jako „zastosowana”.
 _NUMERIC_ENCODINGS = ("watts", "percent")
-_TOU_NUMERIC = ("power_w", "soc")
 
 
 def _matches(key: str, keys: frozenset[str]) -> bool:
@@ -59,12 +62,45 @@ def expected_address(profile, key: str) -> int | None:
     return s.get("addr") if isinstance(s, dict) else None
 
 
-def _numeric_actual(profile, key: str, word: int) -> float | None:
-    """Rzeczywista wartość klucza liczbowego z odczytu; None dla trybu, przełączników, bitów, startów."""
+# Kierunek bezpieczny odchylenia: -1 = rzeczywista nie większa niż zamówiona (moc, limit eksportu,
+# górny próg), +1 = nie mniejsza (dolny próg). Odchylenie w drugą stronę = ERROR (np. minimalna moc
+# urządzenia ponad zamówioną: tryb pracowałby na większej mocy niż w planie).
+_SAFE_DEVIATION = {"power_w": -1, "export_limit_w": -1, "soc_max": -1, "soc_min": 1, "tou.power_w": -1}
+
+
+def _numeric_actual(profile, key: str, word: int, requested: int) -> float | None:
+    """Rzeczywista wartość klucza liczbowego z odczytu, gdy odchylenie jest w stronę bezpieczną;
+    None dla trybu, przełączników, bitów, startów, SoC programów i odchylenia w stronę groźną."""
     if key.startswith("tou."):
-        return float(word) if key.split(".")[-1] in _TOU_NUMERIC else None
-    s = profile.raw["write"].get(key) or {}
-    return float(word) if s.get("encode") in _NUMERIC_ENCODINGS else None
+        name = "tou." + key.split(".")[-1]
+    else:
+        name = key
+        if ((profile.raw["write"].get(key) or {}).get("encode")) not in _NUMERIC_ENCODINGS:
+            return None
+    direction = _SAFE_DEVIATION.get(name)
+    if direction is None or (word - requested) * direction < 0:
+        return None
+    return float(word)
+
+
+def _fresh_value(profile, key: str, value: int, before: int) -> int:
+    """Pole bitowe: odczyt-modyfikacja-zapis na słowie ŚWIEŻO odczytanym przed zapisem
+    (bity właściciela zmienione od ostatniego odpytania nie mogą zostać nadpisane)."""
+    write = profile.raw["write"]
+    if key.startswith("tou.") and key.endswith(".grid_charge"):
+        mask = 1 << write["tou_program"]["grid_charge"]["bit"]
+        return (before & ~mask & 0xFFFF) | (value & mask)
+    if key == "tou_enable":
+        spec = write["tou_enable"]
+        ebit = 1 << spec["enable_bit"]
+        if not value & ebit:
+            return before & ~ebit & 0xFFFF
+        days = spec.get("day_mask", 0)
+        out = before | ebit
+        if before & days == 0:
+            out |= (value & days) or days          # harmonogram „w żadnym dniu” byłby martwy
+        return out & 0xFFFF
+    return value
 
 
 class RegisterWriter:
@@ -104,6 +140,7 @@ class RegisterWriter:
         except TransportError as err:
             _LOGGER.debug("pre-write read of %s failed: %s", w.key, type(err).__name__)
             return DENIED                  # nic nie wysłano; następny cykl spróbuje znowu
+        w = RegisterWrite(w.key, w.addr, _fresh_value(self.profile, w.key, w.value, before))
         echo = await self._send(w)
         if echo == UNSUPPORTED:
             return UNSUPPORTED
@@ -116,9 +153,9 @@ class RegisterWriter:
             return ERROR
         if back == before:
             return DENIED
-        actual = _numeric_actual(self.profile, w.key, back)
+        actual = _numeric_actual(self.profile, w.key, back, w.value)
         if actual is None:
-            return ERROR                   # tryb/bit/start inny niż zamówiony — stan niejasny
+            return ERROR                   # tryb/bit/start inny albo odchylenie w groźną stronę
         _LOGGER.warning("direct write of %s applied with a different value by the inverter", w.key)
         return AdjustedOutcome(actual)
 
