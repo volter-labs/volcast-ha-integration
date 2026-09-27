@@ -102,6 +102,156 @@ async def test_paired_submit_url_from_backend(monkeypatch):
     assert seen["submit_url"] == BACKEND["submit_production"]
 
 
+# ── karta planu i panel boczny ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_forecast_only_entry_never_registers_card_or_panel(monkeypatch):
+    import custom_components.volcast as integ
+
+    async def boom(*_a, **_k):
+        raise AssertionError("the card must not be registered for a forecast-only entry")
+    monkeypatch.setattr(integ, "async_register_card", boom)
+    monkeypatch.setattr(integ, "async_register_panel", boom)
+    hass, entry, ok = await run_setup(monkeypatch.setattr)
+    assert ok
+
+
+async def _ret(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_no_control_entry_never_registers_card_or_panel(monkeypatch):
+    """Sparowany wpis, którego złożenie sterowania i tak zwróciło `None`."""
+    import custom_components.volcast as integ
+
+    async def boom(*_a, **_k):
+        raise AssertionError("the card must not be registered without control")
+    monkeypatch.setattr(integ, "async_setup_control", lambda hass, entry, *, report: _ret(None))
+    monkeypatch.setattr(integ, "async_register_card", boom)
+    monkeypatch.setattr(integ, "async_register_panel", boom)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok
+
+
+@pytest.mark.asyncio
+async def test_paired_entry_registers_card_and_panel_with_the_plan_sensor_entity_id(monkeypatch):
+    import custom_components.volcast as integ
+    from .setup_harness import FakeEntityRegistry
+
+    async def setup_control(hass, entry, *, report):
+        return fake_runtime()
+
+    seen = {}
+
+    async def register_card(hass, version):
+        seen["card_version"] = version
+        return "card-url"
+
+    async def register_panel(hass, entity_id, version):
+        seen["panel_entity"] = entity_id
+        seen["panel_version"] = version
+        return True
+
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_register_card", register_card)
+    monkeypatch.setattr(integ, "async_register_panel", register_panel)
+
+    reg = FakeEntityRegistry()
+    reg.entities["sensor.x"] = SimpleNamespace(entity_id="sensor.plan", unique_id="test_entry_id_control_plan")
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, entity_registry=reg)
+    assert ok
+    assert seen["panel_entity"] == "sensor.plan"
+    assert seen["card_version"] == seen["panel_version"]
+    assert hass.data["volcast"][entry.entry_id]["panel"] is True
+
+
+@pytest.mark.asyncio
+async def test_panel_not_registered_when_card_registration_fails(monkeypatch):
+    import custom_components.volcast as integ
+    from .setup_harness import FakeEntityRegistry
+
+    async def setup_control(hass, entry, *, report):
+        return fake_runtime()
+
+    async def register_card(hass, version):
+        return None
+
+    async def boom_panel(*_a, **_k):
+        raise AssertionError("the panel must not be registered when the card failed")
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_register_card", register_card)
+    monkeypatch.setattr(integ, "async_register_panel", boom_panel)
+    reg = FakeEntityRegistry()
+    reg.entities["sensor.x"] = SimpleNamespace(entity_id="sensor.plan", unique_id="test_entry_id_control_plan")
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, entity_registry=reg)
+    assert ok and hass.data["volcast"][entry.entry_id].get("panel") is None
+
+
+@pytest.mark.asyncio
+async def test_panel_not_registered_when_plan_sensor_is_not_in_the_registry(monkeypatch):
+    import custom_components.volcast as integ
+
+    async def setup_control(hass, entry, *, report):
+        return fake_runtime()
+
+    async def register_card(hass, version):
+        return "card-url"
+
+    async def boom_panel(*_a, **_k):
+        raise AssertionError("no entity_id to configure the panel with")
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_register_card", register_card)
+    monkeypatch.setattr(integ, "async_register_panel", boom_panel)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and hass.data["volcast"][entry.entry_id].get("panel") is None
+
+
+@pytest.mark.asyncio
+async def test_unload_removes_the_panel_only_when_it_was_registered(monkeypatch):
+    import custom_components.volcast as integ
+    from .setup_harness import FakeEntityRegistry
+
+    async def setup_control(hass, entry, *, report):
+        return fake_runtime()
+
+    async def unload_control(hass, rt, **_kw):
+        return None
+    removed = []
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_unload_control", unload_control)
+    monkeypatch.setattr(integ, "async_register_card", lambda hass, version: _ret("url"))
+    monkeypatch.setattr(integ, "async_register_panel", lambda hass, entity_id, version: _ret(True))
+    monkeypatch.setattr(integ, "async_remove_panel", lambda hass: removed.append(True))
+    reg = FakeEntityRegistry()
+    reg.entities["sensor.x"] = SimpleNamespace(entity_id="sensor.plan", unique_id="test_entry_id_control_plan")
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, entity_registry=reg)
+    assert ok
+    assert await integ.async_unload_entry(hass, entry)
+    assert removed == [True]
+
+
+@pytest.mark.asyncio
+async def test_unload_skips_panel_removal_when_it_was_never_registered(monkeypatch):
+    import custom_components.volcast as integ
+
+    async def setup_control(hass, entry, *, report):
+        return fake_runtime()
+
+    async def unload_control(hass, rt, **_kw):
+        return None
+    removed = []
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_unload_control", unload_control)
+    monkeypatch.setattr(integ, "async_register_card", lambda hass, version: _ret(None))
+    monkeypatch.setattr(integ, "async_remove_panel", lambda hass: removed.append(True))
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok
+    assert await integ.async_unload_entry(hass, entry)
+    assert removed == []
+
+
 # ── rozładunek i słuchacz aktualizacji ─────────────────────────────────────
 
 
@@ -113,7 +263,7 @@ async def test_unload_removes_exactly_the_forwarded_platforms_and_stops_control(
     async def setup_control(hass, entry, *, report):
         return fake_runtime()
 
-    async def unload_control(hass, rt):
+    async def unload_control(hass, rt, **_kw):
         stopped.append(rt)
     monkeypatch.setattr(integ, "async_setup_control", setup_control)
     monkeypatch.setattr(integ, "async_unload_control", unload_control)

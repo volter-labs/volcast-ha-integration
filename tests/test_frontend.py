@@ -51,13 +51,35 @@ def test_register_card_yaml_resources_still_returns_url():
     assert hass.data.get("volcast_frontend") is True
 
 
-def test_register_panel_never_raises_and_reports_status():
-    import custom_components.volcast.frontend as fe_mod
-    ok = asyncio.run(fe_mod.async_register_panel(SimpleNamespace(), "sensor.x", "2"))
-    assert ok in (True, False)
+def test_register_panel_calls_panel_custom_with_expected_kwargs(monkeypatch):
+    from homeassistant.components import panel_custom
+    calls = []
+
+    async def register(hass, **kwargs):
+        calls.append(kwargs)
+    monkeypatch.setattr(panel_custom, "async_register_panel", register)
+    assert asyncio.run(fe.async_register_panel(SimpleNamespace(), "sensor.x", "2")) is True
+    assert calls == [{"frontend_url_path": fe.PANEL_PATH, "webcomponent_name": "volcast-panel",
+                      "sidebar_title": "Volcast", "sidebar_icon": "mdi:solar-power-variant",
+                      "module_url": fe.card_url("2"), "config": {"entity": "sensor.x"},
+                      "require_admin": False}]
 
 
-def test_remove_panel_never_raises():
+def test_register_panel_never_raises_on_failure(monkeypatch):
+    from homeassistant.components import panel_custom
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("already registered")
+    monkeypatch.setattr(panel_custom, "async_register_panel", boom)
+    assert asyncio.run(fe.async_register_panel(SimpleNamespace(), "sensor.x", "2")) is False
+
+
+def test_remove_panel_never_raises(monkeypatch):
+    from homeassistant.components import frontend as frontend_mod
+
+    def boom(*_a, **_k):
+        raise RuntimeError("unknown panel")
+    monkeypatch.setattr(frontend_mod, "async_remove_panel", boom)
     fe.async_remove_panel(SimpleNamespace())
 
 
@@ -70,6 +92,13 @@ def test_js_defines_elements_and_uses_new_attribute_names():
         assert old not in text, old
     for new in ("slots", "account_consent", "local_switch", "valid_until", "battery_capacity_kwh", "display_kind"):
         assert new in text, new
+    # Sensor nie ma ceny na najwyższym poziomie atrybutów; karta musi ją liczyć ze slotu.
+    assert not re.search(r"\ba\.price\b", text)
+
+
+def test_footer_price_comes_from_the_current_slot_not_a_top_level_attribute():
+    text = JS.read_text(encoding="utf-8")
+    assert "biezacy ? biezacy.price : null" in text
 
 
 def test_js_parses_when_node_available():

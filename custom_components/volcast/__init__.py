@@ -276,7 +276,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if await async_register_card(hass, version) is not None:
             plan_entity = er.async_get(hass).async_get_entity_id(
                 "sensor", DOMAIN, f"{entry.entry_id}_control_plan")
-            await async_register_panel(hass, plan_entity, version)
+            # Bez encji w rejestrze nie ma czym skonfigurować panelu (pusta konfiguracja
+            # nadpisywałaby domyślną encję karty wartością `null`) — pomijamy rejestrację
+            # zamiast wystawiać panel bez treści.
+            if plan_entity:
+                hass.data[DOMAIN][entry.entry_id]["panel"] = await async_register_panel(
+                    hass, plan_entity, version)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
@@ -441,9 +446,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await tracker.async_stop()
         control = entry_data.get("control")
         if control is not None:
-            # Bez przywracania; czeka na zapis w toku — nowy wykonawca i tak czeka na blokadę wpisu.
-            await async_unload_control(hass, control)
-            async_remove_panel(hass)
+            try:
+                # Bez przywracania; czeka na zapis w toku — nowy wykonawca i tak czeka na blokadę wpisu.
+                await async_unload_control(hass, control)
+            finally:
+                # Usuwamy panel tylko wtedy, gdy naprawdę wystawiliśmy go przy setupie —
+                # inaczej HA loguje ostrzeżenie o nieznanym panelu przy każdym przeładowaniu.
+                if entry_data.get("panel"):
+                    async_remove_panel(hass)
         if not hass.data[DOMAIN] and hass.services.has_service(
             DOMAIN, SERVICE_SYNC_PRODUCTION
         ):

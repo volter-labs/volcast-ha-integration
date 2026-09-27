@@ -4,8 +4,8 @@
  * Karta jest dostarczana RAZEM z integracją i rejestrowana automatycznie, więc
  * użytkownik nie wgrywa niczego ręcznie ani nie dodaje zasobu w Lovelace.
  *
- * Styl: paleta aplikacji Volcast (styles/theme.ts w aplikacji) — te same tokeny,
- * żeby wszystko, co widzi klient, wyglądało jak jedna rzecz.
+ * Styl: taka sama paleta i etykiety, jak w aplikacji Volcast — żeby wszystko,
+ * co widzi klient, wyglądało jak jedna rzecz.
  *
  * SKĄD DANE:
  *   - wartości BIEŻĄCE czytamy WPROST z encji falownika (`hass.states`) — lokalnie,
@@ -62,6 +62,10 @@ const I18N = {
     export_blocked: 'eksport zablokowany',
     past_hour: 'godzina miniona',
     from_measurement: 'od pomiaru',
+    fallback: 'fallback',
+    price_unit: 'zł/kWh',
+    source_pv: 'PV', source_grid: 'sieć', purpose_sell: 'sprzedaż', purpose_self: 'dom',
+    card_description: 'Kokpit magazynu: wartości bieżące z falownika, plan z chmury i prognoza SoC.',
     self_consume: 'Autokonsumpcja', export_pv: 'PV → sieć',
     charge_from_pv: 'Ładuj z PV', charge_from_grid: 'Ładuj z sieci',
     discharge_self: 'Bateria → dom', discharge_sell: 'Bateria → sieć',
@@ -89,6 +93,10 @@ const I18N = {
     export_blocked: 'export blocked',
     past_hour: 'past hour',
     from_measurement: 'from measurement',
+    fallback: 'fallback',
+    price_unit: 'PLN/kWh',
+    source_pv: 'PV', source_grid: 'grid', purpose_sell: 'sell', purpose_self: 'home',
+    card_description: 'Storage cockpit: live inverter values, cloud plan and SoC forecast.',
     self_consume: 'Self-consumption', export_pv: 'PV → grid',
     charge_from_pv: 'Charge from PV', charge_from_grid: 'Charge from grid',
     discharge_self: 'Battery → home', discharge_sell: 'Battery → grid',
@@ -114,10 +122,9 @@ const AKCJE = {
  *  Aplikacja pokazuje OSIEM kategorii: osobno ładowanie z PV i z sieci, osobno
  *  rozładowanie na dom i na sprzedaż, osobno eksport PV i import z sieci.
  *
- *  Kolory i klucze etykiet skopiowane z `services/optimizerService.ts` (MODE_COLORS,
- *  DISPLAY_COLORS) i `i18n/locales/pl/dashboard.json` (optimizer.modes), żeby ta
- *  sama godzina nazywała się w aplikacji i na karcie tak samo. */
-const KATEGORIE = {
+ *  Kolory i etykiety takie same, jak w aplikacji Volcast, żeby ta sama godzina
+ *  nazywała się w obu miejscach tak samo. */
+const KATEGORIE = Object.freeze({
   SELF_CONSUME: { kolor: '#00FF9D', klucz: 'self_consume' },
   EXPORT_PV: { kolor: '#F59E0B', klucz: 'export_pv' },
   CHARGE_FROM_PV: { kolor: '#34D399', klucz: 'charge_from_pv' },
@@ -126,10 +133,15 @@ const KATEGORIE = {
   BATTERY_DISCHARGE_SELL: { kolor: '#EF4444', klucz: 'discharge_sell' },
   IDLE: { kolor: '#475569', klucz: 'idle' },
   GRID_IMPORT: { kolor: '#60A5FA', klucz: 'grid_import' },
-};
+});
+
+// Sprawdzenie WŁASNEJ własności, nie zwykłe `KATEGORIE[k]` — plan przychodzi z
+// chmury, więc `k` bywa dowolnym cudzym tekstem. Bez tego np. `"constructor"`
+// trafiłby w odziedziczoną własność `Object.prototype` zamiast dać „brak dopasowania".
+const maKategorie = (k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(KATEGORIE, k);
 
 /** Próg netto importu (kWh), powyżej którego tryb pasywny pokazujemy jako import.
- *  Ta sama wartość co `NET_IMPORT_DISPLAY_THRESHOLD_KWH` w aplikacji. */
+ *  Ta sama wartość, jaką stosuje aplikacja Volcast. */
 const PROG_IMPORTU_KWH = 0.1;
 
 /** Kategoria wizualna slotu — z trybu planu, a gdy go brak, z kierunku.
@@ -143,9 +155,9 @@ const kategoria = (s) => {
   // Źródło prawdy: kategoria policzona RAZ w chmurze (z przepływów i delty SoC,
   // której karta nie ma) — ta sama, którą pokazuje aplikacja. Reguły poniżej to
   // wyłącznie fallback dla planów utrwalonych przed tym polem.
-  if (s.display_kind && KATEGORIE[s.display_kind]) return s.display_kind;
+  if (maKategorie(s.display_kind)) return s.display_kind;
   let k = s.plan_mode;
-  if (!k || !KATEGORIE[k]) k = kategoriaZKierunku(s);
+  if (!maKategorie(k)) k = kategoriaZKierunku(s);
   // Ta sama reguła co w aplikacji: tryb PASYWNY, który netto importuje, kłamie
   // kolorem „autokonsumpcja" — bateria jest pusta i prąd realnie kupujemy.
   if ((k === 'SELF_CONSUME' || k === 'IDLE') && s.import_kwh != null) {
@@ -166,7 +178,10 @@ const kategoriaZKierunku = (s) => {
   return s.action === 'idle' ? 'IDLE' : 'SELF_CONSUME';
 };
 
-const opisKategorii = (s) => KATEGORIE[kategoria(s)] || KATEGORIE.SELF_CONSUME;
+const opisKategorii = (s) => {
+  const k = kategoria(s);
+  return maKategorie(k) ? KATEGORIE[k] : KATEGORIE.SELF_CONSUME;
+};
 
 /** Etykieta pigułki sterowania.
  *
@@ -284,7 +299,7 @@ class VolcastPlanCard extends HTMLElement {
         ? this._wykres(slots, soc, Number(a.battery_capacity_kwh) || 10)
         : '<div class="pusto">' + this._t('no_plan') + '</div>')
       + (slots.length ? this._legenda(slots) : '')
-      + this._stopka(a));
+      + this._stopka(a, slots));
   }
 
   _naglowek(st, a) {
@@ -304,7 +319,8 @@ class VolcastPlanCard extends HTMLElement {
       + '<div class="head">'
       + '<div class="teraz-tryb">'
       + '<span class="kropka" style="--k:' + cfg.kolor + '"></span>'
-      + '<span class="tytul">' + this._t(cfg.klucz) + (a.fallback ? ' · fallback' : '') + '</span>'
+      + '<span class="tytul">' + this._t(cfg.klucz)
+      + (a.fallback ? ' · ' + this._t('fallback') : '') + '</span>'
       + '</div>'
       + '<span class="pigulka ' + (sterowanie ? 'on' : 'off') + '">'
       + esc(etykietaPigulki)
@@ -427,6 +443,10 @@ class VolcastPlanCard extends HTMLElement {
     }
 
     const t = (k) => this._t(k);
+    // Wartości enuma z chmury (`pv`/`grid`/`sell`/`self`) tłumaczymy, gdy je znamy;
+    // nieznaną wartość pokazujemy jak przyszła — lepsze to niż ukryta podpowiedź.
+    const zrodloTxt = (v) => (v === 'pv' || v === 'grid') ? t('source_' + v) : v;
+    const celTxt = (v) => (v === 'sell' || v === 'self') ? t('purpose_' + v) : v;
 
     slots.forEach((s, i) => {
       const cfg = opisKategorii(s);
@@ -440,15 +460,15 @@ class VolcastPlanCard extends HTMLElement {
           + String(godzina(s.to)).padStart(2, '0') + ':00',
         t(cfg.klucz),
         s.power_w != null ? moc(s.power_w) : t('power_unset'),
-        s.price != null ? Number(s.price).toFixed(2).replace('.', ',') + ' zł/kWh' : null,
+        s.price != null ? this._cena(s.price) : null,
         // Prognoza SoC na tę godzinę — to, po co ta krzywa w ogóle jest.
         // Bieżąca godzina startuje od pomiaru, nie od projekcji; mówimy to wprost,
         // bo inaczej wartość wyglądałaby na wyliczoną dla pełnej godziny.
         p ? 'SoC ' + Math.round(p.od) + ' → ' + Math.round(p.do) + ' %'
           + (i === iTeraz ? ' (' + t('from_measurement') + ')' : '') : null,
         s.soc_target != null ? t('plan_target') + ' ' + Math.round(s.soc_target) + ' %' : null,
-        s.charge_source ? t('source') + ': ' + s.charge_source : null,
-        s.discharge_purpose ? t('purpose') + ': ' + s.discharge_purpose : null,
+        s.charge_source ? t('source') + ': ' + zrodloTxt(s.charge_source) : null,
+        s.discharge_purpose ? t('purpose') + ': ' + celTxt(s.discharge_purpose) : null,
         s.export_allowed === false ? t('export_blocked') : null,
         przeszlosc ? t('past_hour') : null,
       ].filter(Boolean).join(' · ');
@@ -544,13 +564,25 @@ class VolcastPlanCard extends HTMLElement {
       + '<span class="poz"><i class="kreski"></i>' + this._t('soc_forecast_hint') + '</span></div>';
   }
 
-  _stopka(a) {
+  /** Cena sformatowana wg języka karty — separator dziesiętny i jednostka. */
+  _cena(v) {
+    if (v == null) return '—';
+    const lang = jezyk(this._hass);
+    const liczba = Number(v).toLocaleString(lang === 'pl' ? 'pl-PL' : 'en-GB',
+      { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return liczba + ' ' + this._t('price_unit');
+  }
+
+  _stopka(a, slots) {
     const lang = jezyk(this._hass);
     const doKiedy = a.valid_until
       ? new Date(a.valid_until).toLocaleString(lang === 'pl' ? 'pl-PL' : 'en-GB',
         { weekday: 'short', hour: '2-digit', minute: '2-digit' })
       : '—';
-    const cena = a.price != null ? Number(a.price).toFixed(2) + ' zł/kWh' : '—';
+    // Sensor nie ma ceny na najwyższym poziomie atrybutów — karta liczy ją z bieżącego
+    // slotu planu, tak jak każde inne pole slotu.
+    const biezacy = (slots || []).find((s) => s && s.now);
+    const cena = this._cena(biezacy ? biezacy.price : null);
     return '<div class="stopka">'
       + '<span>' + this._t('price_this_hour') + ' <b>' + cena + '</b></span>'
       + '<span>' + this._t('plan_until') + ' <b>' + doKiedy + '</b></span>'
@@ -647,15 +679,23 @@ class VolcastPlanCard extends HTMLElement {
   }
 }
 
-customElements.define('volcast-plan-card', VolcastPlanCard);
+// Strażnik: karta ładuje się i przez `add_extra_js_url`, i jako zasób Lovelace.
+// Gdy oba adresy różnią się (np. po aktualizacji ze starym `?v=` w ręcznym
+// zasobie YAML), druga kopia inaczej rzucałaby tutaj — i nigdy nie doszłaby
+// do rejestracji w `customCards`.
+if (!customElements.get('volcast-plan-card')) {
+  customElements.define('volcast-plan-card', VolcastPlanCard);
 
-window.customCards = window.customCards || [];
-window.customCards.push({
-  type: 'volcast-plan-card',
-  name: 'Volcast Plan',
-  description: 'Kokpit magazynu: wartości bieżące z falownika, plan z chmury i prognoza SoC.',
-  preview: true,
-});
+  // Metadane karty w pickerze Lovelace — ładują się, zanim `hass` istnieje,
+  // więc nie da się ich dopasować do języka użytkownika; angielski jak reszta HA.
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: 'volcast-plan-card',
+    name: 'Volcast Plan',
+    description: I18N.en.card_description,
+    preview: true,
+  });
+}
 
 class VolcastPanel extends HTMLElement {
   set hass(hass) { this._hass = hass; this._render(); }

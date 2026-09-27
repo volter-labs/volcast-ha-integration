@@ -128,13 +128,31 @@ class _ConfigEntries:
         return None
 
 
+class FakeEntityRegistry:
+    """Atrapa `entity_registry` — tyle, ile potrzeba do `async_get_entity_id`.
+
+    `entities` trzyma się jako zwykły słownik (jak w istniejących testach), a
+    wyszukiwanie idzie po `unique_id` — to samo, czego szuka `er.async_get(hass)
+    .async_get_entity_id(domain, platform, unique_id)` w prawdziwym HA.
+    """
+
+    def __init__(self) -> None:
+        self.entities: dict[str, Any] = {}
+
+    def async_get_entity_id(self, domain, platform, unique_id):
+        for ent in self.entities.values():
+            if getattr(ent, "unique_id", None) == unique_id:
+                return getattr(ent, "entity_id", None)
+        return None
+
+
 class SetupHass:
     """Atrapa hass wystarczająca dla `async_setup_entry` i przebiegu wykrywania."""
 
     def __init__(self, *, is_running: bool = True) -> None:
         self.data: dict = {
             "device_registry": types.SimpleNamespace(devices={}),
-            "entity_registry": types.SimpleNamespace(entities={}),
+            "entity_registry": FakeEntityRegistry(),
         }
         self.config = types.SimpleNamespace(time_zone="Europe/Warsaw", components=set())
         self.states = types.SimpleNamespace(get=lambda _eid: None)
@@ -211,14 +229,22 @@ def unique_ids(entities) -> set[str]:
 
 async def run_setup(setattr_: Callable[[Any, str, Any], None], *,
                     options: dict | None = None, data: dict | None = None,
-                    is_running: bool = True, unique_id: str | None = None):
-    """Uruchom `async_setup_entry`, dokończ utworzone zadania; zwróć (hass, entry, ok)."""
+                    is_running: bool = True, unique_id: str | None = None,
+                    entity_registry: Any | None = None):
+    """Uruchom `async_setup_entry`, dokończ utworzone zadania; zwróć (hass, entry, ok).
+
+    `entity_registry`, gdy podany, zastępuje domyślny (pusty) `FakeEntityRegistry`
+    hassa PRZED setupem — potrzebne testom, które sprawdzają, że coś czyta
+    zarejestrowaną encję (np. panel karty planu) w trakcie samego setupu.
+    """
     integ = importlib.import_module("custom_components.volcast")
     setattr_(integ, "VolcastCoordinator", FakeCoordinator)
     setattr_(integ, "VolcastProductionTracker", FakeTracker)
     setattr_(integ, "DailyReconciler", FakeReconciler)
 
     hass = SetupHass(is_running=is_running)
+    if entity_registry is not None:
+        hass.data["entity_registry"] = entity_registry
     entry = FakeEntry(data=data, options=options, unique_id=unique_id)
     ok = await integ.async_setup_entry(hass, entry)
     await drain(hass)
