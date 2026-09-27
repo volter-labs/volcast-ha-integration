@@ -300,16 +300,22 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         notes.append("mode_held")
     direction = profile.mode_direction(params.mode) if params.mode is not None else None
     prev_mode, prev_power = _previous(device, profile, memory)
-    # Tryb przed mocą może skończyć się cofnięciem trybu: wtedy budżet I-8 musi
-    # pomieścić dwie zmiany kierunku (tam i z powrotem), nie jedną.
+    # Tryb przed mocą może skończyć się cofnięciem trybu, czyli dwiema zmianami kierunku.
+    # Gdy budżet I-8 mieści jedną, a nie dwie, i poprzednia moc jest znana, grupa idzie
+    # bez cofnięcia trybu: przy porażce mocy zostaje nowy tryb na starej, mniejszej mocy
+    # (pomniejszona komenda) i jedna zmiana. Zdrowa ścieżka nie traci budżetu.
     round_trip = (direction in _DIRECTIONAL and "power_w" in need and params.power_w is not None
                   and not power_first(params.power_w, prev_power) and prev_mode is not None
                   and profile.mode_direction(prev_mode) in _DIRECTIONAL
                   and profile.mode_direction(prev_mode) != direction)
+    no_mode_restore = False
     if "mode" in allowed and direction is not None \
             and not memory.limiter.allows(direction, now_mono, round_trip=round_trip):
-        allowed.discard("mode")
-        notes.append("I-8")
+        if round_trip and prev_power is not None and memory.limiter.allows(direction, now_mono):
+            no_mode_restore = True
+        else:
+            allowed.discard("mode")
+            notes.append("I-8")
     # Odwrót dotyczy tylko zmiany OBU członków (tylko taka może skończyć się cofnięciem);
     # korekta jednego klucza — np. po zapisie, który doszedł mimo błędu — idzie od razu.
     if _MODE_GROUP <= need and _MODE_GROUP & allowed and memory.in_backoff(now_mono):
@@ -323,6 +329,10 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
                                       keys=allowed, units=ents.units)
     writes, restore, restore_flat, ambiguous_safe = _group_layout(writes, params, device, profile,
                                                                   ents, memory)
+    if no_mode_restore:
+        restore = {k: v for k, v in restore.items() if k != "mode"}
+        restore_flat = {k: v for k, v in restore_flat.items() if k != "mode"}
+        ambiguous_safe = tuple(k for k in ambiguous_safe if k != "mode")
     reason = _gate_reason(gates, memory, now_mono)
     status = WRITE if reason is None else DRY_RUN
     if status == WRITE and not writes:

@@ -654,7 +654,8 @@ def test_failed_restore_keeps_write_interval():
     dev = Scripted(mode="sell_power", power=3000.0, script={"power_w": ["ok", "error"], "mode": ["denied"]})
     mem = ControlMemory.for_profile(GW)
     _, rep = tick(dev, mem, schedule(mode="idle"), 60.0)
-    assert rep.restore_failed == ["power_w"] and rep.ambiguous == ["mode", "power_w"][1:]
+    assert rep.restore_failed == ["power_w"] and rep.ambiguous == ["power_w"]
+    assert "mode" not in rep.ambiguous                       # DENIED: na pewno nie doszło
     d, _ = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=2000), 65.0)
     assert "power_w" not in [w.key for w in d.writes]
 
@@ -681,17 +682,67 @@ def test_async_twin_raise_is_ambiguous():
     assert rep.ambiguous == ["mode"]
 
 
-def test_mode_first_round_trip_needs_budget_for_two_changes():
-    dev = Device(mode="charge_battery", power=1500.0)
-    mem = ControlMemory.for_profile(GW)
+def _three_changes_now_charging(mem):
     for i, direction in enumerate(["discharge", "charge", "discharge", "charge"]):
         mem.limiter.record(direction, 10.0 * i)             # 3 zmiany w oknie, bieżące: ładowanie
     assert len(mem.limiter._changes) == 3
-    sell = schedule(mode="discharge", discharge_purpose="sell", power_w=3000)
-    d, _ = tick(dev, mem, sell, 100.0)                       # tryb najpierw: możliwe tam i z powrotem
+
+
+def test_round_trip_outside_budget_writes_group_without_mode_restore():
+    # Budżet mieści jedną zmianę, nie dwie: grupa idzie, ale bez cofnięcia trybu.
+    dev = Device(mode="charge_battery", power=1500.0)
+    mem = ControlMemory.for_profile(GW)
+    _three_changes_now_charging(mem)
+    d, _ = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 100.0)
+    assert "I-8" not in d.notes and [w.key for w in d.writes] == ["mode", "power_w"]
+    assert "mode" not in d.restore and "mode" not in d.restore_ambiguous_safe
+    assert dev.pair() == ("sell_power", 3000.0) and len(mem.limiter._changes) == 4
+
+
+def test_round_trip_outside_budget_second_member_refused_stays_reduced():
+    # Moc odrzucona: bez cofnięcia trybu falownik sprzedaje na starej, mniejszej mocy
+    # — bez drugiego przełączenia, budżet nie jest przekroczony.
+    dev = Scripted(mode="charge_battery", power=1500.0, script={"power_w": ["denied"]})
+    mem = ControlMemory.for_profile(GW)
+    _three_changes_now_charging(mem)
+    _, rep = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 100.0)
+    assert rep.restored == [] and rep.restore_failed == ["mode"]
+    assert dev.pair() == ("sell_power", 1500.0) and len(mem.limiter._changes) == 4
+
+
+def test_round_trip_outside_budget_with_unknown_power_is_held():
+    dev = Device(mode="charge_battery", power=1500.0)
+    mem = ControlMemory.for_profile(GW)
+    _three_changes_now_charging(mem)
+    d, _ = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=3000), 100.0,
+                hide=("power_w",))
     assert "I-8" in d.notes and dev.pair() == ("charge_battery", 1500.0)
-    d2, _ = tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=1000), 100.0)
-    assert "I-8" not in d2.notes and dev.pair() == ("sell_power", 1000.0)   # moc najpierw: jedna zmiana
+
+
+def test_budget_of_one_reaches_direction_change_in_one_tick():
+    from custom_components.volcast.core.guard_state import DirectionLimiter
+    dev = Device(mode="charge_battery", power=1000.0)
+    mem = ControlMemory.for_profile(GW)
+    mem.limiter = DirectionLimiter(1)
+    tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=1000), 0.0)
+    mem.limiter.record("charge", 0.0)                        # bieżące: ładowanie, okno puste
+    tick(dev, mem, schedule(mode="discharge", discharge_purpose="sell", power_w=2000), 60.0)
+    assert dev.pair() == ("sell_power", 2000.0)
+
+
+def test_four_mode_first_direction_changes_fit_in_an_hour():
+    dev = Device(mode="charge_battery", power=500.0)
+    mem = ControlMemory.for_profile(GW)
+    tick(dev, mem, schedule(mode="charge", charge_source="grid", power_w=500), 0.0)
+    mem.limiter.record("charge", 0.0)
+    plans = [dict(mode="discharge", discharge_purpose="sell", power_w=1000),
+             dict(mode="charge", charge_source="grid", power_w=1500),
+             dict(mode="discharge", discharge_purpose="sell", power_w=2000),
+             dict(mode="charge", charge_source="grid", power_w=2500)]
+    for i, p in enumerate(plans):
+        d, _ = tick(dev, mem, schedule(**p), 600.0 * (i + 1))      # co 10 min, rosnąca moc
+        assert "I-8" not in d.notes and dev.pair()[1] == float(p["power_w"]), (i, d.notes, dev.pair())
+    assert len(mem.limiter._changes) == 4
 
 
 @pytest.mark.parametrize("seed", range(40))
@@ -717,7 +768,8 @@ def test_fuzz_landed_errors_keep_direction_budget(seed):
 
 def test_neutral_round_trip_leaves_direction_unknown():
     # auto 1000 W → ładowanie 3000: tryb najpierw, moc odrzucona, powrót do auto.
-    # Ostatni kierunek na falowniku to znów ten sprzed próby — nie „ładowanie".
+    # Falownik przez chwilę ładował, a tryb neutralny sam potrafi rozładowywać — ostatni
+    # kierunek jest więc nieznany; liczymy zachowawczo następną zmianę w każdą stronę.
     dev = Scripted(mode="auto", power=1000.0, script={"power_w": ["denied"]})
     mem = ControlMemory.for_profile(GW)
     mem.limiter.record("discharge", 0.0)
