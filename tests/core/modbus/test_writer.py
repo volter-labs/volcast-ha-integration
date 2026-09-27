@@ -39,8 +39,9 @@ async def test_mode_changed_to_other_value_is_error(goodwe_writer, goodwe_bank):
 
 @pytest.mark.asyncio
 async def test_pre_read_failure_sends_nothing(goodwe_writer, goodwe_bank, goodwe_udp_sim):
-    # Rejestr bez odczytu (47760 odpowiada ramką złej długości): nic nie jest wysyłane.
-    assert await goodwe_writer.async_write(RegisterWrite("soc_max", 47760, 95)) == DENIED
+    # Rejestr bez odczytu (47760 odpowiada ramką złej długości): nic nie jest wysyłane, a wynik
+    # to ERROR — chwilowa awaria nie jest odmową urządzenia (odmowa blokowałaby ponowienie).
+    assert await goodwe_writer.async_write(RegisterWrite("soc_max", 47760, 95)) == ERROR
     assert goodwe_bank.writes == [] and all(fc == 0x03 for fc, _, _ in goodwe_udp_sim.log)
 
 
@@ -220,7 +221,7 @@ async def test_unreadable_key_not_sent(goodwe_client, goodwe_profile, goodwe_ban
 async def test_unseeded_writer_never_writes_unreadable_register(goodwe_client, goodwe_profile, goodwe_bank):
     w = RegisterWriter(goodwe_client, goodwe_profile)
     assert w.echo_only == frozenset() and w.unreadable == frozenset()
-    assert await w.async_write(RegisterWrite("soc_max", 47760, 95)) == DENIED
+    assert await w.async_write(RegisterWrite("soc_max", 47760, 95)) == ERROR
     assert goodwe_bank.writes == []
 
 
@@ -247,7 +248,7 @@ async def test_tou_keys_match_by_prefix(deye_client, deye_profile, deye_bank):
 async def test_address_or_value_outside_profile_refused(goodwe_writer, goodwe_udp_sim):
     for w in (RegisterWrite("mode", 47512, 10), RegisterWrite("mode", 47511, 70000),
               RegisterWrite("mode", 47511, -1), RegisterWrite("nope", 1, 1), RegisterWrite("tou.1.start", 148, 1)):
-        assert await goodwe_writer.async_write(w) == DENIED
+        assert await goodwe_writer.async_write(w) == ERROR      # nic nie wysłano — to nie odmowa urządzenia
     assert goodwe_udp_sim.requests == 0
 
 
@@ -324,3 +325,31 @@ async def test_enable_bit_on_fresh_word_keeps_or_fills_days(deye_writer, deye_ba
     deye_bank.poke(146, 0)
     assert await deye_writer.async_write(RegisterWrite("tou_enable", 146, 0x01)) == OK
     assert deye_bank.read(146, 1) == [0xFF]            # bez dni → cały tydzień
+
+
+# ── odmowa (DENIED) tylko po prawdziwej odmowie urządzenia ────────────────
+
+
+class _PreReadFails:
+    kind = "goodwe_udp"
+
+    def __init__(self, exc):
+        self.exc = exc
+        self.writes = 0
+
+    async def read(self, addr, count, *, tries=None):
+        raise self.exc
+
+    async def write(self, addr, values, *, function, on_send=None):
+        self.writes += 1
+
+
+@pytest.mark.asyncio
+async def test_pre_read_transport_failure_is_error_not_denied(goodwe_profile):
+    from custom_components.volcast.core.modbus.client import RegisterClient
+    from custom_components.volcast.core.transports.base import InverterAsleep, ModbusException, RequestTimeout
+    for exc in (LinkDown("down"), RequestTimeout(silent=True), InverterAsleep("zz"), ModbusException(6)):
+        t = _PreReadFails(exc)
+        w = RegisterWriter(RegisterClient(t, goodwe_profile), goodwe_profile)
+        assert await w.async_write(RegisterWrite("mode", 47511, 1)) == ERROR, type(exc).__name__
+        assert t.writes == 0

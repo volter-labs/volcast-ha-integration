@@ -7,7 +7,8 @@
 * `LinkDown` albo cisza (przekroczenie czasu bez ŻADNEJ ramki) przerywa cykl — kolejne bloki
   i tak by nie przeszły, a milczący falownik na UDP nie może kosztować minuty na cykl.
 * Cykl ma limit czasu STRACONEGO na przekroczenia czasu (odpowiedzi się nie liczą — wolne łącze
-  z poprawnymi odpowiedziami czyta wszystko): co najmniej `read_tries × timeout` transportu, żeby
+  z poprawnymi odpowiedziami czyta wszystko; próby przekroczone przed udaną liczą się, z licznika
+  `stats.timeouts` transportu): co najmniej `read_tries × timeout` transportu, żeby
   pojedynczy blok zawsze miał pełne próby. Liczba prób bloku jest przycinana do pozostałego
   limitu, a po jego wyczerpaniu reszta bloków jest oznaczana jako nieudana. Tożsamość nie ma
   limitu (1–3 bloki; cisza i zerwanie i tak przerywają).
@@ -79,12 +80,22 @@ class RegisterClient:
         if remaining < timeout:
             raise _OutOfTime("read cycle out of time")
         tries = max(1, min(read_tries, math.floor(remaining / timeout)))
+        stats = getattr(self.transport, "stats", None)
+        before = getattr(stats, "timeouts", 0)
         t0 = self._clock()
         try:
-            return await self.read_block(*block, tries=tries)
+            out = await self.read_block(*block, tries=tries)
         except RequestTimeout:
-            lost[0] += max(0.0, self._clock() - t0)
+            lost[0] += max(max(0.0, self._clock() - t0), self._timed_out(stats, before) * timeout)
             raise
+        # Próby, które przekroczyły czas przed udaną, też są czasem straconym.
+        lost[0] += self._timed_out(stats, before) * timeout
+        return out
+
+    @staticmethod
+    def _timed_out(stats, before: int) -> int:
+        after = getattr(stats, "timeouts", before)
+        return max(0, after - before) if isinstance(after, int) else 0
 
     # ── stan ──
 

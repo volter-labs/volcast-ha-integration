@@ -320,3 +320,30 @@ async def test_last_frames_json_serialisable_without_bytes(goodwe_client):
     await goodwe_client.read_state()
     text = json.dumps(goodwe_client.last_frames)
     assert "request" not in text and "response" not in text
+
+
+class _LossyFake(_SlowFake):
+    """Każdy blok przechodzi dopiero w OSTATNIEJ próbie — wcześniejsze kończą się przekroczeniem czasu."""
+
+    def __init__(self, clock):
+        super().__init__(clock)
+        from custom_components.volcast.core.transports.base import TransportStats
+        self.stats = TransportStats()
+
+    async def read(self, addr, count, *, tries=None):
+        self.tries_seen.append(tries)
+        lost = (tries or 1) - 1
+        self.clock.now += 2.0 * lost
+        self.stats.timeouts += lost
+        return [0] * count
+
+
+@pytest.mark.asyncio
+async def test_time_lost_before_a_successful_retry_counts_toward_budget(goodwe_profile):
+    from tests.core.transports.helpers import FakeClock
+    clock = FakeClock()
+    fake = _LossyFake(clock)
+    client = RegisterClient(fake, goodwe_profile, clock=clock)
+    await client.read_state()
+    # Limit 6 s: pierwszy blok traci 4 s na dwóch próbach, więc kolejne mają już tylko jedną.
+    assert fake.tries_seen[0] == 3 and set(fake.tries_seen[1:]) == {1}

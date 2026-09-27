@@ -58,8 +58,13 @@ _QUANTUM = 1.0
 # Powroty do trybu bazowego poza budżetem: najwyżej tyle prób w oknie doby.
 _RESTORE_CAP = 24
 _RESTORE_WINDOW_S = 86400.0
-# Ponowienie zapisu odrzuconego przy niezmienionym planie i stanie urządzenia.
-_DENIED_RETRY_S = 3600.0
+# Ponowienie zapisu odrzuconego przy niezmienionym planie i stanie urządzenia: pierwsza odmowa
+# wstrzymuje na max(I-6 profilu, 5 min) (`backoff_base_s`) — dłużej zamieniłoby jedną odmowę
+# w godzinę bez sterowania. Dopiero KOLEJNA identyczna odmowa (ta sama prośba, ten sam stan
+# urządzenia) podwaja wstrzymanie, najwyżej do 1 h: urządzenie stojące na swoim limicie nie
+# pali pamięci nieulotnej co 5 min. Ruch w stronę bezpieczną nie jest wstrzymywany nigdy.
+# Klucze, których ZMNIEJSZENIE jest ruchem w stronę bezpieczną (mniej mocy, mniej eksportu).
+_SAFE_WHEN_LOWER = ("power_w", "export_limit_w")
 # Odwrót grupy po cofnięciu: start nie krótszy niż 5 min, podwajany do 1 h.
 _BACKOFF_MIN_S = 300.0
 _BACKOFF_MAX_S = 3600.0
@@ -87,10 +92,12 @@ class ControlMemory:
     # dopóki plan nie zmieni wartości (albo ktoś nie zmieni jej na urządzeniu)
     adjusted: dict[str, tuple[float | str, float | str]] = field(default_factory=dict)
     # tryb bezpośredni: klucz → (zamówiona, wartość na urządzeniu, chwila) po odmowie (DENIED —
-    # rejestr został bez zmian, np. urządzenie już stoi na swoim limicie). Ta sama prośba przy
-    # tym samym stanie urządzenia nie jest ponawiana przez `_DENIED_RETRY_S`; klucz dalej
-    # wstrzymuje tryb (warunek niespełniony), ale nie pali pamięci nieulotnej co cykl.
-    denied: dict[str, tuple[float | str, float | str, float]] = field(default_factory=dict)
+    # ramka poszła, urządzenie odpowiedziało, rejestr bez zmian, np. stoi już na swoim limicie).
+    # Ta sama prośba przy tym samym stanie urządzenia nie jest ponawiana przez `hold_s`
+    # (max(I-6, 5 min), podwajane przy powtórzonej odmowie do 1 h); klucz dalej wstrzymuje tryb
+    # (warunek niespełniony), ale nie pali pamięci nieulotnej co cykl. Nigdy nie dotyczy ruchu
+    # w stronę bezpieczną (`_safe_mode`, `_toward_safety`). Wpis: (zamówiona, urządzenie, chwila, hold_s).
+    denied: dict[str, tuple[float | str, float | str, float, float]] = field(default_factory=dict)
     # powroty do trybu bazowego poza budżetem (wyczerpany budżet przy trybie wymuszonym):
     # odwrót jak grupy (start max(I-6, 5 min), podwajany do 1 h), limit prób na dobę
     restore_backoff_s: float = 0.0
@@ -286,7 +293,10 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     # Do zmiany na falowniku: to, co pójdzie teraz, i to, co czeka w interwale I-6.
     need = due | (memory.throttle.pending(flat, now_mono) - settled)
     notes: list[str] = []
-    refused = {k for k in due if _denied_again(memory, k, flat[k], device.get(k), now_mono)}
+    refused = set() if _safe_mode(flat.get("mode"), profile) else {
+        k for k in due
+        if not _toward_safety(k, flat[k], device.get(k))
+        and _denied_again(memory, k, flat[k], device.get(k), now_mono)}
     if refused:
         due -= refused                      # zostaje w `need`: dalej wstrzymuje tryb
         notes.append("denied_hold")
@@ -371,8 +381,26 @@ def _denied_again(memory: ControlMemory, key: str, planned, current, now_mono: f
     entry = memory.denied.get(key)
     if entry is None or current is None:
         return False
-    req, dev, at = entry
-    return same_value(req, planned) and same_value(dev, current) and 0.0 <= now_mono - at < _DENIED_RETRY_S
+    req, dev, at, hold_s = entry
+    return same_value(req, planned) and same_value(dev, current) and 0.0 <= now_mono - at < hold_s
+
+
+def _safe_mode(mode, profile) -> bool:
+    """Plan prowadzi do trybu bazowego albo neutralnego — wtedy żaden klucz (także warunek trybu)
+    nie jest wstrzymywany pamięcią odmowy: powrót do bezpiecznego stanu idzie przy każdej okazji."""
+    if not isinstance(mode, str) or mode not in profile.modes:
+        return False
+    base = (profile.raw.get("baseline") or {}).get("mode")
+    return mode in (base, profile.neutral_mode) or profile.mode_direction(mode) == "neutral"
+
+
+def _toward_safety(key: str, planned, current) -> bool:
+    """Zmiana, która zmniejsza moc albo eksport — nigdy wstrzymywana pamięcią odmowy."""
+    if key not in _SAFE_WHEN_LOWER:
+        return False
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (planned, current)):
+        return False
+    return abs(planned) < abs(current)
 
 
 def _adjusted_reached(memory: ControlMemory, key: str, planned, actual) -> bool:
@@ -522,7 +550,12 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
         definite = set(report.failed) - set(report.failed if amb is None else amb)
         for key in definite:
             if key in decision.flat and key in decision.device:
-                memory.denied[key] = (decision.flat[key], decision.device[key], now_mono)
+                req, dev = decision.flat[key], decision.device[key]
+                prev = memory.denied.get(key)
+                hold = memory.backoff_base_s
+                if prev is not None and same_value(prev[0], req) and same_value(prev[1], dev):
+                    hold = min(max(prev[3] * 2.0, hold), _BACKOFF_MAX_S)
+                memory.denied[key] = (req, dev, now_mono, hold)
     if restored:
         memory.throttle.record(decision.restore_flat, restored, now_mono)
         for key in restored:

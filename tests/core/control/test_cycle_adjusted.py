@@ -52,7 +52,10 @@ async def test_clamping_device_gets_one_write_per_plan_change(goodwe_profile, go
         for i in range(6, 12):
             await _cycle(goodwe_profile, plan, client, writer, memory, 1000.0 + 600 * i)
         power_writes = [w for w in goodwe_bank.writes if w[0] == POWER_REG]
-        assert power_writes == [(POWER_REG, 2500), (POWER_REG, 3000)]
+        # Odmowa (urządzenie stoi na 2 kW): wstrzymanie 5 min, podwajane przy każdej identycznej
+        # odmowie (5 → 10 → 20 → 40 min) — cykle co 10 min: zapisy w 1., 2., 3. i 5. cyklu.
+        assert power_writes == [(POWER_REG, 2500)] + [(POWER_REG, 3000)] * 4
+        assert memory.denied["power_w"][3] == 2400.0
     finally:
         await t.close()
 
@@ -90,11 +93,11 @@ def test_denied_request_not_repeated_but_keeps_holding_mode(goodwe_profile, char
     # soc_max odrzucony (rejestr bez zmian) → warunek niespełniony
     from custom_components.volcast.core.control.group_writes import GroupReport
     commit(d, GroupReport(failed=["soc_max"], mode_held=True, ambiguous=[]), memory, 1000.0)
-    again = _decide(goodwe_profile, charge_schedule, reading_auto, memory, now_mono=1700.0)
+    again = _decide(goodwe_profile, charge_schedule, reading_auto, memory, now_mono=1200.0)
     assert "soc_max" not in [w.key for w in again.writes] and "mode" not in [w.key for w in again.writes]
     assert "denied_hold" in again.notes and "mode_held" in again.notes
-    later = _decide(goodwe_profile, charge_schedule, reading_auto, memory, now_mono=1000.0 + 3601)
-    assert "soc_max" in [w.key for w in later.writes]          # po godzinie jedna nowa próba
+    later = _decide(goodwe_profile, charge_schedule, reading_auto, memory, now_mono=1000.0 + 301)
+    assert "soc_max" in [w.key for w in later.writes]          # po max(I-6, 5 min) nowa próba
 
 
 def test_entity_mode_keeps_retrying_denied(goodwe_profile, sell_schedule):

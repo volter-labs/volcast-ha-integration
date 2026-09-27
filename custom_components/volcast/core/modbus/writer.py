@@ -3,12 +3,15 @@
 Żaden rejestr nie jest pisany bez możliwości odczytu zwrotnego, chyba że profil jawnie
 wymienia go w `modbus.echo_only` (potwierdzenie samym echem, jak urządzenie referencyjne).
 Odczyt przed zapisem (jedna ramka FC 3, bez kosztu NVM) pozwala odróżnić „nie ustawił”
-od „ustawił inaczej” — odmowa (DENIED) znaczy dla rdzenia „na pewno nie zastosowano”.
+od „ustawił inaczej”. Odmowa (DENIED) to WYŁĄCZNIE prawdziwa odmowa urządzenia: ramka zapisu
+poszła, urządzenie odpowiedziało, a rejestr został bez zmian. Wszystko, co nie wysłało zapisu
+(nieudany odczyt przed zapisem, adres spoza profilu), to ERROR — chwilowa awaria nie może
+zostać zapamiętana jako odmowa (rdzeń wstrzymuje ponowienie odmówionej prośby).
 
 | echo                      | odczyt zwrotny                 | wynik |
 |---------------------------|--------------------------------|-------|
 | —  (odczyt przed: wyjątek 2) | —                           | UNSUPPORTED (nic nie wysłano) |
-| —  (odczyt przed: inny błąd) | —                           | DENIED (nic nie wysłano) |
+| —  (odczyt przed: inny błąd) | —                           | ERROR (nic nie wysłano) |
 | wyjątek 2                 | —                              | UNSUPPORTED |
 | dowolne                   | = zamówiona                    | OK |
 | dowolne                   | brak                           | ERROR |
@@ -128,18 +131,18 @@ class RegisterWriter:
         if expected_address(self.profile, w.key) != w.addr or isinstance(w.value, bool) \
                 or not isinstance(w.value, int) or not 0 <= w.value <= 0xFFFF:
             _LOGGER.error("direct write of %s refused: address or value outside the profile", w.key)
-            return DENIED                  # nic nie wysłano
+            return ERROR                   # nic nie wysłano — to nie odmowa urządzenia
         if _matches(w.key, self.echo_only):
             return await self._write_echo_only(w)
         if _matches(w.key, self.unreadable):
             return UNSUPPORTED             # bez odczytu zwrotnego nie piszemy (nie da się przywrócić)
         try:
             before = await self.client.read_register(w.addr)
-        except ModbusException as err:
-            return UNSUPPORTED if err.code == 2 else DENIED
         except TransportError as err:
+            if isinstance(err, ModbusException) and err.code == 2:
+                return UNSUPPORTED
             _LOGGER.debug("pre-write read of %s failed: %s", w.key, type(err).__name__)
-            return DENIED                  # nic nie wysłano; następny cykl spróbuje znowu
+            return ERROR                   # nic nie wysłano; chwilowa awaria, nie odmowa
         w = RegisterWrite(w.key, w.addr, _fresh_value(self.profile, w.key, w.value, before))
         echo = await self._send(w)
         if echo == UNSUPPORTED:
