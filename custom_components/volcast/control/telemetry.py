@@ -165,10 +165,9 @@ class TelemetrySender:
             return None
         return {"market": market, "currency": currency, "intervals": intervals}, fp
 
-    def _supported_keys(self) -> list[str]:
-        """Klucze z encją bez nastaw, które wykonawca uznał za nieobsługiwane (niedostępne)."""
-        unsupported = set(getattr(self._executor, "unsupported_settings", None) or ())
-        return [k for k in self._profile_map if k not in unsupported]
+    def _unsupported(self) -> tuple[str, ...]:
+        """Nastawy, które wykonawca uznał za nieobsługiwane (brak encji, długo niedostępna)."""
+        return tuple(getattr(self._executor, "unsupported_settings", None) or ())
 
     def _extra(self) -> dict:
         try:
@@ -204,16 +203,20 @@ class TelemetrySender:
         except Exception as err:  # noqa: BLE001 — ceny nigdy nie zabierają telemetrii
             _LOGGER.debug("Volcast prices block skipped (%s)", type(err).__name__)
             priced = None
-        reading = build_reading(
-            now_utc=now, profile_readings=prof, manual=manual,
-            driver=driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
-                                mapped_keys=self._supported_keys(),
-                                local_switch=bool(getattr(self._executor, "local_switch", False)),
-                                limits=self._limits),
-            extra=self._extra(), prices=priced[0] if priced else None)
+        unsupported = self._unsupported()
+        driver = driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
+                              mapped_keys=[k for k in self._profile_map if k not in unsupported],
+                              local_switch=bool(getattr(self._executor, "local_switch", False)),
+                              limits=self._limits)
+        reading = build_reading(now_utc=now, profile_readings=prof, manual=manual, driver=driver,
+                                extra=self._extra(), prices=priced[0] if priced else None)
         if reading is None:
             return False
         ok = await self._cloud.async_post_telemetry(reading) is True
         if ok and priced:
             self._prices_fp, self._prices_at = priced[1], now
+        note = getattr(self._executor, "note_capabilities_sent", None)
+        if ok and note is not None and driver is not None and "capabilities" in driver:
+            # Chmura przyjęła możliwości bez tych nastaw — wykonawca wie, od kiedy.
+            note(unsupported)
         return ok

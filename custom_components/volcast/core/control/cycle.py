@@ -11,7 +11,9 @@ trybie ładuje z sieci). Zasady, które trzymają grupę:
 * bez encji trybu sterowania nie ma wcale; inna nastawa bez encji (`ents.mapped` jej
   nie ma — brak mapowania albo encja niedostępna) jest nieobsługiwana: wypada z planu
   po strażnikach, jak nastawa odrzucona przez falownik; plan z mocą bez encji mocy
-  nie idzie (tryb na starej mocy to inna komenda);
+  nie idzie (tryb na starej mocy to inna komenda), a plan albo strażnik wymagający
+  nastawy ochronnej (`SAFETY_KEYS`) — dopóki chmura nie wie o jej braku
+  (`confirmed_unsupported`);
 * para ogranicznika eksportu (`EXPORT_PAIR`) jest nieobsługiwana, wstrzymana i zapisywana
   razem — połowa pary daje zakaz bez skutku albo 0 W przy nieznanym przełączniku;
 * zmieniony parametr, który w tym cyklu nie pójdzie (interwał I-6, jednostka encji
@@ -57,6 +59,9 @@ WRITE, DRY_RUN, IDLE, BLOCKED, ERROR = "write", "dry_run", "idle", "blocked", "e
 _MODE_GROUP = frozenset({"mode", "power_w"})
 # Ogranicznik eksportu: znaczy coś tylko razem (zakaz = włączony + 0 W) — obie encje albo żadna.
 EXPORT_PAIR = frozenset({"export_limit_w", "export_limit_enabled"})
+# Nastawy ochronne (próg SoC, ogranicznik eksportu): bez encji plan, który ich wymaga, czeka,
+# dopóki chmura nie wie o ich braku — inne nastawy bez encji wypadają od razu.
+SAFETY_KEYS = frozenset({"soc_min"}) | EXPORT_PAIR
 _DIRECTIONAL = ("charge", "discharge")
 _NO_READING = ("unavailable", "unknown", "")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
@@ -127,6 +132,8 @@ class EntityContext:
     readings: Mapping[str, float | str]
     # wartości właściciela (migawka) kluczy, które zmieniliśmy — cel, gdy plan nie ma zdania
     owner_values: Mapping[str, float | str] = field(default_factory=dict)
+    # nastawy bez encji, o których chmura już wie (zgłoszone i jest plan pobrany potem)
+    confirmed_unsupported: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -272,6 +279,9 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     without = tuple(k for k in _with_pair(missing) if getattr(guard.params, k, None) is not None)
     if "power_w" in without:
         return CycleDecision(BLOCKED, "power_unsupported", dropped_unsupported=("power_w",), **common)
+    unknown_to_cloud = sorted((set(without) & SAFETY_KEYS) - _with_pair(ents.confirmed_unsupported))
+    if unknown_to_cloud:
+        return CycleDecision(BLOCKED, "setting_unavailable", unmapped=tuple(unknown_to_cloud), **common)
     planned = replace(guard.params, **{k: None for k in without})
     params, adjusted, unfit = fit_params(planned, profile, ents.domain, ents.mapped,
                                          ents.units, ents.attrs)

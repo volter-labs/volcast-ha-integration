@@ -208,7 +208,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     rt = None
     try:
         fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
-                                  on_auth_failure=executor.async_on_auth_failure)
+                                  on_auth_failure=executor.async_on_auth_failure,
+                                  on_fresh=executor.note_plan_fresh)
         limits = executor_limits(rated_power_w=rated, battery_capacity_kwh=opts.get(OPT_BATTERY_CAPACITY_KWH),
                                  source="user" if manual_rated else "entities")
         telemetry = TelemetrySender(hass, entry, cloud, executor, choice=choice, profile_map=mapped,

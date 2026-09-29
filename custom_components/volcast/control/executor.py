@@ -22,7 +22,10 @@ Zasady wykonania:
   `_UNSUPPORTED_AFTER_S` (brak mapowania — od razu), trafia do `unsupported_settings`
   (możliwości dla chmury) i do zgłoszenia w Naprawach. Encja, która wraca, znów jest
   obsługiwana w najbliższym cyklu; przy trwającej własności jej wartość dochodzi do
-  migawki, zanim ją zapiszemy;
+  migawki, zanim ją zapiszemy. Nastawa ochronna (próg SoC, ogranicznik eksportu) wypada
+  dopiero, gdy chmura o tym wie: telemetria zgłosiła ją jako nieobsługiwaną
+  (`note_capabilities_sent`), a potem przyszedł świeży plan (`note_plan_fresh`) — do
+  tego czasu plan, który jej wymaga, czeka;
 * powrót do trybu bazowego: najpierw sam tryb bazowy (neutralny, nie potrzebuje
   warunków — hamulec właściciela nie może zależeć od innej encji), potem każda
   pozostała nastawa z migawki niezależnie; własność zostaje, dopóki wszystko nie dojdzie,
@@ -171,6 +174,8 @@ class VolcastExecutor:
         self._unsupported_issue: tuple[str, ...] = ()
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
         self._consistent: dict[str, float | str] = {}
+        self._reported_at: dict[str, float] = {}      # nieobsługiwana → od kiedy chmura o tym wie
+        self._fresh_at: float | None = None           # ostatni świeży plan (zegar monotoniczny)
         self._disabled = False
         self._unsub: list[Callable[[], None]] = []
 
@@ -434,6 +439,20 @@ class VolcastExecutor:
             ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
 
     # ── wejścia ───────────────────────────────────────────────────────────
+    def note_capabilities_sent(self, unsupported) -> None:
+        """Telemetria przyjęta przez chmurę z tymi nastawami jako nieobsługiwanymi."""
+        now = self._clock()
+        self._reported_at = {k: self._reported_at.get(k, now) for k in unsupported}
+
+    def note_plan_fresh(self) -> None:
+        """Plan w ręku jest świeży (chmura przeliczyła go z bieżącymi możliwościami)."""
+        self._fresh_at = self._clock()
+
+    def _confirmed_unsupported(self) -> frozenset[str]:
+        """Nastawy, o których brak chmura wie: zgłoszone, a potem przyszedł świeży plan."""
+        fresh = self._fresh_at
+        return frozenset(k for k, at in self._reported_at.items() if fresh is not None and fresh > at)
+
     async def async_on_plan(self, raw: dict, schedule: Schedule) -> None:
         self._state.plan_raw = raw
         self.schedule = schedule
@@ -598,7 +617,8 @@ class VolcastExecutor:
             limits=Limits(rated_power_w=float(self._rated or 0.0)),
             ents=EntityContext(domain=self._domain or "", mapped=live_map, units=rd.units,
                                attrs=rd.attrs, readings=rd.for_cycle(),
-                               owner_values=self._owner_export_values()),
+                               owner_values=self._owner_export_values(),
+                               confirmed_unsupported=self._confirmed_unsupported()),
             gates=gates, memory=self._memory)
         if soc is not None:
             self._prev_soc = (soc, now_mono)

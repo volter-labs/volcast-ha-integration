@@ -1209,3 +1209,54 @@ def test_uncapped_slot_after_our_ban_returns_owner_limiter(monkeypatch):
     assert banned == ("on", "0.0")
     assert h.states.get(E["export_limit_enabled"]).state == "off"
     assert float(h.states.get(E["export_limit_w"]).state) == 4000.0
+
+
+# ── nastawa ochronna bez encji: czekamy, aż chmura o tym wie ──────────────
+
+
+def _sell_with_floor():
+    return plan(slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "discharge",
+                        "discharge_purpose": "sell", "power_w": 2000, "soc_target": 40, "price_pln_kwh": 0.8}])
+
+
+def test_unavailable_floor_blocks_sell_until_reported_and_replanned(monkeypatch):
+    h = goodwe_hass()
+    h.states.set(E["soc_min"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_sell_with_floor())
+        await ex.async_tick()
+        steps = [(ex.last_decision.reason, ex.unsupported_settings)]
+        ex._clock.t += 601
+        await ex.async_tick()
+        steps.append((ex.last_decision.reason, ex.unsupported_settings))
+        ex.note_plan_fresh()                           # plan sprzed zgłoszenia — nic nie zmienia
+        ex.note_capabilities_sent(("soc_min",))        # telemetria: chmura wie
+        ex._clock.t += 1
+        await ex.async_tick()
+        steps.append((ex.last_decision.reason, ()))
+        ex._clock.t += 1
+        ex.note_plan_fresh()                           # plan pobrany po zgłoszeniu
+        await ex.async_tick()
+        return steps
+    steps = asyncio.run(go())
+    assert steps[0] == ("setting_unavailable", ())
+    assert steps[1] == ("setting_unavailable", ("soc_min",))
+    assert steps[2][0] == "setting_unavailable"
+    assert ex.last_decision.status == "write"
+    assert E["soc_min"] not in [c[2]["entity_id"] for c in h.services.calls]
+    assert h.states.get(E["mode"]).state == "sell_power"
+
+
+def test_key_back_then_gone_again_needs_a_new_report(monkeypatch):
+    h = goodwe_hass()
+    h.states.set(E["soc_min"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+    ex.note_capabilities_sent(("soc_min",))
+    ex._clock.t += 1
+    ex.note_plan_fresh()
+    ex.note_capabilities_sent(())                      # chmura znów widzi próg
+    asyncio.run(ready(ex, raw=_sell_with_floor()))
+    asyncio.run(ex.async_tick())
+    assert ex.last_decision.reason == "setting_unavailable"

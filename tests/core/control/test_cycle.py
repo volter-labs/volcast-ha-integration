@@ -59,7 +59,8 @@ def plan(*slots):
 
 
 def run(memory=None, *, schedule="default", gates=OPEN, soc=60.0, age=10.0, temp=25.0, mapped=MAPPED,
-        units=UNITS, attrs=ATTRS, readings=None, now_mono=1000.0, now_utc=NOW, profile=GW, owner_values=None):
+        units=UNITS, attrs=ATTRS, readings=None, now_mono=1000.0, now_utc=NOW, profile=GW, owner_values=None,
+        confirmed=()):
     memory = memory or ControlMemory.for_profile(profile)
     return decide_cycle(
         profile=profile, schedule=sched() if schedule == "default" else schedule,
@@ -67,7 +68,7 @@ def run(memory=None, *, schedule="default", gates=OPEN, soc=60.0, age=10.0, temp
         tele=Telemetry(soc=soc, soc_age_s=age, battery_temp_c=temp),
         limits=Limits(rated_power_w=8000.0),
         ents=EntityContext(domain="goodwe", mapped=mapped, units=units, attrs=attrs, readings=readings or {},
-                           owner_values=owner_values or {}),
+                           owner_values=owner_values or {}, confirmed_unsupported=frozenset(confirmed)),
         gates=gates, memory=memory), memory
 
 
@@ -127,9 +128,9 @@ def test_missing_mode_entity_is_idle():
 
 @pytest.mark.parametrize("key", [k for k in GW.raw["write_policy"]["order"] if k != "mode"])
 def test_missing_setting_entity_is_dropped_not_blocking(key):
-    # Nastawa bez encji (niedostępna, wyłączona, bez mapowania) = nieobsługiwana: wypada
-    # z zapisów, reszta sterowania działa dalej.
-    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != key},
+    # Nastawa bez encji (niedostępna, wyłączona, bez mapowania), o której chmura już wie
+    # (zgłoszona i jest plan pobrany potem) = nieobsługiwana: wypada z zapisów, reszta działa.
+    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != key}, confirmed={key},
                schedule=plan(slot("10:00", "11:00", mode="self_consume", export_allowed=False)))
     assert d.status == WRITE, (d.reason, d.unmapped)
     assert key not in [w.key for w in d.writes] and key not in d.flat
@@ -154,6 +155,33 @@ def test_export_pair_member_held_by_interval_holds_the_pair():
     d2, _ = run(mem, schedule=sched(export_allowed=False),
                 readings={"export_limit_enabled": 0.0, "export_limit_w": 8000.0}, now_mono=1030.0)
     assert not EXPORT_PAIR & {w.key for w in d2.writes}
+
+
+SAFETY_CASES = [
+    # (klucz bez encji, slot, który od niego zależy)
+    ("soc_min", slot("10:00", "11:00", **SELL, power_w=2000, soc_target=40)),
+    ("export_limit_w", slot("10:00", "11:00", mode="self_consume", export_allowed=False)),
+    ("export_limit_enabled", slot("10:00", "11:00", mode="self_consume", export_limit_w=3000)),
+    ("export_limit_w", slot("10:00", "11:00", mode="self_consume", price_pln_kwh=-0.1)),   # I-4
+]
+
+
+@pytest.mark.parametrize("key,slot_", SAFETY_CASES)
+def test_unavailable_safety_setting_blocks_until_cloud_knows(key, slot_):
+    # Próg SoC i ogranicznik eksportu chronią: plan (albo strażnik) ich wymaga, a chmura
+    # jeszcze nie wie, że ich nie ma — nie wykonujemy go bez nich.
+    mapped = {k: v for k, v in MAPPED.items() if k != key}
+    d, _ = run(mapped=mapped, schedule=plan(slot_))
+    assert (d.status, d.reason, d.writes) == (BLOCKED, "setting_unavailable", [])
+    assert key in d.unmapped
+    d2, _ = run(mapped=mapped, schedule=plan(slot_), confirmed={key})
+    assert d2.status == WRITE and key not in {w.key for w in d2.writes}
+
+
+def test_unavailable_safety_setting_the_plan_does_not_need_does_not_block():
+    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != "soc_min"},
+               schedule=plan(slot("10:00", "11:00", mode="self_consume")))
+    assert d.status == WRITE
 
 
 def test_missing_ceiling_entity_drops_plan_ceiling_and_still_charges():
@@ -334,7 +362,7 @@ def test_unsupported_dropped_for_session():
 
 def test_unmapped_keys_reported_not_written():
     d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != "export_limit_enabled"},
-               schedule=sched(export_allowed=False))
+               schedule=sched(export_allowed=False), confirmed={"export_limit_enabled"})
     assert d.status == WRITE
     assert "export_limit_enabled" in d.dropped_unsupported
     assert "export_limit_enabled" not in [w.key for w in d.writes]
