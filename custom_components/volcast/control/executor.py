@@ -18,11 +18,11 @@ Zasady wykonania:
   inaczej żadnego zapisu (klucza bez migawki nigdy byśmy nie przywrócili);
 * nastawa bez używalnej encji (brak mapowania, brak stanu, `unavailable`/`unknown`) jest
   w tym cyklu nieobsługiwana: wypada z odczytów cyklu, zapisów i wymogów migawki — reszta
-  sterowania działa dalej (bez encji trybu nie ma sterowania wcale). Gdy brak trwa (licząc
-  od pierwszego braku, bez kasowania przy krótkich powrotach) `_UNSUPPORTED_AFTER_S` (brak
-  mapowania — od razu), trafia do `unsupported_settings` (możliwości dla chmury) i — przy
-  włączonym sterowaniu — do zgłoszenia w Naprawach; wypada z nich po tyluż czasie ciągłej
-  obecności. Encja, która wraca, znów jest używana w cyklu od razu; przy trwającej własności jej wartość dochodzi do
+  sterowania działa dalej (bez encji trybu nie ma sterowania wcale). Gdy brak trwa BEZ
+  PRZERWY `_UNSUPPORTED_AFTER_S` (brak mapowania — od razu), trafia do
+  `unsupported_settings` (możliwości dla chmury) i — przy włączonym sterowaniu — do
+  zgłoszenia w Naprawach; encja, która miga (łącze UDP), nie trafia tam nigdy. Encja,
+  która wraca, znów jest obsługiwana od razu; przy trwającej własności jej wartość dochodzi do
   migawki, zanim ją zapiszemy. Akcja, której bez nastawy nie da się bezpiecznie
   wykonać, schodzi w cyklu do trybu neutralnego (`cycle._degrade`);
 * powrót do trybu bazowego: najpierw sam tryb bazowy (neutralny, nie potrzebuje
@@ -178,7 +178,6 @@ class VolcastExecutor:
         self._foreign_episode = False                 # tryb spoza profilu na falowniku
         self._restore_failed: tuple[str, ...] | None = None   # ostatnio zalogowane (bez powtórek co tik)
         self._absent_since: dict[str, float] = {}     # klucz zapisu → od kiedy bez używalnej encji
-        self._present_since: dict[str, float] = {}    # … i od kiedy znów jest (po braku)
         self.unsupported_settings: tuple[str, ...] = ()       # nieobsługiwane (w kolejności profilu)
         self._unsupported_issue: tuple[str, ...] = ()
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
@@ -800,19 +799,16 @@ class VolcastExecutor:
     def _track_unsupported(self, absent: tuple[str, ...], now_mono: float, live: bool) -> None:
         """Nieobsługiwane nastawy: brak mapowania od razu, niedostępna encja po czasie.
 
-        Czas braku liczy się od pierwszego braku i nie zeruje się przy krótkich powrotach
-        (encja, która miga, też jest nieobsługiwana); kasuje go dopiero ciągła obecność przez
-        `_UNSUPPORTED_AFTER_S`. Zmiana zbioru aktualizuje zgłoszenie w Naprawach (tylko przy
-        włączonym sterowaniu); w logu same klucze, `entity_id` tylko w parametrze tekstu Napraw.
+        Liczy się CIĄGŁY brak: każdy odczyt encji zeruje czas (encja, która miga, pozostaje
+        obsługiwana — w cyklu i tak wypada na czas braku). Zmiana zbioru aktualizuje
+        zgłoszenie w Naprawach (tylko przy włączonym sterowaniu); w logu same klucze,
+        `entity_id` tylko w parametrze tekstu Napraw.
         """
-        for key in self._write_keys():
-            if key in absent:
-                self._absent_since.setdefault(key, now_mono)
-                self._present_since.pop(key, None)
-            elif key in self._absent_since:
-                back = self._present_since.setdefault(key, now_mono)
-                if now_mono - back >= _UNSUPPORTED_AFTER_S:
-                    del self._absent_since[key], self._present_since[key]
+        for key in list(self._absent_since):
+            if key not in absent:
+                del self._absent_since[key]
+        for key in absent:
+            self._absent_since.setdefault(key, now_mono)
         self.unsupported_settings = tuple(
             k for k in self._write_keys()
             if k not in self._mapped

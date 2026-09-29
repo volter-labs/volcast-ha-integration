@@ -517,13 +517,10 @@ def test_lasting_unavailable_setting_raises_issue_and_clears_when_back(monkeypat
         h.states.set(E["soc_max"], "100")
         ex._clock.t += 60
         await ex.async_tick()
-        # Wraca na stałe dopiero po czasie — encja, która miga, nie przełącza możliwości co chwilę.
-        sticky = ex.unsupported_settings
-        ex._clock.t += 600
-        await ex.async_tick()
-        return first, lasting, sticky
-    first, lasting, sticky = asyncio.run(go())
-    assert first == ([], ()) and sticky == ("soc_max",)
+        back = ex.unsupported_settings                  # dostępna = znów obsługiwana od razu
+        return first, lasting, back
+    first, lasting, back = asyncio.run(go())
+    assert first == ([], ()) and back == ()
     (call,), keys = lasting
     assert keys == ("soc_max",)
     assert call.kwargs["translation_key"] == "unsupported_setting"
@@ -1289,19 +1286,23 @@ def test_returning_setting_is_not_written_when_its_snapshot_cannot_be_saved(monk
     assert saved.snapshot["soc_max"] == 95.0
 
 
-def test_flapping_setting_accumulates_absence_and_becomes_unsupported(monkeypatch):
+def test_blipping_setting_is_never_reported_unsupported(monkeypatch):
+    # Łącze UDP GoodWe gubi encje na chwilę co kilka minut — działająca nastawa nie może
+    # na stałe zniknąć z możliwości (liczy się CIĄGŁY brak).
     h = goodwe_hass()
     h, ex = make(h, monkeypatch=monkeypatch)
 
     async def go():
         await ready(ex)
-        for state, dt in (("unavailable", 300), ("100", 60), ("unavailable", 300)):
-            h.states.set(E["soc_max"], state)
-            await ex.async_tick()
-            ex._clock.t += dt
-        await ex.async_tick()
-    asyncio.run(go())
-    assert ex.unsupported_settings == ("soc_max",)
+        seen = set()
+        for _ in range(4):
+            for state, dt in (("unavailable", 300), ("100", 60)):
+                h.states.set(E["soc_max"], state)
+                await ex.async_tick()
+                seen.update(ex.unsupported_settings)
+                ex._clock.t += dt
+        return seen
+    assert asyncio.run(go()) == set()
 
 
 def test_unsupported_issue_only_while_control_is_on(monkeypatch):
