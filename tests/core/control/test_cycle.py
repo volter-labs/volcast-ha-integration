@@ -123,11 +123,30 @@ def test_missing_mode_entity_is_idle():
     assert (d.status, d.reason, d.unmapped) == (IDLE, "missing_entities", ("mode",))
 
 
-@pytest.mark.parametrize("key", list(GW.raw["write_policy"]["order"]))
-def test_any_missing_write_entity_is_idle(key):
-    d, mem = run(mapped={k: v for k, v in MAPPED.items() if k != key}, soc=5.0)
-    assert (d.status, d.reason, d.writes, d.unmapped) == (IDLE, "missing_entities", [], (key,))
-    assert mem.latch.is_engaged is False
+@pytest.mark.parametrize("key", [k for k in GW.raw["write_policy"]["order"] if k != "mode"])
+def test_missing_setting_entity_is_dropped_not_blocking(key):
+    # Nastawa bez encji (niedostępna, wyłączona, bez mapowania) = nieobsługiwana: wypada
+    # z zapisów, reszta sterowania działa dalej.
+    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != key},
+               schedule=plan(slot("10:00", "11:00", mode="self_consume", export_allowed=False)))
+    assert d.status == WRITE, (d.reason, d.unmapped)
+    assert key not in [w.key for w in d.writes] and key not in d.flat
+
+
+def test_missing_ceiling_entity_drops_plan_ceiling_and_still_charges():
+    sched_ = plan(slot("10:00", "11:00", mode="charge", charge_source="grid", power_w=3000, soc_target=90))
+    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != "soc_max"}, schedule=sched_)
+    assert d.status == WRITE and "soc_max" not in [w.key for w in d.writes]
+    assert "soc_max" in d.dropped_unsupported
+    assert {"mode", "power_w"} <= {w.key for w in d.writes}
+
+
+def test_missing_power_entity_blocks_only_intents_that_need_power():
+    mapped = {k: v for k, v in MAPPED.items() if k != "power_w"}
+    d, _ = run(mapped=mapped)
+    assert (d.status, d.reason, d.writes) == (BLOCKED, "power_unsupported", [])
+    d2, _ = run(mapped=mapped, schedule=plan(slot("10:00", "11:00", mode="self_consume")))
+    assert d2.status == WRITE and d2.writes[-1].data == {"option": "auto"}
 
 
 def test_no_plan_is_idle():
@@ -274,8 +293,8 @@ def test_unsupported_dropped_for_session():
 
 def test_unmapped_keys_reported_not_written():
     d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != "export_limit_enabled"})
-    assert (d.status, d.reason) == (IDLE, "missing_entities")
-    assert "export_limit_enabled" in d.unmapped
+    assert d.status == WRITE
+    assert "export_limit_enabled" in d.dropped_unsupported
     assert "export_limit_enabled" not in [w.key for w in d.writes]
 
 

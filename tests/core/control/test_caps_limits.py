@@ -1,6 +1,7 @@
 import pytest
 
-from custom_components.volcast.core.control.caps import capabilities_for, missing_write_keys
+from custom_components.volcast.core.control.caps import capabilities_for, entity_mode_ready, missing_write_keys
+from custom_components.volcast.core.control.select import ProfileChoice
 from custom_components.volcast.core.control.limits import executor_limits, rated_power_from_model
 from custom_components.volcast.core.profile import load_builtin
 
@@ -15,27 +16,30 @@ def test_all_mapped_gives_profile_capabilities():
     assert all(caps.values()) and set(caps) == CAPS
 
 
-@pytest.mark.parametrize("missing", ALL)
-def test_any_missing_write_key_drops_every_capability(missing):
-    # Tryb bez parametrów warunkujących (blokada eksportu, sufit ładowania) wykonałby
-    # polecenie, którego nikt nie wydał — częściowe możliwości wprowadzałyby planer w błąd.
-    caps = capabilities_for(GW, [k for k in ALL if k != missing])
+def test_missing_mode_drops_every_capability():
+    # Bez encji trybu nie ma sterowania wcale.
+    caps = capabilities_for(GW, [k for k in ALL if k != "mode"])
     assert set(caps) == CAPS and not any(caps.values())
 
 
-def test_missing_export_switch_drops_every_capability():
-    caps = capabilities_for(GW, [k for k in ALL if k != "export_limit_enabled"])
-    assert caps["limit_export"] is False and caps["sell_from_battery"] is False
+@pytest.mark.parametrize("missing,dropped", [
+    ("soc_max", {"set_soc_ceiling"}),
+    ("soc_min", {"set_soc_floor"}),
+    ("export_limit_w", {"limit_export"}),
+    ("export_limit_enabled", {"limit_export"}),
+    ("power_w", {"set_power_w", "force_charge_from_grid", "sell_from_battery", "force_discharge",
+                 "standby"}),
+])
+def test_missing_setting_drops_only_its_capabilities(missing, dropped):
+    # Nastawa bez encji jest nieobsługiwana — chmura nie planuje z nią, reszta zostaje.
+    caps = capabilities_for(GW, [k for k in ALL if k != missing])
+    assert {k for k, v in caps.items() if not v} == dropped
 
 
-def test_missing_power_drops_every_capability():
-    caps = capabilities_for(GW, [k for k in ALL if k != "power_w"])
-    assert not any(caps.values())
-
-
-def test_missing_mode_drops_every_capability():
-    caps = capabilities_for(GW, [k for k in ALL if k != "mode"])
-    assert not any(caps.values())
+def test_entity_mode_ready_needs_only_the_mode_entity():
+    choice = ProfileChoice(GW, "goodwe", None)
+    assert entity_mode_ready(choice, [k for k in ALL if k != "soc_max"]) is True
+    assert entity_mode_ready(choice, [k for k in ALL if k != "mode"]) is False
 
 
 def test_missing_write_keys_in_profile_order():

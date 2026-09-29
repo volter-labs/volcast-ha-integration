@@ -65,7 +65,8 @@ def test_driver_block_capabilities_only_in_entity_mode():
     assert all(b["capabilities"].values()) and b["capabilities"]["set_soc_ceiling"] is True
     partial = driver_block(choice=GW, control_mode="entities", mapped_keys=[k for k in ALL if k != "soc_max"],
                            local_switch=True, limits=None)
-    assert partial["capabilities"] and not any(partial["capabilities"].values())
+    # Nastawa bez encji wyłącza tylko swoją możliwość.
+    assert {k for k, v in partial["capabilities"].items() if not v} == {"set_soc_ceiling"}
     ro = ProfileChoice(load_builtin("deye-sg"), None, None)
     assert "capabilities" not in driver_block(choice=ro, control_mode="entities", mapped_keys=(),
                                               local_switch=False, limits=None)
@@ -207,6 +208,18 @@ def test_limits_and_driver_in_reading():
     d = cloud.sent[0]["driver"]
     assert d["id"] == "goodwe-et" and d["limits"] == {"rated_power_w": 8000, "source": "user"}
     assert all(d["capabilities"].values())
+
+
+def test_unsupported_setting_reported_without_its_capability():
+    # Encja zmapowana, ale nastawa nieobsługiwana (niedostępna) — chmura nie dostaje jej możliwości.
+    class Unsupported(Exec):
+        unsupported_settings = ("soc_max",)
+
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"control_mode": "entities"}, executor=Unsupported())
+    asyncio.run(s.async_flush())
+    caps = cloud.sent[0]["driver"]["capabilities"]
+    assert {k for k, v in caps.items() if not v} == {"set_soc_ceiling"}
 
 
 def test_telemetry_carries_foreign_change_count_never_entity_ids(monkeypatch):

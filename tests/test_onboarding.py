@@ -140,7 +140,7 @@ def test_remote_entities_choice_sets_option():
 
 
 @pytest.mark.parametrize("mapped,choice", [
-    (WRITE_KEYS[:-1], None),                                            # brak encji jednego klucza zapisu
+    (WRITE_KEYS[1:], None),                                             # brak encji trybu
     (WRITE_KEYS, ProfileChoice(load_builtin("goodwe-et"), None, "GW8KN-ET")),   # tylko odczyt
 ])
 def test_remote_entities_choice_not_ready_is_error(mapped, choice):
@@ -153,10 +153,18 @@ def test_remote_entities_choice_not_ready_is_error(mapped, choice):
                                   "detail": "inverter control entities not found"}
 
 
-def test_capabilities_read_only_when_any_write_key_missing():
-    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, mapped=WRITE_KEYS[:-1])
+def test_capabilities_read_only_when_mode_entity_missing():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, mapped=WRITE_KEYS[1:])
     asyncio.run(ob.async_run())
     assert last(client)["capabilities"]["detail"] == "read only"
+
+
+def test_capabilities_list_mapped_settings_when_one_setting_missing():
+    # Nastawa bez encji jest nieobsługiwana — reszta sterowania zostaje dostępna.
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, mapped=WRITE_KEYS[:-1])
+    asyncio.run(ob.async_run())
+    assert "export_limit_enabled" not in last(client)["capabilities"]["detail"]
+    assert "mode" in last(client)["capabilities"]["detail"]
 
 
 def test_remote_direct_choice_is_error_step():

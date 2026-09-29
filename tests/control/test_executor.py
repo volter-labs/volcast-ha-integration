@@ -442,7 +442,8 @@ def test_mode_missing_from_select_options_blocks_before_any_write(monkeypatch):
 # ── migawka trybu bazowego ────────────────────────────────────────────────
 
 
-def test_writes_held_until_baseline_snapshot_complete(monkeypatch):
+def test_unavailable_setting_does_not_hold_control(monkeypatch):
+    # Nastawa z niedostępną encją jest nieobsługiwana: migawka bez niej, sterowanie idzie dalej.
     h = goodwe_hass()
     h.states.set(E["export_limit_w"], "unavailable")
     h, ex = make(h, monkeypatch=monkeypatch)
@@ -450,15 +451,94 @@ def test_writes_held_until_baseline_snapshot_complete(monkeypatch):
     async def go():
         await ready(ex)
         await ex.async_tick()
-        held = (list(h.services.calls), ex.last_decision.reason, ex.last_decision.unmapped, ex._state.owned)
-        h.states.set(E["export_limit_w"], "4000")
-        await ex.async_tick()
-        return held
-    calls, reason, unmapped, owned = asyncio.run(go())
-    assert calls == [] and reason == "baseline_unknown" and unmapped == ("export_limit_w",)
-    assert owned is False
-    assert ex._state.owned is True and ex._state.snapshot["export_limit_w"] == 4000.0
+    asyncio.run(go())
+    assert ex.last_decision.status == "write", ex.last_decision.reason
+    assert ex._state.owned is True and "export_limit_w" not in ex._state.snapshot
+    assert E["export_limit_w"] not in [c[2]["entity_id"] for c in h.services.calls]
     assert h.states.get(E["mode"]).state == "sell_power"
+
+
+def test_setting_back_after_ownership_joins_the_snapshot(monkeypatch):
+    # Nastawa wraca po naszym pierwszym zapisie — jej wartość sprzed zapisu trafia do migawki,
+    # zanim ją zapiszemy (inaczej powrót do trybu bazowego nie miałby jej wartości).
+    h = goodwe_hass()
+    h.states.set(E["export_limit_w"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        h.states.set(E["export_limit_w"], "4000")
+        ex._clock.t += 120
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex._state.snapshot["export_limit_w"] == 4000.0
+
+
+def test_unavailable_mode_entity_holds_every_write(monkeypatch):
+    h = goodwe_hass()
+    h.states.set(E["mode"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.services.calls == [] and ex.last_decision.reason == "missing_entities"
+    assert ex.last_decision.unmapped == ("mode",)
+
+
+def _unsupported_issues():
+    return [c for c in ir.async_create_issue.call_args_list if c.args[2] == "unsupported_setting_e1"]
+
+
+def test_lasting_unavailable_setting_raises_issue_and_clears_when_back(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    ir.async_create_issue.reset_mock()
+    ir.async_delete_issue.reset_mock()
+    h = goodwe_hass()
+    h.states.set(E["soc_max"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        first = (list(_unsupported_issues()), ex.unsupported_settings)   # chwilowy brak — bez zgłoszenia
+        ex._clock.t += 601
+        await ex.async_tick()
+        lasting = (list(_unsupported_issues()), ex.unsupported_settings)
+        h.states.set(E["soc_max"], "100")
+        ex._clock.t += 60
+        await ex.async_tick()
+        return first, lasting
+    first, lasting = asyncio.run(go())
+    assert first == ([], ())
+    (call,), keys = lasting
+    assert keys == ("soc_max",)
+    assert call.kwargs["translation_key"] == "unsupported_setting"
+    assert call.kwargs["translation_placeholders"] == {"entities": E["soc_max"]}
+    assert ex.unsupported_settings == ()
+    assert "unsupported_setting_e1" in [c.args[2] for c in ir.async_delete_issue.call_args_list]
+    assert no_entity_ids_in(caplog.text)
+
+
+def test_unmapped_setting_is_unsupported_at_once(monkeypatch):
+    ir.async_create_issue.reset_mock()
+    h = goodwe_hass()
+    mapped = {k: v for k, v in E.items() if k != "soc_max"}
+    entry = SimpleNamespace(entry_id="e1", options={"control_mode": "entities"})
+    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+    ex = VolcastExecutor(h, entry, choice=GW, mapped=mapped, rated_power_w=8000.0,
+                         store=ControlStore(h, "e1"), writer=EntityServiceWriter(h), clock=Clock(),
+                         utcnow=lambda: NOW + timedelta(seconds=30))
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex.unsupported_settings == ("soc_max",) and ex.last_decision.status == "write"
+    (call,) = _unsupported_issues()
+    assert call.kwargs["translation_placeholders"] == {"entities": "soc_max"}
 
 
 def test_snapshot_save_failure_holds_writes(monkeypatch):

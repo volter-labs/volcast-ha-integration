@@ -8,7 +8,10 @@ co by poszło; zapis wykonuje się tylko przy statusie WRITE.
 Tryb i jego nastawa mocy to JEDNA GRUPA: idą razem albo wcale (zmierzone: standby
 honoruje Xset jako nastawę ładowania, więc tryb na starej mocy albo moc w starym
 trybie ładuje z sieci). Zasady, które trzymają grupę:
-* każdy klucz zapisu profilu musi mieć encję — inaczej sterowania nie ma wcale;
+* bez encji trybu sterowania nie ma wcale; inna nastawa bez encji (`ents.mapped` jej
+  nie ma — brak mapowania albo encja niedostępna) jest nieobsługiwana: wypada z planu
+  po strażnikach, jak nastawa odrzucona przez falownik; plan z mocą bez encji mocy
+  nie idzie (tryb na starej mocy to inna komenda);
 * zmieniony parametr, który w tym cyklu nie pójdzie (interwał I-6, jednostka encji
   się zmieniła), wstrzymuje zmianę trybu, a z nią moc;
 * zmiana trybu wstrzymana (I-6, I-8) wstrzymuje moc — chyba że falownik już ma tryb
@@ -40,7 +43,7 @@ from ..guard_state import DirectionLimiter, WriteThrottle
 from ..guards import GuardContext, GuardResult, apply_guards, temperature_ok
 from ..slot import Schedule, effective_action
 from ..write_sequence import WriteReport
-from .caps import missing_write_keys
+from .caps import missing_write_keys, required_missing
 from ..params import Params
 from .entity_fit import control_writes, fit_params
 from .group_writes import order_group, power_first
@@ -227,7 +230,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     if profile.control_model != "mode_setpoint":
         return CycleDecision(IDLE, "tou_preview_only")
     missing = missing_write_keys(profile, ents.mapped)
-    if missing:
+    if required_missing(profile, ents.mapped):
         return CycleDecision(IDLE, "missing_entities", unmapped=missing)
     if schedule is None:
         return CycleDecision(IDLE, "no_plan")
@@ -258,7 +261,12 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     if not guard.write_allowed:
         return CycleDecision(BLOCKED, f"guard:{guard.invariant}", **common)
 
-    params, adjusted, unfit = fit_params(guard.params, profile, ents.domain, ents.mapped,
+    # Nastawy bez encji wypadają PO strażnikach (ci mogli je dopisać: I-1, I-4).
+    without = tuple(k for k in missing if getattr(guard.params, k, None) is not None)
+    if "power_w" in without:
+        return CycleDecision(BLOCKED, "power_unsupported", dropped_unsupported=("power_w",), **common)
+    planned = replace(guard.params, **{k: None for k in without})
+    params, adjusted, unfit = fit_params(planned, profile, ents.domain, ents.mapped,
                                          ents.units, ents.attrs)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
@@ -341,7 +349,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         status, reason or "ok", writes=writes, flat=flat,
         direction=direction if any(w.key == "mode" for w in writes) else None,
         adjusted=adjusted, unmapped=tuple(dict.fromkeys([*held_by, *unmapped])),
-        dropped_unsupported=tuple(sorted(memory.unsupported & set(flat))), notes=tuple(notes),
+        dropped_unsupported=tuple(sorted({*(memory.unsupported & set(flat)), *without})),
+        notes=tuple(notes),
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
                            if "mode" in restore_flat else None), **common)

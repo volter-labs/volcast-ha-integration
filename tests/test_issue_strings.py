@@ -27,7 +27,8 @@ def _issue_keys_in_code() -> set[str]:
 
 
 def test_code_uses_the_known_issue_keys():
-    assert _issue_keys_in_code() >= {"production_tracking_available", "foreign_control", "control_error"}
+    assert _issue_keys_in_code() >= {"production_tracking_available", "foreign_control", "control_error",
+                                    "unsupported_setting"}
 
 
 @pytest.mark.parametrize("path", [COMPONENT / "strings.json", COMPONENT / "translations" / "en.json"])
@@ -37,3 +38,4 @@ def test_every_issue_key_has_title_and_description(path):
         assert issues.get(key, {}).get("title") and issues[key].get("description"), key
     # Tekst Napraw podaje encję, którą zmieniono (parametr przekazywany przez wykonawcę).
     assert "{entity_id}" in issues["foreign_control"]["description"]
+    assert "{entities}" in issues["unsupported_setting"]["description"]

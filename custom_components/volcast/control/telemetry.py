@@ -165,6 +165,11 @@ class TelemetrySender:
             return None
         return {"market": market, "currency": currency, "intervals": intervals}, fp
 
+    def _supported_keys(self) -> list[str]:
+        """Klucze z encją bez nastaw, które wykonawca uznał za nieobsługiwane (niedostępne)."""
+        unsupported = set(getattr(self._executor, "unsupported_settings", None) or ())
+        return [k for k in self._profile_map if k not in unsupported]
+
     def _extra(self) -> dict:
         try:
             summary = self._executor.exec_summary()
@@ -202,7 +207,7 @@ class TelemetrySender:
         reading = build_reading(
             now_utc=now, profile_readings=prof, manual=manual,
             driver=driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
-                                mapped_keys=self._profile_map.keys(),
+                                mapped_keys=self._supported_keys(),
                                 local_switch=bool(getattr(self._executor, "local_switch", False)),
                                 limits=self._limits),
             extra=self._extra(), prices=priced[0] if priced else None)

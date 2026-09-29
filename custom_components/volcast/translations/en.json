@@ -180,6 +180,10 @@
       "title": "Volcast inverter control paused",
       "description": "An inverter setting controlled by Volcast ({entity_id}) was changed outside Volcast. Volcast paused control for 30 minutes and keeps the settings you changed. Control resumes automatically afterwards; to stop it, turn off the Volcast control switch."
     },
+    "unsupported_setting": {
+      "title": "Some inverter settings are not available to Volcast",
+      "description": "Volcast cannot use these inverter settings because their entities are missing, disabled or unavailable: {entities}. Control continues without them and the Volcast plan no longer relies on them. When the entities become available again, Volcast uses them automatically."
+    },
     "control_error": {
       "title": "Volcast cannot control the inverter",
       "description": "Volcast inverter control stopped working (repeated write errors or saved control state that could not be read). The inverter may still use the last settings Volcast applied. Check the inverter settings and the Home Assistant logs."

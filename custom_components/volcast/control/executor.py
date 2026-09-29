@@ -16,6 +16,13 @@ Zasady wykonania:
   w toku — nawet gdy `async_stop` starego już się poddał;
 * przed pierwszym zapisem migawka nastaw do trybu bazowego musi być pełna i zapisana —
   inaczej żadnego zapisu (klucza bez migawki nigdy byśmy nie przywrócili);
+* nastawa bez używalnej encji (brak mapowania, brak stanu, `unavailable`/`unknown`) jest
+  w tym cyklu nieobsługiwana: wypada z odczytów cyklu, zapisów i wymogów migawki — reszta
+  sterowania działa dalej (bez encji trybu nie ma sterowania wcale). Gdy trwa to
+  `_UNSUPPORTED_AFTER_S` (brak mapowania — od razu), trafia do `unsupported_settings`
+  (możliwości dla chmury) i do zgłoszenia w Naprawach. Encja, która wraca, znów jest
+  obsługiwana w najbliższym cyklu; przy trwającej własności jej wartość dochodzi do
+  migawki, zanim ją zapiszemy;
 * powrót do trybu bazowego: najpierw sam tryb bazowy (neutralny, nie potrzebuje
   warunków — hamulec właściciela nie może zależeć od innej encji), potem każda
   pozostała nastawa z migawki niezależnie; własność zostaje, dopóki wszystko nie dojdzie,
@@ -83,6 +90,9 @@ _NO_READING = ("unavailable", "unknown", "")
 _MAX_RERUNS = 2
 # Ile ostatnich obcych zmian trzymamy w atrybutach (lokalnie).
 _FOREIGN_KEEP = 20
+# Nastawa niedostępna dłużej niż tyle jest nieobsługiwana (Naprawy, możliwości dla chmury);
+# krótsze braki (restart integracji falownika) tylko pomijamy w cyklu.
+_UNSUPPORTED_AFTER_S = 600.0
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
@@ -145,6 +155,9 @@ class VolcastExecutor:
         self._foreign_issue_open = False
         self._foreign_episode = False                 # tryb spoza profilu na falowniku
         self._restore_failed: tuple[str, ...] | None = None   # ostatnio zalogowane (bez powtórek co tik)
+        self._absent_since: dict[str, float] = {}     # klucz zapisu → od kiedy bez używalnej encji
+        self.unsupported_settings: tuple[str, ...] = ()       # nieobsługiwane (w kolejności profilu)
+        self._unsupported_issue: tuple[str, ...] = ()
         self._disabled = False
         self._unsub: list[Callable[[], None]] = []
 
@@ -229,6 +242,7 @@ class VolcastExecutor:
             self._hass, self._async_timer, timedelta(seconds=EXECUTOR_INTERVAL_S)))
         # Pauza nie przeżywa restartu — zgłoszenie z poprzedniego przebiegu jest nieaktualne.
         ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
+        ir.async_delete_issue(self._hass, DOMAIN, self._unsupported_issue_id)
         watched = [self._mapped[k] for k in self._write_keys() if k in self._mapped]
         if watched:
             self._unsub.append(async_track_state_change_event(self._hass, watched,
@@ -244,6 +258,8 @@ class VolcastExecutor:
         self._foreign_issue_open = False
         ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
         ir.async_delete_issue(self._hass, DOMAIN, f"control_error_{self._entry.entry_id}")
+        ir.async_delete_issue(self._hass, DOMAIN, self._unsupported_issue_id)
+        self._unsupported_issue = ()
         if not self._lock.locked():
             return
         try:
@@ -266,6 +282,10 @@ class VolcastExecutor:
     @property
     def _foreign_issue_id(self) -> str:
         return f"foreign_control_{self._entry.entry_id}"
+
+    @property
+    def _unsupported_issue_id(self) -> str:
+        return f"unsupported_setting_{self._entry.entry_id}"
 
     def _write_keys(self) -> tuple[str, ...]:
         if self._profile is None:
@@ -512,6 +532,9 @@ class VolcastExecutor:
             self.last_decision = CycleDecision("idle", "no_profile")
             return
         rd = self._read(now_utc)
+        absent = self._absent_keys()
+        self._track_unsupported(absent, now_mono)
+        live_map = {k: v for k, v in self._mapped.items() if k not in absent}
         self._update_foreign_episode(rd)
         gates = Gates(consent=self._state.consent, local_switch=self._state.local_switch,
                       control_mode=self._entry.options.get(OPT_CONTROL_MODE),
@@ -523,6 +546,8 @@ class VolcastExecutor:
             await self._restore(rd)
             return
         readings = rd.readings
+        if self._state.owned and self._extend_snapshot(readings):
+            await self._async_save("baseline snapshot")
         soc = readings.get("soc")
         soc = soc if isinstance(soc, float) else None
         temp = readings.get("battery_temp_c")
@@ -533,7 +558,7 @@ class VolcastExecutor:
                            battery_temp_c=temp if isinstance(temp, float) else None,
                            previous_soc=prev_soc, previous_soc_gap_s=gap),
             limits=Limits(rated_power_w=float(self._rated or 0.0)),
-            ents=EntityContext(domain=self._domain or "", mapped=self._mapped, units=rd.units,
+            ents=EntityContext(domain=self._domain or "", mapped=live_map, units=rd.units,
                                attrs=rd.attrs, readings=rd.for_cycle()),
             gates=gates, memory=self._memory)
         if soc is not None:
@@ -544,7 +569,7 @@ class VolcastExecutor:
         if decision.status == WRITE and self.paused:
             decision = replace(decision, status=BLOCKED, reason="paused")
         if decision.status == WRITE and not self._state.owned:
-            decision = await self._async_take_ownership(decision, readings)
+            decision = await self._async_take_ownership(decision, readings, live_map)
             if decision.status == WRITE and not self._gates_open():
                 # Zgoda, przełącznik, pauza albo zatrzymanie zmieniły się w trakcie zapisu migawki.
                 decision = replace(decision, status=BLOCKED, reason="gates_changed")
@@ -559,11 +584,14 @@ class VolcastExecutor:
         self.last_decision = decision
         self._count(decision)
 
-    async def _async_take_ownership(self, decision: CycleDecision,
-                                    readings: Mapping[str, float | str]) -> CycleDecision:
-        """Migawka nastaw PRZED pierwszym zapisem; niepełna albo niezapisana = żadnego zapisu."""
+    async def _async_take_ownership(self, decision: CycleDecision, readings: Mapping[str, float | str],
+                                    live_map: Mapping[str, str]) -> CycleDecision:
+        """Migawka nastaw PRZED pierwszym zapisem; niepełna albo niezapisana = żadnego zapisu.
+
+        Pełna = każda nastawa z używalną encją (nieobsługiwanej i tak nie zapiszemy).
+        """
         snapshot = take_snapshot(readings)
-        missing = snapshot_missing(snapshot, self._mapped)
+        missing = snapshot_missing(snapshot, live_map)
         if missing:
             return replace(decision, status=BLOCKED, reason="baseline_unknown", unmapped=missing)
         self._state.snapshot = snapshot
@@ -580,6 +608,55 @@ class VolcastExecutor:
             self._state.taken_over = []
             return replace(decision, status=ERROR, reason="store_failed")
         return decision
+
+    def _extend_snapshot(self, readings: Mapping[str, float | str]) -> bool:
+        """Nastawa, która wróciła w trakcie własności: jej wartość sprzed naszego zapisu do migawki.
+
+        Tylko klucze, których w tej własności jeszcze nie zapisaliśmy; True, gdy migawka urosła.
+        """
+        ours = set(self._state.restore_keys or ()) | set(self._memory.last_written)
+        new = {k: v for k, v in take_snapshot(readings).items()
+               if k not in self._state.snapshot and k not in ours}
+        self._state.snapshot.update(new)
+        return bool(new)
+
+    def _absent_keys(self) -> tuple[str, ...]:
+        """Klucze zapisu bez używalnej encji: brak mapowania, brak stanu albo stan nieczytelny."""
+        out = []
+        for key in self._write_keys():
+            eid = self._mapped.get(key)
+            st = self._hass.states.get(eid) if eid else None
+            if st is None or st.state in _NO_READING:
+                out.append(key)
+        return tuple(out)
+
+    def _track_unsupported(self, absent: tuple[str, ...], now_mono: float) -> None:
+        """Nieobsługiwane nastawy: brak mapowania od razu, niedostępna encja po czasie.
+
+        Zmiana zbioru aktualizuje zgłoszenie w Naprawach (tylko w trybie encji); w logu same
+        klucze, `entity_id` tylko w parametrze tekstu Napraw.
+        """
+        for key in list(self._absent_since):
+            if key not in absent:
+                del self._absent_since[key]
+        for key in absent:
+            self._absent_since.setdefault(key, now_mono)
+        self.unsupported_settings = tuple(
+            k for k in absent
+            if k not in self._mapped or now_mono - self._absent_since[k] >= _UNSUPPORTED_AFTER_S)
+        shown = self.unsupported_settings \
+            if self._entry.options.get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES else ()
+        if shown == self._unsupported_issue:
+            return
+        self._unsupported_issue = shown
+        if shown:
+            _LOGGER.warning("Volcast control: inverter settings without a usable entity are left out "
+                            "of control: %s", list(shown))
+            self._create_issue(self._unsupported_issue_id, "unsupported_setting",
+                               {"entities": ", ".join(self._mapped.get(k) or k for k in shown)})
+        else:
+            _LOGGER.info("Volcast control: all inverter settings are available again")
+            ir.async_delete_issue(self._hass, DOMAIN, self._unsupported_issue_id)
 
     def _gates_open(self) -> bool:
         return (self._state.consent is True and self._state.local_switch and not self._stopped
