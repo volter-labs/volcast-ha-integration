@@ -604,9 +604,14 @@ class VolcastExecutor:
             await self._restore(rd)
             return
         readings = rd.readings
-        if self._follow_owner_snapshot(live, readings) \
-                or (self._state.owned and self._extend_snapshot(readings)):
-            await self._async_save("baseline snapshot")
+        followed = self._follow_owner_snapshot(live, readings)
+        extended = self._extend_snapshot(readings) if self._state.owned else ()
+        snapshot_unsaved = False
+        if (followed or extended) and not await self._async_save("baseline snapshot") and extended:
+            # Bez trwałej wartości sprzed zapisu restart by jej nie przywrócił — w tym cyklu nic.
+            for key in extended:
+                self._state.snapshot.pop(key, None)
+            snapshot_unsaved = True
         soc = readings.get("soc")
         soc = soc if isinstance(soc, float) else None
         temp = readings.get("battery_temp_c")
@@ -637,6 +642,8 @@ class VolcastExecutor:
                             "neutral despite the pause")
         elif decision.status == WRITE and self.paused:
             decision = replace(decision, status=BLOCKED, reason="paused")
+        if decision.status == WRITE and snapshot_unsaved:
+            decision = replace(decision, status=ERROR, reason="store_failed")
         if decision.status == WRITE and not self._state.owned:
             decision = await self._async_take_ownership(decision, readings, live_map)
             if decision.status == WRITE and not self._gates_open():
@@ -731,16 +738,16 @@ class VolcastExecutor:
         self._state.snapshot, self._state.owner = snapshot, owner
         return True
 
-    def _extend_snapshot(self, readings: Mapping[str, float | str]) -> bool:
+    def _extend_snapshot(self, readings: Mapping[str, float | str]) -> tuple[str, ...]:
         """Nastawa, która wróciła w trakcie własności: jej wartość sprzed naszego zapisu do migawki.
 
-        Tylko klucze, których w tej własności jeszcze nie zapisaliśmy; True, gdy migawka urosła.
+        Tylko klucze, których w tej własności jeszcze nie zapisaliśmy; zwraca dodane klucze.
         """
         ours = set(self._state.restore_keys or ()) | set(self._memory.last_written)
         new = {k: v for k, v in take_snapshot(readings).items()
                if k not in self._state.snapshot and k not in ours}
         self._state.snapshot.update(new)
-        return bool(new)
+        return tuple(new)
 
     def _absent_keys(self) -> tuple[str, ...]:
         """Klucze zapisu bez używalnej encji: brak mapowania, brak stanu albo stan nieczytelny."""

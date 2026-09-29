@@ -1260,3 +1260,39 @@ def test_key_back_then_gone_again_needs_a_new_report(monkeypatch):
     asyncio.run(ready(ex, raw=_sell_with_floor()))
     asyncio.run(ex.async_tick())
     assert ex.last_decision.reason == "setting_unavailable"
+
+
+def _charge_to(target=90, power=2000, sid="c1"):
+    return plan(sid=sid, slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+                                 "charge_source": "grid", "power_w": power, "soc_target": target,
+                                 "price_pln_kwh": 0.3}])
+
+
+def test_returning_setting_is_not_written_when_its_snapshot_cannot_be_saved(monkeypatch):
+    h = goodwe_hass(soc_max="95")
+    h.states.set(E["soc_max"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_charge_to())
+        await ex.async_tick()                                   # bez sufitu: tryb i moc
+        assert ex._state.owned and "soc_max" not in ex._state.snapshot
+        h.states.set(E["soc_max"], "95")
+        real = ex._store.async_save
+
+        async def broken(_state):
+            raise OSError("disk")
+        ex._store.async_save = broken
+        ex._clock.t += 120
+        await ex.async_tick()
+        held = (ex.last_decision.status, "soc_max" in ex._state.snapshot, h.states.get(E["soc_max"]).state)
+        ex._store.async_save = real
+        ex._clock.t += 120
+        await ex.async_tick()
+        return held
+    held = asyncio.run(go())
+    assert held == ("error", False, "95")                       # migawka niezapisana = sufit nie idzie
+    assert ex._state.snapshot["soc_max"] == 95.0
+    assert float(h.states.get(E["soc_max"]).state) == 90.0
+    saved = asyncio.run(ex._store.async_load())
+    assert saved.snapshot["soc_max"] == 95.0
