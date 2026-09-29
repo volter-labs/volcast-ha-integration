@@ -653,7 +653,7 @@ def test_foreign_control_issue_is_fixable_for_its_entry(monkeypatch):
 def test_resume_now_ends_pause_and_applies_plan_without_reload(monkeypatch):
     ir.async_delete_issue.reset_mock()
     h, ex = _paused(monkeypatch)
-    assert asyncio.run(ex.async_resume_control()) is True
+    assert asyncio.run(ex.async_resume_control()) == "resumed"
     assert not ex.paused and ex.exec_summary()["paused_for_s"] == 0
     assert ISSUE in [c.args[2] for c in ir.async_delete_issue.call_args_list]
     assert h.states.get(E["mode"]).state == "sell_power"         # cykl od razu, bez przeładowania
@@ -663,11 +663,32 @@ def test_resume_now_ends_pause_and_applies_plan_without_reload(monkeypatch):
 def test_resume_without_pause_changes_nothing(monkeypatch):
     h, ex = _written(monkeypatch)
     n = len(h.services.calls)
-    assert asyncio.run(ex.async_resume_control()) is False
+    assert asyncio.run(ex.async_resume_control()) == "not_paused"
     assert len(h.services.calls) == n
 
 
 def test_resume_after_stop_does_nothing(monkeypatch):
     h, ex = _paused(monkeypatch)
     asyncio.run(ex.async_stop())
-    assert asyncio.run(ex.async_resume_control()) is False
+    assert asyncio.run(ex.async_resume_control()) == "unavailable"
+
+
+def test_resume_during_foreign_mode_episode_keeps_pause_and_issue(monkeypatch):
+    h, ex = _written(monkeypatch)
+    h.states.set(E["mode"], "export_ac")                         # tryb spoza profilu
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "export_ac", Context(user_id="u1"))))
+    ir.async_delete_issue.reset_mock()
+    assert asyncio.run(ex.async_resume_control()) == "foreign_mode"
+    assert ex.paused
+    assert ISSUE not in [c.args[2] for c in ir.async_delete_issue.call_args_list]
+
+
+def test_resume_after_pause_expired_resets_issue_so_next_takeover_raises_again(monkeypatch):
+    # Naprawa kasuje zgłoszenie w HA — wykonawca nie może myśleć, że wciąż jest otwarte.
+    h, ex = _paused(monkeypatch)
+    ex._clock.t += 1801
+    assert asyncio.run(ex.async_resume_control()) == "not_paused"
+    ir.async_create_issue.reset_mock()
+    h.states.set(E["power_w"], "700")
+    asyncio.run(ex.async_on_state_event(event(E["power_w"], "700", Context(user_id="u1"), "W")))
+    assert ex.paused and len(_created()) == 1

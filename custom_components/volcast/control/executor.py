@@ -479,21 +479,29 @@ class VolcastExecutor:
         await self._async_save("local switch")
         self._notify()
 
-    async def async_resume_control(self) -> bool:
-        """„Wznów teraz": koniec pauzy przejęcia bez przeładowania wpisu; True, gdy była pauza.
+    async def async_resume_control(self) -> str:
+        """„Wznów teraz": koniec pauzy przejęcia bez przeładowania wpisu.
 
         Zaraz potem cykl — plan wraca od razu (przeładowanie przywracałoby nastawy i pisało
-        plan od nowa: zbędne zapisy NVM). Tryb spoza profilu nadal wstrzymuje zapisy
-        (nie nadpisujemy cudzego trybu), a zgłoszenie znika dopiero z końcem epizodu.
+        plan od nowa: zbędne zapisy NVM). Wynik: "resumed"; "not_paused" (pauza już minęła —
+        zgłoszenie i tak zamykamy, bo naprawa w HA je kasuje); "foreign_mode" (falownik
+        wciąż w trybie spoza profilu — zapisy i tak stoją, nic nie zmieniamy, zgłoszenie
+        zostaje); "unavailable" (wykonawca zatrzymany albo bez profilu).
         """
-        if self._memory is None or self._stopped or self._disabled or not self.paused:
-            return False
+        if self._memory is None or self._stopped or self._disabled:
+            return "unavailable"
+        if self._foreign_episode:
+            return "foreign_mode"
+        was_paused = self.paused
         self._memory.paused_until = None
+        self._foreign_issue_open = False
+        ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
+        if not was_paused:
+            return "not_paused"
         _LOGGER.warning("Volcast control: resumed by the owner before the end of the pause")
-        self._close_foreign_issue()
         self._notify()
         await self.async_tick()
-        return True
+        return "resumed"
 
     async def async_restore_now(self) -> None:
         """Usuwanie wpisu: przywróć tryb bazowy, jeśli to my zmienialiśmy nastawy."""

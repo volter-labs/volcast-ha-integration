@@ -185,6 +185,9 @@
             "title": "Resume Volcast control now",
             "description": "Volcast ends the pause and applies its plan to the inverter right away, overwriting the settings changed outside Volcast ({entity_id})."
           }
+        },
+        "abort": {
+          "foreign_mode": "The inverter is still in a mode Volcast does not use, so control cannot resume yet. Switch the inverter back to one of the modes Volcast uses, then try again."
         }
       }
     },

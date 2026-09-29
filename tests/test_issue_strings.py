@@ -42,3 +42,4 @@ def test_every_issue_key_has_title_and_description(path):
     # Zgłoszenie pauzy przejęcia da się naprawić („Wznów sterowanie teraz").
     confirm = issues["foreign_control"]["fix_flow"]["step"]["confirm"]
     assert confirm["title"] and confirm["description"]
+    assert issues["foreign_control"]["fix_flow"]["abort"]["foreign_mode"]

@@ -2,7 +2,9 @@
 
 Potwierdzenie kończy pauzę bez przeładowania wpisu (przeładowanie przywracałoby nastawy
 i pisało plan od nowa — zbędne zapisy NVM); najbliższy cykl od razu wykonuje plan.
-Wpis już rozładowany nie ma czego wznawiać — naprawa tylko zamyka zgłoszenie.
+Wpis już rozładowany nie ma czego wznawiać — naprawa tylko zamyka zgłoszenie. Falownik
+wciąż w trybie spoza profilu: zapisy i tak stoją, więc naprawa się przerywa (zgłoszenie
+zostaje) i mówi to właścicielowi.
 """
 from __future__ import annotations
 
@@ -19,7 +21,9 @@ class ResumeControlFlow(ConfirmRepairFlow):
 
     async def async_step_confirm(self, user_input: dict[str, str] | None = None):
         if user_input is not None:
-            await async_resume_control(self.hass, self._entry_id)
+            results = await async_resume_control(self.hass, self._entry_id) or []
+            if "foreign_mode" in results:
+                return self.async_abort(reason="foreign_mode")
         return await super().async_step_confirm(user_input)
 
 
