@@ -99,6 +99,24 @@ async def async_restore_if_control_changed(runtime, old: Mapping, new: Mapping) 
     return not getattr(executor, "owned", False)
 
 
+async def async_resume_control(hass, entry_id: str | None = None) -> int | None:
+    """„Wznów teraz" dla wpisu (albo wszystkich): liczba wznowionych; None = brak sterowania.
+
+    Wspólne dla naprawy w zgłoszeniu i serwisu `volcast.resume_control`.
+    """
+    entries = hass.data.get(DOMAIN, {})
+    ids = [entry_id] if entry_id is not None else list(entries)
+    runtimes = [rt for i in ids if isinstance(entries.get(i), dict)
+                and (rt := entries[i].get("control")) is not None]
+    if not runtimes:
+        return None
+    resumed = 0
+    for rt in runtimes:
+        if await rt.executor.async_resume_control():
+            resumed += 1
+    return resumed
+
+
 def _entry_lock(hass, entry_id: str) -> asyncio.Lock:
     locks = hass.data.setdefault(_LOCKS_KEY, {})
     lock = locks.get(entry_id)

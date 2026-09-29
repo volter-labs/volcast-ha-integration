@@ -39,3 +39,6 @@ def test_every_issue_key_has_title_and_description(path):
     # Tekst Napraw podaje encję, którą zmieniono (parametr przekazywany przez wykonawcę).
     assert "{entity_id}" in issues["foreign_control"]["description"]
     assert "{entities}" in issues["unsupported_setting"]["description"]
+    # Zgłoszenie pauzy przejęcia da się naprawić („Wznów sterowanie teraz").
+    confirm = issues["foreign_control"]["fix_flow"]["step"]["confirm"]
+    assert confirm["title"] and confirm["description"]

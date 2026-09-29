@@ -591,3 +591,44 @@ def test_owner_change_after_control_switched_off_is_not_a_takeover(monkeypatch):
     asyncio.run(ex.async_tick())                                 # powrót do trybu bazowego
     asyncio.run(ex.async_on_state_event(event(E["soc_min"], "50", Context(user_id="u1"), "%")))
     assert not ex.paused and ex.foreign_changes == []
+
+
+# ── „Wznów teraz" po pauzie przejęcia ──────────────────────────────────────
+
+
+def _paused(monkeypatch):
+    h, ex = _written(monkeypatch)
+    h.states.set(E["mode"], "auto")                              # właściciel przełączył tryb
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "auto", Context(user_id="u1"))))
+    assert ex.paused
+    return h, ex
+
+
+def test_foreign_control_issue_is_fixable_for_its_entry(monkeypatch):
+    ir.async_create_issue.reset_mock()
+    _paused(monkeypatch)
+    (call,) = _created()
+    assert call.kwargs["is_fixable"] is True and call.kwargs["data"] == {"entry_id": "e1"}
+
+
+def test_resume_now_ends_pause_and_applies_plan_without_reload(monkeypatch):
+    ir.async_delete_issue.reset_mock()
+    h, ex = _paused(monkeypatch)
+    assert asyncio.run(ex.async_resume_control()) is True
+    assert not ex.paused and ex.exec_summary()["paused_for_s"] == 0
+    assert ISSUE in [c.args[2] for c in ir.async_delete_issue.call_args_list]
+    assert h.states.get(E["mode"]).state == "sell_power"         # cykl od razu, bez przeładowania
+    assert ex.last_decision.status == "write"
+
+
+def test_resume_without_pause_changes_nothing(monkeypatch):
+    h, ex = _written(monkeypatch)
+    n = len(h.services.calls)
+    assert asyncio.run(ex.async_resume_control()) is False
+    assert len(h.services.calls) == n
+
+
+def test_resume_after_stop_does_nothing(monkeypatch):
+    h, ex = _paused(monkeypatch)
+    asyncio.run(ex.async_stop())
+    assert asyncio.run(ex.async_resume_control()) is False

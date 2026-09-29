@@ -60,6 +60,8 @@ pauza 30 min (bez zapisów planu), klucz wypada z `restore_keys`, wpis w `foreig
 w logu sam klucz. Sygnał poziomu działa raz na epizod i tylko przy otwartym sterowaniu
 (nie w próbie na sucho); epizod kończy odczyt trybu z profilu. Zgłoszenie znika po
 pauzie, gdy epizod się skończył. Pauza nie przeżywa restartu (zegar monotoniczny).
+Zgłoszenie da się naprawić („Wznów sterowanie teraz", `async_resume_control`, też serwis
+`volcast.resume_control`): koniec pauzy bez przeładowania wpisu i od razu cykl z planem.
 """
 from __future__ import annotations
 
@@ -377,7 +379,8 @@ class VolcastExecutor:
         if not self._foreign_issue_open:
             self._foreign_issue_open = True
             # Parametr tekstu Napraw zostaje lokalnie w UI — to nie jest log.
-            self._create_issue(self._foreign_issue_id, "foreign_control", {"entity_id": eid or ""})
+            self._create_issue(self._foreign_issue_id, "foreign_control", {"entity_id": eid or ""},
+                               fixable=True, data={"entry_id": self._entry.entry_id})
         self._notify()
 
     def _take_over_key(self, key: str) -> None:
@@ -454,6 +457,22 @@ class VolcastExecutor:
         self._state.local_switch = bool(on)
         await self._async_save("local switch")
         self._notify()
+
+    async def async_resume_control(self) -> bool:
+        """„Wznów teraz": koniec pauzy przejęcia bez przeładowania wpisu; True, gdy była pauza.
+
+        Zaraz potem cykl — plan wraca od razu (przeładowanie przywracałoby nastawy i pisało
+        plan od nowa: zbędne zapisy NVM). Tryb spoza profilu nadal wstrzymuje zapisy
+        (nie nadpisujemy cudzego trybu), a zgłoszenie znika dopiero z końcem epizodu.
+        """
+        if self._memory is None or self._stopped or self._disabled or not self.paused:
+            return False
+        self._memory.paused_until = None
+        _LOGGER.warning("Volcast control: resumed by the owner before the end of the pause")
+        self._close_foreign_issue()
+        self._notify()
+        await self.async_tick()
+        return True
 
     async def async_restore_now(self) -> None:
         """Usuwanie wpisu: przywróć tryb bazowy, jeśli to my zmienialiśmy nastawy."""
@@ -848,9 +867,12 @@ class VolcastExecutor:
             self._errors = 0
 
     def _create_issue(self, issue_id: str, translation_key: str,
-                      placeholders: dict[str, str] | None = None) -> None:
+                      placeholders: dict[str, str] | None = None, *, fixable: bool = False,
+                      data: dict[str, str] | None = None) -> None:
         kwargs = {"translation_placeholders": placeholders} if placeholders else {}
-        ir.async_create_issue(self._hass, DOMAIN, issue_id, is_fixable=False, severity=_WARNING,
+        if data:
+            kwargs["data"] = data
+        ir.async_create_issue(self._hass, DOMAIN, issue_id, is_fixable=fixable, severity=_WARNING,
                               translation_key=translation_key, **kwargs)
 
     def _log_write_exception(self, key: str, err: BaseException) -> None:
