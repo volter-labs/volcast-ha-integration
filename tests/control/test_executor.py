@@ -1336,3 +1336,109 @@ def test_unsupported_issue_only_while_control_is_on(monkeypatch):
         return off
     off = asyncio.run(go())
     assert off == [] and len(_unsupported_issues()) == 1
+
+
+# ── hamulec: zablokowany cykl przy naszym trybie wymuszonym → tryb neutralny ──
+
+
+def _stale_soc(h):
+    h.states.set(E["soc"], "60", {"unit_of_measurement": "%"}, reported=NOW - timedelta(hours=1))
+
+
+def test_blocked_cycle_during_our_sell_writes_neutral_mode_alone(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        n = len(h.services.calls)
+        _stale_soc(h)                                   # I-9: plan nie do wykonania
+        ex._clock.t += 120
+        await ex.async_tick()
+        return h.services.calls[n:]
+    braked = asyncio.run(go())
+    assert [(c[0], c[1], c[2].get("option")) for c in braked] == [("select", "select_option", "auto")]
+    assert h.states.get(E["mode"]).state == "auto"
+    assert ex.last_decision.status == "blocked" and "neutral_brake" in ex.last_decision.notes
+    assert ex._state.owned is True                      # to nie powrót — sterowanie trwa
+
+
+def test_blocked_cycle_during_our_grid_charge_writes_neutral_mode(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+    raw = plan(slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+                       "charge_source": "grid", "power_w": 3000, "price_pln_kwh": 0.3}])
+
+    async def go():
+        await ready(ex, raw=raw)
+        await ex.async_tick()
+        assert h.states.get(E["mode"]).state == "charge_battery"
+        h.states.set(E["battery_temp_c"], "unavailable")    # temperatura nieznana: cykl stoi
+        ex._clock.t += 120
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto"
+    assert ex.last_decision.reason == "temperature_unknown"
+
+
+def test_neutral_brake_respects_write_interval(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        _stale_soc(h)
+        ex._clock.t += 10
+        await ex.async_tick()
+        early = h.states.get(E["mode"]).state
+        ex._clock.t += 60
+        await ex.async_tick()
+        return early
+    assert asyncio.run(go()) == "sell_power"
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_no_brake_on_a_mode_we_did_not_write(monkeypatch):
+    h = goodwe_hass(mode="sell_power")                  # tryb właściciela, nic nie zapisaliśmy
+    _stale_soc(h)
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.services.calls == [] and h.states.get(E["mode"]).state == "sell_power"
+
+
+def test_brake_after_restart_uses_persisted_ownership(monkeypatch):
+    h = goodwe_hass(mode="charge_battery", power="3000")
+    _stale_soc(h)
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True, snapshot={"mode": "auto", "soc_min": 15.0},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": E["mode"]},
+        restore_keys=["mode", "power_w"])))
+    h, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        raw = plan()
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_no_brake_in_dry_run_of_an_unverified_profile(monkeypatch):
+    # Profil w wersji próbnej: żadnych zapisów, także hamulca.
+    h = goodwe_hass(mode="sell_power")
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True, snapshot={"mode": "auto"},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": E["mode"]}, restore_keys=["mode"])))
+    h, ex = make(h, store=store, monkeypatch=monkeypatch, verified=False)
+
+    async def go():
+        await ex.async_start()
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.services.calls == [] and ex.last_decision.status in ("dry_run", "idle")

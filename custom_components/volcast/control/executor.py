@@ -36,6 +36,9 @@ Zasady wykonania:
   trybu = tryb wraca do bazowego, chyba że właściciel przejął tryb już PO naszym zapisie
   albo falownik pokazuje opcję spoza profilu. Powrót rusza od razu po cofnięciu zgody
   albo wyłączeniu przełącznika, także w pauzie;
+* planu nie da się bezpiecznie wykonać = stan neutralny, nigdy „zamrożenie": cykl bez
+  zapisu (blokada, błąd, brak planu) przy NASZYM trybie innym niż neutralny zapisuje sam
+  tryb neutralny (`_async_neutral_brake`) — poza pauzą i obcym trybem;
 * własność i migawka są związane z profilem i encją trybu (`owner`); migawki innego
   falownika albo mapowania nie wpisujemy w nowe encje;
 * zatrzymany wykonawca nie zaczyna zapisów i nie nadpisuje magazynu (poza powrotem do
@@ -96,6 +99,7 @@ from ..core.control.readings import RawState, normalize_readings
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.control.takeover import FOREIGN_PAUSE_S, is_foreign_change
 from ..core.engines.time_window import compress
+from ..core.params import Params
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from .store import ControlState, ControlStore
 
@@ -110,6 +114,9 @@ _FOREIGN_KEEP = 20
 # Nastawa niedostępna dłużej niż tyle jest nieobsługiwana (Naprawy, możliwości dla chmury);
 # krótsze braki (restart integracji falownika) tylko pomijamy w cyklu.
 _UNSUPPORTED_AFTER_S = 600.0
+# Cykl bez zapisu z tych powodów nie hamuje do trybu neutralnego: pauza i obcy tryb to wybór
+# właściciela, a „nic do zapisu" to plan już wykonany.
+_BRAKE_EXEMPT = ("paused", "foreign_mode", "nothing_to_write")
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
@@ -667,6 +674,9 @@ class VolcastExecutor:
             self._log_report(decision, report)
             if self._note_written([*report.written, *report.ambiguous, *report.restored]):
                 await self._async_save("control state")
+        else:
+            if live:
+                decision = await self._async_neutral_brake(decision, rd, live_map, now_mono) or decision
         self.last_decision = decision
         self._count(decision)
 
@@ -696,6 +706,43 @@ class VolcastExecutor:
             self._state.taken_over = []
             return replace(decision, status=ERROR, reason="store_failed")
         return decision
+
+    async def _async_neutral_brake(self, d: CycleDecision, rd: _Reading, live_map: Mapping[str, str],
+                                   now_mono: float) -> CycleDecision | None:
+        """Planu nie da się bezpiecznie wykonać = stan neutralny, nigdy „zamrożenie".
+
+        Cykl bez zapisu (blokada, błąd, brak planu), a falownik wciąż ma NASZ tryb inny niż
+        neutralny: zapisujemy sam tryb neutralny — jak powrót do trybu bazowego, bez żadnej
+        innej encji. Nie w pauzie (to decyzja właściciela) i nie na trybie przejętym przez
+        właściciela, i tylko przy włączonym sterowaniu (profil w wersji próbnej nie pisze
+        nic); interwał I-6 obowiązuje, a kierunek po zapisie jest nieznany (I-8).
+        Własność zostaje — to nie jest powrót, sterowanie trwa.
+        """
+        if d.reason in _BRAKE_EXEMPT or not self._state.owned or "mode" not in live_map \
+                or "mode" in self._state.taken_over:
+            return None
+        current, neutral = rd.readings.get("mode"), self._profile.neutral_mode
+        if not isinstance(current, str) or current == neutral:
+            return None
+        ours, keys = self._memory.last_written.get("mode"), self._state.restore_keys
+        if current != ours and not (ours is None and (keys is None or "mode" in keys)):
+            return None
+        if not self._memory.throttle.filter({"mode": neutral}, now_mono):
+            return None
+        writes, _ = control_writes(Params(mode=neutral), self._profile, self._domain, live_map,
+                                   keys=["mode"], units=rd.units)
+        if not writes:
+            return None
+        report = await async_run_group_writes(writes, self._writer.async_write,
+                                              on_exception=self._log_write_exception)
+        self._account_restore({"mode": neutral}, [report], now_mono)
+        if "mode" in report.written:
+            self._memory.last_written["mode"] = neutral
+        if self._note_written([*report.written, *report.ambiguous]):
+            await self._async_save("control state")
+        _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
+                        "neutral mode", d.reason)
+        return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
 
     def _reserve_neutral(self, d: CycleDecision, rd: _Reading, gates: Gates) -> CycleDecision | None:
         """W pauzie: sam zapis trybu neutralnego, gdy strażnik rezerwy (I-1) zdjął rozładowanie,
