@@ -1223,7 +1223,8 @@ def _sell_with_floor():
                         "discharge_purpose": "sell", "power_w": 2000, "soc_target": 40, "price_pln_kwh": 0.8}])
 
 
-def test_unavailable_floor_blocks_sell_until_reported_and_replanned(monkeypatch):
+def test_unavailable_floor_degrades_sell_to_neutral_at_once(monkeypatch):
+    # Bez encji progu SoC sprzedaż nie idzie — od razu tryb neutralny, bez czekania na chmurę.
     h = goodwe_hass()
     h.states.set(E["soc_min"], "unavailable")
     h, ex = make(h, monkeypatch=monkeypatch)
@@ -1231,39 +1232,25 @@ def test_unavailable_floor_blocks_sell_until_reported_and_replanned(monkeypatch)
     async def go():
         await ready(ex, raw=_sell_with_floor())
         await ex.async_tick()
-        steps = [(ex.last_decision.reason, ex.unsupported_settings)]
-        ex._clock.t += 601
-        await ex.async_tick()
-        steps.append((ex.last_decision.reason, ex.unsupported_settings))
-        ex.note_plan_fresh()                           # plan sprzed zgłoszenia — nic nie zmienia
-        ex.note_capabilities_sent(("soc_min",))        # telemetria: chmura wie
-        ex._clock.t += 1
-        await ex.async_tick()
-        steps.append((ex.last_decision.reason, ()))
-        ex._clock.t += 1
-        ex.note_plan_fresh()                           # plan pobrany po zgłoszeniu
-        await ex.async_tick()
-        return steps
-    steps = asyncio.run(go())
-    assert steps[0] == ("setting_unavailable", ())
-    assert steps[1] == ("setting_unavailable", ("soc_min",))
-    assert steps[2][0] == "setting_unavailable"
-    assert ex.last_decision.status == "write"
-    assert E["soc_min"] not in [c[2]["entity_id"] for c in h.services.calls]
-    assert h.states.get(E["mode"]).state == "sell_power"
+    asyncio.run(go())
+    assert "degraded" in ex.last_decision.notes
+    assert h.services.calls == [] and h.states.get(E["mode"]).state == "auto"
 
 
-def test_key_back_then_gone_again_needs_a_new_report(monkeypatch):
-    h = goodwe_hass()
-    h.states.set(E["soc_min"], "unavailable")
-    h, ex = make(h, monkeypatch=monkeypatch)
-    ex.note_capabilities_sent(("soc_min",))
-    ex._clock.t += 1
-    ex.note_plan_fresh()
-    ex.note_capabilities_sent(())                      # chmura znów widzi próg
-    asyncio.run(ready(ex, raw=_sell_with_floor()))
-    asyncio.run(ex.async_tick())
-    assert ex.last_decision.reason == "setting_unavailable"
+def test_sell_at_reserve_goes_neutral_without_floor_entity(monkeypatch):
+    # BLOCKING-A: nasza sprzedaż, SoC 5 % przy rezerwie 10 %, próg niedostępny → tryb neutralny.
+    h, ex = make(goodwe_hass(soc="12"), monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        assert h.states.get(E["mode"]).state == "sell_power"
+        h.states.set(E["soc_min"], "unavailable")
+        h.states.set(E["soc"], "8")
+        ex._clock.t += 120
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto"
 
 
 def _charge_to(target=90, power=2000, sid="c1"):

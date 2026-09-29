@@ -222,27 +222,6 @@ def test_unsupported_setting_reported_without_its_capability():
     assert {k for k, v in caps.items() if not v} == {"set_soc_ceiling"}
 
 
-def test_sent_capabilities_reported_back_to_executor_only_after_accepted_post():
-    class Recording(Exec):
-        unsupported_settings = ("soc_min",)
-
-        def __init__(self):
-            self.sent = []
-
-        def note_capabilities_sent(self, keys):
-            self.sent.append(tuple(keys))
-
-    h = goodwe_hass()
-    rec = Recording()
-    asyncio.run(sender(h, Cloud(ok=False), options={"control_mode": "entities"}, executor=rec).async_flush())
-    assert rec.sent == []
-    asyncio.run(sender(h, Cloud(), options={"control_mode": "entities"}, executor=rec).async_flush())
-    assert rec.sent == [("soc_min",)]
-    rec2 = Recording()
-    asyncio.run(sender(h, Cloud(), options={}, executor=rec2).async_flush())    # bez możliwości w odczycie
-    assert rec2.sent == []
-
-
 def test_telemetry_carries_foreign_change_count_never_entity_ids(monkeypatch):
     from .test_executor import make, ready
     h, ex = make(monkeypatch=monkeypatch)

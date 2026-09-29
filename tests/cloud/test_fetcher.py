@@ -139,19 +139,3 @@ def test_rejected_plan_warning_logged_once_per_distinct_body(caplog):
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "rejected" in r.getMessage()]
     assert len(warnings) == 3                    # bad, bad2, bad po zaakceptowanym planie
     assert got["plans"] == ["a"]
-
-
-def test_fresh_plan_signalled_for_accepted_and_unchanged_only():
-    # Plan „w ręku" po odpowiedzi chmury: nowy albo ten sam co używany. Odrzucony i brak łącza — nie.
-    fresh = []
-    f, _ = make(doc(), doc(), doc(slots=[{"mode": "nonsense"}]), None)
-    f._on_fresh = lambda: fresh.append(1)
-    results = [asyncio.run(f.async_refresh()) for _ in range(4)]
-    assert results == ["accepted", "unchanged", "rejected", "network"] and fresh == [1, 1]
-
-
-def test_fresh_callback_is_optional_constructor_argument():
-    calls = []
-    f = ScheduleFetcher(Cloud(doc()), on_plan=lambda *_: asyncio.sleep(0), on_consent=lambda *_: asyncio.sleep(0),
-                        on_auth_failure=lambda *_: asyncio.sleep(0), on_fresh=lambda: calls.append(1))
-    assert asyncio.run(f.async_refresh()) == "accepted" and calls == [1]

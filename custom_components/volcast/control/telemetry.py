@@ -215,8 +215,4 @@ class TelemetrySender:
         ok = await self._cloud.async_post_telemetry(reading) is True
         if ok and priced:
             self._prices_fp, self._prices_at = priced[1], now
-        note = getattr(self._executor, "note_capabilities_sent", None)
-        if ok and note is not None and driver is not None and "capabilities" in driver:
-            # Chmura przyjęła możliwości bez tych nastaw — wykonawca wie, od kiedy.
-            note(unsupported)
         return ok

@@ -244,8 +244,3 @@ async def test_fix_flow_strings_exist(hass: HomeAssistant):
     tr = await async_get_translations(hass, "en", "issues", {DOMAIN})
     key = f"component.{DOMAIN}.issues.foreign_control.fix_flow.step.confirm"
     assert f"{key}.title" in tr and f"{key}.description" in tr
-
-
-async def test_fetcher_marks_fresh_plans_for_the_executor(hass: HomeAssistant, network_down, hass_storage):
-    _, rt, _ = await _paired_with_inverter(hass, hass_storage)
-    assert rt.fetcher._on_fresh == rt.executor.note_plan_fresh
