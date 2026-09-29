@@ -114,8 +114,10 @@ _FOREIGN_KEEP = 20
 # krótsze braki (restart integracji falownika) tylko pomijamy w cyklu.
 _UNSUPPORTED_AFTER_S = 600.0
 # Cykl bez zapisu z tych powodów nie hamuje do trybu neutralnego: pauza i obcy tryb to wybór
-# właściciela, a „nic do zapisu" to plan już wykonany.
-_BRAKE_EXEMPT = ("paused", "foreign_mode", "nothing_to_write")
+# właściciela. „Nic do zapisu" to plan już wykonany — chyba że zmiana trybu czeka
+# (`_HOLD_NOTES`), a falownik ma nasz tryb w innym kierunku niż plan.
+_BRAKE_EXEMPT = ("paused", "foreign_mode")
+_HOLD_NOTES = frozenset({"I-8", "group_backoff", "group_held", "mode_held"})
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
@@ -713,6 +715,8 @@ class VolcastExecutor:
         ours, keys = self._memory.last_written.get("mode"), self._state.restore_keys
         if current != ours and not (ours is None and (keys is None or "mode" in keys)):
             return None
+        if d.reason == "nothing_to_write" and not self._held_against_plan(d, current):
+            return None
         if not self._memory.throttle.filter({"mode": neutral}, now_mono):
             return None
         writes, _ = control_writes(Params(mode=neutral), self._profile, self._domain, live_map,
@@ -729,6 +733,18 @@ class VolcastExecutor:
         _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
                         "neutral mode", d.reason)
         return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
+
+    def _held_against_plan(self, d: CycleDecision, current: str) -> bool:
+        """Zmiana trybu wstrzymana (I-8, odwrót, grupa), a nasz tryb ma inny kierunek niż plan.
+
+        Wtedy „nic do zapisu" znaczyłoby dalsze ładowanie w slocie sprzedaży (albo odwrotnie).
+        Tryb neutralny nie zużywa budżetu kierunku, a następny zapis kierunkowy liczy się jako
+        zmiana — pętli nie ma.
+        """
+        planned = d.flat.get("mode")
+        if not _HOLD_NOTES & set(d.notes) or not isinstance(planned, str) or planned not in self._profile.modes:
+            return False
+        return self._profile.mode_direction(current) != self._profile.mode_direction(planned)
 
     def _reserve_neutral(self, d: CycleDecision, rd: _Reading, gates: Gates) -> CycleDecision | None:
         """W pauzie: sam zapis trybu neutralnego, gdy strażnik rezerwy (I-1) zdjął rozładowanie,

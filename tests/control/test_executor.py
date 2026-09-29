@@ -1430,3 +1430,66 @@ def test_no_brake_in_dry_run_of_an_unverified_profile(monkeypatch):
         await ex.async_tick()
     asyncio.run(go())
     assert h.services.calls == [] and ex.last_decision.status in ("dry_run", "idle")
+
+
+# ── hamulec przy wstrzymanym trybie (I-8, odwrót grupy) ────────────────────
+
+
+def _grid_charge(power=3000, sid="gc"):
+    return plan(sid=sid, slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+                                 "charge_source": "grid", "power_w": power, "price_pln_kwh": 0.3}])
+
+
+async def _charging_then_sell(h, ex):
+    await ready(ex, raw=_grid_charge())
+    await ex.async_tick()
+    assert h.states.get(E["mode"]).state == "charge_battery"
+    ex._clock.t += 120
+    raw = plan(sid="sell2")
+    await ex.async_on_plan(raw, parse_schedule(raw))
+
+
+def test_direction_budget_exhausted_brakes_our_opposite_mode_to_neutral(monkeypatch):
+    # Nasze ładowanie z sieci, plan: sprzedaż, budżet zmian kierunku wyczerpany — ładowanie
+    # nie może trwać dalej w slocie sprzedaży.
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _charging_then_sell(h, ex)
+        for i, direction in enumerate(["discharge", "charge", "discharge", "charge"]):
+            ex._memory.limiter.record(direction, ex._clock.t - 100 + i)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert "I-8" in ex.last_decision.notes and "neutral_brake" in ex.last_decision.notes
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_group_backoff_after_failed_write_brakes_our_opposite_mode(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _charging_then_sell(h, ex)
+        ex._memory.group_backoff_s = 300.0
+        ex._memory.group_backoff_until = ex._clock.t + 300.0
+        await ex.async_tick()
+    asyncio.run(go())
+    assert "group_backoff" in ex.last_decision.notes
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_held_mode_in_the_planned_direction_is_not_braked(monkeypatch):
+    # Ten sam kierunek (ładowanie → ładowanie inną mocą) wstrzymany w odwrocie: to nie zamrożenie.
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_grid_charge())
+        await ex.async_tick()
+        ex._clock.t += 120
+        raw = _grid_charge(power=5000, sid="gc2")
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        ex._memory.group_backoff_s = 300.0
+        ex._memory.group_backoff_until = ex._clock.t + 300.0
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "charge_battery"
+
