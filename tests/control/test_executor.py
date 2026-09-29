@@ -32,6 +32,13 @@ def plan(power=2000, sid="p1", control=True, slots=None):
             "control_enabled": control}
 
 
+def sell_ban(power=2000):
+    """Sprzedaż z zakazem eksportu z sieci (ogranicznik: włączony, 0 W) — plan zaostrzający limit."""
+    return plan(power, slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z",
+                               "mode": "discharge", "discharge_purpose": "sell", "power_w": power,
+                               "price_pln_kwh": 0.8, "export_allowed": False}])
+
+
 class Clock:
     def __init__(self):
         self.t = 1000.0
@@ -112,7 +119,7 @@ def test_snapshot_before_first_write_and_restore_when_consent_revoked(monkeypatc
     h, ex = make(monkeypatch=monkeypatch)
 
     async def go():
-        await ready(ex)
+        await ready(ex, raw=sell_ban())
         await ex.async_tick()
         n = len(h.services.calls)
         await ex.async_set_consent(False)
@@ -121,10 +128,10 @@ def test_snapshot_before_first_write_and_restore_when_consent_revoked(monkeypatc
         await ex.async_tick()
         return n, restored
     n, restored = asyncio.run(go())
-    # próg SoC i limit eksportu są już jak w migawce — jadą tylko tryb (najpierw) i przełącznik
-    assert [c[:2] for c in restored] == [("select", "select_option"), ("switch", "turn_on")]
+    # próg SoC i przełącznik są już jak w migawce — jadą tylko tryb (najpierw) i limit eksportu
+    assert [c[:2] for c in restored] == [("select", "select_option"), ("number", "set_value")]
     assert h.states.get(E["mode"]).state == "auto"
-    assert h.states.get(E["export_limit_w"]).state == "4000"
+    assert float(h.states.get(E["export_limit_w"]).state) == 4000.0
     assert h.states.get(E["export_limit_enabled"]).state == "on"
     assert h.states.get(E["soc_min"]).state == "85"
     assert len(h.services.calls) == n + 2                     # trzeci tik: nic
@@ -396,16 +403,16 @@ def test_writer_exception_logs_key_and_class_only(monkeypatch, caplog):
     real = ex._writer.async_write
 
     async def raising(w):
-        if w.key == "export_limit_enabled":
+        if w.key == "export_limit_w":
             raise RuntimeError("tcp://192.168.1.50 id XYZ-PLACEHOLDER")
         return await real(w)
     ex._writer.async_write = raising
 
     async def go():
-        await ready(ex)
+        await ready(ex, raw=sell_ban())
         await ex.async_tick()
     asyncio.run(go())
-    assert "export_limit_enabled" in caplog.text and "RuntimeError" in caplog.text
+    assert "export_limit_w" in caplog.text and "RuntimeError" in caplog.text
     assert "192.168" not in caplog.text and "XYZ-PLACEHOLDER" not in caplog.text
     assert no_entity_ids_in(caplog.text)
     # warunek trybu nie doszedł → grupa czeka
@@ -563,7 +570,7 @@ def test_restore_goes_through_group_runner(monkeypatch):
     h, ex = make(monkeypatch=monkeypatch)
 
     async def go():
-        await ready(ex)
+        await ready(ex, raw=sell_ban())
         await ex.async_tick()
         seen = _spy_group_runner(monkeypatch)
         await ex.async_set_consent(False)
@@ -571,7 +578,7 @@ def test_restore_goes_through_group_runner(monkeypatch):
         return seen
     seen = asyncio.run(go())
     # tryb bazowy osobnym krokiem, przed pozostałymi nastawami
-    assert [keys for keys, _ in seen] == [{"mode"}, {"export_limit_enabled"}]
+    assert [keys for keys, _ in seen] == [{"mode"}, {"export_limit_w"}]
     assert ex.last_decision.status == "restore"
 
 
@@ -580,7 +587,7 @@ def test_restore_does_not_overwrite_foreign_mode(monkeypatch, caplog):
     h, ex = make(monkeypatch=monkeypatch)
 
     async def go():
-        await ready(ex)
+        await ready(ex, raw=sell_ban())
         await ex.async_tick()
         n = len(h.services.calls)
         h.states.set(E["mode"], "export_ac")               # właściciel wybrał tryb spoza profilu
@@ -588,7 +595,7 @@ def test_restore_does_not_overwrite_foreign_mode(monkeypatch, caplog):
         await ex.async_tick()
         return h.services.calls[n:]
     restored = asyncio.run(go())
-    assert [c[:2] for c in restored] == [("switch", "turn_on")]
+    assert [c[:2] for c in restored] == [("number", "set_value")]
     assert h.states.get(E["mode"]).state == "export_ac"
     assert ex._state.owned is False
     assert ex.last_decision.takeover
@@ -1152,3 +1159,53 @@ def test_frozen_executor_never_ticks_but_still_restores(monkeypatch):
     assert asyncio.run(go()) == 0
     assert h.states.get(E["mode"]).state == "auto" and not ex.owned
     assert ex._unsub == []
+
+
+# ── ogranicznik eksportu właściciela ──────────────────────────────────────
+
+
+def _charge_pv(cap=None, allowed=True, sid="pv"):
+    s = {"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+         "charge_source": "pv", "price_pln_kwh": 0.8, "export_allowed": allowed}
+    if cap is not None:
+        s["export_limit_w"] = cap
+    return plan(sid=sid, slots=[s])
+
+
+def test_plan_without_cap_then_with_cap_never_flips_owner_limiter(monkeypatch):
+    # Pole: bez pułapu → przełącznik OFF (12:51), z pułapem 8000 W → ON (12:56). Ogranicznik jest
+    # właściciela (bywa wymogiem operatora) — żaden z tych planów nie może go ruszyć.
+    h = goodwe_hass(export="8000", export_on="on")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_charge_pv())
+        await ex.async_tick()
+        ex._clock.t += 300
+        raw = _charge_pv(cap=8000, sid="pv2")
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        await ex.async_tick()
+    asyncio.run(go())
+    touched = [c for c in h.services.calls
+               if c[2]["entity_id"] in (E["export_limit_enabled"], E["export_limit_w"])]
+    assert touched == []
+    assert h.states.get(E["export_limit_enabled"]).state == "on"
+
+
+def test_uncapped_slot_after_our_ban_returns_owner_limiter(monkeypatch):
+    h = goodwe_hass(export="4000", export_on="off")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_charge_pv(allowed=False))
+        await ex.async_tick()
+        banned = (h.states.get(E["export_limit_enabled"]).state, h.states.get(E["export_limit_w"]).state)
+        ex._clock.t += 300
+        raw = _charge_pv(sid="pv2")
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        await ex.async_tick()
+        return banned
+    banned = asyncio.run(go())
+    assert banned == ("on", "0.0")
+    assert h.states.get(E["export_limit_enabled"]).state == "off"
+    assert float(h.states.get(E["export_limit_w"]).state) == 4000.0

@@ -114,3 +114,16 @@ def test_map_slot_rejects_slot_power_missing_defensively():
     bad_profile = replace(GW, raw=bad_raw)
     with pytest.raises(ValueError, match="power_w"):
         map_slot(_slot(action=Action.IDLE), bad_profile, 8000)
+
+
+def test_uncapped_export_leaves_limiter_alone_when_asked():
+    # Ogranicznik eksportu bywa wymogiem operatora sieci — „bez pułapu" = bez zdania, nie „wyłącz".
+    s = _slot(action=Action.CHARGE, charge_source="pv", export_allowed=True)
+    got = map_slot(s, GW, 8000, leave_uncapped_export=True).params
+    assert got.export_limit_enabled is None and got.export_limit_w is None
+    capped = map_slot(replace(s, export_limit_w=8000.0), GW, 8000, leave_uncapped_export=True).params
+    assert (capped.export_limit_enabled, capped.export_limit_w) == (True, 8000.0)
+    ban = map_slot(replace(s, export_allowed=False), GW, 8000, leave_uncapped_export=True).params
+    assert (ban.export_limit_enabled, ban.export_limit_w) == (True, 0.0)
+    # Bez flagi — jak mapper referencyjny (złote wektory).
+    assert map_slot(s, GW, 8000).params.export_limit_enabled is False

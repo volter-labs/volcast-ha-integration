@@ -121,6 +121,8 @@ class EntityContext:
     units: Mapping[str, str | None]
     attrs: Mapping[str, Mapping[str, Any]]
     readings: Mapping[str, float | str]
+    # wartości właściciela (migawka) kluczy, które zmieniliśmy — cel, gdy plan nie ma zdania
+    owner_values: Mapping[str, float | str] = field(default_factory=dict)
 
 
 @dataclass
@@ -236,7 +238,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         return CycleDecision(IDLE, "no_plan")
 
     slot, is_fallback = schedule.effective_slot(now_utc)
-    mapped_slot = map_slot(slot, profile, limits.rated_power_w)
+    mapped_slot = map_slot(slot, profile, limits.rated_power_w, leave_uncapped_export=True)
+    mapped_slot = replace(mapped_slot, params=_owner_export(mapped_slot.params, ents.owner_values))
     common: dict[str, Any] = dict(intent=mapped_slot.intent, fallback=is_fallback)
     # SoC i temperatura to osobne encje: świeży SoC nic nie mówi o temperaturze.
     if "battery_temp_c" in ents.mapped and tele.battery_temp_c is None:
@@ -354,6 +357,17 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
                            if "mode" in restore_flat else None), **common)
+
+
+def _owner_export(params: Params, owner: Mapping[str, float | str]) -> Params:
+    """Plan bez zdania o ograniczniku eksportu: po naszym zaostrzeniu — powrót do wartości
+    właściciela (para razem albo wcale); bez niego ogranicznika nie ruszamy."""
+    if params.export_limit_enabled is not None or params.export_limit_w is not None:
+        return params
+    enabled, limit = owner.get("export_limit_enabled"), owner.get("export_limit_w")
+    if not isinstance(enabled, float) or not isinstance(limit, float):
+        return params
+    return replace(params, export_limit_enabled=enabled >= 0.5, export_limit_w=limit)
 
 
 def _previous(device: Mapping[str, float | str], profile, memory: ControlMemory

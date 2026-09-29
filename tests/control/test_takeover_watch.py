@@ -9,7 +9,7 @@ from homeassistant.helpers import issue_registry as ir
 from custom_components.volcast.control.store import ControlState, ControlStore
 
 from .ha_fakes import GOODWE_ENTITIES as E, FakeState, goodwe_hass
-from .test_executor import LOGGER, make, no_entity_ids_in, ready
+from .test_executor import LOGGER, make, no_entity_ids_in, ready, sell_ban
 
 ISSUE = "foreign_control_e1"
 
@@ -244,14 +244,19 @@ def test_pause_during_ownership_save_prevents_writes(monkeypatch):
 
 
 def test_restore_skips_mode_taken_over_by_owner(monkeypatch):
-    h, ex = _written(monkeypatch)
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=sell_ban())
+        await ex.async_tick()
+    asyncio.run(go())
     n = len(h.services.calls)
     h.states.set(E["mode"], "charge_pv")
     asyncio.run(ex.async_on_state_event(event(E["mode"], "charge_pv", Context(user_id="u1"))))
     asyncio.run(ex.async_set_consent(False))
     asyncio.run(ex.async_tick())
-    # nasz przełącznik limitu eksportu wraca, tryb właściciela zostaje
-    assert [c[:2] for c in h.services.calls[n:]] == [("switch", "turn_on")]
+    # nasz limit eksportu wraca, tryb właściciela zostaje
+    assert [c[:2] for c in h.services.calls[n:]] == [("number", "set_value")]
     assert h.states.get(E["mode"]).state == "charge_pv" and ex._state.owned is False
     assert ex.last_decision.reason == "baseline_mode_kept"
 

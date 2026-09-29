@@ -597,7 +597,8 @@ class VolcastExecutor:
                            previous_soc=prev_soc, previous_soc_gap_s=gap),
             limits=Limits(rated_power_w=float(self._rated or 0.0)),
             ents=EntityContext(domain=self._domain or "", mapped=live_map, units=rd.units,
-                               attrs=rd.attrs, readings=rd.for_cycle()),
+                               attrs=rd.attrs, readings=rd.for_cycle(),
+                               owner_values=self._owner_export_values()),
             gates=gates, memory=self._memory)
         if soc is not None:
             self._prev_soc = (soc, now_mono)
@@ -648,6 +649,19 @@ class VolcastExecutor:
             self._state.taken_over = []
             return replace(decision, status=ERROR, reason="store_failed")
         return decision
+
+    def _owner_export_values(self) -> dict[str, float | str]:
+        """Ogranicznik eksportu właściciela z migawki — tylko gdy to my go zaostrzyliśmy.
+
+        Plan bez zdania o ograniczniku wraca wtedy do tych wartości; klucz przejęty przez
+        właściciela zostaje jego (nie wracamy).
+        """
+        pair = ("export_limit_enabled", "export_limit_w")
+        st = self._state
+        ours = st.restore_keys is None or any(k in st.restore_keys for k in pair)
+        if not st.owned or not ours or any(k in st.taken_over or k not in st.snapshot for k in pair):
+            return {}
+        return {k: st.snapshot[k] for k in pair}
 
     def _control_on(self, gates: Gates) -> bool:
         """Sterowanie włączone (bez względu na pauzę): zgoda, przełącznik, tryb encji, weryfikacja."""
