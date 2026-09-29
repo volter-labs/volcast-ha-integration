@@ -6,7 +6,7 @@
         "description": "Conecta tu cuenta de Volcast o ejecuta solo un descubrimiento de solo lectura de tu instalación (no se cambia nada y nada sale de Home Assistant hasta que compartas el archivo de diagnóstico).",
         "menu_options": {
           "pair": "Conectar con tu cuenta de Volcast (recomendado)",
-          "api_key": "Conectar con clave de API",
+          "api_key": "Conectar con clave API",
           "discovery_only": "Solo descubrimiento (sin cuenta)"
         }
       },
@@ -34,9 +34,9 @@
       },
       "api_key": {
         "title": "Conectar con Volcast",
-        "description": "Introduce tu clave de API de Volcast. La encontrarás en la aplicación de Volcast en Ajustes > Clave de API.",
+        "description": "Introduce tu clave API de Volcast. La encontrarás en la aplicación de Volcast en Ajustes > Clave API.",
         "data": {
-          "api_key": "Clave de API",
+          "api_key": "Clave API",
           "api_url": "URL de la API (avanzado)"
         }
       },
@@ -59,19 +59,19 @@
     },
     "error": {
       "cannot_connect": "No se puede conectar con la API de Volcast. Comprueba tu conexión a internet.",
-      "invalid_auth": "Clave de API no válida o se requiere suscripción premium.",
-      "masked_key": "Parece la vista previa abreviada de la aplicación (vk_xxxx...xxxx), no la clave completa. En la aplicación de Volcast abre Ajustes > Clave de API, usa el botón Copiar o Compartir y pega aquí la clave completa de 67 caracteres.",
-      "invalid_key_format": "Esa no es una clave de API de Volcast. Una clave empieza por vk_ y tiene 67 caracteres. Usa el botón Copiar o Compartir de la aplicación de Volcast en Ajustes > Clave de API.",
+      "invalid_auth": "Clave API no válida o se requiere suscripción premium.",
+      "masked_key": "Parece la vista previa abreviada de la aplicación (vk_xxxx...xxxx), no la clave completa. En la aplicación de Volcast abre Ajustes > Clave API, usa el botón Copiar o Compartir y pega aquí la clave completa de 67 caracteres.",
+      "invalid_key_format": "Esa no es una clave API de Volcast. Una clave empieza por vk_ y tiene 67 caracteres. Usa el botón Copiar o Compartir de la aplicación de Volcast en Ajustes > Clave API.",
       "unknown": "Se ha producido un error inesperado.",
       "invalid_url": "Introduce una dirección https:// completa sin barra final."
     },
     "abort": {
-      "already_configured": "Esta clave de API ya está configurada.",
+      "already_configured": "Esta clave API ya está configurada.",
       "single_instance_allowed": "Volcast ya está configurado aquí y el descubrimiento de la instalación ya se ejecuta como parte de él.",
       "cannot_connect": "No se puede acceder al servicio de emparejamiento de Volcast. Comprueba tu conexión a internet e inténtalo de nuevo.",
       "pairing_expired": "La solicitud de emparejamiento caducó o se canceló antes de confirmarse. Empieza de nuevo y confirma en un plazo de 10 minutos.",
-      "pairing_disabled": "El emparejamiento no está disponible ahora. Inténtalo más tarde o conéctate con una clave de API.",
-      "pairing_failed": "El emparejamiento no se completó. Empieza de nuevo; si sigue fallando, conéctate con una clave de API.",
+      "pairing_disabled": "El emparejamiento no está disponible ahora. Inténtalo más tarde o conéctate con una clave API.",
+      "pairing_failed": "El emparejamiento no se completó. Empieza de nuevo; si sigue fallando, conéctate con una clave API.",
       "paired_existing": "Tu entrada de Volcast existente ya está conectada a tu cuenta.",
       "multiple_accounts": "Hay más de una entrada de Volcast configurada aquí. Elimina las entradas sobrantes y vuelve a emparejar.",
       "pairing_connection_lost": "Home Assistant perdió la conexión con el servicio de emparejamiento de Volcast mientras esperaba tu confirmación. Comprueba la conexión a internet de Home Assistant y empieza de nuevo.",

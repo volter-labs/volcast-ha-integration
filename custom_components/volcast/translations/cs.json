@@ -34,9 +34,9 @@
       },
       "api_key": {
         "title": "Připojení k Volcast",
-        "description": "Zadejte svůj klíč API Volcast. Najdete ho v aplikaci Volcast v Nastavení > Klíč API.",
+        "description": "Zadejte svůj API klíč Volcast. Najdete ho v aplikaci Volcast v Nastavení > API klíč.",
         "data": {
-          "api_key": "Klíč API",
+          "api_key": "API klíč",
           "api_url": "URL adresa API (pokročilé)"
         }
       },
@@ -59,14 +59,14 @@
     },
     "error": {
       "cannot_connect": "Nelze se připojit k API Volcast. Zkontrolujte připojení k internetu.",
-      "invalid_auth": "Neplatný klíč API nebo je vyžadováno předplatné premium.",
-      "masked_key": "Vypadá to jako zkrácený náhled z aplikace (vk_xxxx...xxxx), ne jako úplný klíč. V aplikaci Volcast otevřete Nastavení > Klíč API, použijte tlačítko Kopírovat nebo Sdílet a vložte sem úplný klíč o 67 znacích.",
-      "invalid_key_format": "To není klíč API Volcast. Klíč začíná vk_ a má 67 znaků. Použijte tlačítko Kopírovat nebo Sdílet v aplikaci Volcast v Nastavení > Klíč API.",
+      "invalid_auth": "Neplatný API klíč nebo je vyžadováno předplatné premium.",
+      "masked_key": "Vypadá to jako zkrácený náhled z aplikace (vk_xxxx...xxxx), ne jako úplný klíč. V aplikaci Volcast otevřete Nastavení > API klíč, použijte tlačítko Kopírovat nebo Sdílet a vložte sem úplný klíč o 67 znacích.",
+      "invalid_key_format": "To není API klíč Volcast. Klíč začíná vk_ a má 67 znaků. Použijte tlačítko Kopírovat nebo Sdílet v aplikaci Volcast v Nastavení > API klíč.",
       "unknown": "Došlo k neočekávané chybě.",
       "invalid_url": "Zadejte úplnou adresu https:// bez lomítka na konci."
     },
     "abort": {
-      "already_configured": "Tento klíč API je již nastaven.",
+      "already_configured": "Tento API klíč je již nastaven.",
       "single_instance_allowed": "Volcast je zde již nastaven a zjišťování instalace už běží jako jeho součást.",
       "cannot_connect": "Službu párování Volcast se nepodařilo zastihnout. Zkontrolujte připojení k internetu a zkuste to znovu.",
       "pairing_expired": "Žádost o párování vypršela nebo byla zrušena před potvrzením. Začněte znovu a potvrďte do 10 minut.",

@@ -34,9 +34,9 @@
       },
       "api_key": {
         "title": "Pripojenie k Volcast",
-        "description": "Zadajte svoj kľúč API Volcast. Nájdete ho v aplikácii Volcast v Nastavenia > Kľúč API.",
+        "description": "Zadajte svoj API kľúč Volcast. Nájdete ho v aplikácii Volcast v Nastavenia > API kľúč.",
         "data": {
-          "api_key": "Kľúč API",
+          "api_key": "API kľúč",
           "api_url": "URL adresa API (rozšírené)"
         }
       },
@@ -59,14 +59,14 @@
     },
     "error": {
       "cannot_connect": "Nie je možné pripojiť sa k API Volcast. Skontrolujte pripojenie na internet.",
-      "invalid_auth": "Neplatný kľúč API alebo je potrebné predplatné premium.",
-      "masked_key": "Vyzerá to ako skrátený náhľad z aplikácie (vk_xxxx...xxxx), nie ako úplný kľúč. V aplikácii Volcast otvorte Nastavenia > Kľúč API, použite tlačidlo Kopírovať alebo Zdieľať a vložte sem úplný kľúč s 67 znakmi.",
-      "invalid_key_format": "Toto nie je kľúč API Volcast. Kľúč začína vk_ a má 67 znakov. Použite tlačidlo Kopírovať alebo Zdieľať v aplikácii Volcast v Nastavenia > Kľúč API.",
+      "invalid_auth": "Neplatný API kľúč alebo je potrebné predplatné premium.",
+      "masked_key": "Vyzerá to ako skrátený náhľad z aplikácie (vk_xxxx...xxxx), nie ako úplný kľúč. V aplikácii Volcast otvorte Nastavenia > API kľúč, použite tlačidlo Kopírovať alebo Zdieľať a vložte sem úplný kľúč s 67 znakmi.",
+      "invalid_key_format": "Toto nie je API kľúč Volcast. Kľúč začína vk_ a má 67 znakov. Použite tlačidlo Kopírovať alebo Zdieľať v aplikácii Volcast v Nastavenia > API kľúč.",
       "unknown": "Vyskytla sa neočakávaná chyba.",
       "invalid_url": "Zadajte úplnú adresu https:// bez lomky na konci."
     },
     "abort": {
-      "already_configured": "Tento kľúč API je už nastavený.",
+      "already_configured": "Tento API kľúč je už nastavený.",
       "single_instance_allowed": "Volcast je tu už nastavený a zisťovanie inštalácie už beží ako jeho súčasť.",
       "cannot_connect": "Službu párovania Volcast sa nepodarilo zastihnúť. Skontrolujte pripojenie na internet a skúste to znova.",
       "pairing_expired": "Žiadosť o párovanie vypršala alebo bola zrušená pred potvrdením. Začnite znova a potvrďte do 10 minút.",

@@ -6,7 +6,7 @@
         "description": "Ligue a sua conta Volcast ou execute apenas uma deteção só de leitura da sua instalação (nada é alterado e nada sai do Home Assistant até partilhar o ficheiro de diagnóstico).",
         "menu_options": {
           "pair": "Ligar à sua conta Volcast (recomendado)",
-          "api_key": "Ligar com chave de API",
+          "api_key": "Ligar com chave API",
           "discovery_only": "Apenas deteção (sem conta)"
         }
       },
@@ -34,9 +34,9 @@
       },
       "api_key": {
         "title": "Ligar ao Volcast",
-        "description": "Introduza a sua chave de API do Volcast. Encontra-a na aplicação Volcast em Definições > Chave de API.",
+        "description": "Introduza a sua chave API do Volcast. Encontra-a na aplicação Volcast em Definições > Chave API.",
         "data": {
-          "api_key": "Chave de API",
+          "api_key": "Chave API",
           "api_url": "URL da API (avançado)"
         }
       },
@@ -59,19 +59,19 @@
     },
     "error": {
       "cannot_connect": "Não é possível ligar à API do Volcast. Verifique a sua ligação à internet.",
-      "invalid_auth": "Chave de API inválida ou subscrição premium necessária.",
-      "masked_key": "Isto parece a pré-visualização abreviada da aplicação (vk_xxxx...xxxx), não a chave completa. Na aplicação Volcast abra Definições > Chave de API, use o botão Copiar ou Partilhar e cole aqui a chave completa de 67 carateres.",
-      "invalid_key_format": "Isto não é uma chave de API do Volcast. Uma chave começa por vk_ e tem 67 carateres. Use o botão Copiar ou Partilhar na aplicação Volcast em Definições > Chave de API.",
+      "invalid_auth": "Chave API inválida ou subscrição premium necessária.",
+      "masked_key": "Isto parece a pré-visualização abreviada da aplicação (vk_xxxx...xxxx), não a chave completa. Na aplicação Volcast abra Definições > Chave API, use o botão Copiar ou Partilhar e cole aqui a chave completa de 67 carateres.",
+      "invalid_key_format": "Isto não é uma chave API do Volcast. Uma chave começa por vk_ e tem 67 carateres. Use o botão Copiar ou Partilhar na aplicação Volcast em Definições > Chave API.",
       "unknown": "Ocorreu um erro inesperado.",
       "invalid_url": "Introduza um endereço https:// completo, sem barra final."
     },
     "abort": {
-      "already_configured": "Esta chave de API já está configurada.",
+      "already_configured": "Esta chave API já está configurada.",
       "single_instance_allowed": "O Volcast já está configurado aqui e a deteção da instalação já funciona como parte dele.",
       "cannot_connect": "Não é possível contactar o serviço de emparelhamento do Volcast. Verifique a sua ligação à internet e tente novamente.",
       "pairing_expired": "O pedido de emparelhamento expirou ou foi cancelado antes de ser confirmado. Comece de novo e confirme no prazo de 10 minutos.",
-      "pairing_disabled": "O emparelhamento não está disponível neste momento. Tente mais tarde ou ligue com uma chave de API.",
-      "pairing_failed": "O emparelhamento não foi concluído. Comece de novo; se continuar a falhar, ligue com uma chave de API.",
+      "pairing_disabled": "O emparelhamento não está disponível neste momento. Tente mais tarde ou ligue com uma chave API.",
+      "pairing_failed": "O emparelhamento não foi concluído. Comece de novo; se continuar a falhar, ligue com uma chave API.",
       "paired_existing": "A sua entrada Volcast existente está agora ligada à sua conta.",
       "multiple_accounts": "Está configurada aqui mais do que uma entrada Volcast. Remova as entradas a mais e emparelhe novamente.",
       "pairing_connection_lost": "O Home Assistant perdeu a ligação ao serviço de emparelhamento do Volcast enquanto aguardava a sua confirmação. Verifique a ligação à internet do Home Assistant e comece de novo.",
