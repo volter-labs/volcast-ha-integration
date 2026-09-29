@@ -185,6 +185,7 @@ class VolcastExecutor:
         self._unsupported_issue: tuple[str, ...] = ()
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
         self._consistent: dict[str, float | str] = {}
+        self._brake_warned = False                    # ostrzeżenie hamulca raz na epizod
         # klucze ostatniej decyzji z planem — zablokowany cykl (bez `flat`) nie gubi odniesienia
         self._plan_keys: frozenset[str] = frozenset()
         self._disabled = False
@@ -549,6 +550,7 @@ class VolcastExecutor:
                 except Exception as err:  # noqa: BLE001 — pętla nie może umrzeć
                     _LOGGER.error("Volcast control cycle failed (%s)", type(err).__name__)
                     self.last_decision = CycleDecision(ERROR, "exception:tick")
+                    await self._async_brake_after_error()
                     self._count(self.last_decision)
                 self._close_foreign_issue()
                 if not self._rerun or self._stopped or self._frozen:
@@ -593,9 +595,7 @@ class VolcastExecutor:
         absent = self._absent_keys()
         live_map = {k: v for k, v in self._mapped.items() if k not in absent}
         self._update_foreign_episode(rd)
-        gates = Gates(consent=self._state.consent, local_switch=self._state.local_switch,
-                      control_mode=self._entry.options.get(OPT_CONTROL_MODE),
-                      verified=control_verified(self._profile, self._domain))
+        gates = self._gates()
         live = self._control_on(gates)
         self._track_unsupported(absent, now_mono, live)
         if not live:
@@ -701,15 +701,18 @@ class VolcastExecutor:
 
         Cykl bez zapisu (blokada, błąd, brak planu), a falownik wciąż ma NASZ tryb inny niż
         neutralny: zapisujemy sam tryb neutralny — jak powrót do trybu bazowego, bez żadnej
-        innej encji. Nie w pauzie (to decyzja właściciela) i nie na trybie przejętym przez
-        właściciela, i tylko przy włączonym sterowaniu (profil w wersji próbnej nie pisze
-        nic); interwał I-6 obowiązuje, a kierunek po zapisie jest nieznany (I-8).
+        innej encji. Sama pauza nie hamuje (to decyzja właściciela) — blokada z innego powodu
+        w trakcie pauzy już tak; nie na trybie przejętym przez właściciela i tylko przy
+        włączonym sterowaniu (profil w wersji próbnej nie pisze nic); interwał I-6 obowiązuje,
+        a kierunek po zapisie jest nieznany (I-8). Ostrzeżenie w logu raz na epizod.
         Własność zostaje — to nie jest powrót, sterowanie trwa.
         """
         if d.reason in _BRAKE_EXEMPT or not self._state.owned or "mode" not in live_map \
                 or "mode" in self._state.taken_over:
             return None
         current, neutral = rd.readings.get("mode"), self._profile.neutral_mode
+        if current == neutral:
+            self._brake_warned = False                  # epizod skończony
         if not isinstance(current, str) or current == neutral:
             return None
         ours, keys = self._memory.last_written.get("mode"), self._state.restore_keys
@@ -730,9 +733,32 @@ class VolcastExecutor:
             self._memory.last_written["mode"] = neutral
         if self._note_written([*report.written, *report.ambiguous]):
             await self._async_save("control state")
-        _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
-                        "neutral mode", d.reason)
+        if not self._brake_warned:
+            self._brake_warned = True
+            _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
+                            "neutral mode", d.reason)
         return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
+
+    def _gates(self) -> Gates:
+        return Gates(consent=self._state.consent, local_switch=self._state.local_switch,
+                     control_mode=self._entry.options.get(OPT_CONTROL_MODE),
+                     verified=control_verified(self._profile, self._domain))
+
+    async def _async_brake_after_error(self) -> None:
+        """Wyjątek w cyklu: hamulec na świeżym odczycie, jeśli da się go bezpiecznie ustalić."""
+        try:
+            if self._profile is None or self._memory is None or self._stopped or self._frozen \
+                    or not self._control_on(self._gates()):
+                return
+            rd = self._read(self._utcnow())
+            absent = self._absent_keys()
+            live_map = {k: v for k, v in self._mapped.items() if k not in absent}
+            braked = await self._async_neutral_brake(self.last_decision, rd, live_map, self._clock())
+            if braked is not None:
+                self.last_decision = braked
+        except Exception as err:  # noqa: BLE001 — pętla nie może umrzeć
+            _LOGGER.error("Volcast control: neutral mode after a failed cycle not applied (%s)",
+                          type(err).__name__)
 
     def _held_against_plan(self, d: CycleDecision, current: str) -> bool:
         """Zmiana trybu wstrzymana (I-8, odwrót, grupa), a nasz tryb ma inny kierunek niż plan.

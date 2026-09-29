@@ -1493,3 +1493,36 @@ def test_held_mode_in_the_planned_direction_is_not_braked(monkeypatch):
     asyncio.run(go())
     assert h.states.get(E["mode"]).state == "charge_battery"
 
+
+
+def test_exception_in_cycle_still_brakes_our_mode(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    def boom(**_kw):
+        raise RuntimeError("x")
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        monkeypatch.setattr(ex_mod, "decide_cycle", boom)
+        ex._clock.t += 120
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex.last_decision.reason == "exception:tick"
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_repeated_failed_brake_warns_once(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        h.services.fail[E["mode"]] = HomeAssistantError("down")
+        _stale_soc(h)
+        for _ in range(3):
+            ex._clock.t += 120
+            await ex.async_tick()
+    asyncio.run(go())
+    assert caplog.text.count("cannot be applied safely") == 1
