@@ -53,9 +53,11 @@ własności ją kasuje.
 
 Obca zmiana nastaw (przejęcie): zdarzenie zmiany stanu encji klucza zapisu z aktorem
 (użytkownik, automatyzacja), nie z naszym kontekstem, z wartością inną niż ostatnia
-wartość zgodna z planem: nasz ostatni zapis klucza, a bez niego — ostatni odczyt przy
-włączonym sterowaniu (plan nie wymagał zapisu, więc stan falownika był z nim zgodny).
-Działa więc także przed naszym pierwszym zapisem. Albo tryb falownika ustawiony na
+wartość zgodna z planem: nasz ostatni zapis klucza, a bez niego — ostatni odczyt klucza,
+którym bieżący plan steruje, przy włączonym sterowaniu (plan nie wymagał zapisu, więc
+stan falownika był z nim zgodny). Działa więc także przed naszym pierwszym zapisem;
+nastawa spoza planu, której nie zapisywaliśmy, nie jest z nim w konflikcie. Pauza nie
+wstrzymuje zejścia z NASZEGO trybu rozładowania do neutralnego pod rezerwą SoC (I-1). Albo tryb falownika ustawiony na
 czytelną opcję spoza profilu (sygnał poziomu,
 także bez aktora i także gdy cykl zatrzymał się wcześniej na innej blokadzie). Skutek:
 pauza 30 min (bez zapisów planu), klucz wypada z `restore_keys`, wpis w `foreign_changes`
@@ -85,7 +87,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from ..const import (CONTROL_MODE_ENTITIES, DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S,
                      OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED, STOP_WRITE_TIMEOUT_S)
 from ..core.control.baseline import baseline_params, needs_restore, snapshot_missing, take_snapshot
-from ..core.control.cycle import (BLOCKED, ERROR, WRITE, ControlMemory, CycleDecision, EntityContext,
+from ..core.control.cycle import (BLOCKED, DRY_RUN, ERROR, WRITE, ControlMemory, CycleDecision, EntityContext,
                                   Gates, Limits, Telemetry, commit, decide_cycle, same_value)
 from ..core.control.entity_fit import control_writes, fit_params
 from ..core.control.group_writes import GROUP_KEYS, GroupReport, async_run_group_writes, order_group
@@ -593,8 +595,8 @@ class VolcastExecutor:
                       control_mode=self._entry.options.get(OPT_CONTROL_MODE),
                       verified=control_verified(self._profile, self._domain))
         live = self._control_on(gates)
-        # Odniesienie przejęcia: odczyty przy włączonym sterowaniu (wyłączone — żadnego).
-        self._consistent = {k: v for k, v in rd.readings.items() if k in self._write_keys()} if live else {}
+        if not live:
+            self._consistent = {}            # wyłączone sterowanie: żadnego odniesienia przejęcia
         if needs_restore(owned=self._state.owned, consent=gates.consent,
                          local_switch=gates.local_switch, control_mode=gates.control_mode) \
                 and self._domain:
@@ -622,10 +624,18 @@ class VolcastExecutor:
             gates=gates, memory=self._memory)
         if soc is not None:
             self._prev_soc = (soc, now_mono)
+        # Odniesienie przejęcia: odczyty kluczy, którymi plan steruje (przy włączonym sterowaniu).
+        self._consistent = ({k: readings[k] for k in decision.flat if k in readings and k in self._write_keys()}
+                            if live else {})
         # Z własnego odczytu, nie tylko z decyzji — wcześniejsza blokada cyklu go nie zasłoni.
         if self._signal_foreign_mode(rd, self._gates_open() and gates.verified, decision.takeover):
             await self._async_save("control state")
-        if decision.status == WRITE and self.paused:
+        reserve = self._reserve_neutral(decision, rd, gates) if self.paused else None
+        if reserve is not None:
+            decision = reserve
+            _LOGGER.warning("Volcast control: battery at the reserve — returning our discharge mode to "
+                            "neutral despite the pause")
+        elif decision.status == WRITE and self.paused:
             decision = replace(decision, status=BLOCKED, reason="paused")
         if decision.status == WRITE and not self._state.owned:
             decision = await self._async_take_ownership(decision, readings, live_map)
@@ -669,6 +679,21 @@ class VolcastExecutor:
             self._state.taken_over = []
             return replace(decision, status=ERROR, reason="store_failed")
         return decision
+
+    def _reserve_neutral(self, d: CycleDecision, rd: _Reading, gates: Gates) -> CycleDecision | None:
+        """W pauzie: sam zapis trybu neutralnego, gdy strażnik rezerwy (I-1) zdjął rozładowanie,
+        a falownik wciąż ma NASZ tryb rozładowania (właściciel go nie przejął)."""
+        if d.status != DRY_RUN or d.reason != "paused" or not gates.verified:
+            return None
+        if d.guard is None or d.guard.invariant != "I-1" or d.flat.get("mode") != self._profile.neutral_mode:
+            return None
+        ours = self._memory.last_written.get("mode")
+        mode_write = next((w for w in d.writes if w.key == "mode"), None)
+        if mode_write is None or "mode" in self._state.taken_over or not isinstance(ours, str) \
+                or rd.readings.get("mode") != ours or self._profile.mode_direction(ours) != "discharge":
+            return None
+        return replace(d, status=WRITE, reason="reserve_neutral", writes=[mode_write], restore={},
+                       restore_flat={}, restore_ambiguous_safe=(), restore_direction=None)
 
     def _owner_export_values(self) -> dict[str, float | str]:
         """Ogranicznik eksportu właściciela z migawki — tylko gdy to my go zaostrzyliśmy.

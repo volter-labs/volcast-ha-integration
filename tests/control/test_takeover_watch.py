@@ -536,10 +536,44 @@ def test_owner_change_before_our_first_write_is_a_takeover(monkeypatch):
     assert h.services.calls == []                               # w pauzie nastawa właściciela zostaje
 
 
-def test_owner_change_of_a_key_the_plan_does_not_touch_is_a_takeover(monkeypatch):
+def test_owner_change_of_a_key_the_plan_does_not_touch_is_not_a_takeover(monkeypatch):
+    # Nastawa spoza planu nie jest z nim w konflikcie — pauza zamroziłaby naszą ostatnią komendę.
     _, ex = _settled(monkeypatch)
     asyncio.run(ex.async_on_state_event(event(E["soc_min"], "50", Context(user_id="u1"), "%")))
-    assert ex.paused and ex.foreign_changes[-1]["key"] == "soc_min"
+    assert not ex.paused and ex.foreign_changes == []
+
+
+def test_owner_tweak_of_untouched_setting_during_our_command_does_not_pause(monkeypatch):
+    _, ex = _written(monkeypatch)                                 # sell_power 2000 W, soc_max nietknięty
+    asyncio.run(ex.async_on_state_event(event(E["soc_max"], "90", Context(user_id="u1"), "%")))
+    assert not ex.paused
+
+
+def test_reserve_forces_neutral_mode_even_during_pause(monkeypatch):
+    # Właściciel zmienił moc (pauza), SoC spada pod rezerwę: nasz tryb sprzedaży musi zejść
+    # do neutralnego — pauza nie może zamrozić rozładowania poniżej rezerwy.
+    h, ex = _written(monkeypatch, goodwe_hass(soc="12"))
+    assert h.states.get(E["mode"]).state == "sell_power"
+    h.states.set(E["power_w"], "1500")
+    asyncio.run(ex.async_on_state_event(event(E["power_w"], "1500", Context(user_id="u1"), "W")))
+    assert ex.paused
+    h.states.set(E["soc"], "9")
+    ex._clock.t += 60
+    asyncio.run(ex.async_tick())
+    assert h.states.get(E["mode"]).state == "auto"
+    assert h.states.get(E["power_w"]).state == "1500"             # nastawa właściciela zostaje
+    assert ex.paused
+
+
+def test_pause_keeps_owner_mode_below_reserve(monkeypatch):
+    # Tryb przejęty przez właściciela zostaje jego — także pod rezerwą.
+    h, ex = _written(monkeypatch, goodwe_hass(soc="12"))
+    h.states.set(E["mode"], "discharge_battery")
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "discharge_battery", Context(user_id="u1"))))
+    h.states.set(E["soc"], "9")
+    ex._clock.t += 60
+    asyncio.run(ex.async_tick())
+    assert h.states.get(E["mode"]).state == "discharge_battery"
 
 
 def test_owner_reselecting_the_same_value_is_not_a_takeover(monkeypatch):
