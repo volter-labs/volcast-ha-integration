@@ -12,6 +12,8 @@ trybie ładuje z sieci). Zasady, które trzymają grupę:
   nie ma — brak mapowania albo encja niedostępna) jest nieobsługiwana: wypada z planu
   po strażnikach, jak nastawa odrzucona przez falownik; plan z mocą bez encji mocy
   nie idzie (tryb na starej mocy to inna komenda);
+* para ogranicznika eksportu (`EXPORT_PAIR`) jest nieobsługiwana, wstrzymana i zapisywana
+  razem — połowa pary daje zakaz bez skutku albo 0 W przy nieznanym przełączniku;
 * zmieniony parametr, który w tym cyklu nie pójdzie (interwał I-6, jednostka encji
   się zmieniła), wstrzymuje zmianę trybu, a z nią moc;
 * zmiana trybu wstrzymana (I-6, I-8) wstrzymuje moc — chyba że falownik już ma tryb
@@ -53,6 +55,8 @@ WRITE, DRY_RUN, IDLE, BLOCKED, ERROR = "write", "dry_run", "idle", "blocked", "e
 
 # Tryb i nastawa, która nadaje mu znaczenie — zapisywane razem albo wcale.
 _MODE_GROUP = frozenset({"mode", "power_w"})
+# Ogranicznik eksportu: znaczy coś tylko razem (zakaz = włączony + 0 W) — obie encje albo żadna.
+EXPORT_PAIR = frozenset({"export_limit_w", "export_limit_enabled"})
 _DIRECTIONAL = ("charge", "discharge")
 _NO_READING = ("unavailable", "unknown", "")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
@@ -265,7 +269,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         return CycleDecision(BLOCKED, f"guard:{guard.invariant}", **common)
 
     # Nastawy bez encji wypadają PO strażnikach (ci mogli je dopisać: I-1, I-4).
-    without = tuple(k for k in missing if getattr(guard.params, k, None) is not None)
+    without = tuple(k for k in _with_pair(missing) if getattr(guard.params, k, None) is not None)
     if "power_w" in without:
         return CycleDecision(BLOCKED, "power_unsupported", dropped_unsupported=("power_w",), **common)
     planned = replace(guard.params, **{k: None for k in without})
@@ -300,12 +304,18 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     need = due | (memory.throttle.pending(flat, now_mono) - settled)
     _, runtime_unmapped = control_writes(params, profile, ents.domain, ents.mapped,
                                          keys=None, units=ents.units)
-    allowed = due - memory.unsupported - set(runtime_unmapped)
+    unsupported = _with_pair(memory.unsupported)
+    allowed = due - unsupported - set(runtime_unmapped)
 
     notes: list[str] = []
+    # Para ogranicznika: członek, który musi się zmienić, a nie pójdzie → nie idzie żaden
+    # (i wstrzymuje tryb jak każdy niedoszły warunek — niżej).
+    if EXPORT_PAIR & (need - allowed) and EXPORT_PAIR & allowed:
+        allowed -= EXPORT_PAIR
+        notes.append("export_held")
     held_by = [k for k in runtime_unmapped if k != "mode"]
     # Zmieniony warunek, który w tym cyklu nie dojdzie („nieobsługiwany" nie dojdzie nigdy).
-    unsettled = (need - allowed - memory.unsupported) - {"mode"}
+    unsettled = (need - allowed - unsupported) - {"mode"}
     if held_by or ("mode" in need and unsettled):
         allowed.discard("mode")
         notes.append("mode_held")
@@ -352,11 +362,17 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         status, reason or "ok", writes=writes, flat=flat,
         direction=direction if any(w.key == "mode" for w in writes) else None,
         adjusted=adjusted, unmapped=tuple(dict.fromkeys([*held_by, *unmapped])),
-        dropped_unsupported=tuple(sorted({*(memory.unsupported & set(flat)), *without})),
+        dropped_unsupported=tuple(sorted({*(unsupported & set(flat)), *without})),
         notes=tuple(notes),
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
                            if "mode" in restore_flat else None), **common)
+
+
+def _with_pair(keys) -> set[str]:
+    """Klucze z dopełnioną parą ogranicznika eksportu (jeden członek = oba)."""
+    out = set(keys)
+    return out | EXPORT_PAIR if out & EXPORT_PAIR else out
 
 
 def _owner_export(params: Params, owner: Mapping[str, float | str]) -> Params:

@@ -39,6 +39,7 @@ def sched(**slot_over):
                            "control_enabled": True})
 
 
+EXPORT_PAIR = {"export_limit_w", "export_limit_enabled"}
 SELL = {"mode": "discharge", "discharge_purpose": "sell", "price_pln_kwh": 0.8}
 STANDBY = {"mode": "idle", "price_pln_kwh": 0.8}
 
@@ -132,6 +133,27 @@ def test_missing_setting_entity_is_dropped_not_blocking(key):
                schedule=plan(slot("10:00", "11:00", mode="self_consume", export_allowed=False)))
     assert d.status == WRITE, (d.reason, d.unmapped)
     assert key not in [w.key for w in d.writes] and key not in d.flat
+    if key in EXPORT_PAIR:
+        # Para ogranicznika (zakaz = włączony + 0 W) idzie razem albo wcale.
+        assert not EXPORT_PAIR & {w.key for w in d.writes}
+        assert EXPORT_PAIR <= set(d.dropped_unsupported)
+
+
+def test_export_pair_member_rejected_by_device_drops_the_pair():
+    d, mem = run()
+    commit(d, WriteReport(written=["power_w", "mode"], unsupported=["export_limit_enabled"]), mem, 1000.0)
+    d2, _ = run(mem, schedule=sched(power_w=3000, export_allowed=False), now_mono=2000.0)
+    assert not EXPORT_PAIR & {w.key for w in d2.writes}
+
+
+def test_export_pair_member_held_by_interval_holds_the_pair():
+    # Pułap 8000 W zapisany (włączony + 8000); 30 s później zakaz: 0 W czeka w I-6,
+    # przełącznik jest już włączony — nic z pary nie idzie osobno.
+    d, mem = run(schedule=sched(export_limit_w=8000), now_mono=1000.0)
+    commit(d, _written(d), mem, 1000.0)
+    d2, _ = run(mem, schedule=sched(export_allowed=False),
+                readings={"export_limit_enabled": 0.0, "export_limit_w": 8000.0}, now_mono=1030.0)
+    assert not EXPORT_PAIR & {w.key for w in d2.writes}
 
 
 def test_missing_ceiling_entity_drops_plan_ceiling_and_still_charges():
