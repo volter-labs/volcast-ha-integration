@@ -225,7 +225,18 @@
     },
     "foreign_control": {
       "title": "Sterowanie falownikiem przez Volcast wstrzymane",
-      "description": "Ustawienie falownika sterowane przez Volcast ({entity_id}) zostało zmienione poza Volcast. Volcast wstrzymał sterowanie na 30 minut i zachowuje wprowadzone przez Ciebie zmiany. Sterowanie wznowi się automatycznie; aby je zatrzymać, wyłącz przełącznik sterowania Volcast."
+      "description": "Ustawienie falownika sterowane przez Volcast ({entity_id}) zostało zmienione poza Volcast. Volcast wstrzymał sterowanie na 30 minut i zachowuje wprowadzone przez Ciebie zmiany. Sterowanie wznowi się automatycznie albo wybierz Napraw, aby wznowić je teraz; aby je zatrzymać, wyłącz przełącznik sterowania Volcast.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Wznów sterowanie Volcast teraz",
+            "description": "Volcast kończy pauzę i od razu stosuje swój plan na falowniku, nadpisując ustawienia zmienione poza Volcast ({entity_id})."
+          }
+        },
+        "abort": {
+          "foreign_mode": "Falownik nadal jest w trybie, którego Volcast nie używa, więc sterowania nie można jeszcze wznowić. Przełącz falownik z powrotem na jeden z trybów używanych przez Volcast i spróbuj ponownie."
+        }
+      }
     },
     "direct_identity_changed": {
       "title": "Volcast znalazł inny falownik pod zapisanym adresem",
@@ -262,6 +273,10 @@
     "direct_start_failed": {
       "title": "Volcast nie mógł uruchomić bezpośredniego połączenia z falownikiem",
       "description": "Bezpośrednie połączenie z falownikiem nie uruchomiło się z powodu nieoczekiwanego błędu. Volcast ponawia próbę kilka razy; do czasu połączenia nie może zmieniać ani przywracać ustawień falownika. Jeśli problem trwa, przeładuj Volcast i sprawdź logi Home Assistanta."
+    },
+    "unsupported_setting": {
+      "title": "Część ustawień falownika jest niedostępna dla Volcast",
+      "description": "Volcast nie może używać tych ustawień falownika, ponieważ ich encje są brakujące, wyłączone lub niedostępne: {entities}. Sterowanie działa dalej bez nich, a plan Volcast już na nich nie polega. Gdy encje znów będą dostępne, Volcast użyje ich automatycznie."
     }
   },
   "services": {
@@ -274,6 +289,10 @@
           "description": "Konkretny dzień do synchronizacji (w ciągu ostatnich ok. 24–38 godzin). Zostaw puste, aby zsynchronizować wczoraj i dziś."
         }
       }
+    },
+    "resume_control": {
+      "name": "Wznów sterowanie",
+      "description": "Kończy pauzę po zmianie ustawienia falownika poza Volcast i od razu stosuje plan Volcast, bez przeładowania integracji."
     }
   },
   "entity": {

@@ -225,7 +225,18 @@
     },
     "foreign_control": {
       "title": "Pilotage de l'onduleur par Volcast en pause",
-      "description": "Un réglage de l'onduleur piloté par Volcast ({entity_id}) a été modifié en dehors de Volcast. Volcast a mis le pilotage en pause pendant 30 minutes et conserve les réglages que vous avez modifiés. Le pilotage reprend ensuite automatiquement ; pour l'arrêter, désactivez l'interrupteur de pilotage Volcast."
+      "description": "Un réglage de l'onduleur piloté par Volcast ({entity_id}) a été modifié en dehors de Volcast. Volcast a mis le pilotage en pause pendant 30 minutes et conserve les réglages que vous avez modifiés. Le pilotage reprend ensuite automatiquement, ou sélectionnez Réparer pour le reprendre maintenant ; pour l'arrêter, désactivez l'interrupteur de pilotage Volcast.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Reprendre le pilotage Volcast maintenant",
+            "description": "Volcast met fin à la pause et applique aussitôt son plan à l'onduleur, en écrasant les réglages modifiés en dehors de Volcast ({entity_id})."
+          }
+        },
+        "abort": {
+          "foreign_mode": "L'onduleur est toujours dans un mode que Volcast n'utilise pas, le pilotage ne peut donc pas encore reprendre. Remettez l'onduleur dans l'un des modes utilisés par Volcast, puis réessayez."
+        }
+      }
     },
     "direct_identity_changed": {
       "title": "Volcast a trouvé un autre onduleur à l'adresse enregistrée",
@@ -262,6 +273,10 @@
     "direct_start_failed": {
       "title": "Volcast n'a pas pu démarrer la connexion directe à l'onduleur",
       "description": "La connexion directe à l'onduleur n'a pas pu démarrer à cause d'une erreur inattendue. Volcast réessaie plusieurs fois ; tant qu'il n'est pas connecté, il ne peut ni modifier ni rétablir les réglages de l'onduleur. Si cela persiste, rechargez Volcast et vérifiez les journaux de Home Assistant."
+    },
+    "unsupported_setting": {
+      "title": "Certains réglages de l'onduleur ne sont pas disponibles pour Volcast",
+      "description": "Volcast ne peut pas utiliser ces réglages de l'onduleur, car leurs entités sont manquantes, désactivées ou indisponibles : {entities}. Le pilotage continue sans eux et le plan Volcast ne s'appuie plus dessus. Lorsque les entités redeviennent disponibles, Volcast les utilise automatiquement."
     }
   },
   "services": {
@@ -274,6 +289,10 @@
           "description": "Jour précis à synchroniser (dans les dernières ~24-38 heures). Laissez vide pour synchroniser hier et aujourd'hui."
         }
       }
+    },
+    "resume_control": {
+      "name": "Reprendre le pilotage",
+      "description": "Met fin à la pause après la modification d'un réglage de l'onduleur en dehors de Volcast et applique aussitôt le plan Volcast, sans recharger l'intégration."
     }
   },
   "entity": {

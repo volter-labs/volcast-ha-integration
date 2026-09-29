@@ -225,7 +225,18 @@
     },
     "foreign_control": {
       "title": "Controllo dell'inverter da parte di Volcast in pausa",
-      "description": "Un'impostazione dell'inverter controllata da Volcast ({entity_id}) è stata modificata al di fuori di Volcast. Volcast ha messo in pausa il controllo per 30 minuti e mantiene le impostazioni che hai modificato. Poi il controllo riprende automaticamente; per fermarlo, spegni l'interruttore di controllo di Volcast."
+      "description": "Un'impostazione dell'inverter controllata da Volcast ({entity_id}) è stata modificata al di fuori di Volcast. Volcast ha messo in pausa il controllo per 30 minuti e mantiene le impostazioni che hai modificato. Poi il controllo riprende automaticamente, oppure seleziona Ripara per riprenderlo subito; per fermarlo, spegni l'interruttore di controllo di Volcast.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Riprendi subito il controllo di Volcast",
+            "description": "Volcast termina la pausa e applica subito il proprio piano all'inverter, sovrascrivendo le impostazioni modificate al di fuori di Volcast ({entity_id})."
+          }
+        },
+        "abort": {
+          "foreign_mode": "L'inverter è ancora in una modalità che Volcast non utilizza, quindi il controllo non può ancora riprendere. Riporta l'inverter in una delle modalità usate da Volcast e riprova."
+        }
+      }
     },
     "direct_identity_changed": {
       "title": "Volcast ha trovato un inverter diverso all'indirizzo salvato",
@@ -262,6 +273,10 @@
     "direct_start_failed": {
       "title": "Volcast non è riuscito ad avviare la connessione diretta all'inverter",
       "description": "La connessione diretta all'inverter non si è avviata a causa di un errore imprevisto. Volcast riprova alcune volte; finché non si connette, non può modificare né ripristinare le impostazioni dell'inverter. Se il problema persiste, ricarica Volcast e controlla i log di Home Assistant."
+    },
+    "unsupported_setting": {
+      "title": "Alcune impostazioni dell'inverter non sono disponibili per Volcast",
+      "description": "Volcast non può usare queste impostazioni dell'inverter perché le relative entità sono mancanti, disattivate o non disponibili: {entities}. Il controllo prosegue senza di esse e il piano di Volcast non fa più affidamento su di esse. Quando le entità tornano disponibili, Volcast le usa automaticamente."
     }
   },
   "services": {
@@ -274,6 +289,10 @@
           "description": "Giorno specifico da sincronizzare (entro le ultime ~24-38 ore). Lascia vuoto per sincronizzare ieri e oggi."
         }
       }
+    },
+    "resume_control": {
+      "name": "Riprendi il controllo",
+      "description": "Termina la pausa dopo la modifica di un'impostazione dell'inverter al di fuori di Volcast e applica subito il piano di Volcast, senza ricaricare l'integrazione."
     }
   },
   "entity": {

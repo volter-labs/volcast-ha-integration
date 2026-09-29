@@ -225,7 +225,18 @@
     },
     "foreign_control": {
       "title": "Controlo do inversor pelo Volcast em pausa",
-      "description": "Uma definição do inversor controlada pelo Volcast ({entity_id}) foi alterada fora do Volcast. O Volcast pôs o controlo em pausa durante 30 minutos e mantém as definições que alterou. Depois o controlo retoma automaticamente; para o parar, desligue o interruptor de controlo do Volcast."
+      "description": "Uma definição do inversor controlada pelo Volcast ({entity_id}) foi alterada fora do Volcast. O Volcast pôs o controlo em pausa durante 30 minutos e mantém as definições que alterou. Depois o controlo retoma automaticamente, ou selecione Corrigir para o retomar agora; para o parar, desligue o interruptor de controlo do Volcast.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Retomar o controlo do Volcast agora",
+            "description": "O Volcast termina a pausa e aplica de imediato o seu plano ao inversor, substituindo as definições alteradas fora do Volcast ({entity_id})."
+          }
+        },
+        "abort": {
+          "foreign_mode": "O inversor continua num modo que o Volcast não utiliza, pelo que o controlo ainda não pode ser retomado. Volte a colocar o inversor num dos modos utilizados pelo Volcast e tente novamente."
+        }
+      }
     },
     "direct_identity_changed": {
       "title": "O Volcast encontrou um inversor diferente no endereço guardado",
@@ -262,6 +273,10 @@
     "direct_start_failed": {
       "title": "O Volcast não conseguiu iniciar a ligação direta ao inversor",
       "description": "A ligação direta ao inversor não conseguiu iniciar devido a um erro inesperado. O Volcast tenta novamente algumas vezes; até estabelecer ligação, não pode alterar nem repor as definições do inversor. Se isto persistir, recarregue o Volcast e verifique os registos do Home Assistant."
+    },
+    "unsupported_setting": {
+      "title": "Algumas definições do inversor não estão disponíveis para o Volcast",
+      "description": "O Volcast não pode utilizar estas definições do inversor porque as respetivas entidades estão em falta, desativadas ou indisponíveis: {entities}. O controlo continua sem elas e o plano do Volcast deixa de depender delas. Quando as entidades voltarem a estar disponíveis, o Volcast utiliza-as automaticamente."
     }
   },
   "services": {
@@ -274,6 +289,10 @@
           "description": "Dia específico a sincronizar (dentro das últimas ~24-38 horas). Deixe vazio para sincronizar ontem e hoje."
         }
       }
+    },
+    "resume_control": {
+      "name": "Retomar o controlo",
+      "description": "Termina a pausa depois de uma definição do inversor ser alterada fora do Volcast e aplica de imediato o plano do Volcast, sem recarregar a integração."
     }
   },
   "entity": {

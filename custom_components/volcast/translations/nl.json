@@ -225,7 +225,18 @@
     },
     "foreign_control": {
       "title": "Omvormerbesturing door Volcast gepauzeerd",
-      "description": "Een omvormerinstelling die door Volcast wordt bestuurd ({entity_id}) is buiten Volcast om gewijzigd. Volcast heeft de besturing 30 minuten gepauzeerd en behoudt de instellingen die je hebt gewijzigd. Daarna wordt de besturing automatisch hervat; zet de Volcast-besturingsschakelaar uit om dit te stoppen."
+      "description": "Een omvormerinstelling die door Volcast wordt bestuurd ({entity_id}) is buiten Volcast om gewijzigd. Volcast heeft de besturing 30 minuten gepauzeerd en behoudt de instellingen die je hebt gewijzigd. Daarna wordt de besturing automatisch hervat, of kies Repareren om de besturing nu te hervatten; zet de Volcast-besturingsschakelaar uit om dit te stoppen.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Volcast-besturing nu hervatten",
+            "description": "Volcast beëindigt de pauze en past zijn plan direct toe op de omvormer, waarbij de buiten Volcast om gewijzigde instellingen ({entity_id}) worden overschreven."
+          }
+        },
+        "abort": {
+          "foreign_mode": "De omvormer staat nog in een modus die Volcast niet gebruikt, dus de besturing kan nog niet worden hervat. Zet de omvormer terug op een van de modi die Volcast gebruikt en probeer het opnieuw."
+        }
+      }
     },
     "direct_identity_changed": {
       "title": "Volcast vond een andere omvormer op het opgeslagen adres",
@@ -262,6 +273,10 @@
     "direct_start_failed": {
       "title": "Volcast kon de directe omvormerverbinding niet starten",
       "description": "De directe verbinding met de omvormer kon door een onverwachte fout niet starten. Volcast probeert het een paar keer opnieuw; totdat er verbinding is, kan het omvormerinstellingen niet wijzigen of terugzetten. Blijft dit zo, laad Volcast dan opnieuw en controleer de Home Assistant-logs."
+    },
+    "unsupported_setting": {
+      "title": "Sommige omvormerinstellingen zijn niet beschikbaar voor Volcast",
+      "description": "Volcast kan deze omvormerinstellingen niet gebruiken omdat hun entiteiten ontbreken, uitgeschakeld of niet beschikbaar zijn: {entities}. De besturing gaat zonder deze instellingen door en het Volcast-plan vertrouwt er niet meer op. Zodra de entiteiten weer beschikbaar zijn, gebruikt Volcast ze automatisch."
     }
   },
   "services": {
@@ -274,6 +289,10 @@
           "description": "Specifieke dag om te synchroniseren (binnen de laatste ca. 24-38 uur). Laat leeg om gisteren en vandaag te synchroniseren."
         }
       }
+    },
+    "resume_control": {
+      "name": "Besturing hervatten",
+      "description": "Beëindigt de pauze nadat een omvormerinstelling buiten Volcast om is gewijzigd en past het Volcast-plan direct toe, zonder de integratie opnieuw te laden."
     }
   },
   "entity": {

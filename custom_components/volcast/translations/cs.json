@@ -225,7 +225,18 @@
     },
     "foreign_control": {
       "title": "Řízení střídače přes Volcast je pozastaveno",
-      "description": "Nastavení střídače řízené Volcastem ({entity_id}) bylo změněno mimo Volcast. Volcast pozastavil řízení na 30 minut a ponechává vámi změněná nastavení. Poté se řízení automaticky obnoví; chcete-li ho zastavit, vypněte přepínač řízení Volcast."
+      "description": "Nastavení střídače řízené Volcastem ({entity_id}) bylo změněno mimo Volcast. Volcast pozastavil řízení na 30 minut a ponechává vámi změněná nastavení. Poté se řízení automaticky obnoví, nebo vyberte Opravit a obnovte ho hned; chcete-li ho zastavit, vypněte přepínač řízení Volcast.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Obnovit řízení Volcast hned",
+            "description": "Volcast ukončí pauzu a okamžitě použije svůj plán na střídači, čímž přepíše nastavení změněná mimo Volcast ({entity_id})."
+          }
+        },
+        "abort": {
+          "foreign_mode": "Střídač je stále v režimu, který Volcast nepoužívá, takže řízení zatím nelze obnovit. Přepněte střídač zpět do jednoho z režimů používaných Volcastem a zkuste to znovu."
+        }
+      }
     },
     "direct_identity_changed": {
       "title": "Volcast našel na uložené adrese jiný střídač",
@@ -262,6 +273,10 @@
     "direct_start_failed": {
       "title": "Volcast nemohl spustit přímé připojení ke střídači",
       "description": "Přímé připojení ke střídači se kvůli neočekávané chybě nepodařilo spustit. Volcast to několikrát zopakuje; dokud se nepřipojí, nemůže měnit ani vracet nastavení střídače. Pokud to trvá, znovu načtěte Volcast a zkontrolujte protokoly Home Assistantu."
+    },
+    "unsupported_setting": {
+      "title": "Některá nastavení střídače nejsou pro Volcast dostupná",
+      "description": "Volcast nemůže tato nastavení střídače používat, protože jejich entity chybí, jsou vypnuté nebo nedostupné: {entities}. Řízení pokračuje bez nich a plán Volcast se na ně už nespoléhá. Jakmile budou entity opět dostupné, Volcast je použije automaticky."
     }
   },
   "services": {
@@ -274,6 +289,10 @@
           "description": "Konkrétní den k synchronizaci (v posledních ~24–38 hodinách). Nechte prázdné pro synchronizaci včerejška a dneška."
         }
       }
+    },
+    "resume_control": {
+      "name": "Obnovit řízení",
+      "description": "Ukončí pauzu po změně nastavení střídače mimo Volcast a okamžitě použije plán Volcast, bez opětovného načtení integrace."
     }
   },
   "entity": {

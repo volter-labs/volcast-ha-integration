@@ -225,7 +225,18 @@
     },
     "foreign_control": {
       "title": "Controlul invertorului de către Volcast este în pauză",
-      "description": "O setare a invertorului controlată de Volcast ({entity_id}) a fost modificată în afara Volcast. Volcast a pus controlul în pauză pentru 30 de minute și păstrează setările pe care le-ai modificat. Apoi controlul se reia automat; pentru a-l opri, oprește comutatorul de control Volcast."
+      "description": "O setare a invertorului controlată de Volcast ({entity_id}) a fost modificată în afara Volcast. Volcast a pus controlul în pauză pentru 30 de minute și păstrează setările pe care le-ai modificat. Apoi controlul se reia automat, sau selectează Remediază pentru a-l relua acum; pentru a-l opri, oprește comutatorul de control Volcast.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Reia acum controlul Volcast",
+            "description": "Volcast încheie pauza și aplică imediat planul său pe invertor, suprascriind setările modificate în afara Volcast ({entity_id})."
+          }
+        },
+        "abort": {
+          "foreign_mode": "Invertorul este încă într-un mod pe care Volcast nu îl folosește, așa că controlul nu poate fi reluat încă. Readu invertorul într-unul dintre modurile folosite de Volcast și încearcă din nou."
+        }
+      }
     },
     "direct_identity_changed": {
       "title": "Volcast a găsit un alt invertor la adresa salvată",
@@ -262,6 +273,10 @@
     "direct_start_failed": {
       "title": "Volcast nu a putut porni conexiunea directă la invertor",
       "description": "Conexiunea directă la invertor nu a putut porni din cauza unei erori neașteptate. Volcast reîncearcă de câteva ori; până se conectează, nu poate modifica sau readuce setările invertorului. Dacă persistă, reîncarcă Volcast și verifică jurnalele Home Assistant."
+    },
+    "unsupported_setting": {
+      "title": "Unele setări ale invertorului nu sunt disponibile pentru Volcast",
+      "description": "Volcast nu poate folosi aceste setări ale invertorului deoarece entitățile lor lipsesc, sunt dezactivate sau indisponibile: {entities}. Controlul continuă fără ele, iar planul Volcast nu se mai bazează pe ele. Când entitățile devin din nou disponibile, Volcast le folosește automat."
     }
   },
   "services": {
@@ -274,6 +289,10 @@
           "description": "Ziua specifică de sincronizat (în ultimele ~24-38 de ore). Lasă gol pentru a sincroniza ieri și azi."
         }
       }
+    },
+    "resume_control": {
+      "name": "Reia controlul",
+      "description": "Încheie pauza după ce o setare a invertorului a fost modificată în afara Volcast și aplică imediat planul Volcast, fără a reîncărca integrarea."
     }
   },
   "entity": {

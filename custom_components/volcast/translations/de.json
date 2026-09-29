@@ -225,7 +225,18 @@
     },
     "foreign_control": {
       "title": "Wechselrichter-Steuerung durch Volcast pausiert",
-      "description": "Eine von Volcast gesteuerte Wechselrichter-Einstellung ({entity_id}) wurde außerhalb von Volcast geändert. Volcast hat die Steuerung für 30 Minuten pausiert und behält deine geänderten Einstellungen bei. Danach läuft die Steuerung automatisch weiter; um sie zu beenden, schalte den Volcast-Steuerungsschalter aus."
+      "description": "Eine von Volcast gesteuerte Wechselrichter-Einstellung ({entity_id}) wurde außerhalb von Volcast geändert. Volcast hat die Steuerung für 30 Minuten pausiert und behält deine geänderten Einstellungen bei. Danach läuft die Steuerung automatisch weiter, oder wähle Beheben, um sie jetzt fortzusetzen; um sie zu beenden, schalte den Volcast-Steuerungsschalter aus.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Volcast-Steuerung jetzt fortsetzen",
+            "description": "Volcast beendet die Pause und wendet seinen Plan sofort auf den Wechselrichter an; dabei werden die außerhalb von Volcast geänderten Einstellungen ({entity_id}) überschrieben."
+          }
+        },
+        "abort": {
+          "foreign_mode": "Der Wechselrichter befindet sich noch in einem Modus, den Volcast nicht verwendet, daher kann die Steuerung noch nicht fortgesetzt werden. Stelle den Wechselrichter wieder auf einen der von Volcast verwendeten Modi und versuche es erneut."
+        }
+      }
     },
     "direct_identity_changed": {
       "title": "Volcast hat unter der gespeicherten Adresse einen anderen Wechselrichter gefunden",
@@ -262,6 +273,10 @@
     "direct_start_failed": {
       "title": "Volcast konnte die direkte Wechselrichter-Verbindung nicht starten",
       "description": "Die Direktverbindung zum Wechselrichter konnte wegen eines unerwarteten Fehlers nicht gestartet werden. Volcast versucht es einige Male erneut; bis die Verbindung steht, kann es Wechselrichter-Einstellungen weder ändern noch zurücksetzen. Falls das so bleibt, lade Volcast neu und prüfe die Home-Assistant-Logs."
+    },
+    "unsupported_setting": {
+      "title": "Einige Wechselrichter-Einstellungen sind für Volcast nicht verfügbar",
+      "description": "Volcast kann diese Wechselrichter-Einstellungen nicht verwenden, weil ihre Entitäten fehlen, deaktiviert oder nicht verfügbar sind: {entities}. Die Steuerung läuft ohne sie weiter, und der Volcast-Plan verlässt sich nicht mehr auf sie. Sobald die Entitäten wieder verfügbar sind, nutzt Volcast sie automatisch."
     }
   },
   "services": {
@@ -274,6 +289,10 @@
           "description": "Bestimmter Tag zur Synchronisierung (innerhalb der letzten ca. 24–38 Stunden). Leer lassen, um gestern und heute zu synchronisieren."
         }
       }
+    },
+    "resume_control": {
+      "name": "Steuerung fortsetzen",
+      "description": "Beendet die Pause, nachdem eine Wechselrichter-Einstellung außerhalb von Volcast geändert wurde, und wendet den Volcast-Plan sofort an, ohne die Integration neu zu laden."
     }
   },
   "entity": {
