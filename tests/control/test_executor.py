@@ -517,9 +517,13 @@ def test_lasting_unavailable_setting_raises_issue_and_clears_when_back(monkeypat
         h.states.set(E["soc_max"], "100")
         ex._clock.t += 60
         await ex.async_tick()
-        return first, lasting
-    first, lasting = asyncio.run(go())
-    assert first == ([], ())
+        # Wraca na stałe dopiero po czasie — encja, która miga, nie przełącza możliwości co chwilę.
+        sticky = ex.unsupported_settings
+        ex._clock.t += 600
+        await ex.async_tick()
+        return first, lasting, sticky
+    first, lasting, sticky = asyncio.run(go())
+    assert first == ([], ()) and sticky == ("soc_max",)
     (call,), keys = lasting
     assert keys == ("soc_max",)
     assert call.kwargs["translation_key"] == "unsupported_setting"
@@ -1296,3 +1300,39 @@ def test_returning_setting_is_not_written_when_its_snapshot_cannot_be_saved(monk
     assert float(h.states.get(E["soc_max"]).state) == 90.0
     saved = asyncio.run(ex._store.async_load())
     assert saved.snapshot["soc_max"] == 95.0
+
+
+def test_flapping_setting_accumulates_absence_and_becomes_unsupported(monkeypatch):
+    h = goodwe_hass()
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        for state, dt in (("unavailable", 300), ("100", 60), ("unavailable", 300)):
+            h.states.set(E["soc_max"], state)
+            await ex.async_tick()
+            ex._clock.t += dt
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex.unsupported_settings == ("soc_max",)
+
+
+def test_unsupported_issue_only_while_control_is_on(monkeypatch):
+    ir.async_create_issue.reset_mock()
+    h = goodwe_hass()
+    mapped = {k: v for k, v in E.items() if k != "soc_max"}
+    entry = SimpleNamespace(entry_id="e1", options={"control_mode": "entities"})
+    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+    ex = VolcastExecutor(h, entry, choice=GW, mapped=mapped, rated_power_w=8000.0,
+                         store=ControlStore(h, "e1"), writer=EntityServiceWriter(h), clock=Clock(),
+                         utcnow=lambda: NOW + timedelta(seconds=30))
+
+    async def go():
+        await ready(ex, local=False)
+        await ex.async_tick()
+        off = list(_unsupported_issues())
+        await ex.async_set_local_switch(True)
+        await ex.async_tick()
+        return off
+    off = asyncio.run(go())
+    assert off == [] and len(_unsupported_issues()) == 1

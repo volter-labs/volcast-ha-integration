@@ -18,10 +18,11 @@ Zasady wykonania:
   inaczej żadnego zapisu (klucza bez migawki nigdy byśmy nie przywrócili);
 * nastawa bez używalnej encji (brak mapowania, brak stanu, `unavailable`/`unknown`) jest
   w tym cyklu nieobsługiwana: wypada z odczytów cyklu, zapisów i wymogów migawki — reszta
-  sterowania działa dalej (bez encji trybu nie ma sterowania wcale). Gdy trwa to
-  `_UNSUPPORTED_AFTER_S` (brak mapowania — od razu), trafia do `unsupported_settings`
-  (możliwości dla chmury) i do zgłoszenia w Naprawach. Encja, która wraca, znów jest
-  obsługiwana w najbliższym cyklu; przy trwającej własności jej wartość dochodzi do
+  sterowania działa dalej (bez encji trybu nie ma sterowania wcale). Gdy brak trwa (licząc
+  od pierwszego braku, bez kasowania przy krótkich powrotach) `_UNSUPPORTED_AFTER_S` (brak
+  mapowania — od razu), trafia do `unsupported_settings` (możliwości dla chmury) i — przy
+  włączonym sterowaniu — do zgłoszenia w Naprawach; wypada z nich po tyluż czasie ciągłej
+  obecności. Encja, która wraca, znów jest używana w cyklu od razu; przy trwającej własności jej wartość dochodzi do
   migawki, zanim ją zapiszemy. Nastawa ochronna (próg SoC, ogranicznik eksportu) wypada
   dopiero, gdy chmura o tym wie: telemetria zgłosiła ją jako nieobsługiwaną
   (`note_capabilities_sent`), a potem przyszedł świeży plan (`note_plan_fresh`) — do
@@ -172,6 +173,7 @@ class VolcastExecutor:
         self._foreign_episode = False                 # tryb spoza profilu na falowniku
         self._restore_failed: tuple[str, ...] | None = None   # ostatnio zalogowane (bez powtórek co tik)
         self._absent_since: dict[str, float] = {}     # klucz zapisu → od kiedy bez używalnej encji
+        self._present_since: dict[str, float] = {}    # … i od kiedy znów jest (po braku)
         self.unsupported_settings: tuple[str, ...] = ()       # nieobsługiwane (w kolejności profilu)
         self._unsupported_issue: tuple[str, ...] = ()
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
@@ -596,13 +598,13 @@ class VolcastExecutor:
             return
         rd = self._read(now_utc)
         absent = self._absent_keys()
-        self._track_unsupported(absent, now_mono)
         live_map = {k: v for k, v in self._mapped.items() if k not in absent}
         self._update_foreign_episode(rd)
         gates = Gates(consent=self._state.consent, local_switch=self._state.local_switch,
                       control_mode=self._entry.options.get(OPT_CONTROL_MODE),
                       verified=control_verified(self._profile, self._domain))
         live = self._control_on(gates)
+        self._track_unsupported(absent, now_mono, live)
         if not live:
             self._consistent = {}            # wyłączone sterowanie: żadnego odniesienia przejęcia
         if needs_restore(owned=self._state.owned, consent=gates.consent,
@@ -767,22 +769,27 @@ class VolcastExecutor:
                 out.append(key)
         return tuple(out)
 
-    def _track_unsupported(self, absent: tuple[str, ...], now_mono: float) -> None:
+    def _track_unsupported(self, absent: tuple[str, ...], now_mono: float, live: bool) -> None:
         """Nieobsługiwane nastawy: brak mapowania od razu, niedostępna encja po czasie.
 
-        Zmiana zbioru aktualizuje zgłoszenie w Naprawach (tylko w trybie encji); w logu same
-        klucze, `entity_id` tylko w parametrze tekstu Napraw.
+        Czas braku liczy się od pierwszego braku i nie zeruje się przy krótkich powrotach
+        (encja, która miga, też jest nieobsługiwana); kasuje go dopiero ciągła obecność przez
+        `_UNSUPPORTED_AFTER_S`. Zmiana zbioru aktualizuje zgłoszenie w Naprawach (tylko przy
+        włączonym sterowaniu); w logu same klucze, `entity_id` tylko w parametrze tekstu Napraw.
         """
-        for key in list(self._absent_since):
-            if key not in absent:
-                del self._absent_since[key]
-        for key in absent:
-            self._absent_since.setdefault(key, now_mono)
+        for key in self._write_keys():
+            if key in absent:
+                self._absent_since.setdefault(key, now_mono)
+                self._present_since.pop(key, None)
+            elif key in self._absent_since:
+                back = self._present_since.setdefault(key, now_mono)
+                if now_mono - back >= _UNSUPPORTED_AFTER_S:
+                    del self._absent_since[key], self._present_since[key]
         self.unsupported_settings = tuple(
-            k for k in absent
-            if k not in self._mapped or now_mono - self._absent_since[k] >= _UNSUPPORTED_AFTER_S)
-        shown = self.unsupported_settings \
-            if self._entry.options.get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES else ()
+            k for k in self._write_keys()
+            if k not in self._mapped
+            or (k in self._absent_since and now_mono - self._absent_since[k] >= _UNSUPPORTED_AFTER_S))
+        shown = self.unsupported_settings if live else ()
         if shown == self._unsupported_issue:
             return
         self._unsupported_issue = shown
