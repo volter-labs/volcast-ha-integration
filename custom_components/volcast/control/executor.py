@@ -56,7 +56,8 @@ własności ją kasuje.
 Obca zmiana nastaw (przejęcie): zdarzenie zmiany stanu encji klucza zapisu z aktorem
 (użytkownik, automatyzacja), nie z naszym kontekstem, z wartością inną niż ostatnia
 wartość zgodna z planem: nasz ostatni zapis klucza, a bez niego — ostatni odczyt klucza,
-którym bieżący plan steruje, przy włączonym sterowaniu (plan nie wymagał zapisu, więc
+którym plan steruje (ostatnia decyzja z planem — także gdy cykl stoi) albo który
+zapisaliśmy w tej własności (przeżywa restart), przy włączonym sterowaniu (plan nie wymagał zapisu, więc
 stan falownika był z nim zgodny). Działa więc także przed naszym pierwszym zapisem;
 nastawa spoza planu, której nie zapisywaliśmy, nie jest z nim w konflikcie. Pauza nie
 wstrzymuje zejścia z NASZEGO trybu rozładowania do neutralnego pod rezerwą SoC (I-1). Albo tryb falownika ustawiony na
@@ -182,6 +183,8 @@ class VolcastExecutor:
         self._unsupported_issue: tuple[str, ...] = ()
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
         self._consistent: dict[str, float | str] = {}
+        # klucze ostatniej decyzji z planem — zablokowany cykl (bez `flat`) nie gubi odniesienia
+        self._plan_keys: frozenset[str] = frozenset()
         self._disabled = False
         self._unsub: list[Callable[[], None]] = []
 
@@ -627,7 +630,10 @@ class VolcastExecutor:
         if soc is not None:
             self._prev_soc = (soc, now_mono)
         # Odniesienie przejęcia: odczyty kluczy, którymi plan steruje (przy włączonym sterowaniu).
-        self._consistent = ({k: readings[k] for k in decision.flat if k in readings and k in self._write_keys()}
+        if decision.flat:
+            self._plan_keys = frozenset(decision.flat)
+        watched = self._plan_keys | self._restorable_keys()
+        self._consistent = ({k: readings[k] for k in watched if k in readings and k in self._write_keys()}
                             if live else {})
         # Z własnego odczytu, nie tylko z decyzji — wcześniejsza blokada cyklu go nie zasłoni.
         if self._signal_foreign_mode(rd, self._gates_open() and gates.verified, decision.takeover):
@@ -751,6 +757,13 @@ class VolcastExecutor:
         if not st.owned or not ours or any(k in st.taken_over or k not in st.snapshot for k in pair):
             return {}
         return {k: st.snapshot[k] for k in pair}
+
+    def _restorable_keys(self) -> frozenset[str]:
+        """Klucze zapisane w tej własności (przeżywają restart), bez przejętych przez właściciela."""
+        keys = self._state.restore_keys
+        if not self._state.owned or keys is None:
+            return frozenset()
+        return frozenset(k for k in keys if k not in self._state.taken_over)
 
     def _control_on(self, gates: Gates) -> bool:
         """Sterowanie włączone (bez względu na pauzę): zgoda, przełącznik, tryb encji, weryfikacja."""

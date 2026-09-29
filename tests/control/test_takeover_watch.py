@@ -692,3 +692,29 @@ def test_resume_after_pause_expired_resets_issue_so_next_takeover_raises_again(m
     h.states.set(E["power_w"], "700")
     asyncio.run(ex.async_on_state_event(event(E["power_w"], "700", Context(user_id="u1"), "W")))
     assert ex.paused and len(_created()) == 1
+
+
+def test_owner_change_detected_while_cycle_blocked_after_restart(monkeypatch):
+    # Po restarcie pamięć zapisów jest pusta, a zablokowany cykl nie ma planu (flat) — nastawa,
+    # którą zapisaliśmy w tej własności, i tak jest odniesieniem przejęcia.
+    from datetime import timedelta
+    from .ha_fakes import NOW
+    h = goodwe_hass(export="0", export_on="on")
+    h.states.set(E["soc"], "60", {"unit_of_measurement": "%"}, reported=NOW - timedelta(hours=1))
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True,
+        snapshot={"mode": "auto", "export_limit_w": 4000.0, "export_limit_enabled": 0.0},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": E["mode"]},
+        restore_keys=["export_limit_w", "export_limit_enabled"])))
+    h, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=sell_ban())
+        await ex.async_tick()
+        assert ex.last_decision.status == "blocked" and ex.last_decision.flat == {}
+        h.states.set(E["export_limit_w"], "5000")
+        await ex.async_on_state_event(event(E["export_limit_w"], "5000", Context(user_id="u1"), "W"))
+    asyncio.run(go())
+    assert ex.paused and ex.foreign_changes[-1]["key"] == "export_limit_w"
+    assert "export_limit_w" in ex._state.taken_over
