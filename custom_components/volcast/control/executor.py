@@ -42,9 +42,18 @@ Zasady wykonania:
 * wejścia (plan, zgoda, przełącznik) nie rzucają: błąd magazynu zostawia stan w pamięci
   i trafia do logu.
 
+Migawka stanu właściciela powstaje przy włączeniu sterowania (zgoda, przełącznik, tryb
+encji, profil zweryfikowany — także przy starcie wpisu z włączonym sterowaniem), zanim
+cokolwiek zapiszemy, i do pierwszego zapisu podąża za odczytami (zmiana w aplikacji
+producenta nie ma aktora, a też jest wyborem właściciela). Wyłączone sterowanie bez
+własności ją kasuje.
+
 Obca zmiana nastaw (przejęcie): zdarzenie zmiany stanu encji klucza zapisu z aktorem
-(użytkownik, automatyzacja), nie z naszym kontekstem, z wartością inną niż nasz ostatni
-zapis — albo tryb falownika ustawiony na czytelną opcję spoza profilu (sygnał poziomu,
+(użytkownik, automatyzacja), nie z naszym kontekstem, z wartością inną niż ostatnia
+wartość zgodna z planem: nasz ostatni zapis klucza, a bez niego — ostatni odczyt przy
+włączonym sterowaniu (plan nie wymagał zapisu, więc stan falownika był z nim zgodny).
+Działa więc także przed naszym pierwszym zapisem. Albo tryb falownika ustawiony na
+czytelną opcję spoza profilu (sygnał poziomu,
 także bez aktora i także gdy cykl zatrzymał się wcześniej na innej blokadzie). Skutek:
 pauza 30 min (bez zapisów planu), klucz wypada z `restore_keys`, wpis w `foreign_changes`
 (lokalnie, z `entity_id`), zgłoszenie w Naprawach (z `entity_id` jako parametrem tekstu),
@@ -158,6 +167,8 @@ class VolcastExecutor:
         self._absent_since: dict[str, float] = {}     # klucz zapisu → od kiedy bez używalnej encji
         self.unsupported_settings: tuple[str, ...] = ()       # nieobsługiwane (w kolejności profilu)
         self._unsupported_issue: tuple[str, ...] = ()
+        # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
+        self._consistent: dict[str, float | str] = {}
         self._disabled = False
         self._unsub: list[Callable[[], None]] = []
 
@@ -299,12 +310,15 @@ class VolcastExecutor:
     def _drop_foreign_owner(self) -> bool:
         """Migawka z innego profilu albo innej encji trybu nie trafia w nowe encje.
 
-        Własność bez powiązania (zapisana przed jego wprowadzeniem) uznajemy za własną.
+        Dotyczy też migawki sprzed pierwszego zapisu. Własność bez powiązania (zapisana
+        przed jego wprowadzeniem) uznajemy za własną.
         """
-        if not self._state.owned or not self._state.owner or self._state.owner == self._owner():
+        if not (self._state.owned or self._state.snapshot) or not self._state.owner \
+                or self._state.owner == self._owner():
             return False
-        _LOGGER.warning("Volcast control: saved baseline settings belong to a different inverter "
-                        "profile or mode entity — not reusing them; check the inverter settings")
+        if self._state.owned:
+            _LOGGER.warning("Volcast control: saved baseline settings belong to a different inverter "
+                            "profile or mode entity — not reusing them; check the inverter settings")
         self._state.owned = False
         self._state.snapshot = {}
         self._state.owner = {}
@@ -343,10 +357,11 @@ class VolcastExecutor:
                           and raw_state not in _NO_READING)
         if foreign_option:
             value = "?" + raw_state          # czytelna opcja spoza profilu ≠ brak odczytu
+        expected = self._memory.last_written.get(key, self._consistent.get(key))
         if not is_foreign_change(ours=self._writer.is_ours(getattr(ctx, "id", None)),
                                  has_actor=bool(getattr(ctx, "user_id", None)
                                                 or getattr(ctx, "parent_id", None)),
-                                 new_value=value, last_written=self._memory.last_written.get(key)):
+                                 new_value=value, expected=expected):
             return False
         if foreign_option:
             self._foreign_episode = True     # sygnał poziomu nie powtórzy tego epizodu
@@ -539,6 +554,9 @@ class VolcastExecutor:
         gates = Gates(consent=self._state.consent, local_switch=self._state.local_switch,
                       control_mode=self._entry.options.get(OPT_CONTROL_MODE),
                       verified=control_verified(self._profile, self._domain))
+        live = self._control_on(gates)
+        # Odniesienie przejęcia: odczyty przy włączonym sterowaniu (wyłączone — żadnego).
+        self._consistent = {k: v for k, v in rd.readings.items() if k in self._write_keys()} if live else {}
         if needs_restore(owned=self._state.owned, consent=gates.consent,
                          local_switch=gates.local_switch, control_mode=gates.control_mode) \
                 and self._domain:
@@ -546,7 +564,8 @@ class VolcastExecutor:
             await self._restore(rd)
             return
         readings = rd.readings
-        if self._state.owned and self._extend_snapshot(readings):
+        if self._follow_owner_snapshot(live, readings) \
+                or (self._state.owned and self._extend_snapshot(readings)):
             await self._async_save("baseline snapshot")
         soc = readings.get("soc")
         soc = soc if isinstance(soc, float) else None
@@ -590,7 +609,9 @@ class VolcastExecutor:
 
         Pełna = każda nastawa z używalną encją (nieobsługiwanej i tak nie zapiszemy).
         """
-        snapshot = take_snapshot(readings)
+        # Migawka z włączenia sterowania, uzupełniona bieżącym odczytem.
+        before, before_owner = dict(self._state.snapshot), dict(self._state.owner)
+        snapshot = {**before, **take_snapshot(readings)}
         missing = snapshot_missing(snapshot, live_map)
         if missing:
             return replace(decision, status=BLOCKED, reason="baseline_unknown", unmapped=missing)
@@ -602,12 +623,35 @@ class VolcastExecutor:
         if not await self._async_save("baseline snapshot"):
             # Bez trwałej migawki restart nie wiedziałby, co przywrócić — nie piszemy.
             self._state.owned = False
-            self._state.snapshot = {}
-            self._state.owner = {}
+            self._state.snapshot = before
+            self._state.owner = before_owner
             self._state.restore_keys = None
             self._state.taken_over = []
             return replace(decision, status=ERROR, reason="store_failed")
         return decision
+
+    def _control_on(self, gates: Gates) -> bool:
+        """Sterowanie włączone (bez względu na pauzę): zgoda, przełącznik, tryb encji, weryfikacja."""
+        return (gates.consent is True and gates.local_switch and not self._stopped
+                and gates.control_mode == CONTROL_MODE_ENTITIES and gates.verified)
+
+    def _follow_owner_snapshot(self, live: bool, readings: Mapping[str, float | str]) -> bool:
+        """Migawka stanu właściciela przed pierwszym zapisem; True, gdy się zmieniła.
+
+        Włączone sterowanie: migawka podąża za odczytami (nieczytelny klucz zostaje przy
+        ostatniej wartości). Wyłączone: kasujemy ją — następne włączenie zrobi nową.
+        """
+        if self._state.owned:
+            return False
+        if not live:
+            changed = bool(self._state.snapshot or self._state.owner)
+            self._state.snapshot, self._state.owner = {}, {}
+            return changed
+        snapshot, owner = {**self._state.snapshot, **take_snapshot(readings)}, self._owner()
+        if snapshot == self._state.snapshot and owner == self._state.owner:
+            return False
+        self._state.snapshot, self._state.owner = snapshot, owner
+        return True
 
     def _extend_snapshot(self, readings: Mapping[str, float | str]) -> bool:
         """Nastawa, która wróciła w trakcie własności: jej wartość sprzed naszego zapisu do migawki.

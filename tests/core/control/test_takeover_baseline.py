@@ -21,7 +21,7 @@ GW = load_builtin("goodwe-et")
     (False, True, 3000.0, None, False),       # tego klucza nie pisaliśmy
 ])
 def test_is_foreign_change(ours, actor, new, last, expected):
-    assert is_foreign_change(ours=ours, has_actor=actor, new_value=new, last_written=last) is expected
+    assert is_foreign_change(ours=ours, has_actor=actor, new_value=new, expected=last) is expected
 
 
 def test_foreign_pause_is_half_an_hour():
