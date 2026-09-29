@@ -203,12 +203,24 @@ def test_negative_price_ban_without_pair_keeps_neutral_mode():
     assert d.status == WRITE and d.flat["mode"] == "auto" and not EXPORT_PAIR & _keys(d)
 
 
-def test_grid_charge_with_export_cap_without_pair_degrades_to_neutral():
+def test_grid_charge_with_export_ban_without_pair_still_charges():
+    # Ładowanie nie potrzebuje ogranicznika (auto i tak oddaje nadwyżkę PV) — para wypada,
+    # ładowanie przy ujemnej cenie zostaje.
     d, _ = run(mapped=_without("export_limit_enabled"),
                schedule=plan(slot("10:00", "11:00", mode="charge", charge_source="grid", power_w=3000,
                                   export_allowed=False)))
-    assert d.status == WRITE and "degraded" in d.notes and d.flat["mode"] == "auto"
-    assert not EXPORT_PAIR & _keys(d) and "power_w" not in _keys(d)
+    assert d.status == WRITE and "degraded" not in d.notes and d.flat["mode"] == "charge_battery"
+    assert not EXPORT_PAIR & _keys(d) and "power_w" in _keys(d)
+
+
+def test_discharge_degrades_only_for_an_export_ban_not_a_cap():
+    ban = run(mapped=_without("export_limit_w"), readings={"mode": "auto"},
+              schedule=plan(slot("10:00", "11:00", **SELL, power_w=2000, export_allowed=False)))[0]
+    assert "degraded" in ban.notes and ban.flat["mode"] == "auto"
+    cap = run(mapped=_without("export_limit_w"),
+              schedule=plan(slot("10:00", "11:00", **SELL, power_w=2000, export_limit_w=3000)))[0]
+    assert "degraded" not in cap.notes and cap.flat["mode"] == "sell_power"
+    assert not EXPORT_PAIR & _keys(cap)
 
 
 def test_missing_ceiling_entity_drops_plan_ceiling_and_still_charges():

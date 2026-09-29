@@ -13,7 +13,9 @@ trybie ładuje z sieci). Zasady, które trzymają grupę:
   po strażnikach, jak nastawa odrzucona przez falownik. Akcja, której bez niej nie da
   się bezpiecznie wykonać, schodzi do trybu neutralnego (`_degrade`): moc dla trybu
   z mocą (tryb na starej mocy to inna komenda), próg SoC dla rozładowania, ogranicznik
-  eksportu dla trybu kierunkowego. Tryb neutralny i postój nie zależą od żadnej z nich —
+  eksportu dla rozładowania z zakazem eksportu (0 W). Ładowanie, tryb neutralny i postój
+  ogranicznika nie potrzebują (para tylko wypada) — tryb neutralny i postój nie zależą
+  od żadnej z nich —
   slot zapasowy i zejście do rezerwy (I-1) idą zawsze;
 * para ogranicznika eksportu (`EXPORT_PAIR`) jest nieobsługiwana, wstrzymana i zapisywana
   razem — połowa pary daje zakaz bez skutku albo 0 W przy nieznanym przełączniku;
@@ -374,9 +376,11 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
 def _degrade(params: Params, without: set[str], profile) -> tuple[Params, bool]:
     """Akcja bez nastawy, której wymaga, schodzi do trybu neutralnego (bez mocy).
 
-    Moc — tryb, który jej używa; próg SoC — rozładowanie; ogranicznik eksportu — tryb
-    kierunkowy (ładowanie, rozładowanie). Tryb neutralny i postój idą bez nich. Pozostałe
-    nastawy planu zostają (wołający i tak zdejmuje te bez encji).
+    Moc — tryb, który jej używa; próg SoC — rozładowanie; ogranicznik eksportu — tylko
+    rozładowanie z zakazem eksportu (0 W; pułap to nie warunek bezpieczeństwa). Ładowanie
+    go nie potrzebuje: tryb neutralny i tak oddaje nadwyżkę PV, a ładowanie przy ujemnej
+    cenie to najcenniejsza akcja. Tryb neutralny i postój idą bez nich. Pozostałe nastawy
+    planu zostają (wołający i tak zdejmuje te bez encji).
     """
     mode = params.mode
     if mode is None or mode == profile.neutral_mode:
@@ -384,7 +388,8 @@ def _degrade(params: Params, without: set[str], profile) -> tuple[Params, bool]:
     direction = profile.mode_direction(mode)
     needed = ("power_w" in without
               or ("soc_min" in without and direction == "discharge")
-              or (bool(without & EXPORT_PAIR) and direction in _DIRECTIONAL))
+              or (bool(without & EXPORT_PAIR) and direction == "discharge"
+                  and params.export_limit_w == 0.0))
     if not needed:
         return params, False
     return replace(params, mode=profile.neutral_mode, power_w=None), True
