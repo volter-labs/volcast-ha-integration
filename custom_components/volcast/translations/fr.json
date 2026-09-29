@@ -1,0 +1,396 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurer Volcast",
+        "description": "Connectez votre compte Volcast, ou lancez uniquement une détection en lecture seule de votre installation (rien n'est modifié et rien ne quitte Home Assistant tant que vous ne partagez pas le fichier de diagnostic).",
+        "menu_options": {
+          "pair": "Se connecter à votre compte Volcast (recommandé)",
+          "api_key": "Se connecter avec une clé API",
+          "discovery_only": "Détection uniquement (sans compte)"
+        }
+      },
+      "pair": {
+        "title": "Connecter votre compte Volcast",
+        "description": "Ouvrez l'application ou la page Volcast et confirmez cette connexion à cet endroit. Cette fenêtre se ferme toute seule dès que vous confirmez.",
+        "data": {
+          "pairing_url": "Adresse du service d'appairage"
+        },
+        "data_description": {
+          "pairing_url": "Laissez vide pour utiliser le service Volcast par défaut. Ne modifiez que si l'assistance Volcast vous l'a demandé."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Avancé",
+            "description": "Nécessaire uniquement si l'assistance Volcast vous a demandé d'utiliser un autre service d'appairage.",
+            "data": {
+              "pairing_url": "Adresse du service d'appairage"
+            },
+            "data_description": {
+              "pairing_url": "Laissez vide pour utiliser le service Volcast par défaut."
+            }
+          }
+        }
+      },
+      "api_key": {
+        "title": "Se connecter à Volcast",
+        "description": "Saisissez votre clé API Volcast. Vous la trouverez dans l'application Volcast sous Paramètres > Clé API.",
+        "data": {
+          "api_key": "Clé API",
+          "api_url": "URL de l'API (avancé)"
+        }
+      },
+      "production": {
+        "title": "Suivi de la production (facultatif)",
+        "description": "Connectez les capteurs de votre onduleur pour améliorer la précision des prévisions. Volcast enverra des résumés horaires de production pour l'étalonnage.\n\nLes deux sont facultatifs — vous pouvez les configurer plus tard dans les options de l'intégration.",
+        "data": {
+          "pv_energy_entity": "Production PV du jour (kWh)",
+          "pv_power_entity": "Puissance PV actuelle (W)",
+          "battery_soc_entity": "État de charge de la batterie (%)",
+          "battery_charge_power_entity": "Puissance de charge de la batterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un capteur qui indique la production solaire totale du jour en kWh (remis à zéro chaque jour). C'est la source principale du suivi — cherchez des capteurs comme « Production PV du jour » ou « Rendement quotidien » de votre onduleur (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_power_entity": "Un capteur qui indique la puissance solaire actuelle en watts. Utilisé en secours lorsque le capteur d'énergie est indisponible ou se remet à zéro en cours de journée.",
+          "battery_soc_entity": "Un capteur qui indique l'état de charge de la batterie (0-100 %). Utilisé pour détecter le bridage de l'onduleur lorsque la batterie est pleine. Facultatif — nécessaire uniquement si vous avez un système de batterie.",
+          "battery_charge_power_entity": "Un capteur qui indique la puissance de charge de la batterie en watts. Utilisé pour confirmer le bridage (batterie pleine, n'accepte plus de charge) et détecter la charge depuis le réseau (scénarios de prix négatifs). Facultatif."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter à l'API Volcast. Vérifiez votre connexion internet.",
+      "invalid_auth": "Clé API non valide ou abonnement premium requis.",
+      "masked_key": "Cela ressemble à l'aperçu abrégé de l'application (vk_xxxx...xxxx), pas à la clé complète. Dans l'application Volcast, ouvrez Paramètres > Clé API, utilisez le bouton Copier ou Partager, puis collez ici la clé complète de 67 caractères.",
+      "invalid_key_format": "Ce n'est pas une clé API Volcast. Une clé commence par vk_ et fait 67 caractères. Utilisez le bouton Copier ou Partager de l'application Volcast sous Paramètres > Clé API.",
+      "unknown": "Une erreur inattendue s'est produite.",
+      "invalid_url": "Saisissez une adresse https:// complète, sans barre oblique finale."
+    },
+    "abort": {
+      "already_configured": "Cette clé API est déjà configurée.",
+      "single_instance_allowed": "Volcast est déjà configuré ici, et la détection de l'installation s'exécute déjà dans ce cadre.",
+      "cannot_connect": "Impossible de joindre le service d'appairage Volcast. Vérifiez votre connexion internet et réessayez.",
+      "pairing_expired": "La demande d'appairage a expiré ou a été annulée avant d'être confirmée. Recommencez et confirmez dans les 10 minutes.",
+      "pairing_disabled": "L'appairage n'est pas disponible pour le moment. Réessayez plus tard ou connectez-vous avec une clé API.",
+      "pairing_failed": "L'appairage n'a pas abouti. Recommencez ; si cela échoue encore, connectez-vous avec une clé API.",
+      "paired_existing": "Votre entrée Volcast existante est maintenant connectée à votre compte.",
+      "multiple_accounts": "Plus d'une entrée Volcast est configurée ici. Supprimez les entrées en trop, puis appairez à nouveau.",
+      "pairing_connection_lost": "Home Assistant a perdu la connexion au service d'appairage Volcast en attendant votre confirmation. Vérifiez la connexion internet de Home Assistant et recommencez.",
+      "already_in_progress": "La configuration de Volcast est déjà en cours. Terminez ou fermez d'abord l'autre fenêtre de configuration.",
+      "existing_entry_disabled": "Volcast est déjà ajouté, mais désactivé. Activez-le dans Paramètres → Appareils et services.",
+      "converted_existing": "Votre entrée en détection seule utilise maintenant votre compte Volcast."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options de Volcast",
+        "data": {
+          "update_interval": "Intervalle de mise à jour (minutes)",
+          "peak_threshold": "Seuil de production maximale (%)",
+          "pv_energy_entity": "Production PV du jour (kWh)",
+          "pv_power_entity": "Puissance PV actuelle (W)",
+          "battery_soc_entity": "État de charge de la batterie (%)",
+          "battery_charge_power_entity": "Puissance de charge de la batterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un capteur qui indique la production solaire totale du jour en kWh (remis à zéro chaque jour).",
+          "pv_power_entity": "Un capteur qui indique la puissance solaire actuelle en watts. Utilisé en secours.",
+          "battery_soc_entity": "Un capteur qui indique l'état de charge de la batterie (0-100 %). Utilisé pour détecter le bridage.",
+          "battery_charge_power_entity": "Un capteur de la puissance de charge de la batterie en watts. Détecte le bridage et la charge depuis le réseau."
+        },
+        "menu_options": {
+          "forecast": "Prévision",
+          "control": "Pilotage de l'onduleur",
+          "details": "Détails de l'installation",
+          "prices": "Prix de l'énergie"
+        }
+      },
+      "forecast": {
+        "title": "Prévision",
+        "data": {
+          "update_interval": "Intervalle de mise à jour (minutes)",
+          "peak_threshold": "Seuil de production maximale (%)",
+          "pv_energy_entity": "Production PV du jour (kWh)",
+          "pv_power_entity": "Puissance PV actuelle (W)",
+          "battery_soc_entity": "État de charge de la batterie (%)",
+          "battery_charge_power_entity": "Puissance de charge de la batterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un capteur qui indique la production solaire totale du jour en kWh (remis à zéro chaque jour).",
+          "pv_power_entity": "Un capteur qui indique la puissance solaire actuelle en watts. Utilisé en secours.",
+          "battery_soc_entity": "Un capteur qui indique l'état de charge de la batterie (0-100 %). Utilisé pour détecter le bridage.",
+          "battery_charge_power_entity": "Un capteur de la puissance de charge de la batterie en watts. Détecte le bridage et la charge depuis le réseau."
+        }
+      },
+      "control": {
+        "title": "Pilotage de l'onduleur",
+        "description": "Via l'intégration de votre onduleur — Volcast écrit les entités de mode et de puissance de l'onduleur. Directement — Volcast communique avec l'onduleur sur le réseau local ; disponible uniquement pour les onduleurs dont le pilotage direct est vérifié et lorsqu'aucune autre intégration n'utilise l'onduleur (recherchez-le d'abord dans Détails de l'installation). Le pilotage nécessite aussi l'interrupteur dans Home Assistant et votre accord dans l'application Volcast.",
+        "menu_options": {
+          "control_entities": "Via l'intégration de l'onduleur (entités)",
+          "control_direct": "Directement sur le réseau local",
+          "control_off": "Désactivé — prévision et surveillance uniquement"
+        }
+      },
+      "details": {
+        "title": "Détails de l'installation",
+        "description": "Facultatif. Choisissez des capteurs pour les mesures que Volcast ne trouve pas via l'intégration de l'onduleur, et corrigez les données de l'installation.",
+        "data": {
+          "soc": "État de charge de la batterie",
+          "pv_power_w": "Puissance PV",
+          "battery_power_w": "Puissance de la batterie",
+          "grid_power_w": "Puissance du réseau",
+          "load_power_w": "Puissance de consommation de la maison",
+          "pv_energy_total_kwh": "Énergie PV totale",
+          "grid_import_total_kwh": "Soutirage réseau total",
+          "grid_export_total_kwh": "Injection réseau totale",
+          "grid_power_negate": "Le capteur réseau indique l'injection comme positive",
+          "rated_power_w": "Puissance nominale de l'onduleur (W)",
+          "battery_capacity_kwh": "Capacité de la batterie (kWh)",
+          "load_energy_entity": "Capteur d'énergie de consommation de la maison (kWh)",
+          "direct_search": "Rechercher l'onduleur sur le réseau local",
+          "direct_trial": "Connexion de test en lecture seule",
+          "direct_poll_s": "Intervalle de lecture de la connexion directe (s)"
+        },
+        "data_description": {
+          "grid_power_negate": "Activez si votre capteur réseau est négatif lors du soutirage.",
+          "rated_power_w": "Entre 1000 et 30000 W.",
+          "load_energy_entity": "Utilisé une seule fois pour envoyer votre historique de consommation à Volcast.",
+          "direct_search": "Lit uniquement l'identification de l'onduleur ; rien n'est écrit.",
+          "direct_trial": "Se connecte à l'onduleur, affiche ses mesures et ce que ferait Volcast — n'écrit jamais. Uniquement pour les onduleurs dont le pilotage direct est encore en cours de vérification.",
+          "direct_poll_s": "Entre 5 et 60 secondes."
+        }
+      },
+      "prices": {
+        "title": "Prix de l'énergie",
+        "description": "Seuls les capteurs qui fournissent déjà une série de prix complète sont listés.",
+        "data": {
+          "entity_price_buy": "Capteur du prix d'achat",
+          "entity_price_sell": "Capteur du prix de vente",
+          "price_currency": "Devise (lorsque le capteur ne l'indique pas)"
+        }
+      },
+      "direct_pick": {
+        "title": "Onduleur trouvé",
+        "description": "Choisissez l'onduleur auquel vous connecter directement. « test only » signifie que le pilotage direct de ce modèle n'est pas encore vérifié — seule la connexion de test en lecture seule est disponible.",
+        "data": {
+          "candidate": "Onduleur"
+        }
+      },
+      "direct_manual": {
+        "title": "Adresse de l'onduleur",
+        "description": "Saisissez l'adresse locale de l'onduleur ou de son enregistreur de données. Volcast lit son identification avant d'enregistrer.",
+        "data": {
+          "host": "Adresse IP locale",
+          "transport": "Type de connexion",
+          "port": "Port",
+          "unit_id": "ID d'unité Modbus",
+          "logger_serial": "Numéro de série de l'enregistreur de données"
+        },
+        "data_description": {
+          "host": "Une adresse de réseau privé, par exemple celle du module Wi-Fi ou LAN de l'onduleur.",
+          "logger_serial": "Obligatoire pour les enregistreurs de données Solarman (jusqu'à 10 chiffres)."
+        }
+      },
+      "direct_search": {
+        "title": "Recherche de l'onduleur",
+        "description": "Volcast lit uniquement l'identification des appareils qui répondent sur le réseau local ; rien n'est écrit."
+      }
+    },
+    "abort": {
+      "entity_mode_unavailable": "Entités de pilotage de l'onduleur introuvables. Le pilotage via l'intégration nécessite une intégration d'onduleur prise en charge avec une entité pour chaque réglage.",
+      "direct_unverified": "Le pilotage direct n'est pas encore disponible pour cet onduleur. Vous pouvez essayer une connexion de test en lecture seule dans Détails de l'installation.",
+      "direct_conflict": "Une autre intégration ({integration}) utilise cet onduleur. Désactivez-la avant de choisir le pilotage direct, afin que deux programmes ne pilotent pas l'onduleur en même temps.",
+      "direct_not_found": "Aucun onduleur trouvé pour l'instant. Recherchez-le d'abord dans Détails de l'installation.",
+      "direct_in_use": "Une autre entrée Volcast se connecte déjà à cet onduleur.",
+      "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état)."
+    },
+    "error": {
+      "prices_not_usable": "Ce capteur ne fournit pas de série de prix complète pour le moment.",
+      "currency_invalid": "Utilisez un code de devise à trois lettres, par exemple PLN ou EUR.",
+      "trial_with_entities": "La connexion de test ne peut pas s'exécuter tant que le pilotage passe par l'intégration de l'onduleur.",
+      "trial_while_owned": "Volcast pilote encore l'onduleur depuis une session précédente. Désactivez le pilotage et attendez que l'onduleur soit revenu dans son propre mode.",
+      "invalid_host": "Saisissez une adresse IP locale (un nom d'hôte ou une adresse publique n'est pas accepté).",
+      "logger_serial_required": "Saisissez le numéro de série de l'enregistreur de données (jusqu'à 10 chiffres).",
+      "direct_not_found": "Aucun onduleur pris en charge n'a répondu à cette adresse.",
+      "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état)."
+    },
+    "progress": {
+      "direct_search": "Recherche de l'onduleur sur le réseau local. Cela peut prendre jusqu'à une minute."
+    }
+  },
+  "issues": {
+    "production_tracking_available": {
+      "title": "Améliorez la précision des prévisions grâce au suivi de la production",
+      "description": "Volcast v1.5.0 peut désormais suivre votre production PV réelle et l'utiliser pour étalonner les prévisions. Ouvrez les options de l'intégration et sélectionnez le capteur d'énergie ou de puissance de votre onduleur pour activer cette fonction."
+    },
+    "foreign_control": {
+      "title": "Pilotage de l'onduleur par Volcast en pause",
+      "description": "Un réglage de l'onduleur piloté par Volcast ({entity_id}) a été modifié en dehors de Volcast. Volcast a mis le pilotage en pause pendant 30 minutes et conserve les réglages que vous avez modifiés. Le pilotage reprend ensuite automatiquement ; pour l'arrêter, désactivez l'interrupteur de pilotage Volcast."
+    },
+    "direct_identity_changed": {
+      "title": "Volcast a trouvé un autre onduleur à l'adresse enregistrée",
+      "description": "L'appareil qui répond à l'adresse enregistrée de l'onduleur n'est pas l'onduleur avec lequel Volcast a été configuré. Le pilotage est arrêté. Recherchez à nouveau votre onduleur dans les options de Volcast."
+    },
+    "control_error": {
+      "title": "Volcast ne peut pas piloter l'onduleur",
+      "description": "Le pilotage de l'onduleur par Volcast a cessé de fonctionner (erreurs d'écriture répétées ou état de pilotage enregistré illisible). L'onduleur utilise peut-être encore les derniers réglages appliqués par Volcast. Vérifiez les réglages de l'onduleur et les journaux de Home Assistant."
+    },
+    "foreign_control_direct": {
+      "title": "Pilotage de l'onduleur par Volcast en pause",
+      "description": "Le réglage {setting} de l'onduleur a été modifié en dehors de Volcast. Le pilotage est en pause pendant 30 minutes et Volcast conserve la valeur que vous avez définie jusqu'à ce que son plan pour ce réglage change. Pour arrêter le pilotage, désactivez l'interrupteur de pilotage Volcast."
+    },
+    "direct_conflict": {
+      "title": "Un autre client utilise la connexion de l'onduleur",
+      "description": "Un autre client communique avec votre onduleur ({reason}). Volcast a cessé de modifier les réglages de l'onduleur tant que cela dure ; la remise de l'onduleur dans ses propres réglages fonctionne toujours. Si une autre intégration ou application pilote cet onduleur, désactivez-la ou désactivez le pilotage Volcast."
+    },
+    "nvm_budget": {
+      "title": "Budget d'écriture de Volcast sur l'onduleur épuisé",
+      "description": "Volcast a atteint la limite quotidienne de modifications des réglages de l'onduleur, les modifications suivantes attendent donc pour le moment. Si l'onduleur était en charge ou décharge forcée, Volcast le remet en mode normal au lieu de le laisser tourner. Cela protège la mémoire de l'onduleur ; téléchargez le diagnostic si cela se reproduit."
+    },
+    "tou_snapshot_lost": {
+      "title": "Volcast a perdu la copie enregistrée de la programmation de votre onduleur",
+      "description": "Volcast n'a pas pu lire sa copie enregistrée des programmes horaires (time-of-use) que vous aviez avant que Volcast ne prenne le contrôle. À la fin du pilotage, Volcast définira des programmes simples d'autoconsommation et désactivera la programmation horaire de l'onduleur. Vérifiez ensuite votre propre programmation sur l'onduleur et saisissez-la à nouveau."
+    },
+    "tou_safety_off_cap": {
+      "title": "La programmation de l'onduleur de Volcast demande votre attention",
+      "description": "Volcast a dû désactiver de nombreuses fois aujourd'hui, par sécurité, la programmation horaire (time-of-use) de l'onduleur et a atteint sa limite quotidienne pour le faire. La programmation est laissée dans son état actuel. Vérifiez les programmes horaires de l'onduleur et si une autre application les modifie ; téléchargez le diagnostic si cela se reproduit."
+    },
+    "control_record_dropped": {
+      "title": "Volcast n'a pas pu remettre l'onduleur dans ses réglages précédents",
+      "description": "Volcast avait modifié des réglages de l'onduleur via une méthode de pilotage ou un onduleur qui n'est plus configuré, et ne peut donc pas les rétablir. L'onduleur utilise peut-être encore les derniers réglages appliqués par Volcast. Vérifiez le mode et les réglages de l'onduleur."
+    },
+    "direct_start_failed": {
+      "title": "Volcast n'a pas pu démarrer la connexion directe à l'onduleur",
+      "description": "La connexion directe à l'onduleur n'a pas pu démarrer à cause d'une erreur inattendue. Volcast réessaie plusieurs fois ; tant qu'il n'est pas connecté, il ne peut ni modifier ni rétablir les réglages de l'onduleur. Si cela persiste, rechargez Volcast et vérifiez les journaux de Home Assistant."
+    }
+  },
+  "services": {
+    "sync_production": {
+      "name": "Synchroniser la production",
+      "description": "Force la synchronisation de la production PV horaire vers Volcast à partir des statistiques de l'enregistreur de Home Assistant. Comble les trous laissés par une indisponibilité de HA (p. ex. une mise à jour du système). Sans date, synchronise hier et aujourd'hui.",
+      "fields": {
+        "date": {
+          "name": "Date",
+          "description": "Jour précis à synchroniser (dans les dernières ~24-38 heures). Laissez vide pour synchroniser hier et aujourd'hui."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_today": {
+        "name": "Prévision d'énergie aujourd'hui"
+      },
+      "energy_tomorrow": {
+        "name": "Prévision d'énergie demain"
+      },
+      "energy_day_3": {
+        "name": "Prévision d'énergie jour 3"
+      },
+      "energy_day_4": {
+        "name": "Prévision d'énergie jour 4"
+      },
+      "energy_day_5": {
+        "name": "Prévision d'énergie jour 5"
+      },
+      "energy_day_6": {
+        "name": "Prévision d'énergie jour 6"
+      },
+      "energy_day_7": {
+        "name": "Prévision d'énergie jour 7"
+      },
+      "power_now": {
+        "name": "Puissance actuelle"
+      },
+      "api_status": {
+        "name": "État de l'API"
+      },
+      "discovery": {
+        "name": "Détection de l'installation"
+      },
+      "control_plan": {
+        "name": "Plan"
+      },
+      "control_status": {
+        "name": "État"
+      },
+      "control_direct_soc": {
+        "name": "État de charge de la batterie"
+      },
+      "control_direct_battery_temp_c": {
+        "name": "Température de la batterie"
+      },
+      "control_direct_battery_voltage_v": {
+        "name": "Tension de la batterie"
+      },
+      "control_direct_battery_current_a": {
+        "name": "Courant de la batterie"
+      },
+      "control_direct_battery_power_w": {
+        "name": "Puissance de la batterie"
+      },
+      "control_direct_pv_power_w": {
+        "name": "Puissance PV"
+      },
+      "control_direct_active_power_w": {
+        "name": "Puissance active de l'onduleur"
+      },
+      "control_direct_load_power_w": {
+        "name": "Consommation de la maison"
+      },
+      "control_direct_grid_power_w": {
+        "name": "Puissance du réseau"
+      },
+      "control_direct_pv_energy_total_kwh": {
+        "name": "Énergie PV totale"
+      },
+      "control_direct_grid_import_total_kwh": {
+        "name": "Soutirage réseau total"
+      },
+      "control_direct_grid_export_total_kwh": {
+        "name": "Injection réseau totale"
+      },
+      "control_direct_mode": {
+        "name": "Mode de l'onduleur",
+        "state": {
+          "auto": "Auto",
+          "charge_pv": "Charge depuis le PV",
+          "battery_standby": "Batterie en veille",
+          "sell_power": "Vente de puissance",
+          "charge_battery": "Charge de la batterie",
+          "discharge_battery": "Décharge de la batterie"
+        }
+      },
+      "control_direct_power_w": {
+        "name": "Réglage de puissance du mode"
+      },
+      "control_direct_export_limit_w": {
+        "name": "Réglage de la limite d'injection"
+      },
+      "control_direct_soc_min": {
+        "name": "Réglage de l'état de charge minimal"
+      },
+      "control_direct_link_quality": {
+        "name": "Délais dépassés de la liaison onduleur"
+      }
+    },
+    "binary_sensor": {
+      "peak_production": {
+        "name": "Production maximale"
+      }
+    },
+    "button": {
+      "sync_now": {
+        "name": "Synchroniser la production maintenant"
+      },
+      "run_discovery": {
+        "name": "Lancer la détection"
+      }
+    },
+    "switch": {
+      "control_switch": {
+        "name": "Pilotage"
+      }
+    }
+  }
+}

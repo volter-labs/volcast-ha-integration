@@ -1,0 +1,396 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Volcast instellen",
+        "description": "Koppel je Volcast-account, of voer alleen een alleen-lezen detectie van je installatie uit (er wordt niets gewijzigd en er verlaat niets Home Assistant totdat je het diagnosebestand deelt).",
+        "menu_options": {
+          "pair": "Verbinden met je Volcast-account (aanbevolen)",
+          "api_key": "Verbinden met API-sleutel",
+          "discovery_only": "Alleen detectie (geen account)"
+        }
+      },
+      "pair": {
+        "title": "Verbind je Volcast-account",
+        "description": "Open de Volcast-app of -pagina en bevestig daar deze verbinding. Dit venster sluit vanzelf zodra je bevestigt.",
+        "data": {
+          "pairing_url": "Adres van de koppelingsservice"
+        },
+        "data_description": {
+          "pairing_url": "Laat leeg om de standaard Volcast-service te gebruiken. Wijzig dit alleen als Volcast-support je daarom heeft gevraagd."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Geavanceerd",
+            "description": "Alleen nodig als Volcast-support je heeft gevraagd een andere koppelingsservice te gebruiken.",
+            "data": {
+              "pairing_url": "Adres van de koppelingsservice"
+            },
+            "data_description": {
+              "pairing_url": "Laat leeg om de standaard Volcast-service te gebruiken."
+            }
+          }
+        }
+      },
+      "api_key": {
+        "title": "Verbinden met Volcast",
+        "description": "Voer je Volcast API-sleutel in. Je vindt die in de Volcast-app onder Instellingen > API-sleutel.",
+        "data": {
+          "api_key": "API-sleutel",
+          "api_url": "API-URL (geavanceerd)"
+        }
+      },
+      "production": {
+        "title": "Opbrengstregistratie (optioneel)",
+        "description": "Koppel de sensoren van je omvormer om de nauwkeurigheid van de voorspelling te verbeteren. Volcast stuurt uurlijkse opbrengstsamenvattingen voor kalibratie.\n\nBeide zijn optioneel — je kunt ze later instellen in de opties van de integratie.",
+        "data": {
+          "pv_energy_entity": "PV-opbrengst vandaag (kWh)",
+          "pv_power_entity": "Huidig PV-vermogen (W)",
+          "battery_soc_entity": "Laadtoestand van de accu (%)",
+          "battery_charge_power_entity": "Laadvermogen van de accu (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Een sensor die de totale zonne-opbrengst van vandaag in kWh toont (dagelijks gereset). Dit is de belangrijkste bron voor de registratie — zoek naar sensoren zoals „PV-opbrengst vandaag” of „Dagopbrengst” van je omvormer (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_power_entity": "Een sensor die het huidige zonnevermogen in watt toont. Wordt gebruikt als terugval wanneer de energiesensor niet beschikbaar is of halverwege de dag reset.",
+          "battery_soc_entity": "Een sensor die de laadtoestand van de accu (0-100%) toont. Wordt gebruikt om terugregeling van de omvormer te detecteren als de accu vol is. Optioneel — alleen nodig als je een thuisaccu hebt.",
+          "battery_charge_power_entity": "Een sensor die het laadvermogen van de accu in watt toont. Wordt gebruikt om terugregeling te bevestigen (accu vol, neemt geen lading aan) en om laden vanaf het net te detecteren (scenario's met negatieve prijzen). Optioneel."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Geen verbinding met de Volcast API mogelijk. Controleer je internetverbinding.",
+      "invalid_auth": "Ongeldige API-sleutel of premium-abonnement vereist.",
+      "masked_key": "Dit lijkt op het ingekorte voorbeeld uit de app (vk_xxxx...xxxx), niet op de volledige sleutel. Open in de Volcast-app Instellingen > API-sleutel, gebruik de knop Kopiëren of Delen en plak hier de volledige sleutel van 67 tekens.",
+      "invalid_key_format": "Dit is geen Volcast API-sleutel. Een sleutel begint met vk_ en is 67 tekens lang. Gebruik de knop Kopiëren of Delen in de Volcast-app onder Instellingen > API-sleutel.",
+      "unknown": "Er is een onverwachte fout opgetreden.",
+      "invalid_url": "Voer een volledig https://-adres in zonder slash aan het einde."
+    },
+    "abort": {
+      "already_configured": "Deze API-sleutel is al ingesteld.",
+      "single_instance_allowed": "Volcast is hier al ingesteld en de installatiedetectie draait al als onderdeel daarvan.",
+      "cannot_connect": "De Volcast-koppelingsservice is niet bereikbaar. Controleer je internetverbinding en probeer het opnieuw.",
+      "pairing_expired": "Het koppelingsverzoek is verlopen of geannuleerd voordat het werd bevestigd. Begin opnieuw en bevestig binnen 10 minuten.",
+      "pairing_disabled": "Koppelen is op dit moment niet beschikbaar. Probeer het later opnieuw of verbind met een API-sleutel.",
+      "pairing_failed": "Koppelen is niet voltooid. Begin opnieuw; als het blijft mislukken, verbind dan met een API-sleutel.",
+      "paired_existing": "Je bestaande Volcast-item is nu verbonden met je account.",
+      "multiple_accounts": "Er is hier meer dan één Volcast-item ingesteld. Verwijder de extra items en koppel daarna opnieuw.",
+      "pairing_connection_lost": "Home Assistant verloor de verbinding met de Volcast-koppelingsservice terwijl het op je bevestiging wachtte. Controleer de internetverbinding van Home Assistant en begin opnieuw.",
+      "already_in_progress": "De Volcast-configuratie is al bezig. Rond eerst het andere configuratievenster af of sluit het.",
+      "existing_entry_disabled": "Volcast is al toegevoegd, maar uitgeschakeld. Schakel het in via Instellingen → Apparaten & services.",
+      "converted_existing": "Je item met alleen detectie gebruikt nu je Volcast-account."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Volcast-opties",
+        "data": {
+          "update_interval": "Vernieuwingsinterval (minuten)",
+          "peak_threshold": "Drempel voor piekopbrengst (%)",
+          "pv_energy_entity": "PV-opbrengst vandaag (kWh)",
+          "pv_power_entity": "Huidig PV-vermogen (W)",
+          "battery_soc_entity": "Laadtoestand van de accu (%)",
+          "battery_charge_power_entity": "Laadvermogen van de accu (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Een sensor die de totale zonne-opbrengst van vandaag in kWh toont (dagelijks gereset).",
+          "pv_power_entity": "Een sensor die het huidige zonnevermogen in watt toont. Wordt gebruikt als terugval.",
+          "battery_soc_entity": "Een sensor die de laadtoestand van de accu (0-100%) toont. Wordt gebruikt om terugregeling te detecteren.",
+          "battery_charge_power_entity": "Een sensor voor het laadvermogen van de accu in watt. Detecteert terugregeling en laden vanaf het net."
+        },
+        "menu_options": {
+          "forecast": "Voorspelling",
+          "control": "Omvormerbesturing",
+          "details": "Installatiegegevens",
+          "prices": "Energieprijzen"
+        }
+      },
+      "forecast": {
+        "title": "Voorspelling",
+        "data": {
+          "update_interval": "Vernieuwingsinterval (minuten)",
+          "peak_threshold": "Drempel voor piekopbrengst (%)",
+          "pv_energy_entity": "PV-opbrengst vandaag (kWh)",
+          "pv_power_entity": "Huidig PV-vermogen (W)",
+          "battery_soc_entity": "Laadtoestand van de accu (%)",
+          "battery_charge_power_entity": "Laadvermogen van de accu (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Een sensor die de totale zonne-opbrengst van vandaag in kWh toont (dagelijks gereset).",
+          "pv_power_entity": "Een sensor die het huidige zonnevermogen in watt toont. Wordt gebruikt als terugval.",
+          "battery_soc_entity": "Een sensor die de laadtoestand van de accu (0-100%) toont. Wordt gebruikt om terugregeling te detecteren.",
+          "battery_charge_power_entity": "Een sensor voor het laadvermogen van de accu in watt. Detecteert terugregeling en laden vanaf het net."
+        }
+      },
+      "control": {
+        "title": "Omvormerbesturing",
+        "description": "Via je omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert via het lokale netwerk met de omvormer; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst onder Installatiegegevens). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
+        "menu_options": {
+          "control_entities": "Via de omvormerintegratie (entiteiten)",
+          "control_direct": "Rechtstreeks via het lokale netwerk",
+          "control_off": "Uit — alleen voorspelling en monitoring"
+        }
+      },
+      "details": {
+        "title": "Installatiegegevens",
+        "description": "Optioneel. Kies sensoren voor de metingen die Volcast niet via de omvormerintegratie kan vinden en corrigeer de installatiegegevens.",
+        "data": {
+          "soc": "Laadtoestand van de accu",
+          "pv_power_w": "PV-vermogen",
+          "battery_power_w": "Accuvermogen",
+          "grid_power_w": "Netvermogen",
+          "load_power_w": "Huisverbruiksvermogen",
+          "pv_energy_total_kwh": "PV-energie totaal",
+          "grid_import_total_kwh": "Netafname totaal",
+          "grid_export_total_kwh": "Netteruglevering totaal",
+          "grid_power_negate": "Netsensor toont teruglevering als positief",
+          "rated_power_w": "Nominaal vermogen van de omvormer (W)",
+          "battery_capacity_kwh": "Accucapaciteit (kWh)",
+          "load_energy_entity": "Energiesensor voor huisverbruik (kWh)",
+          "direct_search": "Omvormer zoeken op het lokale netwerk",
+          "direct_trial": "Alleen-lezen testverbinding",
+          "direct_poll_s": "Leesinterval van de directe verbinding (s)"
+        },
+        "data_description": {
+          "grid_power_negate": "Schakel in als je netsensor negatief is tijdens afname.",
+          "rated_power_w": "Tussen 1000 en 30000 W.",
+          "load_energy_entity": "Wordt eenmalig gebruikt om je verbruiksgeschiedenis naar Volcast te sturen.",
+          "direct_search": "Leest alleen de identificatie van de omvormer; er wordt niets geschreven.",
+          "direct_trial": "Maakt verbinding met de omvormer, toont de metingen en wat Volcast zou doen — schrijft nooit. Alleen voor omvormers waarvan de directe besturing nog wordt geverifieerd.",
+          "direct_poll_s": "Tussen 5 en 60 seconden."
+        }
+      },
+      "prices": {
+        "title": "Energieprijzen",
+        "description": "Alleen sensoren die al een volledige prijsreeks leveren, worden getoond.",
+        "data": {
+          "entity_price_buy": "Sensor voor inkoopprijs",
+          "entity_price_sell": "Sensor voor verkoopprijs",
+          "price_currency": "Valuta (als de sensor die niet vermeldt)"
+        }
+      },
+      "direct_pick": {
+        "title": "Omvormer gevonden",
+        "description": "Kies de omvormer waarmee je rechtstreeks wilt verbinden. „test only” betekent dat directe besturing van dit model nog niet is geverifieerd — alleen de alleen-lezen testverbinding is beschikbaar.",
+        "data": {
+          "candidate": "Omvormer"
+        }
+      },
+      "direct_manual": {
+        "title": "Adres van de omvormer",
+        "description": "Voer het lokale adres van de omvormer of zijn datalogger in. Volcast leest de identificatie voordat het opslaat.",
+        "data": {
+          "host": "Lokaal IP-adres",
+          "transport": "Verbindingstype",
+          "port": "Poort",
+          "unit_id": "Modbus-unit-ID",
+          "logger_serial": "Serienummer van de datalogger"
+        },
+        "data_description": {
+          "host": "Een adres in het privénetwerk, bijvoorbeeld van de wifi- of LAN-module van de omvormer.",
+          "logger_serial": "Vereist voor Solarman-dataloggers (maximaal 10 cijfers)."
+        }
+      },
+      "direct_search": {
+        "title": "Zoeken naar de omvormer",
+        "description": "Volcast leest alleen de identificatie van apparaten die antwoorden op het lokale netwerk; er wordt niets geschreven."
+      }
+    },
+    "abort": {
+      "entity_mode_unavailable": "Besturingsentiteiten van de omvormer niet gevonden. Besturing via de integratie vereist een ondersteunde omvormerintegratie met een entiteit voor elke instelling.",
+      "direct_unverified": "Directe besturing is voor deze omvormer nog niet beschikbaar. Je kunt onder Installatiegegevens een alleen-lezen testverbinding proberen.",
+      "direct_conflict": "Een andere integratie ({integration}) gebruikt deze omvormer. Schakel die uit voordat je directe besturing kiest, zodat niet twee programma's de omvormer tegelijk besturen.",
+      "direct_not_found": "Nog geen omvormer gevonden. Zoek hem eerst onder Installatiegegevens.",
+      "direct_in_use": "Een ander Volcast-item is al met deze omvormer verbonden.",
+      "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten)."
+    },
+    "error": {
+      "prices_not_usable": "Deze sensor levert op dit moment geen volledige prijsreeks.",
+      "currency_invalid": "Gebruik een valutacode van drie letters, bijvoorbeeld PLN of EUR.",
+      "trial_with_entities": "De testverbinding kan niet draaien terwijl de besturing via de omvormerintegratie loopt.",
+      "trial_while_owned": "Volcast bestuurt de omvormer nog vanuit een eerdere sessie. Zet de besturing uit en wacht tot de omvormer weer in zijn eigen modus staat.",
+      "invalid_host": "Voer een lokaal IP-adres in (een hostnaam of openbaar adres wordt niet geaccepteerd).",
+      "logger_serial_required": "Voer het serienummer van de datalogger in (maximaal 10 cijfers).",
+      "direct_not_found": "Op dit adres heeft geen ondersteunde omvormer geantwoord.",
+      "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten)."
+    },
+    "progress": {
+      "direct_search": "Het lokale netwerk wordt doorzocht op de omvormer. Dit kan tot een minuut duren."
+    }
+  },
+  "issues": {
+    "production_tracking_available": {
+      "title": "Verbeter de voorspellingsnauwkeurigheid met opbrengstregistratie",
+      "description": "Volcast v1.5.0 kan nu je werkelijke PV-opbrengst registreren en gebruiken om voorspellingen te kalibreren. Ga naar de opties van de integratie en kies de energie- of vermogenssensor van je omvormer om deze functie in te schakelen."
+    },
+    "foreign_control": {
+      "title": "Omvormerbesturing door Volcast gepauzeerd",
+      "description": "Een omvormerinstelling die door Volcast wordt bestuurd ({entity_id}) is buiten Volcast om gewijzigd. Volcast heeft de besturing 30 minuten gepauzeerd en behoudt de instellingen die je hebt gewijzigd. Daarna wordt de besturing automatisch hervat; zet de Volcast-besturingsschakelaar uit om dit te stoppen."
+    },
+    "direct_identity_changed": {
+      "title": "Volcast vond een andere omvormer op het opgeslagen adres",
+      "description": "Het apparaat dat antwoordt op het opgeslagen adres van de omvormer is niet de omvormer waarmee Volcast is ingesteld. De besturing is gestopt. Zoek je omvormer opnieuw in de Volcast-opties."
+    },
+    "control_error": {
+      "title": "Volcast kan de omvormer niet besturen",
+      "description": "De omvormerbesturing van Volcast werkt niet meer (herhaalde schrijffouten of een opgeslagen besturingsstatus die niet gelezen kon worden). De omvormer gebruikt mogelijk nog de laatste instellingen die Volcast heeft toegepast. Controleer de instellingen van de omvormer en de Home Assistant-logs."
+    },
+    "foreign_control_direct": {
+      "title": "Omvormerbesturing door Volcast gepauzeerd",
+      "description": "Omvormerinstelling {setting} is buiten Volcast om gewijzigd. De besturing is 30 minuten gepauzeerd en Volcast behoudt de waarde die je hebt ingesteld totdat zijn plan voor die instelling verandert. Zet de Volcast-besturingsschakelaar uit om de besturing te stoppen."
+    },
+    "direct_conflict": {
+      "title": "Een andere client gebruikt de omvormerverbinding",
+      "description": "Een andere client communiceert met je omvormer ({reason}). Volcast wijzigt geen omvormerinstellingen meer totdat die ermee stopt; de omvormer terugzetten naar zijn eigen instellingen werkt nog steeds. Als een andere integratie of app deze omvormer bestuurt, zet die dan uit of zet de Volcast-besturing uit."
+    },
+    "nvm_budget": {
+      "title": "Schrijfbudget van Volcast voor de omvormer is op",
+      "description": "Volcast heeft de dagelijkse limiet voor wijzigingen van omvormerinstellingen bereikt, dus verdere wijzigingen wachten voorlopig. Als de omvormer in geforceerd laden of ontladen stond, zet Volcast hem terug in de normale modus in plaats van hem te laten doorlopen. Dit beschermt het geheugen van de omvormer; download de diagnose als het opnieuw gebeurt."
+    },
+    "tou_snapshot_lost": {
+      "title": "Volcast heeft de opgeslagen kopie van het schema van je omvormer verloren",
+      "description": "Volcast kon zijn opgeslagen kopie van de tijdsprogramma's (time-of-use) die je had voordat Volcast de besturing overnam niet lezen. Wanneer de besturing eindigt, stelt Volcast eenvoudige eigenverbruiksprogramma's in en schakelt het tijdschema van de omvormer uit. Controleer daarna je eigen schema op de omvormer en voer het opnieuw in."
+    },
+    "tou_safety_off_cap": {
+      "title": "Het omvormerschema van Volcast heeft aandacht nodig",
+      "description": "Volcast moest het tijdschema (time-of-use) van de omvormer vandaag om veiligheidsredenen vaak uitschakelen en heeft zijn dagelijkse limiet daarvoor bereikt. Het schema blijft zoals het nu is. Controleer de tijdsprogramma's van de omvormer en of een andere app ze wijzigt; download de diagnose als het opnieuw gebeurt."
+    },
+    "control_record_dropped": {
+      "title": "Volcast kon de omvormer niet terugzetten naar de vorige instellingen",
+      "description": "Volcast had omvormerinstellingen gewijzigd via een besturingsmethode of omvormer die niet meer is ingesteld en kan ze daarom niet terugzetten. De omvormer gebruikt mogelijk nog de laatste instellingen die Volcast heeft toegepast. Controleer de modus en instellingen van de omvormer."
+    },
+    "direct_start_failed": {
+      "title": "Volcast kon de directe omvormerverbinding niet starten",
+      "description": "De directe verbinding met de omvormer kon door een onverwachte fout niet starten. Volcast probeert het een paar keer opnieuw; totdat er verbinding is, kan het omvormerinstellingen niet wijzigen of terugzetten. Blijft dit zo, laad Volcast dan opnieuw en controleer de Home Assistant-logs."
+    }
+  },
+  "services": {
+    "sync_production": {
+      "name": "Opbrengst synchroniseren",
+      "description": "Forceert het synchroniseren van de uurlijkse PV-opbrengst met Volcast op basis van de recorderstatistieken van Home Assistant. Vult hiaten op door downtime van HA (bijv. een systeemupdate). Zonder datum worden gisteren en vandaag gesynchroniseerd.",
+      "fields": {
+        "date": {
+          "name": "Datum",
+          "description": "Specifieke dag om te synchroniseren (binnen de laatste ca. 24-38 uur). Laat leeg om gisteren en vandaag te synchroniseren."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_today": {
+        "name": "Energievoorspelling vandaag"
+      },
+      "energy_tomorrow": {
+        "name": "Energievoorspelling morgen"
+      },
+      "energy_day_3": {
+        "name": "Energievoorspelling dag 3"
+      },
+      "energy_day_4": {
+        "name": "Energievoorspelling dag 4"
+      },
+      "energy_day_5": {
+        "name": "Energievoorspelling dag 5"
+      },
+      "energy_day_6": {
+        "name": "Energievoorspelling dag 6"
+      },
+      "energy_day_7": {
+        "name": "Energievoorspelling dag 7"
+      },
+      "power_now": {
+        "name": "Vermogen nu"
+      },
+      "api_status": {
+        "name": "API-status"
+      },
+      "discovery": {
+        "name": "Installatiedetectie"
+      },
+      "control_plan": {
+        "name": "Plan"
+      },
+      "control_status": {
+        "name": "Status"
+      },
+      "control_direct_soc": {
+        "name": "Laadtoestand van de accu"
+      },
+      "control_direct_battery_temp_c": {
+        "name": "Accutemperatuur"
+      },
+      "control_direct_battery_voltage_v": {
+        "name": "Accuspanning"
+      },
+      "control_direct_battery_current_a": {
+        "name": "Accustroom"
+      },
+      "control_direct_battery_power_w": {
+        "name": "Accuvermogen"
+      },
+      "control_direct_pv_power_w": {
+        "name": "PV-vermogen"
+      },
+      "control_direct_active_power_w": {
+        "name": "Actief vermogen van de omvormer"
+      },
+      "control_direct_load_power_w": {
+        "name": "Huisverbruik"
+      },
+      "control_direct_grid_power_w": {
+        "name": "Netvermogen"
+      },
+      "control_direct_pv_energy_total_kwh": {
+        "name": "PV-energie totaal"
+      },
+      "control_direct_grid_import_total_kwh": {
+        "name": "Netafname totaal"
+      },
+      "control_direct_grid_export_total_kwh": {
+        "name": "Netteruglevering totaal"
+      },
+      "control_direct_mode": {
+        "name": "Omvormermodus",
+        "state": {
+          "auto": "Auto",
+          "charge_pv": "Laden vanaf PV",
+          "battery_standby": "Accu stand-by",
+          "sell_power": "Vermogen verkopen",
+          "charge_battery": "Accu laden",
+          "discharge_battery": "Accu ontladen"
+        }
+      },
+      "control_direct_power_w": {
+        "name": "Vermogensinstelling van de modus"
+      },
+      "control_direct_export_limit_w": {
+        "name": "Instelling terugleverlimiet"
+      },
+      "control_direct_soc_min": {
+        "name": "Instelling minimale laadtoestand"
+      },
+      "control_direct_link_quality": {
+        "name": "Time-outs van de omvormerverbinding"
+      }
+    },
+    "binary_sensor": {
+      "peak_production": {
+        "name": "Piekopbrengst"
+      }
+    },
+    "button": {
+      "sync_now": {
+        "name": "Opbrengst nu synchroniseren"
+      },
+      "run_discovery": {
+        "name": "Detectie uitvoeren"
+      }
+    },
+    "switch": {
+      "control_switch": {
+        "name": "Besturing"
+      }
+    }
+  }
+}

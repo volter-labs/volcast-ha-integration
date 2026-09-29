@@ -1,0 +1,396 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurar Volcast",
+        "description": "Conecta tu cuenta de Volcast o ejecuta solo un descubrimiento de solo lectura de tu instalación (no se cambia nada y nada sale de Home Assistant hasta que compartas el archivo de diagnóstico).",
+        "menu_options": {
+          "pair": "Conectar con tu cuenta de Volcast (recomendado)",
+          "api_key": "Conectar con clave de API",
+          "discovery_only": "Solo descubrimiento (sin cuenta)"
+        }
+      },
+      "pair": {
+        "title": "Conecta tu cuenta de Volcast",
+        "description": "Abre la aplicación o la página de Volcast y confirma allí esta conexión. Esta ventana se cierra sola cuando confirmes.",
+        "data": {
+          "pairing_url": "Dirección del servicio de emparejamiento"
+        },
+        "data_description": {
+          "pairing_url": "Déjalo vacío para usar el servicio predeterminado de Volcast. Cámbialo solo si el soporte de Volcast te lo ha pedido."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Avanzado",
+            "description": "Solo es necesario si el soporte de Volcast te ha pedido usar otro servicio de emparejamiento.",
+            "data": {
+              "pairing_url": "Dirección del servicio de emparejamiento"
+            },
+            "data_description": {
+              "pairing_url": "Déjalo vacío para usar el servicio predeterminado de Volcast."
+            }
+          }
+        }
+      },
+      "api_key": {
+        "title": "Conectar con Volcast",
+        "description": "Introduce tu clave de API de Volcast. La encontrarás en la aplicación de Volcast en Ajustes > Clave de API.",
+        "data": {
+          "api_key": "Clave de API",
+          "api_url": "URL de la API (avanzado)"
+        }
+      },
+      "production": {
+        "title": "Seguimiento de producción (opcional)",
+        "description": "Conecta los sensores de tu inversor para mejorar la precisión de la previsión. Volcast enviará resúmenes horarios de producción para la calibración.\n\nAmbos son opcionales: puedes configurarlos más tarde en las opciones de la integración.",
+        "data": {
+          "pv_energy_entity": "Generación FV de hoy (kWh)",
+          "pv_power_entity": "Potencia FV actual (W)",
+          "battery_soc_entity": "Estado de carga de la batería (%)",
+          "battery_charge_power_entity": "Potencia de carga de la batería (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un sensor que muestra la producción solar total de hoy en kWh (se reinicia cada día). Es la fuente principal para el seguimiento: busca sensores como «Generación FV de hoy» o «Rendimiento diario» de tu inversor (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_power_entity": "Un sensor que muestra la potencia solar actual en vatios. Se usa como alternativa cuando el sensor de energía no está disponible o se reinicia a mitad del día.",
+          "battery_soc_entity": "Un sensor que muestra el estado de carga de la batería (0-100 %). Se usa para detectar la limitación del inversor cuando la batería está llena. Opcional: solo es necesario si tienes un sistema de baterías.",
+          "battery_charge_power_entity": "Un sensor que muestra la potencia de carga de la batería en vatios. Se usa para confirmar la limitación (batería llena, no acepta carga) y detectar la carga desde la red (escenarios de precios negativos). Opcional."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se puede conectar con la API de Volcast. Comprueba tu conexión a internet.",
+      "invalid_auth": "Clave de API no válida o se requiere suscripción premium.",
+      "masked_key": "Parece la vista previa abreviada de la aplicación (vk_xxxx...xxxx), no la clave completa. En la aplicación de Volcast abre Ajustes > Clave de API, usa el botón Copiar o Compartir y pega aquí la clave completa de 67 caracteres.",
+      "invalid_key_format": "Esa no es una clave de API de Volcast. Una clave empieza por vk_ y tiene 67 caracteres. Usa el botón Copiar o Compartir de la aplicación de Volcast en Ajustes > Clave de API.",
+      "unknown": "Se ha producido un error inesperado.",
+      "invalid_url": "Introduce una dirección https:// completa sin barra final."
+    },
+    "abort": {
+      "already_configured": "Esta clave de API ya está configurada.",
+      "single_instance_allowed": "Volcast ya está configurado aquí y el descubrimiento de la instalación ya se ejecuta como parte de él.",
+      "cannot_connect": "No se puede acceder al servicio de emparejamiento de Volcast. Comprueba tu conexión a internet e inténtalo de nuevo.",
+      "pairing_expired": "La solicitud de emparejamiento caducó o se canceló antes de confirmarse. Empieza de nuevo y confirma en un plazo de 10 minutos.",
+      "pairing_disabled": "El emparejamiento no está disponible ahora. Inténtalo más tarde o conéctate con una clave de API.",
+      "pairing_failed": "El emparejamiento no se completó. Empieza de nuevo; si sigue fallando, conéctate con una clave de API.",
+      "paired_existing": "Tu entrada de Volcast existente ya está conectada a tu cuenta.",
+      "multiple_accounts": "Hay más de una entrada de Volcast configurada aquí. Elimina las entradas sobrantes y vuelve a emparejar.",
+      "pairing_connection_lost": "Home Assistant perdió la conexión con el servicio de emparejamiento de Volcast mientras esperaba tu confirmación. Comprueba la conexión a internet de Home Assistant y empieza de nuevo.",
+      "already_in_progress": "La configuración de Volcast ya está en curso. Termina o cierra primero la otra ventana de configuración.",
+      "existing_entry_disabled": "Volcast ya está añadido, pero deshabilitado. Habilítalo en Ajustes → Dispositivos y servicios.",
+      "converted_existing": "Tu entrada solo de descubrimiento ahora usa tu cuenta de Volcast."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de Volcast",
+        "data": {
+          "update_interval": "Intervalo de actualización (minutos)",
+          "peak_threshold": "Umbral de producción máxima (%)",
+          "pv_energy_entity": "Generación FV de hoy (kWh)",
+          "pv_power_entity": "Potencia FV actual (W)",
+          "battery_soc_entity": "Estado de carga de la batería (%)",
+          "battery_charge_power_entity": "Potencia de carga de la batería (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un sensor que muestra la producción solar total de hoy en kWh (se reinicia cada día).",
+          "pv_power_entity": "Un sensor que muestra la potencia solar actual en vatios. Se usa como alternativa.",
+          "battery_soc_entity": "Un sensor que muestra el estado de carga de la batería (0-100 %). Se usa para detectar la limitación.",
+          "battery_charge_power_entity": "Un sensor de la potencia de carga de la batería en vatios. Detecta la limitación y la carga desde la red."
+        },
+        "menu_options": {
+          "forecast": "Previsión",
+          "control": "Control del inversor",
+          "details": "Detalles de la instalación",
+          "prices": "Precios de la energía"
+        }
+      },
+      "forecast": {
+        "title": "Previsión",
+        "data": {
+          "update_interval": "Intervalo de actualización (minutos)",
+          "peak_threshold": "Umbral de producción máxima (%)",
+          "pv_energy_entity": "Generación FV de hoy (kWh)",
+          "pv_power_entity": "Potencia FV actual (W)",
+          "battery_soc_entity": "Estado de carga de la batería (%)",
+          "battery_charge_power_entity": "Potencia de carga de la batería (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un sensor que muestra la producción solar total de hoy en kWh (se reinicia cada día).",
+          "pv_power_entity": "Un sensor que muestra la potencia solar actual en vatios. Se usa como alternativa.",
+          "battery_soc_entity": "Un sensor que muestra el estado de carga de la batería (0-100 %). Se usa para detectar la limitación.",
+          "battery_charge_power_entity": "Un sensor de la potencia de carga de la batería en vatios. Detecta la limitación y la carga desde la red."
+        }
+      },
+      "control": {
+        "title": "Control del inversor",
+        "description": "A través de la integración de tu inversor: Volcast escribe las entidades de modo y potencia del inversor. Directamente: Volcast se comunica con el inversor por la red local; disponible solo para inversores con control directo verificado y cuando ninguna otra integración usa el inversor (búscalo primero en Detalles de la instalación). El control también necesita el interruptor en Home Assistant y tu consentimiento en la aplicación de Volcast.",
+        "menu_options": {
+          "control_entities": "A través de la integración del inversor (entidades)",
+          "control_direct": "Directamente por la red local",
+          "control_off": "Desactivado: solo previsión y monitorización"
+        }
+      },
+      "details": {
+        "title": "Detalles de la instalación",
+        "description": "Opcional. Elige sensores para las lecturas que Volcast no encuentra a través de la integración del inversor y corrige los datos de la instalación.",
+        "data": {
+          "soc": "Estado de carga de la batería",
+          "pv_power_w": "Potencia FV",
+          "battery_power_w": "Potencia de la batería",
+          "grid_power_w": "Potencia de la red",
+          "load_power_w": "Potencia de consumo de la casa",
+          "pv_energy_total_kwh": "Energía FV total",
+          "grid_import_total_kwh": "Importación de red total",
+          "grid_export_total_kwh": "Exportación a la red total",
+          "grid_power_negate": "El sensor de red muestra la exportación como positiva",
+          "rated_power_w": "Potencia nominal del inversor (W)",
+          "battery_capacity_kwh": "Capacidad de la batería (kWh)",
+          "load_energy_entity": "Sensor de energía de consumo de la casa (kWh)",
+          "direct_search": "Buscar el inversor en la red local",
+          "direct_trial": "Conexión de prueba de solo lectura",
+          "direct_poll_s": "Intervalo de lectura de la conexión directa (s)"
+        },
+        "data_description": {
+          "grid_power_negate": "Actívalo cuando tu sensor de red sea negativo al importar.",
+          "rated_power_w": "Entre 1000 y 30000 W.",
+          "load_energy_entity": "Se usa una sola vez para enviar tu historial de consumo a Volcast.",
+          "direct_search": "Lee solo la identificación del inversor; no se escribe nada.",
+          "direct_trial": "Se conecta al inversor, muestra sus lecturas y lo que haría Volcast; nunca escribe. Solo para inversores cuyo control directo aún se está verificando.",
+          "direct_poll_s": "Entre 5 y 60 segundos."
+        }
+      },
+      "prices": {
+        "title": "Precios de la energía",
+        "description": "Solo se listan los sensores que ya proporcionan una serie de precios completa.",
+        "data": {
+          "entity_price_buy": "Sensor del precio de compra",
+          "entity_price_sell": "Sensor del precio de venta",
+          "price_currency": "Moneda (cuando el sensor no la indica)"
+        }
+      },
+      "direct_pick": {
+        "title": "Inversor encontrado",
+        "description": "Elige el inversor al que conectarte directamente. «test only» significa que el control directo de este modelo aún no está verificado: solo está disponible la conexión de prueba de solo lectura.",
+        "data": {
+          "candidate": "Inversor"
+        }
+      },
+      "direct_manual": {
+        "title": "Dirección del inversor",
+        "description": "Introduce la dirección local del inversor o de su registrador de datos. Volcast lee su identificación antes de guardar.",
+        "data": {
+          "host": "Dirección IP local",
+          "transport": "Tipo de conexión",
+          "port": "Puerto",
+          "unit_id": "ID de unidad Modbus",
+          "logger_serial": "Número de serie del registrador de datos"
+        },
+        "data_description": {
+          "host": "Una dirección de red privada, por ejemplo la del módulo Wi-Fi o LAN del inversor.",
+          "logger_serial": "Obligatorio para los registradores de datos Solarman (hasta 10 dígitos)."
+        }
+      },
+      "direct_search": {
+        "title": "Buscando el inversor",
+        "description": "Volcast lee solo la identificación de los dispositivos que responden en la red local; no se escribe nada."
+      }
+    },
+    "abort": {
+      "entity_mode_unavailable": "No se encontraron las entidades de control del inversor. El control a través de la integración necesita una integración de inversor compatible con una entidad para cada ajuste.",
+      "direct_unverified": "El control directo aún no está disponible para este inversor. Puedes probar una conexión de prueba de solo lectura en Detalles de la instalación.",
+      "direct_conflict": "Otra integración ({integration}) usa este inversor. Desactívala antes de elegir el control directo, para que dos programas no controlen el inversor a la vez.",
+      "direct_not_found": "Aún no se ha encontrado ningún inversor. Búscalo primero en Detalles de la instalación.",
+      "direct_in_use": "Otra entrada de Volcast ya se conecta a este inversor.",
+      "restore_failed": "Volcast no pudo devolver el inversor a sus ajustes anteriores al control, por lo que no se cambió nada. Inténtalo de nuevo cuando el inversor sea accesible, o apaga el interruptor de control de Volcast (Volcast sigue intentando devolver el inversor)."
+    },
+    "error": {
+      "prices_not_usable": "Este sensor no proporciona ahora una serie de precios completa.",
+      "currency_invalid": "Usa un código de moneda de tres letras, por ejemplo PLN o EUR.",
+      "trial_with_entities": "La conexión de prueba no puede ejecutarse mientras el control pasa por la integración del inversor.",
+      "trial_while_owned": "Volcast aún controla el inversor desde una sesión anterior. Desactiva el control y espera a que el inversor vuelva a su propio modo.",
+      "invalid_host": "Introduce una dirección IP local (no se acepta un nombre de host ni una dirección pública).",
+      "logger_serial_required": "Introduce el número de serie del registrador de datos (hasta 10 dígitos).",
+      "direct_not_found": "Ningún inversor compatible respondió en esta dirección.",
+      "restore_failed": "Volcast no pudo devolver el inversor a sus ajustes anteriores al control, por lo que no se cambió nada. Inténtalo de nuevo cuando el inversor sea accesible, o apaga el interruptor de control de Volcast (Volcast sigue intentando devolver el inversor)."
+    },
+    "progress": {
+      "direct_search": "Buscando el inversor en la red local. Puede tardar hasta un minuto."
+    }
+  },
+  "issues": {
+    "production_tracking_available": {
+      "title": "Mejora la precisión de la previsión con el seguimiento de producción",
+      "description": "Volcast v1.5.0 ahora puede seguir tu producción FV real y usarla para calibrar las previsiones. Ve a las opciones de la integración y selecciona el sensor de energía o potencia de tu inversor para activar esta función."
+    },
+    "foreign_control": {
+      "title": "Control del inversor por Volcast en pausa",
+      "description": "Un ajuste del inversor controlado por Volcast ({entity_id}) se cambió fuera de Volcast. Volcast pausó el control durante 30 minutos y conserva los ajustes que cambiaste. Después el control se reanuda automáticamente; para detenerlo, apaga el interruptor de control de Volcast."
+    },
+    "direct_identity_changed": {
+      "title": "Volcast encontró un inversor distinto en la dirección guardada",
+      "description": "El dispositivo que responde en la dirección guardada del inversor no es el inversor con el que se configuró Volcast. El control está detenido. Busca de nuevo tu inversor en las opciones de Volcast."
+    },
+    "control_error": {
+      "title": "Volcast no puede controlar el inversor",
+      "description": "El control del inversor por Volcast dejó de funcionar (errores de escritura repetidos o un estado de control guardado que no se pudo leer). Es posible que el inversor siga usando los últimos ajustes aplicados por Volcast. Revisa los ajustes del inversor y los registros de Home Assistant."
+    },
+    "foreign_control_direct": {
+      "title": "Control del inversor por Volcast en pausa",
+      "description": "El ajuste del inversor {setting} se cambió fuera de Volcast. El control está en pausa durante 30 minutos y Volcast conserva el valor que fijaste hasta que cambie su plan para ese ajuste. Para detener el control, apaga el interruptor de control de Volcast."
+    },
+    "direct_conflict": {
+      "title": "Otro cliente está usando la conexión del inversor",
+      "description": "Otro cliente se está comunicando con tu inversor ({reason}). Volcast dejó de cambiar los ajustes del inversor hasta que ese cliente termine; devolver el inversor a sus propios ajustes sigue funcionando. Si otra integración o aplicación controla este inversor, desactívala o apaga el control de Volcast."
+    },
+    "nvm_budget": {
+      "title": "Se agotó el presupuesto de escrituras de Volcast en el inversor",
+      "description": "Volcast alcanzó el límite diario de cambios de ajustes del inversor, así que los cambios posteriores esperan por ahora. Si el inversor estaba en carga o descarga forzada, Volcast lo devuelve a su modo normal en lugar de dejarlo funcionando. Esto protege la memoria del inversor; descarga el diagnóstico si vuelve a ocurrir."
+    },
+    "tou_snapshot_lost": {
+      "title": "Volcast perdió la copia guardada del horario de tu inversor",
+      "description": "Volcast no pudo leer su copia guardada de los programas horarios (time-of-use) que tenías antes de que Volcast tomara el control. Cuando termine el control, Volcast configurará programas simples de autoconsumo y desactivará el horario del inversor. Después revisa y vuelve a introducir tu propio horario en el inversor."
+    },
+    "tou_safety_off_cap": {
+      "title": "El horario del inversor de Volcast necesita atención",
+      "description": "Volcast tuvo que desactivar por seguridad el horario (time-of-use) del inversor muchas veces hoy y alcanzó su límite diario para hacerlo. El horario se deja como está ahora. Revisa los programas horarios del inversor y si otra aplicación los cambia; descarga el diagnóstico si vuelve a ocurrir."
+    },
+    "control_record_dropped": {
+      "title": "Volcast no pudo devolver el inversor a sus ajustes anteriores",
+      "description": "Volcast había cambiado ajustes del inversor mediante un método de control o un inversor que ya no está configurado, por lo que no puede devolverlos. Es posible que el inversor siga usando los últimos ajustes aplicados por Volcast. Revisa el modo y los ajustes del inversor."
+    },
+    "direct_start_failed": {
+      "title": "Volcast no pudo iniciar la conexión directa con el inversor",
+      "description": "La conexión directa con el inversor no pudo iniciarse por un error inesperado. Volcast lo reintenta unas cuantas veces; hasta que se conecte, no puede cambiar ni devolver los ajustes del inversor. Si esto continúa, recarga Volcast y revisa los registros de Home Assistant."
+    }
+  },
+  "services": {
+    "sync_production": {
+      "name": "Sincronizar producción",
+      "description": "Fuerza la sincronización de la producción FV horaria con Volcast usando las estadísticas del recorder de Home Assistant. Rellena los huecos dejados por la inactividad de HA (p. ej., una actualización del sistema). Sin fecha, sincroniza ayer y hoy.",
+      "fields": {
+        "date": {
+          "name": "Fecha",
+          "description": "Día concreto a sincronizar (dentro de las últimas ~24-38 horas). Déjalo vacío para sincronizar ayer y hoy."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_today": {
+        "name": "Previsión de energía de hoy"
+      },
+      "energy_tomorrow": {
+        "name": "Previsión de energía de mañana"
+      },
+      "energy_day_3": {
+        "name": "Previsión de energía del día 3"
+      },
+      "energy_day_4": {
+        "name": "Previsión de energía del día 4"
+      },
+      "energy_day_5": {
+        "name": "Previsión de energía del día 5"
+      },
+      "energy_day_6": {
+        "name": "Previsión de energía del día 6"
+      },
+      "energy_day_7": {
+        "name": "Previsión de energía del día 7"
+      },
+      "power_now": {
+        "name": "Potencia ahora"
+      },
+      "api_status": {
+        "name": "Estado de la API"
+      },
+      "discovery": {
+        "name": "Descubrimiento de la instalación"
+      },
+      "control_plan": {
+        "name": "Plan"
+      },
+      "control_status": {
+        "name": "Estado"
+      },
+      "control_direct_soc": {
+        "name": "Estado de carga de la batería"
+      },
+      "control_direct_battery_temp_c": {
+        "name": "Temperatura de la batería"
+      },
+      "control_direct_battery_voltage_v": {
+        "name": "Tensión de la batería"
+      },
+      "control_direct_battery_current_a": {
+        "name": "Corriente de la batería"
+      },
+      "control_direct_battery_power_w": {
+        "name": "Potencia de la batería"
+      },
+      "control_direct_pv_power_w": {
+        "name": "Potencia FV"
+      },
+      "control_direct_active_power_w": {
+        "name": "Potencia activa del inversor"
+      },
+      "control_direct_load_power_w": {
+        "name": "Consumo de la casa"
+      },
+      "control_direct_grid_power_w": {
+        "name": "Potencia de la red"
+      },
+      "control_direct_pv_energy_total_kwh": {
+        "name": "Energía FV total"
+      },
+      "control_direct_grid_import_total_kwh": {
+        "name": "Importación de red total"
+      },
+      "control_direct_grid_export_total_kwh": {
+        "name": "Exportación a la red total"
+      },
+      "control_direct_mode": {
+        "name": "Modo del inversor",
+        "state": {
+          "auto": "Auto",
+          "charge_pv": "Cargar desde FV",
+          "battery_standby": "Batería en espera",
+          "sell_power": "Vender potencia",
+          "charge_battery": "Cargar batería",
+          "discharge_battery": "Descargar batería"
+        }
+      },
+      "control_direct_power_w": {
+        "name": "Ajuste de potencia del modo"
+      },
+      "control_direct_export_limit_w": {
+        "name": "Ajuste del límite de exportación"
+      },
+      "control_direct_soc_min": {
+        "name": "Ajuste del estado de carga mínimo"
+      },
+      "control_direct_link_quality": {
+        "name": "Tiempos de espera del enlace del inversor"
+      }
+    },
+    "binary_sensor": {
+      "peak_production": {
+        "name": "Producción máxima"
+      }
+    },
+    "button": {
+      "sync_now": {
+        "name": "Sincronizar producción ahora"
+      },
+      "run_discovery": {
+        "name": "Ejecutar descubrimiento"
+      }
+    },
+    "switch": {
+      "control_switch": {
+        "name": "Control"
+      }
+    }
+  }
+}

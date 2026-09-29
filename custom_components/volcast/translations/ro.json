@@ -1,0 +1,396 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurare Volcast",
+        "description": "Conectează-ți contul Volcast sau rulează doar o detectare în modul doar citire a instalației tale (nu se modifică nimic și nimic nu părăsește Home Assistant până nu partajezi fișierul de diagnosticare).",
+        "menu_options": {
+          "pair": "Conectează-te la contul tău Volcast (recomandat)",
+          "api_key": "Conectează-te cu cheie API",
+          "discovery_only": "Doar detectare (fără cont)"
+        }
+      },
+      "pair": {
+        "title": "Conectează-ți contul Volcast",
+        "description": "Deschide aplicația sau pagina Volcast și confirmă acolo această conexiune. Această fereastră se închide singură după ce confirmi.",
+        "data": {
+          "pairing_url": "Adresa serviciului de asociere"
+        },
+        "data_description": {
+          "pairing_url": "Lasă gol pentru a folosi serviciul Volcast implicit. Modifică doar dacă asistența Volcast ți-a cerut."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Avansat",
+            "description": "Necesar doar dacă asistența Volcast ți-a cerut să folosești alt serviciu de asociere.",
+            "data": {
+              "pairing_url": "Adresa serviciului de asociere"
+            },
+            "data_description": {
+              "pairing_url": "Lasă gol pentru a folosi serviciul Volcast implicit."
+            }
+          }
+        }
+      },
+      "api_key": {
+        "title": "Conectare la Volcast",
+        "description": "Introdu cheia ta API Volcast. O găsești în aplicația Volcast la Setări > Cheie API.",
+        "data": {
+          "api_key": "Cheie API",
+          "api_url": "URL API (avansat)"
+        }
+      },
+      "production": {
+        "title": "Urmărirea producției (opțional)",
+        "description": "Conectează senzorii invertorului pentru a îmbunătăți precizia prognozei. Volcast va trimite rezumate orare ale producției pentru calibrare.\n\nAmbele sunt opționale — le poți configura mai târziu în opțiunile integrării.",
+        "data": {
+          "pv_energy_entity": "Producția FV de azi (kWh)",
+          "pv_power_entity": "Puterea FV curentă (W)",
+          "battery_soc_entity": "Starea de încărcare a bateriei (%)",
+          "battery_charge_power_entity": "Puterea de încărcare a bateriei (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un senzor care arată producția solară totală de azi în kWh (se resetează zilnic). Este sursa principală pentru urmărire — caută senzori precum „Producția FV de azi” sau „Randament zilnic” de la invertorul tău (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_power_entity": "Un senzor care arată puterea solară curentă în wați. Folosit ca alternativă când senzorul de energie nu este disponibil sau se resetează în timpul zilei.",
+          "battery_soc_entity": "Un senzor care arată starea de încărcare a bateriei (0-100 %). Folosit pentru a detecta limitarea invertorului când bateria este plină. Opțional — necesar doar dacă ai un sistem cu baterie.",
+          "battery_charge_power_entity": "Un senzor care arată puterea de încărcare a bateriei în wați. Folosit pentru a confirma limitarea (baterie plină, nu mai acceptă încărcare) și pentru a detecta încărcarea din rețea (scenarii cu prețuri negative). Opțional."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Nu se poate conecta la API-ul Volcast. Verifică conexiunea la internet.",
+      "invalid_auth": "Cheie API invalidă sau este necesar un abonament premium.",
+      "masked_key": "Aceasta pare previzualizarea scurtată din aplicație (vk_xxxx...xxxx), nu cheia completă. În aplicația Volcast deschide Setări > Cheie API, folosește butonul Copiază sau Distribuie și lipește aici cheia completă de 67 de caractere.",
+      "invalid_key_format": "Aceasta nu este o cheie API Volcast. O cheie începe cu vk_ și are 67 de caractere. Folosește butonul Copiază sau Distribuie din aplicația Volcast la Setări > Cheie API.",
+      "unknown": "A apărut o eroare neașteptată.",
+      "invalid_url": "Introdu o adresă https:// completă, fără bară oblică la final."
+    },
+    "abort": {
+      "already_configured": "Această cheie API este deja configurată.",
+      "single_instance_allowed": "Volcast este deja configurat aici, iar detectarea instalației rulează deja ca parte a acestuia.",
+      "cannot_connect": "Serviciul de asociere Volcast nu poate fi contactat. Verifică conexiunea la internet și încearcă din nou.",
+      "pairing_expired": "Cererea de asociere a expirat sau a fost anulată înainte de confirmare. Începe din nou și confirmă în 10 minute.",
+      "pairing_disabled": "Asocierea nu este disponibilă acum. Încearcă mai târziu sau conectează-te cu o cheie API.",
+      "pairing_failed": "Asocierea nu s-a finalizat. Începe din nou; dacă continuă să eșueze, conectează-te cu o cheie API.",
+      "paired_existing": "Intrarea ta Volcast existentă este acum conectată la contul tău.",
+      "multiple_accounts": "Aici este configurată mai mult de o intrare Volcast. Elimină intrările în plus, apoi asociază din nou.",
+      "pairing_connection_lost": "Home Assistant a pierdut conexiunea la serviciul de asociere Volcast în timp ce aștepta confirmarea ta. Verifică conexiunea la internet a Home Assistant și începe din nou.",
+      "already_in_progress": "Configurarea Volcast este deja în curs. Finalizează sau închide mai întâi cealaltă fereastră de configurare.",
+      "existing_entry_disabled": "Volcast este deja adăugat, dar dezactivat. Activează-l în Setări → Dispozitive și servicii.",
+      "converted_existing": "Intrarea ta doar cu detectare folosește acum contul tău Volcast."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opțiuni Volcast",
+        "data": {
+          "update_interval": "Interval de actualizare (minute)",
+          "peak_threshold": "Prag de producție maximă (%)",
+          "pv_energy_entity": "Producția FV de azi (kWh)",
+          "pv_power_entity": "Puterea FV curentă (W)",
+          "battery_soc_entity": "Starea de încărcare a bateriei (%)",
+          "battery_charge_power_entity": "Puterea de încărcare a bateriei (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un senzor care arată producția solară totală de azi în kWh (se resetează zilnic).",
+          "pv_power_entity": "Un senzor care arată puterea solară curentă în wați. Folosit ca alternativă.",
+          "battery_soc_entity": "Un senzor care arată starea de încărcare a bateriei (0-100 %). Folosit pentru a detecta limitarea.",
+          "battery_charge_power_entity": "Un senzor pentru puterea de încărcare a bateriei în wați. Detectează limitarea și încărcarea din rețea."
+        },
+        "menu_options": {
+          "forecast": "Prognoză",
+          "control": "Controlul invertorului",
+          "details": "Detalii instalație",
+          "prices": "Prețurile energiei"
+        }
+      },
+      "forecast": {
+        "title": "Prognoză",
+        "data": {
+          "update_interval": "Interval de actualizare (minute)",
+          "peak_threshold": "Prag de producție maximă (%)",
+          "pv_energy_entity": "Producția FV de azi (kWh)",
+          "pv_power_entity": "Puterea FV curentă (W)",
+          "battery_soc_entity": "Starea de încărcare a bateriei (%)",
+          "battery_charge_power_entity": "Puterea de încărcare a bateriei (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Un senzor care arată producția solară totală de azi în kWh (se resetează zilnic).",
+          "pv_power_entity": "Un senzor care arată puterea solară curentă în wați. Folosit ca alternativă.",
+          "battery_soc_entity": "Un senzor care arată starea de încărcare a bateriei (0-100 %). Folosit pentru a detecta limitarea.",
+          "battery_charge_power_entity": "Un senzor pentru puterea de încărcare a bateriei în wați. Detectează limitarea și încărcarea din rețea."
+        }
+      },
+      "control": {
+        "title": "Controlul invertorului",
+        "description": "Prin integrarea invertorului — Volcast scrie entitățile de mod și putere ale invertorului. Direct — Volcast comunică cu invertorul prin rețeaua locală; disponibil doar pentru invertoare cu control direct verificat și când nicio altă integrare nu folosește invertorul (caută-l mai întâi în Detalii instalație). Controlul necesită și comutatorul din Home Assistant și acordul tău în aplicația Volcast.",
+        "menu_options": {
+          "control_entities": "Prin integrarea invertorului (entități)",
+          "control_direct": "Direct prin rețeaua locală",
+          "control_off": "Oprit — doar prognoză și monitorizare"
+        }
+      },
+      "details": {
+        "title": "Detalii instalație",
+        "description": "Opțional. Alege senzori pentru valorile pe care Volcast nu le găsește prin integrarea invertorului și corectează datele instalației.",
+        "data": {
+          "soc": "Starea de încărcare a bateriei",
+          "pv_power_w": "Putere FV",
+          "battery_power_w": "Puterea bateriei",
+          "grid_power_w": "Puterea rețelei",
+          "load_power_w": "Puterea consumului casei",
+          "pv_energy_total_kwh": "Energie FV totală",
+          "grid_import_total_kwh": "Import din rețea total",
+          "grid_export_total_kwh": "Export în rețea total",
+          "grid_power_negate": "Senzorul rețelei arată exportul ca pozitiv",
+          "rated_power_w": "Puterea nominală a invertorului (W)",
+          "battery_capacity_kwh": "Capacitatea bateriei (kWh)",
+          "load_energy_entity": "Senzor de energie pentru consumul casei (kWh)",
+          "direct_search": "Caută invertorul în rețeaua locală",
+          "direct_trial": "Conexiune de test doar citire",
+          "direct_poll_s": "Intervalul de citire al conexiunii directe (s)"
+        },
+        "data_description": {
+          "grid_power_negate": "Activează când senzorul rețelei este negativ la import.",
+          "rated_power_w": "Între 1000 și 30000 W.",
+          "load_energy_entity": "Folosit o singură dată pentru a trimite istoricul consumului către Volcast.",
+          "direct_search": "Citește doar identificarea invertorului; nu se scrie nimic.",
+          "direct_trial": "Se conectează la invertor, arată valorile lui și ce ar face Volcast — nu scrie niciodată. Doar pentru invertoare al căror control direct este încă în curs de verificare.",
+          "direct_poll_s": "Între 5 și 60 de secunde."
+        }
+      },
+      "prices": {
+        "title": "Prețurile energiei",
+        "description": "Sunt listați doar senzorii care oferă deja o serie completă de prețuri.",
+        "data": {
+          "entity_price_buy": "Senzor pentru prețul de cumpărare",
+          "entity_price_sell": "Senzor pentru prețul de vânzare",
+          "price_currency": "Moneda (când senzorul nu o indică)"
+        }
+      },
+      "direct_pick": {
+        "title": "Invertor găsit",
+        "description": "Alege invertorul la care să te conectezi direct. „test only” înseamnă că controlul direct al acestui model nu este încă verificat — este disponibilă doar conexiunea de test doar citire.",
+        "data": {
+          "candidate": "Invertor"
+        }
+      },
+      "direct_manual": {
+        "title": "Adresa invertorului",
+        "description": "Introdu adresa locală a invertorului sau a data logger-ului său. Volcast îi citește identificarea înainte de salvare.",
+        "data": {
+          "host": "Adresă IP locală",
+          "transport": "Tip de conexiune",
+          "port": "Port",
+          "unit_id": "ID unitate Modbus",
+          "logger_serial": "Număr de serie al data logger-ului"
+        },
+        "data_description": {
+          "host": "O adresă din rețeaua privată, de exemplu a modulului Wi-Fi sau LAN al invertorului.",
+          "logger_serial": "Obligatoriu pentru data logger-e Solarman (până la 10 cifre)."
+        }
+      },
+      "direct_search": {
+        "title": "Se caută invertorul",
+        "description": "Volcast citește doar identificarea dispozitivelor care răspund în rețeaua locală; nu se scrie nimic."
+      }
+    },
+    "abort": {
+      "entity_mode_unavailable": "Entitățile de control ale invertorului nu au fost găsite. Controlul prin integrare necesită o integrare de invertor compatibilă, cu o entitate pentru fiecare setare.",
+      "direct_unverified": "Controlul direct nu este încă disponibil pentru acest invertor. Poți încerca o conexiune de test doar citire în Detalii instalație.",
+      "direct_conflict": "O altă integrare ({integration}) folosește acest invertor. Dezactivează-o înainte de a alege controlul direct, ca două programe să nu controleze invertorul în același timp.",
+      "direct_not_found": "Nu a fost găsit încă niciun invertor. Caută-l mai întâi în Detalii instalație.",
+      "direct_in_use": "O altă intrare Volcast se conectează deja la acest invertor.",
+      "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul)."
+    },
+    "error": {
+      "prices_not_usable": "Acest senzor nu oferă acum o serie completă de prețuri.",
+      "currency_invalid": "Folosește un cod de monedă din trei litere, de exemplu PLN sau EUR.",
+      "trial_with_entities": "Conexiunea de test nu poate rula cât timp controlul trece prin integrarea invertorului.",
+      "trial_while_owned": "Volcast încă controlează invertorul dintr-o sesiune anterioară. Oprește controlul și așteaptă până când invertorul revine la propriul mod.",
+      "invalid_host": "Introdu o adresă IP locală (un nume de gazdă sau o adresă publică nu este acceptată).",
+      "logger_serial_required": "Introdu numărul de serie al data logger-ului (până la 10 cifre).",
+      "direct_not_found": "Niciun invertor compatibil nu a răspuns la această adresă.",
+      "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul)."
+    },
+    "progress": {
+      "direct_search": "Se caută invertorul în rețeaua locală. Poate dura până la un minut."
+    }
+  },
+  "issues": {
+    "production_tracking_available": {
+      "title": "Îmbunătățește precizia prognozei cu urmărirea producției",
+      "description": "Volcast v1.5.0 poate urmări acum producția FV reală și o poate folosi pentru calibrarea prognozelor. Mergi la opțiunile integrării și selectează senzorul de energie sau de putere al invertorului tău pentru a activa această funcție."
+    },
+    "foreign_control": {
+      "title": "Controlul invertorului de către Volcast este în pauză",
+      "description": "O setare a invertorului controlată de Volcast ({entity_id}) a fost modificată în afara Volcast. Volcast a pus controlul în pauză pentru 30 de minute și păstrează setările pe care le-ai modificat. Apoi controlul se reia automat; pentru a-l opri, oprește comutatorul de control Volcast."
+    },
+    "direct_identity_changed": {
+      "title": "Volcast a găsit un alt invertor la adresa salvată",
+      "description": "Dispozitivul care răspunde la adresa salvată a invertorului nu este invertorul cu care a fost configurat Volcast. Controlul este oprit. Caută din nou invertorul în opțiunile Volcast."
+    },
+    "control_error": {
+      "title": "Volcast nu poate controla invertorul",
+      "description": "Controlul invertorului de către Volcast a încetat să funcționeze (erori repetate de scriere sau o stare de control salvată care nu a putut fi citită). Invertorul poate folosi în continuare ultimele setări aplicate de Volcast. Verifică setările invertorului și jurnalele Home Assistant."
+    },
+    "foreign_control_direct": {
+      "title": "Controlul invertorului de către Volcast este în pauză",
+      "description": "Setarea {setting} a invertorului a fost modificată în afara Volcast. Controlul este în pauză 30 de minute, iar Volcast păstrează valoarea setată de tine până când planul său pentru acea setare se schimbă. Pentru a opri controlul, oprește comutatorul de control Volcast."
+    },
+    "direct_conflict": {
+      "title": "Alt client folosește conexiunea invertorului",
+      "description": "Alt client comunică cu invertorul tău ({reason}). Volcast a încetat să modifice setările invertorului până când acela se oprește; readucerea invertorului la propriile setări funcționează în continuare. Dacă o altă integrare sau aplicație controlează acest invertor, oprește-o sau oprește controlul Volcast."
+    },
+    "nvm_budget": {
+      "title": "Bugetul de scrieri Volcast către invertor s-a epuizat",
+      "description": "Volcast a atins limita zilnică de modificări ale setărilor invertorului, așa că modificările următoare așteaptă deocamdată. Dacă invertorul era în încărcare sau descărcare forțată, Volcast îl readuce la modul normal în loc să îl lase să ruleze. Aceasta protejează memoria invertorului; descarcă diagnosticarea dacă se repetă."
+    },
+    "tou_snapshot_lost": {
+      "title": "Volcast a pierdut copia salvată a programului invertorului tău",
+      "description": "Volcast nu a putut citi copia salvată a programelor orare (time-of-use) pe care le aveai înainte ca Volcast să preia controlul. Când controlul se încheie, Volcast va seta programe simple de autoconsum și va opri programul orar al invertorului. Apoi verifică și reintrodu propriul program în invertor."
+    },
+    "tou_safety_off_cap": {
+      "title": "Programul invertorului Volcast necesită atenție",
+      "description": "Volcast a trebuit să oprească de multe ori azi, din motive de siguranță, programul orar (time-of-use) al invertorului și a atins limita zilnică pentru aceasta. Programul rămâne așa cum este acum. Verifică programele orare ale invertorului și dacă o altă aplicație le modifică; descarcă diagnosticarea dacă se repetă."
+    },
+    "control_record_dropped": {
+      "title": "Volcast nu a putut readuce invertorul la setările anterioare",
+      "description": "Volcast modificase setările invertorului printr-o metodă de control sau un invertor care nu mai este configurat, așa că nu le poate readuce. Invertorul poate folosi în continuare ultimele setări aplicate de Volcast. Verifică modul și setările invertorului."
+    },
+    "direct_start_failed": {
+      "title": "Volcast nu a putut porni conexiunea directă la invertor",
+      "description": "Conexiunea directă la invertor nu a putut porni din cauza unei erori neașteptate. Volcast reîncearcă de câteva ori; până se conectează, nu poate modifica sau readuce setările invertorului. Dacă persistă, reîncarcă Volcast și verifică jurnalele Home Assistant."
+    }
+  },
+  "services": {
+    "sync_production": {
+      "name": "Sincronizează producția",
+      "description": "Forțează sincronizarea producției FV orare către Volcast folosind statisticile recorder din Home Assistant. Completează golurile lăsate de indisponibilitatea HA (de ex. o actualizare de sistem). Fără dată, sincronizează ieri și azi.",
+      "fields": {
+        "date": {
+          "name": "Data",
+          "description": "Ziua specifică de sincronizat (în ultimele ~24-38 de ore). Lasă gol pentru a sincroniza ieri și azi."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_today": {
+        "name": "Prognoza de energie pentru azi"
+      },
+      "energy_tomorrow": {
+        "name": "Prognoza de energie pentru mâine"
+      },
+      "energy_day_3": {
+        "name": "Prognoza de energie ziua 3"
+      },
+      "energy_day_4": {
+        "name": "Prognoza de energie ziua 4"
+      },
+      "energy_day_5": {
+        "name": "Prognoza de energie ziua 5"
+      },
+      "energy_day_6": {
+        "name": "Prognoza de energie ziua 6"
+      },
+      "energy_day_7": {
+        "name": "Prognoza de energie ziua 7"
+      },
+      "power_now": {
+        "name": "Putere acum"
+      },
+      "api_status": {
+        "name": "Stare API"
+      },
+      "discovery": {
+        "name": "Detectarea instalației"
+      },
+      "control_plan": {
+        "name": "Plan"
+      },
+      "control_status": {
+        "name": "Stare"
+      },
+      "control_direct_soc": {
+        "name": "Starea de încărcare a bateriei"
+      },
+      "control_direct_battery_temp_c": {
+        "name": "Temperatura bateriei"
+      },
+      "control_direct_battery_voltage_v": {
+        "name": "Tensiunea bateriei"
+      },
+      "control_direct_battery_current_a": {
+        "name": "Curentul bateriei"
+      },
+      "control_direct_battery_power_w": {
+        "name": "Puterea bateriei"
+      },
+      "control_direct_pv_power_w": {
+        "name": "Putere FV"
+      },
+      "control_direct_active_power_w": {
+        "name": "Puterea activă a invertorului"
+      },
+      "control_direct_load_power_w": {
+        "name": "Consumul casei"
+      },
+      "control_direct_grid_power_w": {
+        "name": "Puterea rețelei"
+      },
+      "control_direct_pv_energy_total_kwh": {
+        "name": "Energie FV totală"
+      },
+      "control_direct_grid_import_total_kwh": {
+        "name": "Import din rețea total"
+      },
+      "control_direct_grid_export_total_kwh": {
+        "name": "Export în rețea total"
+      },
+      "control_direct_mode": {
+        "name": "Modul invertorului",
+        "state": {
+          "auto": "Auto",
+          "charge_pv": "Încărcare din FV",
+          "battery_standby": "Baterie în standby",
+          "sell_power": "Vânzare de putere",
+          "charge_battery": "Încărcare baterie",
+          "discharge_battery": "Descărcare baterie"
+        }
+      },
+      "control_direct_power_w": {
+        "name": "Setarea puterii modului"
+      },
+      "control_direct_export_limit_w": {
+        "name": "Setarea limitei de export"
+      },
+      "control_direct_soc_min": {
+        "name": "Setarea stării minime de încărcare"
+      },
+      "control_direct_link_quality": {
+        "name": "Depășiri de timp ale legăturii cu invertorul"
+      }
+    },
+    "binary_sensor": {
+      "peak_production": {
+        "name": "Producție maximă"
+      }
+    },
+    "button": {
+      "sync_now": {
+        "name": "Sincronizează producția acum"
+      },
+      "run_discovery": {
+        "name": "Rulează detectarea"
+      }
+    },
+    "switch": {
+      "control_switch": {
+        "name": "Control"
+      }
+    }
+  }
+}

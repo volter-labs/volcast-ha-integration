@@ -1,0 +1,396 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Volcast einrichten",
+        "description": "Verbinde dein Volcast-Konto oder führe nur eine schreibgeschützte Erkennung deiner Anlage durch (es wird nichts geändert, und nichts verlässt Home Assistant, bis du die Diagnosedatei teilst).",
+        "menu_options": {
+          "pair": "Mit deinem Volcast-Konto verbinden (empfohlen)",
+          "api_key": "Mit API-Schlüssel verbinden",
+          "discovery_only": "Nur Erkennung (ohne Konto)"
+        }
+      },
+      "pair": {
+        "title": "Volcast-Konto verbinden",
+        "description": "Öffne die Volcast-App oder -Seite und bestätige dort diese Verbindung. Dieses Fenster schließt sich von selbst, sobald du bestätigt hast.",
+        "data": {
+          "pairing_url": "Adresse des Kopplungsdienstes"
+        },
+        "data_description": {
+          "pairing_url": "Leer lassen, um den Standarddienst von Volcast zu verwenden. Nur ändern, wenn der Volcast-Support dich darum gebeten hat."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Erweitert",
+            "description": "Nur nötig, wenn der Volcast-Support dich gebeten hat, einen anderen Kopplungsdienst zu verwenden.",
+            "data": {
+              "pairing_url": "Adresse des Kopplungsdienstes"
+            },
+            "data_description": {
+              "pairing_url": "Leer lassen, um den Standarddienst von Volcast zu verwenden."
+            }
+          }
+        }
+      },
+      "api_key": {
+        "title": "Mit Volcast verbinden",
+        "description": "Gib deinen Volcast-API-Schlüssel ein. Du findest ihn in der Volcast-App unter Einstellungen > API-Schlüssel.",
+        "data": {
+          "api_key": "API-Schlüssel",
+          "api_url": "API-URL (erweitert)"
+        }
+      },
+      "production": {
+        "title": "Ertragserfassung (optional)",
+        "description": "Verbinde die Sensoren deines Wechselrichters, um die Genauigkeit der Prognose zu verbessern. Volcast sendet stündliche Ertragszusammenfassungen zur Kalibrierung.\n\nBeides ist optional — du kannst es später in den Optionen der Integration einrichten.",
+        "data": {
+          "pv_energy_entity": "PV-Erzeugung heute (kWh)",
+          "pv_power_entity": "Aktuelle PV-Leistung (W)",
+          "battery_soc_entity": "Ladezustand der Batterie (%)",
+          "battery_charge_power_entity": "Ladeleistung der Batterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Ein Sensor, der die gesamte Solarerzeugung von heute in kWh anzeigt (täglich zurückgesetzt). Das ist die wichtigste Quelle für die Erfassung — suche nach Sensoren wie „PV-Erzeugung heute“ oder „Tagesertrag“ deines Wechselrichters (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_power_entity": "Ein Sensor, der die aktuelle Solarleistung in Watt anzeigt. Dient als Ersatz, wenn der Energiesensor nicht verfügbar ist oder sich tagsüber zurücksetzt.",
+          "battery_soc_entity": "Ein Sensor, der den Ladezustand der Batterie (0–100 %) anzeigt. Dient dazu, eine Abregelung des Wechselrichters bei voller Batterie zu erkennen. Optional — nur nötig, wenn du einen Batteriespeicher hast.",
+          "battery_charge_power_entity": "Ein Sensor, der die Ladeleistung der Batterie in Watt anzeigt. Dient dazu, eine Abregelung zu bestätigen (Batterie voll, nimmt keine Ladung an) und Laden aus dem Netz zu erkennen (Szenarien mit negativen Preisen). Optional."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zur Volcast-API nicht möglich. Prüfe deine Internetverbindung.",
+      "invalid_auth": "Ungültiger API-Schlüssel oder Premium-Abonnement erforderlich.",
+      "masked_key": "Das sieht nach der gekürzten Vorschau aus der App aus (vk_xxxx...xxxx), nicht nach dem vollständigen Schlüssel. Öffne in der Volcast-App Einstellungen > API-Schlüssel, nutze die Schaltfläche Kopieren oder Teilen und füge hier den vollständigen Schlüssel mit 67 Zeichen ein.",
+      "invalid_key_format": "Das ist kein Volcast-API-Schlüssel. Ein Schlüssel beginnt mit vk_ und ist 67 Zeichen lang. Nutze die Schaltfläche Kopieren oder Teilen in der Volcast-App unter Einstellungen > API-Schlüssel.",
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten.",
+      "invalid_url": "Gib eine vollständige https://-Adresse ohne abschließenden Schrägstrich ein."
+    },
+    "abort": {
+      "already_configured": "Dieser API-Schlüssel ist bereits eingerichtet.",
+      "single_instance_allowed": "Volcast ist hier bereits eingerichtet, und die Anlagenerkennung läuft bereits als Teil davon.",
+      "cannot_connect": "Der Volcast-Kopplungsdienst ist nicht erreichbar. Prüfe deine Internetverbindung und versuche es erneut.",
+      "pairing_expired": "Die Kopplungsanfrage ist abgelaufen oder wurde vor der Bestätigung abgebrochen. Starte erneut und bestätige innerhalb von 10 Minuten.",
+      "pairing_disabled": "Die Kopplung ist derzeit nicht verfügbar. Versuche es später erneut oder verbinde dich mit einem API-Schlüssel.",
+      "pairing_failed": "Die Kopplung wurde nicht abgeschlossen. Starte erneut; falls es weiterhin fehlschlägt, verbinde dich mit einem API-Schlüssel.",
+      "paired_existing": "Dein vorhandener Volcast-Eintrag ist jetzt mit deinem Konto verbunden.",
+      "multiple_accounts": "Hier ist mehr als ein Volcast-Eintrag eingerichtet. Entferne die überzähligen Einträge und koppele dann erneut.",
+      "pairing_connection_lost": "Home Assistant hat die Verbindung zum Volcast-Kopplungsdienst verloren, während er auf deine Bestätigung wartete. Prüfe die Internetverbindung von Home Assistant und starte erneut.",
+      "already_in_progress": "Die Volcast-Einrichtung läuft bereits. Schließe zuerst das andere Einrichtungsfenster oder beende die Einrichtung dort.",
+      "existing_entry_disabled": "Volcast ist bereits hinzugefügt, aber deaktiviert. Aktiviere es unter Einstellungen → Geräte & Dienste.",
+      "converted_existing": "Dein Eintrag nur mit Erkennung nutzt jetzt dein Volcast-Konto."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Volcast-Optionen",
+        "data": {
+          "update_interval": "Aktualisierungsintervall (Minuten)",
+          "peak_threshold": "Schwellenwert für Spitzenerzeugung (%)",
+          "pv_energy_entity": "PV-Erzeugung heute (kWh)",
+          "pv_power_entity": "Aktuelle PV-Leistung (W)",
+          "battery_soc_entity": "Ladezustand der Batterie (%)",
+          "battery_charge_power_entity": "Ladeleistung der Batterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Ein Sensor, der die gesamte Solarerzeugung von heute in kWh anzeigt (täglich zurückgesetzt).",
+          "pv_power_entity": "Ein Sensor, der die aktuelle Solarleistung in Watt anzeigt. Dient als Ersatz.",
+          "battery_soc_entity": "Ein Sensor, der den Ladezustand der Batterie (0–100 %) anzeigt. Dient zur Erkennung von Abregelung.",
+          "battery_charge_power_entity": "Ein Sensor für die Ladeleistung der Batterie in Watt. Erkennt Abregelung und Laden aus dem Netz."
+        },
+        "menu_options": {
+          "forecast": "Prognose",
+          "control": "Wechselrichter-Steuerung",
+          "details": "Anlagendetails",
+          "prices": "Energiepreise"
+        }
+      },
+      "forecast": {
+        "title": "Prognose",
+        "data": {
+          "update_interval": "Aktualisierungsintervall (Minuten)",
+          "peak_threshold": "Schwellenwert für Spitzenerzeugung (%)",
+          "pv_energy_entity": "PV-Erzeugung heute (kWh)",
+          "pv_power_entity": "Aktuelle PV-Leistung (W)",
+          "battery_soc_entity": "Ladezustand der Batterie (%)",
+          "battery_charge_power_entity": "Ladeleistung der Batterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Ein Sensor, der die gesamte Solarerzeugung von heute in kWh anzeigt (täglich zurückgesetzt).",
+          "pv_power_entity": "Ein Sensor, der die aktuelle Solarleistung in Watt anzeigt. Dient als Ersatz.",
+          "battery_soc_entity": "Ein Sensor, der den Ladezustand der Batterie (0–100 %) anzeigt. Dient zur Erkennung von Abregelung.",
+          "battery_charge_power_entity": "Ein Sensor für die Ladeleistung der Batterie in Watt. Erkennt Abregelung und Laden aus dem Netz."
+        }
+      },
+      "control": {
+        "title": "Wechselrichter-Steuerung",
+        "description": "Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungs-Entitäten des Wechselrichters. Direkt — Volcast spricht den Wechselrichter über das lokale Netzwerk an; nur verfügbar für Wechselrichter mit geprüfter Direktsteuerung und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Anlagendetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
+        "menu_options": {
+          "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
+          "control_direct": "Direkt über das lokale Netzwerk",
+          "control_off": "Aus — nur Prognose und Überwachung"
+        }
+      },
+      "details": {
+        "title": "Anlagendetails",
+        "description": "Optional. Wähle Sensoren für die Messwerte, die Volcast über die Wechselrichter-Integration nicht findet, und korrigiere die Anlagendaten.",
+        "data": {
+          "soc": "Ladezustand der Batterie",
+          "pv_power_w": "PV-Leistung",
+          "battery_power_w": "Batterieleistung",
+          "grid_power_w": "Netzleistung",
+          "load_power_w": "Hausverbrauchsleistung",
+          "pv_energy_total_kwh": "PV-Energie gesamt",
+          "grid_import_total_kwh": "Netzbezug gesamt",
+          "grid_export_total_kwh": "Netzeinspeisung gesamt",
+          "grid_power_negate": "Netzsensor zeigt Einspeisung als positiv",
+          "rated_power_w": "Nennleistung des Wechselrichters (W)",
+          "battery_capacity_kwh": "Batteriekapazität (kWh)",
+          "load_energy_entity": "Energiesensor für den Hausverbrauch (kWh)",
+          "direct_search": "Wechselrichter im lokalen Netzwerk suchen",
+          "direct_trial": "Schreibgeschützte Testverbindung",
+          "direct_poll_s": "Leseintervall der Direktverbindung (s)"
+        },
+        "data_description": {
+          "grid_power_negate": "Aktivieren, wenn dein Netzsensor beim Bezug negativ ist.",
+          "rated_power_w": "Zwischen 1000 und 30000 W.",
+          "load_energy_entity": "Wird einmalig verwendet, um deinen Verbrauchsverlauf an Volcast zu senden.",
+          "direct_search": "Liest nur die Kennung des Wechselrichters; es wird nichts geschrieben.",
+          "direct_trial": "Verbindet sich mit dem Wechselrichter, zeigt seine Messwerte und was Volcast tun würde — schreibt nie. Nur für Wechselrichter, deren Direktsteuerung noch geprüft wird.",
+          "direct_poll_s": "Zwischen 5 und 60 Sekunden."
+        }
+      },
+      "prices": {
+        "title": "Energiepreise",
+        "description": "Es werden nur Sensoren aufgelistet, die bereits eine vollständige Preisreihe liefern.",
+        "data": {
+          "entity_price_buy": "Sensor für den Bezugspreis",
+          "entity_price_sell": "Sensor für den Verkaufspreis",
+          "price_currency": "Währung (wenn der Sensor sie nicht angibt)"
+        }
+      },
+      "direct_pick": {
+        "title": "Wechselrichter gefunden",
+        "description": "Wähle den Wechselrichter für die Direktverbindung. „test only“ bedeutet, dass die Direktsteuerung dieses Modells noch nicht geprüft ist — nur die schreibgeschützte Testverbindung ist verfügbar.",
+        "data": {
+          "candidate": "Wechselrichter"
+        }
+      },
+      "direct_manual": {
+        "title": "Adresse des Wechselrichters",
+        "description": "Gib die lokale Adresse des Wechselrichters oder seines Datenloggers ein. Volcast liest vor dem Speichern seine Kennung.",
+        "data": {
+          "host": "Lokale IP-Adresse",
+          "transport": "Verbindungsart",
+          "port": "Port",
+          "unit_id": "Modbus-Geräte-ID",
+          "logger_serial": "Seriennummer des Datenloggers"
+        },
+        "data_description": {
+          "host": "Eine Adresse im privaten Netzwerk, zum Beispiel die des WLAN- oder LAN-Moduls des Wechselrichters.",
+          "logger_serial": "Erforderlich für Solarman-Datenlogger (bis zu 10 Ziffern)."
+        }
+      },
+      "direct_search": {
+        "title": "Suche nach dem Wechselrichter",
+        "description": "Volcast liest nur die Kennung von Geräten, die im lokalen Netzwerk antworten; es wird nichts geschrieben."
+      }
+    },
+    "abort": {
+      "entity_mode_unavailable": "Steuerungs-Entitäten des Wechselrichters nicht gefunden. Die Steuerung über die Integration braucht eine unterstützte Wechselrichter-Integration mit einer Entität für jede Einstellung.",
+      "direct_unverified": "Die Direktsteuerung ist für diesen Wechselrichter noch nicht verfügbar. Du kannst unter Anlagendetails eine schreibgeschützte Testverbindung versuchen.",
+      "direct_conflict": "Eine andere Integration ({integration}) nutzt diesen Wechselrichter. Deaktiviere sie, bevor du die Direktsteuerung wählst, damit nicht zwei Programme den Wechselrichter gleichzeitig steuern.",
+      "direct_not_found": "Noch kein Wechselrichter gefunden. Suche ihn zuerst unter Anlagendetails.",
+      "direct_in_use": "Ein anderer Volcast-Eintrag ist bereits mit diesem Wechselrichter verbunden.",
+      "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen)."
+    },
+    "error": {
+      "prices_not_usable": "Dieser Sensor liefert derzeit keine vollständige Preisreihe.",
+      "currency_invalid": "Verwende einen dreistelligen Währungscode, zum Beispiel PLN oder EUR.",
+      "trial_with_entities": "Die Testverbindung kann nicht laufen, solange die Steuerung über die Wechselrichter-Integration erfolgt.",
+      "trial_while_owned": "Volcast steuert den Wechselrichter noch aus einer früheren Sitzung. Schalte die Steuerung aus und warte, bis der Wechselrichter wieder in seinem eigenen Modus ist.",
+      "invalid_host": "Gib eine lokale IP-Adresse ein (ein Hostname oder eine öffentliche Adresse wird nicht akzeptiert).",
+      "logger_serial_required": "Gib die Seriennummer des Datenloggers ein (bis zu 10 Ziffern).",
+      "direct_not_found": "Unter dieser Adresse hat kein unterstützter Wechselrichter geantwortet.",
+      "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen)."
+    },
+    "progress": {
+      "direct_search": "Das lokale Netzwerk wird nach dem Wechselrichter durchsucht. Das kann bis zu einer Minute dauern."
+    }
+  },
+  "issues": {
+    "production_tracking_available": {
+      "title": "Prognosegenauigkeit mit Ertragserfassung verbessern",
+      "description": "Volcast v1.5.0 kann jetzt deine tatsächliche PV-Erzeugung erfassen und zur Kalibrierung der Prognosen nutzen. Öffne die Optionen der Integration und wähle den Energie- oder Leistungssensor deines Wechselrichters, um diese Funktion zu aktivieren."
+    },
+    "foreign_control": {
+      "title": "Wechselrichter-Steuerung durch Volcast pausiert",
+      "description": "Eine von Volcast gesteuerte Wechselrichter-Einstellung ({entity_id}) wurde außerhalb von Volcast geändert. Volcast hat die Steuerung für 30 Minuten pausiert und behält deine geänderten Einstellungen bei. Danach läuft die Steuerung automatisch weiter; um sie zu beenden, schalte den Volcast-Steuerungsschalter aus."
+    },
+    "direct_identity_changed": {
+      "title": "Volcast hat unter der gespeicherten Adresse einen anderen Wechselrichter gefunden",
+      "description": "Das Gerät, das unter der gespeicherten Adresse des Wechselrichters antwortet, ist nicht der Wechselrichter, mit dem Volcast eingerichtet wurde. Die Steuerung wurde gestoppt. Suche deinen Wechselrichter in den Volcast-Optionen erneut."
+    },
+    "control_error": {
+      "title": "Volcast kann den Wechselrichter nicht steuern",
+      "description": "Die Wechselrichter-Steuerung von Volcast funktioniert nicht mehr (wiederholte Schreibfehler oder ein gespeicherter Steuerungszustand, der nicht gelesen werden konnte). Der Wechselrichter nutzt möglicherweise noch die letzten von Volcast angewendeten Einstellungen. Prüfe die Einstellungen des Wechselrichters und die Home-Assistant-Logs."
+    },
+    "foreign_control_direct": {
+      "title": "Wechselrichter-Steuerung durch Volcast pausiert",
+      "description": "Die Wechselrichter-Einstellung {setting} wurde außerhalb von Volcast geändert. Die Steuerung ist für 30 Minuten pausiert, und Volcast behält den von dir gesetzten Wert bei, bis sich sein Plan für diese Einstellung ändert. Um die Steuerung zu beenden, schalte den Volcast-Steuerungsschalter aus."
+    },
+    "direct_conflict": {
+      "title": "Ein anderer Client nutzt die Wechselrichter-Verbindung",
+      "description": "Ein anderer Client kommuniziert mit deinem Wechselrichter ({reason}). Volcast ändert keine Wechselrichter-Einstellungen mehr, bis dieser damit aufhört; das Zurücksetzen des Wechselrichters auf seine eigenen Einstellungen funktioniert weiterhin. Wenn eine andere Integration oder App diesen Wechselrichter steuert, schalte sie aus oder schalte die Volcast-Steuerung aus."
+    },
+    "nvm_budget": {
+      "title": "Schreibbudget von Volcast für den Wechselrichter aufgebraucht",
+      "description": "Volcast hat das Tageslimit für Einstellungsänderungen am Wechselrichter erreicht, weitere Änderungen warten daher vorerst. Falls der Wechselrichter im erzwungenen Laden oder Entladen war, setzt Volcast ihn in den Normalmodus zurück, statt ihn weiterlaufen zu lassen. Das schützt den Speicher des Wechselrichters; lade die Diagnose herunter, falls es erneut passiert."
+    },
+    "tou_snapshot_lost": {
+      "title": "Volcast hat die gespeicherte Kopie deines Wechselrichter-Zeitplans verloren",
+      "description": "Volcast konnte seine gespeicherte Kopie der Zeitprogramme (Time-of-Use) nicht lesen, die du hattest, bevor Volcast die Steuerung übernommen hat. Wenn die Steuerung endet, setzt Volcast einfache Eigenverbrauchsprogramme und schaltet den Zeitplan des Wechselrichters aus. Prüfe danach deinen eigenen Zeitplan am Wechselrichter und gib ihn erneut ein."
+    },
+    "tou_safety_off_cap": {
+      "title": "Der Wechselrichter-Zeitplan von Volcast braucht Aufmerksamkeit",
+      "description": "Volcast musste den Zeitplan (Time-of-Use) des Wechselrichters heute aus Sicherheitsgründen mehrfach ausschalten und hat sein Tageslimit dafür erreicht. Der Zeitplan bleibt, wie er jetzt ist. Prüfe die Zeitprogramme des Wechselrichters und ob eine andere App sie ändert; lade die Diagnose herunter, falls es erneut passiert."
+    },
+    "control_record_dropped": {
+      "title": "Volcast konnte den Wechselrichter nicht auf die vorherigen Einstellungen zurücksetzen",
+      "description": "Volcast hatte Wechselrichter-Einstellungen über eine Steuerungsmethode oder einen Wechselrichter geändert, die nicht mehr eingerichtet sind, und kann sie daher nicht zurücksetzen. Der Wechselrichter nutzt möglicherweise noch die letzten von Volcast angewendeten Einstellungen. Prüfe Modus und Einstellungen des Wechselrichters."
+    },
+    "direct_start_failed": {
+      "title": "Volcast konnte die direkte Wechselrichter-Verbindung nicht starten",
+      "description": "Die Direktverbindung zum Wechselrichter konnte wegen eines unerwarteten Fehlers nicht gestartet werden. Volcast versucht es einige Male erneut; bis die Verbindung steht, kann es Wechselrichter-Einstellungen weder ändern noch zurücksetzen. Falls das so bleibt, lade Volcast neu und prüfe die Home-Assistant-Logs."
+    }
+  },
+  "services": {
+    "sync_production": {
+      "name": "Erzeugung synchronisieren",
+      "description": "Erzwingt die Synchronisierung der stündlichen PV-Erzeugung mit Volcast anhand der Recorder-Statistiken von Home Assistant. Füllt Lücken durch Ausfallzeiten von HA (z. B. ein Systemupdate). Ohne Datum werden gestern und heute synchronisiert.",
+      "fields": {
+        "date": {
+          "name": "Datum",
+          "description": "Bestimmter Tag zur Synchronisierung (innerhalb der letzten ca. 24–38 Stunden). Leer lassen, um gestern und heute zu synchronisieren."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_today": {
+        "name": "Energieprognose heute"
+      },
+      "energy_tomorrow": {
+        "name": "Energieprognose morgen"
+      },
+      "energy_day_3": {
+        "name": "Energieprognose Tag 3"
+      },
+      "energy_day_4": {
+        "name": "Energieprognose Tag 4"
+      },
+      "energy_day_5": {
+        "name": "Energieprognose Tag 5"
+      },
+      "energy_day_6": {
+        "name": "Energieprognose Tag 6"
+      },
+      "energy_day_7": {
+        "name": "Energieprognose Tag 7"
+      },
+      "power_now": {
+        "name": "Leistung jetzt"
+      },
+      "api_status": {
+        "name": "API-Status"
+      },
+      "discovery": {
+        "name": "Anlagenerkennung"
+      },
+      "control_plan": {
+        "name": "Plan"
+      },
+      "control_status": {
+        "name": "Status"
+      },
+      "control_direct_soc": {
+        "name": "Ladezustand der Batterie"
+      },
+      "control_direct_battery_temp_c": {
+        "name": "Batterietemperatur"
+      },
+      "control_direct_battery_voltage_v": {
+        "name": "Batteriespannung"
+      },
+      "control_direct_battery_current_a": {
+        "name": "Batteriestrom"
+      },
+      "control_direct_battery_power_w": {
+        "name": "Batterieleistung"
+      },
+      "control_direct_pv_power_w": {
+        "name": "PV-Leistung"
+      },
+      "control_direct_active_power_w": {
+        "name": "Wirkleistung des Wechselrichters"
+      },
+      "control_direct_load_power_w": {
+        "name": "Hausverbrauch"
+      },
+      "control_direct_grid_power_w": {
+        "name": "Netzleistung"
+      },
+      "control_direct_pv_energy_total_kwh": {
+        "name": "PV-Energie gesamt"
+      },
+      "control_direct_grid_import_total_kwh": {
+        "name": "Netzbezug gesamt"
+      },
+      "control_direct_grid_export_total_kwh": {
+        "name": "Netzeinspeisung gesamt"
+      },
+      "control_direct_mode": {
+        "name": "Wechselrichter-Modus",
+        "state": {
+          "auto": "Auto",
+          "charge_pv": "Aus PV laden",
+          "battery_standby": "Batterie im Standby",
+          "sell_power": "Leistung verkaufen",
+          "charge_battery": "Batterie laden",
+          "discharge_battery": "Batterie entladen"
+        }
+      },
+      "control_direct_power_w": {
+        "name": "Leistungseinstellung des Modus"
+      },
+      "control_direct_export_limit_w": {
+        "name": "Einstellung des Einspeiselimits"
+      },
+      "control_direct_soc_min": {
+        "name": "Einstellung des minimalen Ladezustands"
+      },
+      "control_direct_link_quality": {
+        "name": "Zeitüberschreitungen der Wechselrichter-Verbindung"
+      }
+    },
+    "binary_sensor": {
+      "peak_production": {
+        "name": "Spitzenerzeugung"
+      }
+    },
+    "button": {
+      "sync_now": {
+        "name": "Erzeugung jetzt synchronisieren"
+      },
+      "run_discovery": {
+        "name": "Erkennung starten"
+      }
+    },
+    "switch": {
+      "control_switch": {
+        "name": "Steuerung"
+      }
+    }
+  }
+}

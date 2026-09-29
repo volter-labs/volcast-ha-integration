@@ -1,0 +1,396 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Nastavení Volcast",
+        "description": "Připojte svůj účet Volcast, nebo spusťte pouze zjištění své instalace v režimu jen pro čtení (nic se nemění a nic neopustí Home Assistant, dokud nesdílíte diagnostický soubor).",
+        "menu_options": {
+          "pair": "Připojit k účtu Volcast (doporučeno)",
+          "api_key": "Připojit pomocí klíče API",
+          "discovery_only": "Pouze zjištění (bez účtu)"
+        }
+      },
+      "pair": {
+        "title": "Připojení účtu Volcast",
+        "description": "Otevřete aplikaci nebo stránku Volcast a potvrďte tam toto připojení. Toto okno se po potvrzení samo zavře.",
+        "data": {
+          "pairing_url": "Adresa služby párování"
+        },
+        "data_description": {
+          "pairing_url": "Nechte prázdné pro výchozí službu Volcast. Měňte jen na žádost podpory Volcast."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Pokročilé",
+            "description": "Potřebné jen tehdy, pokud vás podpora Volcast požádala o použití jiné služby párování.",
+            "data": {
+              "pairing_url": "Adresa služby párování"
+            },
+            "data_description": {
+              "pairing_url": "Nechte prázdné pro výchozí službu Volcast."
+            }
+          }
+        }
+      },
+      "api_key": {
+        "title": "Připojení k Volcast",
+        "description": "Zadejte svůj klíč API Volcast. Najdete ho v aplikaci Volcast v Nastavení > Klíč API.",
+        "data": {
+          "api_key": "Klíč API",
+          "api_url": "URL adresa API (pokročilé)"
+        }
+      },
+      "production": {
+        "title": "Sledování výroby (volitelné)",
+        "description": "Připojte senzory svého střídače, aby se zlepšila přesnost předpovědi. Volcast bude posílat hodinové souhrny výroby pro kalibraci.\n\nOboje je volitelné — můžete to nastavit později v možnostech integrace.",
+        "data": {
+          "pv_energy_entity": "Dnešní výroba FV (kWh)",
+          "pv_power_entity": "Aktuální výkon FV (W)",
+          "battery_soc_entity": "Stav nabití baterie (%)",
+          "battery_charge_power_entity": "Nabíjecí výkon baterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Senzor zobrazující celkovou dnešní solární výrobu v kWh (denně se nuluje). Je to hlavní zdroj pro sledování — hledejte senzory jako „Dnešní výroba FV“ nebo „Denní výnos“ od svého střídače (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_power_entity": "Senzor zobrazující aktuální solární výkon ve wattech. Používá se jako záloha, když je senzor energie nedostupný nebo se během dne vynuluje.",
+          "battery_soc_entity": "Senzor zobrazující stav nabití baterie (0–100 %). Používá se ke zjištění omezení výkonu střídače při plné baterii. Volitelné — potřebné jen tehdy, pokud máte bateriový systém.",
+          "battery_charge_power_entity": "Senzor zobrazující nabíjecí výkon baterie ve wattech. Používá se k potvrzení omezení výkonu (baterie plná, nepřijímá nabíjení) a ke zjištění nabíjení ze sítě (scénáře se zápornými cenami). Volitelné."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Nelze se připojit k API Volcast. Zkontrolujte připojení k internetu.",
+      "invalid_auth": "Neplatný klíč API nebo je vyžadováno předplatné premium.",
+      "masked_key": "Vypadá to jako zkrácený náhled z aplikace (vk_xxxx...xxxx), ne jako úplný klíč. V aplikaci Volcast otevřete Nastavení > Klíč API, použijte tlačítko Kopírovat nebo Sdílet a vložte sem úplný klíč o 67 znacích.",
+      "invalid_key_format": "To není klíč API Volcast. Klíč začíná vk_ a má 67 znaků. Použijte tlačítko Kopírovat nebo Sdílet v aplikaci Volcast v Nastavení > Klíč API.",
+      "unknown": "Došlo k neočekávané chybě.",
+      "invalid_url": "Zadejte úplnou adresu https:// bez lomítka na konci."
+    },
+    "abort": {
+      "already_configured": "Tento klíč API je již nastaven.",
+      "single_instance_allowed": "Volcast je zde již nastaven a zjišťování instalace už běží jako jeho součást.",
+      "cannot_connect": "Službu párování Volcast se nepodařilo zastihnout. Zkontrolujte připojení k internetu a zkuste to znovu.",
+      "pairing_expired": "Žádost o párování vypršela nebo byla zrušena před potvrzením. Začněte znovu a potvrďte do 10 minut.",
+      "pairing_disabled": "Párování teď není dostupné. Zkuste to později nebo se připojte pomocí klíče API.",
+      "pairing_failed": "Párování se nedokončilo. Začněte znovu; pokud to stále selhává, připojte se pomocí klíče API.",
+      "paired_existing": "Váš existující záznam Volcast je nyní připojen k vašemu účtu.",
+      "multiple_accounts": "Je zde nastaven více než jeden záznam Volcast. Odeberte přebytečné záznamy a poté párování zopakujte.",
+      "pairing_connection_lost": "Home Assistant ztratil spojení se službou párování Volcast při čekání na vaše potvrzení. Zkontrolujte připojení Home Assistantu k internetu a začněte znovu.",
+      "already_in_progress": "Nastavení Volcast již probíhá. Nejprve dokončete nebo zavřete druhé okno nastavení.",
+      "existing_entry_disabled": "Volcast je již přidán, ale je zakázán. Povolte ho v Nastavení → Zařízení a služby.",
+      "converted_existing": "Váš záznam pouze se zjišťováním nyní používá váš účet Volcast."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Možnosti Volcast",
+        "data": {
+          "update_interval": "Interval aktualizace (minuty)",
+          "peak_threshold": "Práh špičkové výroby (%)",
+          "pv_energy_entity": "Dnešní výroba FV (kWh)",
+          "pv_power_entity": "Aktuální výkon FV (W)",
+          "battery_soc_entity": "Stav nabití baterie (%)",
+          "battery_charge_power_entity": "Nabíjecí výkon baterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Senzor zobrazující celkovou dnešní solární výrobu v kWh (denně se nuluje).",
+          "pv_power_entity": "Senzor zobrazující aktuální solární výkon ve wattech. Používá se jako záloha.",
+          "battery_soc_entity": "Senzor zobrazující stav nabití baterie (0–100 %). Používá se ke zjištění omezení výkonu.",
+          "battery_charge_power_entity": "Senzor nabíjecího výkonu baterie ve wattech. Zjišťuje omezení výkonu a nabíjení ze sítě."
+        },
+        "menu_options": {
+          "forecast": "Předpověď",
+          "control": "Řízení střídače",
+          "details": "Podrobnosti o instalaci",
+          "prices": "Ceny energie"
+        }
+      },
+      "forecast": {
+        "title": "Předpověď",
+        "data": {
+          "update_interval": "Interval aktualizace (minuty)",
+          "peak_threshold": "Práh špičkové výroby (%)",
+          "pv_energy_entity": "Dnešní výroba FV (kWh)",
+          "pv_power_entity": "Aktuální výkon FV (W)",
+          "battery_soc_entity": "Stav nabití baterie (%)",
+          "battery_charge_power_entity": "Nabíjecí výkon baterie (W)"
+        },
+        "data_description": {
+          "pv_energy_entity": "Senzor zobrazující celkovou dnešní solární výrobu v kWh (denně se nuluje).",
+          "pv_power_entity": "Senzor zobrazující aktuální solární výkon ve wattech. Používá se jako záloha.",
+          "battery_soc_entity": "Senzor zobrazující stav nabití baterie (0–100 %). Používá se ke zjištění omezení výkonu.",
+          "battery_charge_power_entity": "Senzor nabíjecího výkonu baterie ve wattech. Zjišťuje omezení výkonu a nabíjení ze sítě."
+        }
+      },
+      "control": {
+        "title": "Řízení střídače",
+        "description": "Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače s ověřeným přímým řízením a když střídač nepoužívá žádná jiná integrace (nejprve ho vyhledejte v Podrobnostech o instalaci). Řízení vyžaduje také přepínač v Home Assistantu a váš souhlas v aplikaci Volcast.",
+        "menu_options": {
+          "control_entities": "Přes integraci střídače (entity)",
+          "control_direct": "Přímo přes místní síť",
+          "control_off": "Vypnuto — pouze předpověď a monitorování"
+        }
+      },
+      "details": {
+        "title": "Podrobnosti o instalaci",
+        "description": "Volitelné. Vyberte senzory pro hodnoty, které Volcast nenajde přes integraci střídače, a opravte údaje o instalaci.",
+        "data": {
+          "soc": "Stav nabití baterie",
+          "pv_power_w": "Výkon FV",
+          "battery_power_w": "Výkon baterie",
+          "grid_power_w": "Výkon sítě",
+          "load_power_w": "Výkon spotřeby domu",
+          "pv_energy_total_kwh": "Celková energie FV",
+          "grid_import_total_kwh": "Celkový odběr ze sítě",
+          "grid_export_total_kwh": "Celkový export do sítě",
+          "grid_power_negate": "Senzor sítě zobrazuje export jako kladný",
+          "rated_power_w": "Jmenovitý výkon střídače (W)",
+          "battery_capacity_kwh": "Kapacita baterie (kWh)",
+          "load_energy_entity": "Senzor energie spotřeby domu (kWh)",
+          "direct_search": "Vyhledat střídač v místní síti",
+          "direct_trial": "Zkušební připojení jen pro čtení",
+          "direct_poll_s": "Interval čtení přímého připojení (s)"
+        },
+        "data_description": {
+          "grid_power_negate": "Zapněte, pokud je senzor sítě při odběru záporný.",
+          "rated_power_w": "Mezi 1000 a 30000 W.",
+          "load_energy_entity": "Použije se jednorázově k odeslání historie spotřeby do Volcast.",
+          "direct_search": "Čte pouze identifikaci střídače; nic se nezapisuje.",
+          "direct_trial": "Připojí se ke střídači, zobrazí jeho hodnoty a to, co by Volcast udělal — nikdy nezapisuje. Jen pro střídače, jejichž přímé řízení se teprve ověřuje.",
+          "direct_poll_s": "Mezi 5 a 60 sekundami."
+        }
+      },
+      "prices": {
+        "title": "Ceny energie",
+        "description": "Zobrazují se jen senzory, které už poskytují úplnou cenovou řadu.",
+        "data": {
+          "entity_price_buy": "Senzor nákupní ceny",
+          "entity_price_sell": "Senzor prodejní ceny",
+          "price_currency": "Měna (když ji senzor neuvádí)"
+        }
+      },
+      "direct_pick": {
+        "title": "Střídač nalezen",
+        "description": "Vyberte střídač, ke kterému se připojit přímo. „test only“ znamená, že přímé řízení tohoto modelu zatím není ověřeno — k dispozici je jen zkušební připojení pro čtení.",
+        "data": {
+          "candidate": "Střídač"
+        }
+      },
+      "direct_manual": {
+        "title": "Adresa střídače",
+        "description": "Zadejte místní adresu střídače nebo jeho datalogeru. Volcast před uložením přečte jeho identifikaci.",
+        "data": {
+          "host": "Místní IP adresa",
+          "transport": "Typ připojení",
+          "port": "Port",
+          "unit_id": "ID jednotky Modbus",
+          "logger_serial": "Sériové číslo datalogeru"
+        },
+        "data_description": {
+          "host": "Adresa v privátní síti, například Wi-Fi nebo LAN modulu střídače.",
+          "logger_serial": "Vyžadováno pro dataloggery Solarman (až 10 číslic)."
+        }
+      },
+      "direct_search": {
+        "title": "Vyhledávání střídače",
+        "description": "Volcast čte pouze identifikaci zařízení, která odpovídají v místní síti; nic se nezapisuje."
+      }
+    },
+    "abort": {
+      "entity_mode_unavailable": "Řídicí entity střídače nebyly nalezeny. Řízení přes integraci vyžaduje podporovanou integraci střídače s entitou pro každé nastavení.",
+      "direct_unverified": "Přímé řízení zatím není pro tento střídač dostupné. V Podrobnostech o instalaci můžete zkusit zkušební připojení jen pro čtení.",
+      "direct_conflict": "Tento střídač používá jiná integrace ({integration}). Před volbou přímého řízení ji vypněte, aby střídač neřídily dva programy současně.",
+      "direct_not_found": "Zatím nebyl nalezen žádný střídač. Nejprve ho vyhledejte v Podrobnostech o instalaci.",
+      "direct_in_use": "K tomuto střídači se již připojuje jiný záznam Volcast.",
+      "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit)."
+    },
+    "error": {
+      "prices_not_usable": "Tento senzor teď neposkytuje úplnou cenovou řadu.",
+      "currency_invalid": "Použijte třípísmenný kód měny, například PLN nebo EUR.",
+      "trial_with_entities": "Zkušební připojení nelze spustit, dokud řízení probíhá přes integraci střídače.",
+      "trial_while_owned": "Volcast stále řídí střídač z dřívější relace. Vypněte řízení a počkejte, až se střídač vrátí do vlastního režimu.",
+      "invalid_host": "Zadejte místní IP adresu (název hostitele ani veřejná adresa se nepřijímá).",
+      "logger_serial_required": "Zadejte sériové číslo datalogeru (až 10 číslic).",
+      "direct_not_found": "Na této adrese neodpověděl žádný podporovaný střídač.",
+      "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit)."
+    },
+    "progress": {
+      "direct_search": "Vyhledávání střídače v místní síti. Může to trvat až minutu."
+    }
+  },
+  "issues": {
+    "production_tracking_available": {
+      "title": "Zlepšete přesnost předpovědi sledováním výroby",
+      "description": "Volcast v1.5.0 nyní umí sledovat vaši skutečnou výrobu FV a použít ji ke kalibraci předpovědí. Přejděte do možností integrace a vyberte senzor energie nebo výkonu svého střídače, čímž tuto funkci zapnete."
+    },
+    "foreign_control": {
+      "title": "Řízení střídače přes Volcast je pozastaveno",
+      "description": "Nastavení střídače řízené Volcastem ({entity_id}) bylo změněno mimo Volcast. Volcast pozastavil řízení na 30 minut a ponechává vámi změněná nastavení. Poté se řízení automaticky obnoví; chcete-li ho zastavit, vypněte přepínač řízení Volcast."
+    },
+    "direct_identity_changed": {
+      "title": "Volcast našel na uložené adrese jiný střídač",
+      "description": "Zařízení odpovídající na uložené adrese střídače není střídač, se kterým byl Volcast nastaven. Řízení je zastaveno. V možnostech Volcast svůj střídač vyhledejte znovu."
+    },
+    "control_error": {
+      "title": "Volcast nemůže řídit střídač",
+      "description": "Řízení střídače přes Volcast přestalo fungovat (opakované chyby zápisu nebo uložený stav řízení, který nešlo přečíst). Střídač může stále používat poslední nastavení použitá Volcastem. Zkontrolujte nastavení střídače a protokoly Home Assistantu."
+    },
+    "foreign_control_direct": {
+      "title": "Řízení střídače přes Volcast je pozastaveno",
+      "description": "Nastavení střídače {setting} bylo změněno mimo Volcast. Řízení je pozastaveno na 30 minut a Volcast ponechává vámi nastavenou hodnotu, dokud se jeho plán pro dané nastavení nezmění. Chcete-li řízení zastavit, vypněte přepínač řízení Volcast."
+    },
+    "direct_conflict": {
+      "title": "Připojení ke střídači používá jiný klient",
+      "description": "S vaším střídačem komunikuje jiný klient ({reason}). Volcast přestal měnit nastavení střídače, dokud ten klient neskončí; vrácení střídače do jeho vlastního nastavení stále funguje. Pokud tento střídač řídí jiná integrace nebo aplikace, vypněte ji nebo vypněte řízení Volcast."
+    },
+    "nvm_budget": {
+      "title": "Rozpočet zápisů Volcast do střídače je vyčerpán",
+      "description": "Volcast dosáhl denního limitu změn nastavení střídače, takže další změny zatím čekají. Pokud byl střídač ve vynuceném nabíjení nebo vybíjení, Volcast ho vrátí do běžného režimu, místo aby ho nechal běžet. Tím se chrání paměť střídače; pokud se to bude opakovat, stáhněte diagnostiku."
+    },
+    "tou_snapshot_lost": {
+      "title": "Volcast ztratil uloženou kopii rozvrhu vašeho střídače",
+      "description": "Volcast nemohl přečíst uloženou kopii časových programů (time-of-use), které jste měli, než Volcast převzal řízení. Po skončení řízení Volcast nastaví jednoduché programy vlastní spotřeby a vypne časový rozvrh střídače. Poté zkontrolujte a znovu zadejte vlastní rozvrh ve střídači."
+    },
+    "tou_safety_off_cap": {
+      "title": "Rozvrh střídače Volcast vyžaduje pozornost",
+      "description": "Volcast dnes musel z bezpečnostních důvodů mnohokrát vypnout časový rozvrh (time-of-use) střídače a dosáhl denního limitu pro toto vypnutí. Rozvrh zůstává tak, jak je nyní. Zkontrolujte časové programy střídače a zda je nemění jiná aplikace; pokud se to bude opakovat, stáhněte diagnostiku."
+    },
+    "control_record_dropped": {
+      "title": "Volcast nemohl vrátit střídač do předchozího nastavení",
+      "description": "Volcast změnil nastavení střídače pomocí způsobu řízení nebo střídače, který už není nastaven, a proto je nemůže vrátit. Střídač může stále používat poslední nastavení použitá Volcastem. Zkontrolujte režim a nastavení střídače."
+    },
+    "direct_start_failed": {
+      "title": "Volcast nemohl spustit přímé připojení ke střídači",
+      "description": "Přímé připojení ke střídači se kvůli neočekávané chybě nepodařilo spustit. Volcast to několikrát zopakuje; dokud se nepřipojí, nemůže měnit ani vracet nastavení střídače. Pokud to trvá, znovu načtěte Volcast a zkontrolujte protokoly Home Assistantu."
+    }
+  },
+  "services": {
+    "sync_production": {
+      "name": "Synchronizovat výrobu",
+      "description": "Vynutí synchronizaci hodinové výroby FV do Volcast pomocí statistik recorderu Home Assistantu. Doplní mezery po výpadku HA (např. po aktualizaci systému). Bez data synchronizuje včerejšek a dnešek.",
+      "fields": {
+        "date": {
+          "name": "Datum",
+          "description": "Konkrétní den k synchronizaci (v posledních ~24–38 hodinách). Nechte prázdné pro synchronizaci včerejška a dneška."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_today": {
+        "name": "Předpověď energie na dnes"
+      },
+      "energy_tomorrow": {
+        "name": "Předpověď energie na zítra"
+      },
+      "energy_day_3": {
+        "name": "Předpověď energie na den 3"
+      },
+      "energy_day_4": {
+        "name": "Předpověď energie na den 4"
+      },
+      "energy_day_5": {
+        "name": "Předpověď energie na den 5"
+      },
+      "energy_day_6": {
+        "name": "Předpověď energie na den 6"
+      },
+      "energy_day_7": {
+        "name": "Předpověď energie na den 7"
+      },
+      "power_now": {
+        "name": "Výkon nyní"
+      },
+      "api_status": {
+        "name": "Stav API"
+      },
+      "discovery": {
+        "name": "Zjišťování instalace"
+      },
+      "control_plan": {
+        "name": "Plán"
+      },
+      "control_status": {
+        "name": "Stav"
+      },
+      "control_direct_soc": {
+        "name": "Stav nabití baterie"
+      },
+      "control_direct_battery_temp_c": {
+        "name": "Teplota baterie"
+      },
+      "control_direct_battery_voltage_v": {
+        "name": "Napětí baterie"
+      },
+      "control_direct_battery_current_a": {
+        "name": "Proud baterie"
+      },
+      "control_direct_battery_power_w": {
+        "name": "Výkon baterie"
+      },
+      "control_direct_pv_power_w": {
+        "name": "Výkon FV"
+      },
+      "control_direct_active_power_w": {
+        "name": "Činný výkon střídače"
+      },
+      "control_direct_load_power_w": {
+        "name": "Spotřeba domu"
+      },
+      "control_direct_grid_power_w": {
+        "name": "Výkon sítě"
+      },
+      "control_direct_pv_energy_total_kwh": {
+        "name": "Celková energie FV"
+      },
+      "control_direct_grid_import_total_kwh": {
+        "name": "Celkový odběr ze sítě"
+      },
+      "control_direct_grid_export_total_kwh": {
+        "name": "Celkový export do sítě"
+      },
+      "control_direct_mode": {
+        "name": "Režim střídače",
+        "state": {
+          "auto": "Auto",
+          "charge_pv": "Nabíjení z FV",
+          "battery_standby": "Baterie v pohotovosti",
+          "sell_power": "Prodej výkonu",
+          "charge_battery": "Nabíjení baterie",
+          "discharge_battery": "Vybíjení baterie"
+        }
+      },
+      "control_direct_power_w": {
+        "name": "Nastavení výkonu režimu"
+      },
+      "control_direct_export_limit_w": {
+        "name": "Nastavení limitu exportu"
+      },
+      "control_direct_soc_min": {
+        "name": "Nastavení minimálního stavu nabití"
+      },
+      "control_direct_link_quality": {
+        "name": "Vypršení časových limitů spojení se střídačem"
+      }
+    },
+    "binary_sensor": {
+      "peak_production": {
+        "name": "Špičková výroba"
+      }
+    },
+    "button": {
+      "sync_now": {
+        "name": "Synchronizovat výrobu nyní"
+      },
+      "run_discovery": {
+        "name": "Spustit zjišťování"
+      }
+    },
+    "switch": {
+      "control_switch": {
+        "name": "Řízení"
+      }
+    }
+  }
+}
