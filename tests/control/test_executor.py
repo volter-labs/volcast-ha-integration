@@ -32,6 +32,13 @@ def plan(power=2000, sid="p1", control=True, slots=None):
             "control_enabled": control}
 
 
+def sell_ban(power=2000):
+    """Sprzedaż z zakazem eksportu z sieci (ogranicznik: włączony, 0 W) — plan zaostrzający limit."""
+    return plan(power, slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z",
+                               "mode": "discharge", "discharge_purpose": "sell", "power_w": power,
+                               "price_pln_kwh": 0.8, "export_allowed": False}])
+
+
 class Clock:
     def __init__(self):
         self.t = 1000.0
@@ -112,7 +119,7 @@ def test_snapshot_before_first_write_and_restore_when_consent_revoked(monkeypatc
     h, ex = make(monkeypatch=monkeypatch)
 
     async def go():
-        await ready(ex)
+        await ready(ex, raw=sell_ban())
         await ex.async_tick()
         n = len(h.services.calls)
         await ex.async_set_consent(False)
@@ -121,10 +128,10 @@ def test_snapshot_before_first_write_and_restore_when_consent_revoked(monkeypatc
         await ex.async_tick()
         return n, restored
     n, restored = asyncio.run(go())
-    # próg SoC i limit eksportu są już jak w migawce — jadą tylko tryb (najpierw) i przełącznik
-    assert [c[:2] for c in restored] == [("select", "select_option"), ("switch", "turn_on")]
+    # próg SoC i przełącznik są już jak w migawce — jadą tylko tryb (najpierw) i limit eksportu
+    assert [c[:2] for c in restored] == [("select", "select_option"), ("number", "set_value")]
     assert h.states.get(E["mode"]).state == "auto"
-    assert h.states.get(E["export_limit_w"]).state == "4000"
+    assert float(h.states.get(E["export_limit_w"]).state) == 4000.0
     assert h.states.get(E["export_limit_enabled"]).state == "on"
     assert h.states.get(E["soc_min"]).state == "85"
     assert len(h.services.calls) == n + 2                     # trzeci tik: nic
@@ -396,16 +403,16 @@ def test_writer_exception_logs_key_and_class_only(monkeypatch, caplog):
     real = ex._writer.async_write
 
     async def raising(w):
-        if w.key == "export_limit_enabled":
+        if w.key == "export_limit_w":
             raise RuntimeError("tcp://192.168.1.50 id XYZ-PLACEHOLDER")
         return await real(w)
     ex._writer.async_write = raising
 
     async def go():
-        await ready(ex)
+        await ready(ex, raw=sell_ban())
         await ex.async_tick()
     asyncio.run(go())
-    assert "export_limit_enabled" in caplog.text and "RuntimeError" in caplog.text
+    assert "export_limit_w" in caplog.text and "RuntimeError" in caplog.text
     assert "192.168" not in caplog.text and "XYZ-PLACEHOLDER" not in caplog.text
     assert no_entity_ids_in(caplog.text)
     # warunek trybu nie doszedł → grupa czeka
@@ -442,7 +449,8 @@ def test_mode_missing_from_select_options_blocks_before_any_write(monkeypatch):
 # ── migawka trybu bazowego ────────────────────────────────────────────────
 
 
-def test_writes_held_until_baseline_snapshot_complete(monkeypatch):
+def test_unavailable_setting_does_not_hold_control(monkeypatch):
+    # Nastawa z niedostępną encją jest nieobsługiwana: migawka bez niej, sterowanie idzie dalej.
     h = goodwe_hass()
     h.states.set(E["export_limit_w"], "unavailable")
     h, ex = make(h, monkeypatch=monkeypatch)
@@ -450,15 +458,95 @@ def test_writes_held_until_baseline_snapshot_complete(monkeypatch):
     async def go():
         await ready(ex)
         await ex.async_tick()
-        held = (list(h.services.calls), ex.last_decision.reason, ex.last_decision.unmapped, ex._state.owned)
-        h.states.set(E["export_limit_w"], "4000")
-        await ex.async_tick()
-        return held
-    calls, reason, unmapped, owned = asyncio.run(go())
-    assert calls == [] and reason == "baseline_unknown" and unmapped == ("export_limit_w",)
-    assert owned is False
-    assert ex._state.owned is True and ex._state.snapshot["export_limit_w"] == 4000.0
+    asyncio.run(go())
+    assert ex.last_decision.status == "write", ex.last_decision.reason
+    assert ex._state.owned is True and "export_limit_w" not in ex._state.snapshot
+    assert E["export_limit_w"] not in [c[2]["entity_id"] for c in h.services.calls]
     assert h.states.get(E["mode"]).state == "sell_power"
+
+
+def test_setting_back_after_ownership_joins_the_snapshot(monkeypatch):
+    # Nastawa wraca po naszym pierwszym zapisie — jej wartość sprzed zapisu trafia do migawki,
+    # zanim ją zapiszemy (inaczej powrót do trybu bazowego nie miałby jej wartości).
+    h = goodwe_hass()
+    h.states.set(E["export_limit_w"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        h.states.set(E["export_limit_w"], "4000")
+        ex._clock.t += 120
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex._state.snapshot["export_limit_w"] == 4000.0
+
+
+def test_unavailable_mode_entity_holds_every_write(monkeypatch):
+    h = goodwe_hass()
+    h.states.set(E["mode"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.services.calls == [] and ex.last_decision.reason == "missing_entities"
+    assert ex.last_decision.unmapped == ("mode",)
+
+
+def _unsupported_issues():
+    return [c for c in ir.async_create_issue.call_args_list if c.args[2] == "unsupported_setting_e1"]
+
+
+def test_lasting_unavailable_setting_raises_issue_and_clears_when_back(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    ir.async_create_issue.reset_mock()
+    ir.async_delete_issue.reset_mock()
+    h = goodwe_hass()
+    h.states.set(E["soc_max"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        first = (list(_unsupported_issues()), ex.unsupported_settings)   # chwilowy brak — bez zgłoszenia
+        ex._clock.t += 601
+        await ex.async_tick()
+        lasting = (list(_unsupported_issues()), ex.unsupported_settings)
+        h.states.set(E["soc_max"], "100")
+        ex._clock.t += 60
+        await ex.async_tick()
+        back = ex.unsupported_settings                  # dostępna = znów obsługiwana od razu
+        return first, lasting, back
+    first, lasting, back = asyncio.run(go())
+    assert first == ([], ()) and back == ()
+    (call,), keys = lasting
+    assert keys == ("soc_max",)
+    assert call.kwargs["translation_key"] == "unsupported_setting"
+    assert call.kwargs["translation_placeholders"] == {"entities": E["soc_max"]}
+    assert ex.unsupported_settings == ()
+    assert "unsupported_setting_e1" in [c.args[2] for c in ir.async_delete_issue.call_args_list]
+    assert no_entity_ids_in(caplog.text)
+
+
+def test_unmapped_setting_is_unsupported_at_once(monkeypatch):
+    ir.async_create_issue.reset_mock()
+    h = goodwe_hass()
+    mapped = {k: v for k, v in E.items() if k != "soc_max"}
+    entry = SimpleNamespace(entry_id="e1", options={"control_mode": "entities"})
+    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+    ex = VolcastExecutor(h, entry, choice=GW, mapped=mapped, rated_power_w=8000.0,
+                         store=ControlStore(h, "e1"), writer=EntityServiceWriter(h), clock=Clock(),
+                         utcnow=lambda: NOW + timedelta(seconds=30))
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex.unsupported_settings == ("soc_max",) and ex.last_decision.status == "write"
+    (call,) = _unsupported_issues()
+    assert call.kwargs["translation_placeholders"] == {"entities": "soc_max"}
 
 
 def test_snapshot_save_failure_holds_writes(monkeypatch):
@@ -483,7 +571,7 @@ def test_restore_goes_through_group_runner(monkeypatch):
     h, ex = make(monkeypatch=monkeypatch)
 
     async def go():
-        await ready(ex)
+        await ready(ex, raw=sell_ban())
         await ex.async_tick()
         seen = _spy_group_runner(monkeypatch)
         await ex.async_set_consent(False)
@@ -491,7 +579,7 @@ def test_restore_goes_through_group_runner(monkeypatch):
         return seen
     seen = asyncio.run(go())
     # tryb bazowy osobnym krokiem, przed pozostałymi nastawami
-    assert [keys for keys, _ in seen] == [{"mode"}, {"export_limit_enabled"}]
+    assert [keys for keys, _ in seen] == [{"mode"}, {"export_limit_w"}]
     assert ex.last_decision.status == "restore"
 
 
@@ -500,7 +588,7 @@ def test_restore_does_not_overwrite_foreign_mode(monkeypatch, caplog):
     h, ex = make(monkeypatch=monkeypatch)
 
     async def go():
-        await ready(ex)
+        await ready(ex, raw=sell_ban())
         await ex.async_tick()
         n = len(h.services.calls)
         h.states.set(E["mode"], "export_ac")               # właściciel wybrał tryb spoza profilu
@@ -508,7 +596,7 @@ def test_restore_does_not_overwrite_foreign_mode(monkeypatch, caplog):
         await ex.async_tick()
         return h.services.calls[n:]
     restored = asyncio.run(go())
-    assert [c[:2] for c in restored] == [("switch", "turn_on")]
+    assert [c[:2] for c in restored] == [("number", "set_value")]
     assert h.states.get(E["mode"]).state == "export_ac"
     assert ex._state.owned is False
     assert ex.last_decision.takeover
@@ -884,7 +972,8 @@ def test_consent_withdrawn_during_ownership_save_prevents_writes(monkeypatch):
         ex._store.async_save = withdrawing
         await ex.async_tick()
     asyncio.run(go())
-    assert h.services.calls == [] and ex.last_decision.reason == "gates_changed"
+    # Migawka zapisywana przed decyzją: cofnięcie zgody w trakcie zapisu zamyka bramkę przed zapisem planu.
+    assert h.services.calls == [] and ex.last_decision.reason in ("gates_changed", "gates_closed")
 
 
 @pytest.mark.parametrize("value", [0, 1, "false", None])
@@ -1180,3 +1269,369 @@ def test_owner_record_readable_by_b2_shape(monkeypatch):
     raw = store._store._data                         # zapis w magazynie, tak jak go czyta starsza wersja
     assert raw["owned"] is True
     assert _b2_owner_matches(raw["owner"], "goodwe-et", "goodwe", E["mode"])
+
+
+# ── ogranicznik eksportu właściciela ──────────────────────────────────────
+
+
+def _charge_pv(cap=None, allowed=True, sid="pv"):
+    s = {"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+         "charge_source": "pv", "price_pln_kwh": 0.8, "export_allowed": allowed}
+    if cap is not None:
+        s["export_limit_w"] = cap
+    return plan(sid=sid, slots=[s])
+
+
+def test_plan_without_cap_then_with_cap_never_flips_owner_limiter(monkeypatch):
+    # Pole: bez pułapu → przełącznik OFF (12:51), z pułapem 8000 W → ON (12:56). Ogranicznik jest
+    # właściciela (bywa wymogiem operatora) — żaden z tych planów nie może go ruszyć.
+    h = goodwe_hass(export="8000", export_on="on")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_charge_pv())
+        await ex.async_tick()
+        ex._clock.t += 300
+        raw = _charge_pv(cap=8000, sid="pv2")
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        await ex.async_tick()
+    asyncio.run(go())
+    touched = [c for c in h.services.calls
+               if c[2]["entity_id"] in (E["export_limit_enabled"], E["export_limit_w"])]
+    assert touched == []
+    assert h.states.get(E["export_limit_enabled"]).state == "on"
+
+
+def test_uncapped_slot_after_our_ban_returns_owner_limiter(monkeypatch):
+    h = goodwe_hass(export="4000", export_on="off")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_charge_pv(allowed=False))
+        await ex.async_tick()
+        banned = (h.states.get(E["export_limit_enabled"]).state, h.states.get(E["export_limit_w"]).state)
+        ex._clock.t += 300
+        raw = _charge_pv(sid="pv2")
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        await ex.async_tick()
+        return banned
+    banned = asyncio.run(go())
+    assert banned == ("on", "0.0")
+    assert h.states.get(E["export_limit_enabled"]).state == "off"
+    assert float(h.states.get(E["export_limit_w"]).state) == 4000.0
+
+
+# ── nastawa ochronna bez encji: czekamy, aż chmura o tym wie ──────────────
+
+
+def _sell_with_floor():
+    return plan(slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "discharge",
+                        "discharge_purpose": "sell", "power_w": 2000, "soc_target": 40, "price_pln_kwh": 0.8}])
+
+
+def test_unavailable_floor_degrades_sell_to_neutral_at_once(monkeypatch):
+    # Bez encji progu SoC sprzedaż nie idzie — od razu tryb neutralny, bez czekania na chmurę.
+    h = goodwe_hass()
+    h.states.set(E["soc_min"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_sell_with_floor())
+        await ex.async_tick()
+    asyncio.run(go())
+    assert "degraded" in ex.last_decision.notes
+    assert h.services.calls == [] and h.states.get(E["mode"]).state == "auto"
+
+
+def test_sell_at_reserve_goes_neutral_without_floor_entity(monkeypatch):
+    # BLOCKING-A: nasza sprzedaż, SoC 5 % przy rezerwie 10 %, próg niedostępny → tryb neutralny.
+    h, ex = make(goodwe_hass(soc="12"), monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        assert h.states.get(E["mode"]).state == "sell_power"
+        h.states.set(E["soc_min"], "unavailable")
+        h.states.set(E["soc"], "8")
+        ex._clock.t += 120
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def _charge_to(target=90, power=2000, sid="c1"):
+    return plan(sid=sid, slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+                                 "charge_source": "grid", "power_w": power, "soc_target": target,
+                                 "price_pln_kwh": 0.3}])
+
+
+def test_returning_setting_is_not_written_when_its_snapshot_cannot_be_saved(monkeypatch):
+    h = goodwe_hass(soc_max="95")
+    h.states.set(E["soc_max"], "unavailable")
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_charge_to())
+        await ex.async_tick()                                   # bez sufitu: tryb i moc
+        assert ex._state.owned and "soc_max" not in ex._state.snapshot
+        h.states.set(E["soc_max"], "95")
+        real = ex._store.async_save
+
+        async def broken(_state):
+            raise OSError("disk")
+        ex._store.async_save = broken
+        ex._clock.t += 120
+        await ex.async_tick()
+        held = (ex.last_decision.status, "soc_max" in ex._state.snapshot, h.states.get(E["soc_max"]).state)
+        ex._store.async_save = real
+        ex._clock.t += 120
+        await ex.async_tick()
+        return held
+    held = asyncio.run(go())
+    assert held == ("error", False, "95")                       # migawka niezapisana = sufit nie idzie
+    assert ex._state.snapshot["soc_max"] == 95.0
+    assert float(h.states.get(E["soc_max"]).state) == 90.0
+    saved = asyncio.run(ex._store.async_load())
+    assert saved.snapshot["soc_max"] == 95.0
+
+
+def test_blipping_setting_is_never_reported_unsupported(monkeypatch):
+    # Łącze UDP GoodWe gubi encje na chwilę co kilka minut — działająca nastawa nie może
+    # na stałe zniknąć z możliwości (liczy się CIĄGŁY brak).
+    h = goodwe_hass()
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        seen = set()
+        for _ in range(4):
+            for state, dt in (("unavailable", 300), ("100", 60)):
+                h.states.set(E["soc_max"], state)
+                await ex.async_tick()
+                seen.update(ex.unsupported_settings)
+                ex._clock.t += dt
+        return seen
+    assert asyncio.run(go()) == set()
+
+
+def test_unsupported_issue_only_while_control_is_on(monkeypatch):
+    ir.async_create_issue.reset_mock()
+    h = goodwe_hass()
+    mapped = {k: v for k, v in E.items() if k != "soc_max"}
+    entry = SimpleNamespace(entry_id="e1", options={"control_mode": "entities"})
+    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+    ex = VolcastExecutor(h, entry, choice=GW, mapped=mapped, rated_power_w=8000.0,
+                         store=ControlStore(h, "e1"), writer=EntityServiceWriter(h), clock=Clock(),
+                         utcnow=lambda: NOW + timedelta(seconds=30))
+
+    async def go():
+        await ready(ex, local=False)
+        await ex.async_tick()
+        off = list(_unsupported_issues())
+        await ex.async_set_local_switch(True)
+        await ex.async_tick()
+        return off
+    off = asyncio.run(go())
+    assert off == [] and len(_unsupported_issues()) == 1
+
+
+# ── hamulec: zablokowany cykl przy naszym trybie wymuszonym → tryb neutralny ──
+
+
+def _stale_soc(h):
+    h.states.set(E["soc"], "60", {"unit_of_measurement": "%"}, reported=NOW - timedelta(hours=1))
+
+
+def test_blocked_cycle_during_our_sell_writes_neutral_mode_alone(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        n = len(h.services.calls)
+        _stale_soc(h)                                   # I-9: plan nie do wykonania
+        ex._clock.t += 120
+        await ex.async_tick()
+        return h.services.calls[n:]
+    braked = asyncio.run(go())
+    assert [(c[0], c[1], c[2].get("option")) for c in braked] == [("select", "select_option", "auto")]
+    assert h.states.get(E["mode"]).state == "auto"
+    assert ex.last_decision.status == "blocked" and "neutral_brake" in ex.last_decision.notes
+    assert ex._state.owned is True                      # to nie powrót — sterowanie trwa
+
+
+def test_blocked_cycle_during_our_grid_charge_writes_neutral_mode(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+    raw = plan(slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+                       "charge_source": "grid", "power_w": 3000, "price_pln_kwh": 0.3}])
+
+    async def go():
+        await ready(ex, raw=raw)
+        await ex.async_tick()
+        assert h.states.get(E["mode"]).state == "charge_battery"
+        h.states.set(E["battery_temp_c"], "unavailable")    # temperatura nieznana: cykl stoi
+        ex._clock.t += 120
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto"
+    assert ex.last_decision.reason == "temperature_unknown"
+
+
+def test_neutral_brake_respects_write_interval(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        _stale_soc(h)
+        ex._clock.t += 10
+        await ex.async_tick()
+        early = h.states.get(E["mode"]).state
+        ex._clock.t += 60
+        await ex.async_tick()
+        return early
+    assert asyncio.run(go()) == "sell_power"
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_no_brake_on_a_mode_we_did_not_write(monkeypatch):
+    h = goodwe_hass(mode="sell_power")                  # tryb właściciela, nic nie zapisaliśmy
+    _stale_soc(h)
+    h, ex = make(h, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.services.calls == [] and h.states.get(E["mode"]).state == "sell_power"
+
+
+def test_brake_after_restart_uses_persisted_ownership(monkeypatch):
+    h = goodwe_hass(mode="charge_battery", power="3000")
+    _stale_soc(h)
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True, snapshot={"mode": "auto", "soc_min": 15.0},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": E["mode"]},
+        restore_keys=["mode", "power_w"])))
+    h, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        raw = plan()
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_no_brake_in_dry_run_of_an_unverified_profile(monkeypatch):
+    # Profil w wersji próbnej: żadnych zapisów, także hamulca.
+    h = goodwe_hass(mode="sell_power")
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True, snapshot={"mode": "auto"},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": E["mode"]}, restore_keys=["mode"])))
+    h, ex = make(h, store=store, monkeypatch=monkeypatch, verified=False)
+
+    async def go():
+        await ex.async_start()
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.services.calls == [] and ex.last_decision.status in ("dry_run", "idle")
+
+
+# ── hamulec przy wstrzymanym trybie (I-8, odwrót grupy) ────────────────────
+
+
+def _grid_charge(power=3000, sid="gc"):
+    return plan(sid=sid, slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+                                 "charge_source": "grid", "power_w": power, "price_pln_kwh": 0.3}])
+
+
+async def _charging_then_sell(h, ex):
+    await ready(ex, raw=_grid_charge())
+    await ex.async_tick()
+    assert h.states.get(E["mode"]).state == "charge_battery"
+    ex._clock.t += 120
+    raw = plan(sid="sell2")
+    await ex.async_on_plan(raw, parse_schedule(raw))
+
+
+def test_direction_budget_exhausted_brakes_our_opposite_mode_to_neutral(monkeypatch):
+    # Nasze ładowanie z sieci, plan: sprzedaż, budżet zmian kierunku wyczerpany — ładowanie
+    # nie może trwać dalej w slocie sprzedaży.
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _charging_then_sell(h, ex)
+        for i, direction in enumerate(["discharge", "charge", "discharge", "charge"]):
+            ex._memory.limiter.record(direction, ex._clock.t - 100 + i)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert "I-8" in ex.last_decision.notes and "neutral_brake" in ex.last_decision.notes
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_group_backoff_after_failed_write_brakes_our_opposite_mode(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _charging_then_sell(h, ex)
+        ex._memory.group_backoff_s = 300.0
+        ex._memory.group_backoff_until = ex._clock.t + 300.0
+        await ex.async_tick()
+    asyncio.run(go())
+    assert "group_backoff" in ex.last_decision.notes
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_held_mode_in_the_planned_direction_is_not_braked(monkeypatch):
+    # Ten sam kierunek (ładowanie → ładowanie inną mocą) wstrzymany w odwrocie: to nie zamrożenie.
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=_grid_charge())
+        await ex.async_tick()
+        ex._clock.t += 120
+        raw = _grid_charge(power=5000, sid="gc2")
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        ex._memory.group_backoff_s = 300.0
+        ex._memory.group_backoff_until = ex._clock.t + 300.0
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "charge_battery"
+
+
+
+def test_exception_in_cycle_still_brakes_our_mode(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    def boom(**_kw):
+        raise RuntimeError("x")
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        monkeypatch.setattr(ex_mod, "decide_cycle", boom)
+        ex._clock.t += 120
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex.last_decision.reason == "exception:tick"
+    assert h.states.get(E["mode"]).state == "auto"
+
+
+def test_repeated_failed_brake_warns_once(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        h.services.fail[E["mode"]] = HomeAssistantError("down")
+        _stale_soc(h)
+        for _ in range(3):
+            ex._clock.t += 120
+            await ex.async_tick()
+    asyncio.run(go())
+    assert caplog.text.count("cannot be applied safely") == 1

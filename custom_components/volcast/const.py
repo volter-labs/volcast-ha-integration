@@ -33,6 +33,7 @@ CONF_MODE = "mode"
 MODE_DISCOVERY_ONLY = "discovery_only"
 
 SERVICE_SYNC_PRODUCTION = "sync_production"
+SERVICE_RESUME_CONTROL = "resume_control"
 ATTR_DATE = "date"
 
 # Wykrywanie instalacji (tylko odczyt) — sygnał po nowym raporcie i limit czasu przebiegu

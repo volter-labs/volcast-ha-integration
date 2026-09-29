@@ -335,6 +335,38 @@ class _FakeSection:
 
 _make_module("homeassistant.data_entry_flow", {"section": _FakeSection})
 
+# --- homeassistant.components.repairs (przepływ naprawy) ---
+class _FakeRepairsFlow:
+    """Atrapa RepairsFlow — formularz i wpis jako słowniki (jak data_entry_flow)."""
+    hass = None
+    issue_id = ""
+    data = None
+
+    def async_show_form(self, *, step_id, data_schema=None, description_placeholders=None, **_kw):
+        return {"type": "form", "step_id": step_id, "description_placeholders": description_placeholders}
+
+    def async_create_entry(self, *, data, title=None, **_kw):
+        return {"type": "create_entry", "data": data}
+
+    def async_abort(self, *, reason, **_kw):
+        return {"type": "abort", "reason": reason}
+
+
+class _FakeConfirmRepairFlow(_FakeRepairsFlow):
+    async def async_step_init(self, user_input=None):
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(data={})
+        return self.async_show_form(step_id="confirm")
+
+
+_make_module("homeassistant.components.repairs", {
+    "RepairsFlow": _FakeRepairsFlow,
+    "ConfirmRepairFlow": _FakeConfirmRepairFlow,
+})
+
 # --- homeassistant.components.panel_custom (sidebar panel) ---
 _make_module("homeassistant.components.panel_custom", {
     "async_register_panel": AsyncMock(),

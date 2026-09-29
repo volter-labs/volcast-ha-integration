@@ -59,7 +59,13 @@ def _clip_power(power_w: float, rated_power_w: float) -> float:
     return w
 
 
-def map_slot(slot: Slot, profile: Profile, rated_power_w: float) -> MappedSlot:
+def map_slot(slot: Slot, profile: Profile, rated_power_w: float, *,
+             leave_uncapped_export: bool = False) -> MappedSlot:
+    """`leave_uncapped_export`: eksport dozwolony bez pułapu = bez zdania o ograniczniku (None).
+
+    Ogranicznik bywa wymogiem operatora sieci — wolno go tylko zaostrzyć (zakaz, pułap).
+    Bez flagi — jak mapper referencyjny (wyłączony ogranicznik; złote wektory).
+    """
     if profile.control_model != "mode_setpoint":
         raise ValueError(f"profil {profile.id} nie jest modelu mode_setpoint")
     intent, note = slot_intent(slot)
@@ -84,11 +90,14 @@ def map_slot(slot: Slot, profile: Profile, rated_power_w: float) -> MappedSlot:
         else:
             soc_min = slot.soc_target      # pamiętana nastawa — rezerwa jako dolny próg
 
-    # Jeden ogranicznik eksportu: zakaz = włączony z 0 W; brak pułapu = wyłączony.
+    # Jeden ogranicznik eksportu: zakaz = włączony z 0 W; brak pułapu = wyłączony
+    # (albo — z `leave_uncapped_export` — nietknięty).
     if not slot.export_allowed:
         export_enabled, export_w = True, 0.0
     elif slot.export_limit_w is not None:
         export_enabled, export_w = True, slot.export_limit_w
+    elif leave_uncapped_export:
+        export_enabled, export_w = None, None
     else:
         export_enabled, export_w = False, None
 

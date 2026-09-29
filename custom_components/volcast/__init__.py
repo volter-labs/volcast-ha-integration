@@ -31,10 +31,12 @@ from .const import (
     DOMAIN,
     MODE_DISCOVERY_ONLY,
     OPT_LOAD_ENERGY,
+    SERVICE_RESUME_CONTROL,
     SERVICE_SYNC_PRODUCTION,
 )
 from .control.history_import import async_import_history_once
 from .control.runtime import (RELOAD_FREE_KEYS, async_remove_control, async_restore_if_control_changed,
+                              async_resume_control,
                               async_setup_control, async_unload_control, changed_option_keys,
                               control_options_changed, freeze_control)
 from .coordinator import VolcastCoordinator
@@ -98,12 +100,22 @@ def _migrate_unique_id(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _async_register_services(hass: HomeAssistant) -> None:
-    """Zarejestruj domain-level serwis volcast.sync_production (idempotentnie).
+    """Zarejestruj serwisy domeny volcast.sync_production i volcast.resume_control (idempotentnie).
+
+    `resume_control` kończy pauzę przejęcia we wszystkich wpisach ze sterowaniem (bez
+    przeładowania); brak takiego wpisu = błąd walidacji.
 
     Bez `date` → reconcile_recent() (wczoraj + dziś) na wszystkich entries.
     Z `date` (YYYY-MM-DD lub datetime.date z selectora) → reconcile_day(date);
     daty poza oknem odbija istniejący gate `out_of_window` w reconcile_day.
     """
+    if not hass.services.has_service(DOMAIN, SERVICE_RESUME_CONTROL):
+        async def _handle_resume_control(call: ServiceCall) -> None:
+            # „Wznów teraz" po pauzie przejęcia — bez przeładowania wpisu (zbędne zapisy NVM).
+            if await async_resume_control(hass) is None:
+                raise ServiceValidationError("No Volcast entry controls an inverter")
+
+        hass.services.async_register(DOMAIN, SERVICE_RESUME_CONTROL, _handle_resume_control)
     if hass.services.has_service(DOMAIN, SERVICE_SYNC_PRODUCTION):
         return
 
@@ -472,6 +484,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Wpisy tylko-rozpoznanie nigdy nie rejestrują tego serwisu — bez
             # strażnika HA loguje ostrzeżenie o usuwaniu nieznanego serwisu.
             hass.services.async_remove(DOMAIN, SERVICE_SYNC_PRODUCTION)
+        if not hass.data[DOMAIN] and hass.services.has_service(DOMAIN, SERVICE_RESUME_CONTROL):
+            hass.services.async_remove(DOMAIN, SERVICE_RESUME_CONTROL)
     return unload_ok
 
 

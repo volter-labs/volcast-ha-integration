@@ -39,6 +39,7 @@ def sched(**slot_over):
                            "control_enabled": True})
 
 
+EXPORT_PAIR = {"export_limit_w", "export_limit_enabled"}
 SELL = {"mode": "discharge", "discharge_purpose": "sell", "price_pln_kwh": 0.8}
 STANDBY = {"mode": "idle", "price_pln_kwh": 0.8}
 
@@ -58,14 +59,15 @@ def plan(*slots):
 
 
 def run(memory=None, *, schedule="default", gates=OPEN, soc=60.0, age=10.0, temp=25.0, mapped=MAPPED,
-        units=UNITS, attrs=ATTRS, readings=None, now_mono=1000.0, now_utc=NOW, profile=GW):
+        units=UNITS, attrs=ATTRS, readings=None, now_mono=1000.0, now_utc=NOW, profile=GW, owner_values=None):
     memory = memory or ControlMemory.for_profile(profile)
     return decide_cycle(
         profile=profile, schedule=sched() if schedule == "default" else schedule,
         now_utc=now_utc, now_mono=now_mono,
         tele=Telemetry(soc=soc, soc_age_s=age, battery_temp_c=temp),
         limits=Limits(rated_power_w=8000.0),
-        ents=EntityContext(domain="goodwe", mapped=mapped, units=units, attrs=attrs, readings=readings or {}),
+        ents=EntityContext(domain="goodwe", mapped=mapped, units=units, attrs=attrs, readings=readings or {},
+                           owner_values=owner_values or {}),
         gates=gates, memory=memory), memory
 
 
@@ -76,11 +78,11 @@ def _written(d):
 # ── Ścieżka podstawowa ──
 
 def test_sell_slot_writes_conditions_then_group_in_safe_order():
-    d, _ = run()
+    d, _ = run(schedule=sched(export_allowed=False))
     assert d.status == WRITE and d.intent == "sell" and d.direction == "discharge"
     # Moc nieznana → tryb przed mocą (postój z dużym Xset to znana pułapka).
-    assert [w.key for w in d.writes] == ["export_limit_enabled", "mode", "power_w"]
-    assert d.writes[1].data == {"option": "sell_power"}
+    assert [w.key for w in d.writes] == ["export_limit_w", "export_limit_enabled", "mode", "power_w"]
+    assert d.writes[2].data == {"option": "sell_power"}
 
 
 def test_no_mode_chosen_is_idle_and_does_not_touch_latch():
@@ -123,11 +125,137 @@ def test_missing_mode_entity_is_idle():
     assert (d.status, d.reason, d.unmapped) == (IDLE, "missing_entities", ("mode",))
 
 
-@pytest.mark.parametrize("key", list(GW.raw["write_policy"]["order"]))
-def test_any_missing_write_entity_is_idle(key):
-    d, mem = run(mapped={k: v for k, v in MAPPED.items() if k != key}, soc=5.0)
-    assert (d.status, d.reason, d.writes, d.unmapped) == (IDLE, "missing_entities", [], (key,))
-    assert mem.latch.is_engaged is False
+@pytest.mark.parametrize("key", [k for k in GW.raw["write_policy"]["order"] if k != "mode"])
+def test_missing_setting_entity_is_dropped_not_blocking(key):
+    # Nastawa bez encji (niedostępna, wyłączona, bez mapowania), o której chmura już wie
+    # (zgłoszona i jest plan pobrany potem) = nieobsługiwana: wypada z zapisów, reszta działa.
+    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != key},
+               schedule=plan(slot("10:00", "11:00", mode="self_consume", export_allowed=False)))
+    assert d.status == WRITE, (d.reason, d.unmapped)
+    assert key not in [w.key for w in d.writes] and key not in d.flat
+    if key in EXPORT_PAIR:
+        # Para ogranicznika (zakaz = włączony + 0 W) idzie razem albo wcale.
+        assert not EXPORT_PAIR & {w.key for w in d.writes}
+        assert EXPORT_PAIR <= set(d.dropped_unsupported)
+
+
+def test_export_pair_member_rejected_by_device_drops_the_pair():
+    d, mem = run()
+    commit(d, WriteReport(written=["power_w", "mode"], unsupported=["export_limit_enabled"]), mem, 1000.0)
+    d2, _ = run(mem, schedule=sched(power_w=3000, export_allowed=False), now_mono=2000.0)
+    assert not EXPORT_PAIR & {w.key for w in d2.writes}
+
+
+def test_export_pair_member_held_by_interval_holds_the_pair():
+    # Pułap 8000 W zapisany (włączony + 8000); 30 s później zakaz: 0 W czeka w I-6,
+    # przełącznik jest już włączony — nic z pary nie idzie osobno.
+    d, mem = run(schedule=sched(export_limit_w=8000), now_mono=1000.0)
+    commit(d, _written(d), mem, 1000.0)
+    d2, _ = run(mem, schedule=sched(export_allowed=False),
+                readings={"export_limit_enabled": 0.0, "export_limit_w": 8000.0}, now_mono=1030.0)
+    assert not EXPORT_PAIR & {w.key for w in d2.writes}
+
+
+def _without(*keys):
+    return {k: v for k, v in MAPPED.items() if k not in keys}
+
+
+def _keys(d):
+    return {w.key for w in d.writes}
+
+
+def test_reserve_guard_goes_neutral_without_floor_entity():
+    # Sprzedaż przy 5 % i rezerwie 10 %: I-1 dopisuje próg, którego encji nie ma — zejście do
+    # trybu neutralnego i tak musi pójść (hamulec nie zależy od innej encji).
+    d, _ = run(soc=5.0, mapped=_without("soc_min"), readings={"mode": "sell_power"})
+    assert d.status == WRITE and d.guard.invariant == "I-1"
+    assert [w.data for w in d.writes if w.key == "mode"] == [{"option": "auto"}]
+    assert "soc_min" not in _keys(d)
+
+
+def test_sell_needing_floor_without_floor_entity_degrades_to_neutral():
+    d, _ = run(mapped=_without("soc_min"), readings={"mode": "sell_power", "power_w": 2000.0},
+               schedule=plan(slot("10:00", "11:00", **SELL, power_w=2000, soc_target=40)))
+    assert d.status == WRITE and "degraded" in d.notes
+    assert d.flat["mode"] == "auto" and "power_w" not in d.flat and "soc_min" not in d.flat
+    assert [w.data for w in d.writes if w.key == "mode"] == [{"option": "auto"}]
+
+
+def test_charge_does_not_need_floor_entity():
+    d, _ = run(mapped=_without("soc_min"),
+               schedule=plan(slot("10:00", "11:00", mode="charge", charge_source="grid", power_w=3000)))
+    assert d.status == WRITE and d.flat["mode"] == "charge_battery" and "degraded" not in d.notes
+
+
+@pytest.mark.parametrize("key", sorted(EXPORT_PAIR))
+def test_fallback_applies_mode_without_export_pair(key):
+    # Bez łącza z chmurą działa slot zapasowy (zakaz eksportu) — tryb idzie, para wypada.
+    d, _ = run(mapped=_without(key), readings={"mode": "sell_power"},
+               now_utc=datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc))
+    assert d.fallback is True and d.status == WRITE
+    assert [w.data for w in d.writes if w.key == "mode"] == [{"option": "auto"}]
+    assert not EXPORT_PAIR & _keys(d) and "degraded" not in d.notes
+
+
+def test_negative_price_ban_without_pair_keeps_neutral_mode():
+    d, _ = run(mapped=_without("export_limit_w"), readings={"mode": "sell_power"},
+               schedule=plan(slot("10:00", "11:00", mode="self_consume", price_pln_kwh=-0.1)))
+    assert d.status == WRITE and d.flat["mode"] == "auto" and not EXPORT_PAIR & _keys(d)
+
+
+def test_grid_charge_with_export_ban_without_pair_still_charges():
+    # Ładowanie nie potrzebuje ogranicznika (auto i tak oddaje nadwyżkę PV) — para wypada,
+    # ładowanie przy ujemnej cenie zostaje.
+    d, _ = run(mapped=_without("export_limit_enabled"),
+               schedule=plan(slot("10:00", "11:00", mode="charge", charge_source="grid", power_w=3000,
+                                  export_allowed=False)))
+    assert d.status == WRITE and "degraded" not in d.notes and d.flat["mode"] == "charge_battery"
+    assert not EXPORT_PAIR & _keys(d) and "power_w" in _keys(d)
+
+
+def test_discharge_degrades_only_for_an_export_ban_not_a_cap():
+    ban = run(mapped=_without("export_limit_w"), readings={"mode": "auto"},
+              schedule=plan(slot("10:00", "11:00", **SELL, power_w=2000, export_allowed=False)))[0]
+    assert "degraded" in ban.notes and ban.flat["mode"] == "auto"
+    cap = run(mapped=_without("export_limit_w"),
+              schedule=plan(slot("10:00", "11:00", **SELL, power_w=2000, export_limit_w=3000)))[0]
+    assert "degraded" not in cap.notes and cap.flat["mode"] == "sell_power"
+    assert not EXPORT_PAIR & _keys(cap)
+
+
+def test_missing_ceiling_entity_drops_plan_ceiling_and_still_charges():
+    sched_ = plan(slot("10:00", "11:00", mode="charge", charge_source="grid", power_w=3000, soc_target=90))
+    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != "soc_max"}, schedule=sched_)
+    assert d.status == WRITE and "soc_max" not in [w.key for w in d.writes]
+    assert "soc_max" in d.dropped_unsupported
+    assert {"mode", "power_w"} <= {w.key for w in d.writes}
+
+
+def test_missing_power_entity_degrades_powered_intents_to_neutral():
+    mapped = {k: v for k, v in MAPPED.items() if k != "power_w"}
+    d, _ = run(mapped=mapped, readings={"mode": "sell_power"})
+    assert d.status == WRITE and "degraded" in d.notes and d.flat["mode"] == "auto"
+    assert "power_w" not in _keys(d)
+    d2, _ = run(mapped=mapped, schedule=plan(slot("10:00", "11:00", mode="self_consume")))
+    assert d2.status == WRITE and d2.writes[-1].data == {"option": "auto"}
+
+
+def test_uncapped_export_slot_never_touches_owner_limiter():
+    d, _ = run(schedule=plan(slot("10:00", "11:00", mode="self_consume")),
+               readings={"mode": "sell_power", "export_limit_enabled": 1.0, "export_limit_w": 8000.0})
+    assert d.status == WRITE
+    assert not {"export_limit_enabled", "export_limit_w"} & {w.key for w in d.writes}
+    assert not {"export_limit_enabled", "export_limit_w"} & set(d.flat)
+
+
+def test_uncapped_export_after_our_ban_returns_limiter_to_owner_values():
+    owner = {"export_limit_enabled": 0.0, "export_limit_w": 4000.0}
+    ents_readings = {"mode": "auto", "export_limit_enabled": 1.0, "export_limit_w": 0.0}
+    d, _ = run(schedule=plan(slot("10:00", "11:00", mode="self_consume")), readings=ents_readings,
+               owner_values=owner)
+    writes = {w.key: w for w in d.writes}
+    assert d.status == WRITE and writes["export_limit_enabled"].service == "turn_off"
+    assert writes["export_limit_w"].data == {"value": 4000.0}
 
 
 def test_no_plan_is_idle():
@@ -273,9 +401,10 @@ def test_unsupported_dropped_for_session():
 
 
 def test_unmapped_keys_reported_not_written():
-    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != "export_limit_enabled"})
-    assert (d.status, d.reason) == (IDLE, "missing_entities")
-    assert "export_limit_enabled" in d.unmapped
+    d, _ = run(mapped={k: v for k, v in MAPPED.items() if k != "export_limit_enabled"},
+               schedule=sched(export_allowed=False))
+    assert d.status == WRITE
+    assert "export_limit_enabled" in d.dropped_unsupported
     assert "export_limit_enabled" not in [w.key for w in d.writes]
 
 
@@ -350,7 +479,7 @@ def test_commit_ignores_non_write_decision():
     commit(d, _written(d), mem, 1000.0)
     assert mem.last_written == {}
     d2, _ = run(mem, now_mono=1010.0)
-    assert d2.status == WRITE and len(d2.writes) == 3
+    assert d2.status == WRITE and len(d2.writes) == 2
 
 
 def test_summary_is_small_and_json_safe():
@@ -411,14 +540,15 @@ def test_mode_change_with_pending_condition_param_holds_group(gap):
     # Warunek trybu (blokada eksportu) czeka w interwale → tryb i moc też czekają.
     d, mem = run(schedule=sched(export_allowed=False), now_mono=1000.0)
     commit(d, _written(d), mem, 1000.0)
-    d1, _ = run(mem, now_mono=1070.0)                              # eksport znów dozwolony
-    assert [w.key for w in d1.writes] == ["export_limit_enabled"]
+    owner = {"export_limit_enabled": 0.0, "export_limit_w": 4000.0}
+    d1, _ = run(mem, now_mono=1070.0, owner_values=owner)          # eksport znów dozwolony → limit właściciela
+    assert [w.key for w in d1.writes] == ["export_limit_w", "export_limit_enabled"]
     commit(d1, _written(d1), mem, 1070.0)
     blocked = plan(slot("10:00", "11:00", export_allowed=False, **STANDBY))
     d2, _ = run(mem, schedule=blocked, now_mono=1070.0 + gap)
     assert d2.writes == [] and "mode_held" in d2.notes
     d3, _ = run(mem, schedule=blocked, now_mono=1130.5)
-    assert [w.key for w in d3.writes] == ["export_limit_enabled", "power_w", "mode"]
+    assert [w.key for w in d3.writes] == ["export_limit_w", "export_limit_enabled", "power_w", "mode"]
 
 
 def test_power_alone_goes_when_device_has_planned_mode():

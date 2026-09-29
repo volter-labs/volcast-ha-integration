@@ -205,3 +205,42 @@ async def test_live_cycle_writes_through_real_entities_and_echo_is_ours(
     await ex.async_tick()
     await hass.async_block_till_done()
     assert ex.last_decision.reason == "nothing_to_write" and inv["mode"].calls == 1 and not ex.paused
+
+
+async def _paused_by_owner(hass, hass_storage, hass_admin_user):
+    entry, rt, _ = await _paired_with_inverter(hass, hass_storage)
+    await _our_mode_write(hass, rt, "sell_power")
+    await hass.services.async_call("select", "select_option", {"entity_id": rt.mapped["mode"], "option": "auto"},
+                                   blocking=True, context=Context(user_id=hass_admin_user.id))
+    await hass.async_block_till_done()
+    assert rt.executor.paused
+    return entry, rt
+
+
+async def test_foreign_control_fix_flow_resumes_without_reload(
+        hass: HomeAssistant, network_down, hass_storage, hass_admin_user):
+    entry, rt = await _paused_by_owner(hass, hass_storage, hass_admin_user)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "foreign_control_paired01")
+    assert issue is not None and issue.is_fixable and issue.data == {"entry_id": entry.entry_id}
+    manager = hass.data["repairs"]["flow_manager"]
+    form = await manager.async_init(DOMAIN, data={"issue_id": "foreign_control_paired01"})
+    assert form["type"] == "form" and form["step_id"] == "confirm"
+    done = await manager.async_configure(form["flow_id"], {})
+    await hass.async_block_till_done()
+    assert done["type"] == "create_entry"
+    assert not rt.executor.paused
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "foreign_control_paired01") is None
+    assert entry.state is ConfigEntryState.LOADED and control_of(hass, entry) is rt   # bez przeładowania
+
+
+async def test_resume_control_service_ends_pause(hass: HomeAssistant, network_down, hass_storage, hass_admin_user):
+    _, rt = await _paused_by_owner(hass, hass_storage, hass_admin_user)
+    await hass.services.async_call(DOMAIN, "resume_control", {}, blocking=True)
+    await hass.async_block_till_done()
+    assert not rt.executor.paused
+
+
+async def test_fix_flow_strings_exist(hass: HomeAssistant):
+    tr = await async_get_translations(hass, "en", "issues", {DOMAIN})
+    key = f"component.{DOMAIN}.issues.foreign_control.fix_flow.step.confirm"
+    assert f"{key}.title" in tr and f"{key}.description" in tr

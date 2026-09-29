@@ -9,7 +9,7 @@ from homeassistant.helpers import issue_registry as ir
 from custom_components.volcast.control.store import ControlState, ControlStore
 
 from .ha_fakes import GOODWE_ENTITIES as E, FakeState, goodwe_hass
-from .test_executor import LOGGER, make, no_entity_ids_in, ready
+from .test_executor import LOGGER, make, no_entity_ids_in, ready, sell_ban
 
 ISSUE = "foreign_control_e1"
 
@@ -235,7 +235,8 @@ def test_pause_during_ownership_save_prevents_writes(monkeypatch):
 
         async def pausing(state):
             await real(state)
-            ex._memory.paused_until = ex._clock() + 1800        # obca zmiana w trakcie zapisu
+            if state.owned:                                     # obca zmiana w trakcie zapisu własności
+                ex._memory.paused_until = ex._clock() + 1800
         ex._store.async_save = pausing
         await ex.async_tick()
     asyncio.run(go())
@@ -243,14 +244,19 @@ def test_pause_during_ownership_save_prevents_writes(monkeypatch):
 
 
 def test_restore_skips_mode_taken_over_by_owner(monkeypatch):
-    h, ex = _written(monkeypatch)
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=sell_ban())
+        await ex.async_tick()
+    asyncio.run(go())
     n = len(h.services.calls)
     h.states.set(E["mode"], "charge_pv")
     asyncio.run(ex.async_on_state_event(event(E["mode"], "charge_pv", Context(user_id="u1"))))
     asyncio.run(ex.async_set_consent(False))
     asyncio.run(ex.async_tick())
-    # nasz przełącznik limitu eksportu wraca, tryb właściciela zostaje
-    assert [c[:2] for c in h.services.calls[n:]] == [("switch", "turn_on")]
+    # nasz limit eksportu wraca, tryb właściciela zostaje
+    assert [c[:2] for c in h.services.calls[n:]] == [("number", "set_value")]
     assert h.states.get(E["mode"]).state == "charge_pv" and ex._state.owned is False
     assert ex.last_decision.reason == "baseline_mode_kept"
 
@@ -498,3 +504,217 @@ def test_release_clears_restore_bookkeeping(monkeypatch):
         return await store.async_load()
     state = asyncio.run(go())
     assert state.owned is False and state.restore_keys is None and state.taken_over == []
+
+
+# ── przejęcie przed naszym pierwszym zapisem ────────────────────────────────
+
+
+def _settled(monkeypatch, *, local=True):
+    """Sterowanie włączone, plan zgodny z falownikiem (tryb auto, bez limitu eksportu) — zero zapisów."""
+    h = goodwe_hass(export_on="off")
+    h, ex = make(h, monkeypatch=monkeypatch)
+    raw = {"schedule_id": "p1", "slots": [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z",
+                                           "mode": "self_consume", "price_pln_kwh": 0.8}],
+           "fallback": {"mode": "self_consume", "soc_reserve": 10}, "control_enabled": True}
+
+    async def go():
+        await ready(ex, raw=raw, local=local)
+        await ex.async_tick()
+    asyncio.run(go())
+    return h, ex
+
+
+def test_owner_change_before_our_first_write_is_a_takeover(monkeypatch):
+    ir.async_create_issue.reset_mock()
+    h, ex = _settled(monkeypatch)
+    assert h.services.calls == [] and ex._state.owned is False
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "sell_power", Context(user_id="u1"))))
+    assert ex.paused and ex.foreign_changes[-1]["key"] == "mode"
+    assert _created()
+    h.states.set(E["mode"], "sell_power")
+    asyncio.run(ex.async_tick())
+    assert h.services.calls == []                               # w pauzie nastawa właściciela zostaje
+
+
+def test_owner_change_of_a_key_the_plan_does_not_touch_is_not_a_takeover(monkeypatch):
+    # Nastawa spoza planu nie jest z nim w konflikcie — pauza zamroziłaby naszą ostatnią komendę.
+    _, ex = _settled(monkeypatch)
+    asyncio.run(ex.async_on_state_event(event(E["soc_min"], "50", Context(user_id="u1"), "%")))
+    assert not ex.paused and ex.foreign_changes == []
+
+
+def test_owner_tweak_of_untouched_setting_during_our_command_does_not_pause(monkeypatch):
+    _, ex = _written(monkeypatch)                                 # sell_power 2000 W, soc_max nietknięty
+    asyncio.run(ex.async_on_state_event(event(E["soc_max"], "90", Context(user_id="u1"), "%")))
+    assert not ex.paused
+
+
+def test_reserve_forces_neutral_mode_even_during_pause(monkeypatch):
+    # Właściciel zmienił moc (pauza), SoC spada pod rezerwę: nasz tryb sprzedaży musi zejść
+    # do neutralnego — pauza nie może zamrozić rozładowania poniżej rezerwy.
+    h, ex = _written(monkeypatch, goodwe_hass(soc="12"))
+    assert h.states.get(E["mode"]).state == "sell_power"
+    h.states.set(E["power_w"], "1500")
+    asyncio.run(ex.async_on_state_event(event(E["power_w"], "1500", Context(user_id="u1"), "W")))
+    assert ex.paused
+    h.states.set(E["soc"], "9")
+    ex._clock.t += 60
+    asyncio.run(ex.async_tick())
+    assert h.states.get(E["mode"]).state == "auto"
+    assert h.states.get(E["power_w"]).state == "1500"             # nastawa właściciela zostaje
+    assert ex.paused
+
+
+def test_pause_keeps_owner_mode_below_reserve(monkeypatch):
+    # Tryb przejęty przez właściciela zostaje jego — także pod rezerwą.
+    h, ex = _written(monkeypatch, goodwe_hass(soc="12"))
+    h.states.set(E["mode"], "discharge_battery")
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "discharge_battery", Context(user_id="u1"))))
+    h.states.set(E["soc"], "9")
+    ex._clock.t += 60
+    asyncio.run(ex.async_tick())
+    assert h.states.get(E["mode"]).state == "discharge_battery"
+
+
+def test_owner_reselecting_the_same_value_is_not_a_takeover(monkeypatch):
+    _, ex = _settled(monkeypatch)
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "auto", Context(user_id="u1"))))
+    assert not ex.paused
+
+
+def test_device_refresh_before_first_write_is_not_a_takeover(monkeypatch):
+    _, ex = _settled(monkeypatch)
+    asyncio.run(ex.async_on_state_event(event(E["soc_min"], "50", Context(), "%")))
+    assert not ex.paused
+
+
+def test_owner_change_with_control_off_is_not_a_takeover(monkeypatch):
+    _, ex = _settled(monkeypatch, local=False)
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "sell_power", Context(user_id="u1"))))
+    assert not ex.paused and ex.foreign_changes == []
+
+
+def test_owner_snapshot_taken_when_control_is_enabled(monkeypatch):
+    h, ex = _settled(monkeypatch)
+    assert ex._state.owned is False
+    assert ex._state.snapshot == {"mode": "auto", "soc_min": 15.0, "soc_max": 100.0,
+                                  "export_limit_w": 4000.0, "export_limit_enabled": 0.0}
+    saved = asyncio.run(ex._store.async_load())
+    assert saved.snapshot == ex._state.snapshot and saved.owned is False
+
+
+def test_owner_snapshot_follows_owner_until_first_write_and_clears_when_off(monkeypatch):
+    h, ex = _settled(monkeypatch)
+    h.states.set(E["soc_min"], "70")                             # właściciel (albo aplikacja producenta)
+    ex._clock.t += 60
+    asyncio.run(ex.async_tick())
+    assert ex._state.snapshot["soc_min"] == 30.0
+    asyncio.run(ex.async_set_local_switch(False))
+    asyncio.run(ex.async_tick())
+    assert ex._state.snapshot == {} and ex._state.owned is False and h.services.calls == []
+
+
+def test_pre_control_snapshot_of_another_mapping_is_dropped_on_start(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(consent=True, local_switch=True, snapshot={"soc_min": 50.0},
+                                              owner={"profile": "other", "domain": "x", "mode_entity": "y"})))
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+    asyncio.run(ex.async_start())
+    assert ex._state.snapshot == {} and ex._state.owner == {}
+
+
+def test_owner_change_after_control_switched_off_is_not_a_takeover(monkeypatch):
+    _, ex = _written(monkeypatch)
+    asyncio.run(ex.async_set_local_switch(False))
+    asyncio.run(ex.async_tick())                                 # powrót do trybu bazowego
+    asyncio.run(ex.async_on_state_event(event(E["soc_min"], "50", Context(user_id="u1"), "%")))
+    assert not ex.paused and ex.foreign_changes == []
+
+
+# ── „Wznów teraz" po pauzie przejęcia ──────────────────────────────────────
+
+
+def _paused(monkeypatch):
+    h, ex = _written(monkeypatch)
+    h.states.set(E["mode"], "auto")                              # właściciel przełączył tryb
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "auto", Context(user_id="u1"))))
+    assert ex.paused
+    return h, ex
+
+
+def test_foreign_control_issue_is_fixable_for_its_entry(monkeypatch):
+    ir.async_create_issue.reset_mock()
+    _paused(monkeypatch)
+    (call,) = _created()
+    assert call.kwargs["is_fixable"] is True and call.kwargs["data"] == {"entry_id": "e1"}
+
+
+def test_resume_now_ends_pause_and_applies_plan_without_reload(monkeypatch):
+    ir.async_delete_issue.reset_mock()
+    h, ex = _paused(monkeypatch)
+    assert asyncio.run(ex.async_resume_control()) == "resumed"
+    assert not ex.paused and ex.exec_summary()["paused_for_s"] == 0
+    assert ISSUE in [c.args[2] for c in ir.async_delete_issue.call_args_list]
+    assert h.states.get(E["mode"]).state == "sell_power"         # cykl od razu, bez przeładowania
+    assert ex.last_decision.status == "write"
+
+
+def test_resume_without_pause_changes_nothing(monkeypatch):
+    h, ex = _written(monkeypatch)
+    n = len(h.services.calls)
+    assert asyncio.run(ex.async_resume_control()) == "not_paused"
+    assert len(h.services.calls) == n
+
+
+def test_resume_after_stop_does_nothing(monkeypatch):
+    h, ex = _paused(monkeypatch)
+    asyncio.run(ex.async_stop())
+    assert asyncio.run(ex.async_resume_control()) == "unavailable"
+
+
+def test_resume_during_foreign_mode_episode_keeps_pause_and_issue(monkeypatch):
+    h, ex = _written(monkeypatch)
+    h.states.set(E["mode"], "export_ac")                         # tryb spoza profilu
+    asyncio.run(ex.async_on_state_event(event(E["mode"], "export_ac", Context(user_id="u1"))))
+    ir.async_delete_issue.reset_mock()
+    assert asyncio.run(ex.async_resume_control()) == "foreign_mode"
+    assert ex.paused
+    assert ISSUE not in [c.args[2] for c in ir.async_delete_issue.call_args_list]
+
+
+def test_resume_after_pause_expired_resets_issue_so_next_takeover_raises_again(monkeypatch):
+    # Naprawa kasuje zgłoszenie w HA — wykonawca nie może myśleć, że wciąż jest otwarte.
+    h, ex = _paused(monkeypatch)
+    ex._clock.t += 1801
+    assert asyncio.run(ex.async_resume_control()) == "not_paused"
+    ir.async_create_issue.reset_mock()
+    h.states.set(E["power_w"], "700")
+    asyncio.run(ex.async_on_state_event(event(E["power_w"], "700", Context(user_id="u1"), "W")))
+    assert ex.paused and len(_created()) == 1
+
+
+def test_owner_change_detected_while_cycle_blocked_after_restart(monkeypatch):
+    # Po restarcie pamięć zapisów jest pusta, a zablokowany cykl nie ma planu (flat) — nastawa,
+    # którą zapisaliśmy w tej własności, i tak jest odniesieniem przejęcia.
+    from datetime import timedelta
+    from .ha_fakes import NOW
+    h = goodwe_hass(export="0", export_on="on")
+    h.states.set(E["soc"], "60", {"unit_of_measurement": "%"}, reported=NOW - timedelta(hours=1))
+    store = ControlStore(h, "e1")
+    asyncio.run(store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True,
+        snapshot={"mode": "auto", "export_limit_w": 4000.0, "export_limit_enabled": 0.0},
+        owner={"profile": "goodwe-et", "domain": "goodwe", "mode_entity": E["mode"]},
+        restore_keys=["export_limit_w", "export_limit_enabled"])))
+    h, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, raw=sell_ban())
+        await ex.async_tick()
+        assert ex.last_decision.status == "blocked" and ex.last_decision.flat == {}
+        h.states.set(E["export_limit_w"], "5000")
+        await ex.async_on_state_event(event(E["export_limit_w"], "5000", Context(user_id="u1"), "W"))
+    asyncio.run(go())
+    assert ex.paused and ex.foreign_changes[-1]["key"] == "export_limit_w"
+    assert "export_limit_w" in ex._state.taken_over

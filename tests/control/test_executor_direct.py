@@ -27,7 +27,7 @@ from custom_components.volcast.core.registers import RegisterImage
 from custom_components.volcast.core.slot import parse_schedule
 from custom_components.volcast.core.write_sequence import DENIED
 from tests.control.test_direct_connection import _factory
-from tests.control.test_executor import plan
+from tests.control.test_executor import plan, sell_ban
 from tests.core.control.tou_helpers import DAY0, NOW as TOU_NOW, SELF, iso
 from tests.core.transports.helpers import FakeClock
 from tests.sim.fixtures import deye_words, goodwe_words
@@ -293,10 +293,10 @@ async def test_trial_refused_while_owned(make_hass, goodwe_udp_sim, goodwe_bank)
 
 
 async def _owned_sell(make_hass, sim, bank, **kw):
-    bank.poke(EXPORT_EN, 1)                                  # właściciel: ogranicznik eksportu włączony
+    bank.poke(EXPORT_EN, 1)                                  # właściciel: ogranicznik eksportu włączony (plan go nie rusza)
     h = await Harness(make_hass, GW_V, gw_target(sim), **kw).start()
     await h.ex.async_tick()
-    assert h.ex.owned and gw_raw_word(bank, MODE) == 10 and gw_raw_word(bank, EXPORT_EN) == 0
+    assert h.ex.owned and gw_raw_word(bank, MODE) == 10 and gw_raw_word(bank, EXPORT_EN) == 1
     return h
 
 
@@ -363,8 +363,11 @@ async def test_restore_blocked_on_identity_mismatch(make_hass, goodwe_udp_sim, g
 @pytest.mark.asyncio
 async def test_partial_restore_writes_are_ours_no_takeover(make_hass, goodwe_udp_sim, goodwe_bank, sim_faults,
                                                            issues):
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    goodwe_bank.poke(EXPORT_EN, 0)                             # właściciel: ogranicznik wyłączony
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=sell_ban())
     try:
+        await h.ex.async_tick()
+        assert h.ex.owned and gw_raw_word(goodwe_bank, MODE) == 10 and gw_raw_word(goodwe_bank, EXPORT_EN) == 1
         goodwe_bank.readonly.add(EXPORT_EN)                    # przełącznik eksportu nie wraca (wyjątek 2)
         await h.ex.async_set_consent(False)
         for _ in range(3):

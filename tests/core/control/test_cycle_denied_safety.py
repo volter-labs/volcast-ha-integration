@@ -21,11 +21,14 @@ GATES = Gates(consent=True, local_switch=True, control_mode="direct", verified=T
 SELF_CONSUME = one_slot(mode="self_consume")
 
 
-def _decide(profile, schedule, reading, memory, now_mono):
+def _decide(profile, schedule, reading, memory, now_mono, owner_values=None):
+    target = RegisterTarget(reading)
+    if owner_values:
+        target.owner_values = owner_values
     return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=now_mono,
                         tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
                         limits=Limits(rated_power_w=8000.0), gates=GATES, memory=memory,
-                        target=RegisterTarget(reading))
+                        target=target)
 
 
 def _selling(profile, power):
@@ -58,14 +61,16 @@ def test_refused_power_reduction_is_retried_next_cycle(goodwe_profile):
 
 
 def test_refused_condition_does_not_hold_return_to_baseline(goodwe_profile):
-    # Powrót do auto z warunkiem (przełącznik limitu eksportu), którego zapis urządzenie odrzuciło.
+    # Powrót do auto z warunkiem (przełącznik limitu eksportu — wartość właściciela), którego zapis
+    # urządzenie odrzuciło.
+    owner = {"export_limit_enabled": 0.0, "export_limit_w": 5000.0}
     reading = goodwe_reading(goodwe_profile, **{str(MODE_REG): 10, str(POWER_REG): 5000, str(SOC_REG): 80,
                                                 "47509": 1})
     memory = ControlMemory.for_profile(goodwe_profile)
-    d = _decide(goodwe_profile, SELF_CONSUME, reading, memory, 1000.0)
+    d = _decide(goodwe_profile, SELF_CONSUME, reading, memory, 1000.0, owner)
     assert "export_limit_enabled" in _keys(d)
     commit(d, GroupReport(failed=["export_limit_enabled"], mode_held=True, ambiguous=[]), memory, 1000.0)
-    again = _decide(goodwe_profile, SELF_CONSUME, reading, memory, 1000.0 + 61)
+    again = _decide(goodwe_profile, SELF_CONSUME, reading, memory, 1000.0 + 61, owner)
     assert "export_limit_enabled" in _keys(again) and "denied_hold" not in again.notes
 
 

@@ -90,6 +90,10 @@ class EntityTarget:
     def __init__(self, ents: "EntityContext") -> None:
         self.ents = ents
 
+    @property
+    def owner_values(self) -> Mapping[str, float | str]:
+        return self.ents.owner_values
+
     def missing_keys(self, profile) -> tuple[str, ...]:
         return missing_write_keys(profile, self.ents.mapped)
 
@@ -139,6 +143,8 @@ class RegisterTarget:
     def __init__(self, reading: "DirectReading", *, unreadable: frozenset[str] = frozenset()) -> None:
         self.reading = reading
         self.unreadable = frozenset(unreadable)
+        # wartości właściciela (migawka) kluczy, które zmieniliśmy — ustawia wykonawca
+        self.owner_values: Mapping[str, float | str] = {}
 
     def _skipped(self, keys: Iterable[str]) -> set[str]:
         return {k for k in keys if k in self.unreadable

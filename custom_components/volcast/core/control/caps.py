@@ -1,9 +1,10 @@
 """Możliwości wykonawcy w trybie encji = deklaracja profilu ∩ klucze z encją.
 
-Sterowanie wymaga encji dla KAŻDEGO klucza zapisu profilu (`write_policy.order`).
-Tryb zapisany bez swoich parametrów warunkujących (blokada eksportu, sufit
-ładowania) wykonałby polecenie, którego nikt nie wydał — dlatego przy choćby
-jednym brakującym kluczu wszystkie możliwości są fałszywe.
+Sterowanie wymaga encji trybu (`REQUIRED_WRITE_KEYS`). Pozostała nastawa bez encji
+(brak mapowania, encja wyłączona albo niedostępna) jest nieobsługiwana: wypada jej
+możliwość — chmura nie planuje z nią — i intencje, które jej potrzebują (moc), a reszta
+sterowania działa dalej. Plan, który mimo to niesie taką nastawę, dostaje ją odrzuconą
+w cyklu (moc — cykl wstrzymany, bo tryb na starej mocy to inna komenda).
 """
 from __future__ import annotations
 
@@ -15,6 +16,9 @@ _KEY_CAPS = {"set_power_w": ("power_w",), "limit_export": ("export_limit_w", "ex
              "set_soc_floor": ("soc_min",), "set_soc_ceiling": ("soc_max",)}
 
 
+REQUIRED_WRITE_KEYS = ("mode",)
+
+
 def missing_write_keys(profile, mapped_keys: Iterable[str]) -> tuple[str, ...]:
     """Klucze zapisu profilu bez encji, w kolejności profilu."""
     mapped = set(mapped_keys)
@@ -23,13 +27,19 @@ def missing_write_keys(profile, mapped_keys: Iterable[str]) -> tuple[str, ...]:
 
 
 def entity_mode_ready(choice, mapped_keys: Iterable[str]) -> bool:
-    """Czy tryb encji jest dostępny: profil z integracją HA i encja dla KAŻDEGO klucza zapisu.
+    """Czy tryb encji jest dostępny: profil z integracją HA i encja trybu.
 
     Jedna reguła dla opcji integracji i dla wyboru zdalnego w onboardingu.
     """
     if choice is None or not getattr(choice, "integration_domain", None):
         return False
-    return not missing_write_keys(choice.profile, mapped_keys or ())
+    return not required_missing(choice.profile, mapped_keys or ())
+
+
+def required_missing(profile, mapped_keys: Iterable[str]) -> tuple[str, ...]:
+    """Klucze wymagane do sterowania (tryb), które nie mają encji."""
+    missing = missing_write_keys(profile, mapped_keys)
+    return tuple(k for k in missing if k in REQUIRED_WRITE_KEYS)
 
 
 def entity_mode_options(choice) -> dict[str, str]:
@@ -44,7 +54,7 @@ def entity_mode_options(choice) -> dict[str, str]:
 
 def capabilities_for(profile, mapped_keys: Iterable[str]) -> dict[str, bool]:
     mapped = set(mapped_keys)
-    complete = not missing_write_keys(profile, mapped)
+    complete = not required_missing(profile, mapped)
     declared = profile.raw.get("capabilities") or {}
     intents = profile.raw.get("intents") or {}
     out: dict[str, bool] = {}

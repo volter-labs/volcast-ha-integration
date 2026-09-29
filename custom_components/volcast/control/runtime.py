@@ -183,6 +183,20 @@ def _schedule_reload(hass, entry_id: str) -> None:
         hass.async_create_task(hass.config_entries.async_reload(entry_id))
 
 
+async def async_resume_control(hass, entry_id: str | None = None) -> list[str] | None:
+    """„Wznów teraz" dla wpisu (albo wszystkich): wyniki wykonawców; None = brak sterowania.
+
+    Wspólne dla naprawy w zgłoszeniu i serwisu `volcast.resume_control`.
+    """
+    entries = hass.data.get(DOMAIN, {})
+    ids = [entry_id] if entry_id is not None else list(entries)
+    runtimes = [rt for i in ids if isinstance(entries.get(i), dict)
+                and (rt := entries[i].get("control")) is not None]
+    if not runtimes:
+        return None
+    return [await rt.executor.async_resume_control() for rt in runtimes]
+
+
 def _entry_lock(hass, entry_id: str) -> asyncio.Lock:
     locks = hass.data.setdefault(_LOCKS_KEY, {})
     lock = locks.get(entry_id)

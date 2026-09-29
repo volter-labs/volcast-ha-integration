@@ -8,7 +8,17 @@ co by poszło; zapis wykonuje się tylko przy statusie WRITE.
 Tryb i jego nastawa mocy to JEDNA GRUPA: idą razem albo wcale (zmierzone: standby
 honoruje Xset jako nastawę ładowania, więc tryb na starej mocy albo moc w starym
 trybie ładuje z sieci). Zasady, które trzymają grupę:
-* każdy klucz zapisu profilu musi mieć encję — inaczej sterowania nie ma wcale;
+* bez encji trybu sterowania nie ma wcale; inna nastawa bez encji (`ents.mapped` jej
+  nie ma — brak mapowania albo encja niedostępna) jest nieobsługiwana: wypada z planu
+  po strażnikach, jak nastawa odrzucona przez falownik. Akcja, której bez niej nie da
+  się bezpiecznie wykonać, schodzi do trybu neutralnego (`_degrade`): moc dla trybu
+  z mocą (tryb na starej mocy to inna komenda), próg SoC dla rozładowania, ogranicznik
+  eksportu dla rozładowania z zakazem eksportu (0 W). Ładowanie, tryb neutralny i postój
+  ogranicznika nie potrzebują (para tylko wypada) — tryb neutralny i postój nie zależą
+  od żadnej z nich —
+  slot zapasowy i zejście do rezerwy (I-1) idą zawsze;
+* para ogranicznika eksportu (`EXPORT_PAIR`) jest nieobsługiwana, wstrzymana i zapisywana
+  razem — połowa pary daje zakaz bez skutku albo 0 W przy nieznanym przełączniku;
 * zmieniony parametr, który w tym cyklu nie pójdzie (interwał I-6, jednostka encji
   się zmieniła), wstrzymuje zmianę trybu, a z nią moc;
 * zmiana trybu wstrzymana (I-6, I-8) wstrzymuje moc — chyba że falownik już ma tryb
@@ -40,6 +50,7 @@ from ..guard_state import DirectionLimiter, WriteBudget, WriteThrottle
 from ..guards import GuardContext, GuardResult, apply_guards, temperature_ok
 from ..slot import Schedule, effective_action
 from ..write_sequence import WriteReport
+from .caps import REQUIRED_WRITE_KEYS
 from ..params import Params
 from .group_writes import order_group, power_first
 from .latch import ReserveLatch
@@ -52,6 +63,8 @@ RESTORE = "restore"
 
 # Tryb i nastawa, która nadaje mu znaczenie — zapisywane razem albo wcale.
 _MODE_GROUP = frozenset({"mode", "power_w"})
+# Ogranicznik eksportu: znaczy coś tylko razem (zakaz = włączony + 0 W) — obie encje albo żadna.
+EXPORT_PAIR = frozenset({"export_limit_w", "export_limit_enabled"})
 _DIRECTIONAL = ("charge", "discharge")
 # Kwant rejestru: plan niesie ułamki (625,6 W), falownik pokaże 626 — to nie rozjazd.
 _QUANTUM = 1.0
@@ -157,6 +170,8 @@ class EntityContext:
     units: Mapping[str, str | None]
     attrs: Mapping[str, Mapping[str, Any]]
     readings: Mapping[str, float | str]
+    # wartości właściciela (migawka) kluczy, które zmieniliśmy — cel, gdy plan nie ma zdania
+    owner_values: Mapping[str, float | str] = field(default_factory=dict)
 
 
 @dataclass
@@ -240,13 +255,14 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     if profile.control_model != "mode_setpoint":
         return CycleDecision(IDLE, "tou_preview_only")
     missing = target.missing_keys(profile)
-    if missing:
+    if any(k in REQUIRED_WRITE_KEYS for k in missing):
         return CycleDecision(IDLE, "missing_entities", unmapped=missing)
     if schedule is None:
         return CycleDecision(IDLE, "no_plan")
 
     slot, is_fallback = schedule.effective_slot(now_utc)
-    mapped_slot = map_slot(slot, profile, limits.rated_power_w)
+    mapped_slot = map_slot(slot, profile, limits.rated_power_w, leave_uncapped_export=True)
+    mapped_slot = replace(mapped_slot, params=_owner_export(mapped_slot.params, _owner_values(target)))
     common: dict[str, Any] = dict(intent=mapped_slot.intent, fallback=is_fallback)
     # SoC i temperatura to osobne encje: świeży SoC nic nie mówi o temperaturze.
     if target.has_temperature() and tele.battery_temp_c is None:
@@ -271,16 +287,20 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     if not guard.write_allowed:
         return CycleDecision(BLOCKED, f"guard:{guard.invariant}", **common)
 
-    params, adjusted, unfit = target.fit(guard.params, profile)
+    # Nastawy bez encji wypadają PO strażnikach (ci mogli je dopisać: I-1, I-4).
+    without = tuple(k for k in _with_pair(missing) if getattr(guard.params, k, None) is not None)
+    planned, degraded = _degrade(guard.params, set(without), profile)
+    planned = replace(planned, **{k: None for k in without})
+    params, adjusted, unfit = target.fit(planned, profile)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
         return CycleDecision(BLOCKED, "entity_range_unknown", unmapped=unfit, **common)
     flat = params.flatten()
-    unsupported = _unsupported_group(flat, profile, target, memory)
-    if unsupported:
-        reason = "mode_unsupported" if unsupported[0].startswith("mode:") else "power_unsupported"
+    group_unsupported = _unsupported_group(flat, profile, target, memory)
+    if group_unsupported:
+        reason = "mode_unsupported" if group_unsupported[0].startswith("mode:") else "power_unsupported"
         return CycleDecision(BLOCKED, reason, flat=flat,
-                             dropped_unsupported=unsupported, **common)
+                             dropped_unsupported=group_unsupported, **common)
     device = target.device_view(flat, profile)
     # Uzgodnienie z tym, co falownik naprawdę ma (tylko klucze planu, tylko czytelne).
     # Zły typ odczytu rzuca TypeError po drodze (pamięć wcześniejszych kluczy mogła już
@@ -300,7 +320,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     due = memory.throttle.filter(flat, now_mono) - settled
     # Do zmiany na falowniku: to, co pójdzie teraz, i to, co czeka w interwale I-6.
     need = due | (memory.throttle.pending(flat, now_mono) - settled)
-    notes: list[str] = []
+    notes: list[str] = ["degraded"] if degraded else []
+    unsupported = _with_pair(memory.unsupported)
     refused = set() if _safe_mode(flat.get("mode"), profile) else {
         k for k in due
         if not _toward_safety(k, flat[k], device.get(k))
@@ -318,7 +339,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         memory.restore_backoff_s, memory.restore_until = 0.0, None
     blocked: set[str] = set()
     if memory.budget is not None:
-        blocked = memory.budget.exhausted(need - memory.unsupported, now_utc.timestamp())
+        blocked = memory.budget.exhausted(need - unsupported, now_utc.timestamp())
     if blocked:
         due -= blocked
         notes.append("nvm_budget")
@@ -328,11 +349,15 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         if note is not None:
             notes.append(note)
     _, runtime_unmapped = target.writes(params, profile, None)
-    allowed = due - memory.unsupported - set(runtime_unmapped)
-
+    allowed = due - unsupported - set(runtime_unmapped)
+    # Para ogranicznika: członek, który musi się zmienić, a nie pójdzie → nie idzie żaden
+    # (i wstrzymuje tryb jak każdy niedoszły warunek — niżej).
+    if EXPORT_PAIR & (need - allowed) and EXPORT_PAIR & allowed:
+        allowed -= EXPORT_PAIR
+        notes.append("export_held")
     held_by = [k for k in runtime_unmapped if k != "mode"]
     # Zmieniony warunek, który w tym cyklu nie dojdzie („nieobsługiwany" nie dojdzie nigdy).
-    unsettled = (need - allowed - memory.unsupported) - {"mode"}
+    unsettled = (need - allowed - unsupported) - {"mode"}
     if held_by or ("mode" in need and unsettled):
         allowed.discard("mode")
         notes.append("mode_held")
@@ -378,7 +403,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         status, reason or "ok", writes=writes, flat=flat,
         direction=direction if any(w.key == "mode" for w in writes) else None,
         adjusted=adjusted, unmapped=tuple(dict.fromkeys([*held_by, *unmapped])),
-        dropped_unsupported=tuple(sorted(memory.unsupported & set(flat))), notes=tuple(notes),
+        dropped_unsupported=tuple(sorted({*(unsupported & set(flat)), *without})),
+        notes=tuple(notes),
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
                            if "mode" in restore_flat else None), target_kind=target.kind,
@@ -458,6 +484,50 @@ def _budget_restore(device, profile, target: WriteTarget, memory: ControlMemory,
     return CycleDecision(RESTORE if reason is None else DRY_RUN, reason or "nvm_budget",
                          writes=writes, flat=back.flatten(), direction=profile.mode_direction(base),
                          notes=("nvm_budget",), target_kind=target.kind, **common), None
+
+
+def _degrade(params: Params, without: set[str], profile) -> tuple[Params, bool]:
+    """Akcja bez nastawy, której wymaga, schodzi do trybu neutralnego (bez mocy).
+
+    Moc — tryb, który jej używa; próg SoC — rozładowanie; ogranicznik eksportu — tylko
+    rozładowanie z zakazem eksportu (0 W; pułap to nie warunek bezpieczeństwa). Ładowanie
+    go nie potrzebuje: tryb neutralny i tak oddaje nadwyżkę PV, a ładowanie przy ujemnej
+    cenie to najcenniejsza akcja. Tryb neutralny i postój idą bez nich. Pozostałe nastawy
+    planu zostają (wołający i tak zdejmuje te bez encji).
+    """
+    mode = params.mode
+    if mode is None or mode == profile.neutral_mode:
+        return params, False
+    direction = profile.mode_direction(mode)
+    needed = ("power_w" in without
+              or ("soc_min" in without and direction == "discharge")
+              or (bool(without & EXPORT_PAIR) and direction == "discharge"
+                  and params.export_limit_w == 0.0))
+    if not needed:
+        return params, False
+    return replace(params, mode=profile.neutral_mode, power_w=None), True
+
+
+def _owner_values(target: WriteTarget) -> Mapping[str, float | str]:
+    """Wartości właściciela z migawki kluczy, które zmieniliśmy (cel encji i rejestrowy)."""
+    return getattr(target, "owner_values", None) or {}
+
+
+def _with_pair(keys) -> set[str]:
+    """Klucze z dopełnioną parą ogranicznika eksportu (jeden członek = oba)."""
+    out = set(keys)
+    return out | EXPORT_PAIR if out & EXPORT_PAIR else out
+
+
+def _owner_export(params: Params, owner: Mapping[str, float | str]) -> Params:
+    """Plan bez zdania o ograniczniku eksportu: po naszym zaostrzeniu — powrót do wartości
+    właściciela (para razem albo wcale); bez niego ogranicznika nie ruszamy."""
+    if params.export_limit_enabled is not None or params.export_limit_w is not None:
+        return params
+    enabled, limit = owner.get("export_limit_enabled"), owner.get("export_limit_w")
+    if not isinstance(enabled, float) or not isinstance(limit, float):
+        return params
+    return replace(params, export_limit_enabled=enabled >= 0.5, export_limit_w=limit)
 
 
 def _previous(device: Mapping[str, float | str], profile, memory: ControlMemory

@@ -127,7 +127,8 @@ def test_control_entities_sets_mode_and_profile():
 
 
 def test_control_entities_unavailable_aborts():
-    for runtime in (None, rt(domain=None), rt(mapped=("power_w",)), rt(mapped=WRITE_KEYS[:-1])):
+    # Bez encji trybu nie ma sterowania; brak innej nastawy tylko ją wyłącza (niżej).
+    for runtime in (None, rt(domain=None), rt(mapped=("power_w",)), rt(mapped=WRITE_KEYS[1:])):
         assert asyncio.run(flow(runtime=runtime).async_step_control_entities()) == {
             "type": "abort", "reason": "entity_mode_unavailable"}
 
@@ -136,7 +137,8 @@ def test_readiness_rule_is_shared_with_onboarding():
     from custom_components.volcast import onboarding
     gw = ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET")
     assert entity_mode_ready(gw, dict.fromkeys(WRITE_KEYS)) is True
-    assert entity_mode_ready(gw, dict.fromkeys(WRITE_KEYS[:-1])) is False
+    assert entity_mode_ready(gw, dict.fromkeys(WRITE_KEYS[1:])) is False          # bez trybu
+    assert entity_mode_ready(gw, dict.fromkeys(WRITE_KEYS[:-1])) is True          # bez jednej nastawy
     assert entity_mode_ready(ProfileChoice(gw.profile, None, None), dict.fromkeys(WRITE_KEYS)) is False
     assert entity_mode_ready(None, {}) is False
     assert onboarding.entity_mode_ready is entity_mode_ready

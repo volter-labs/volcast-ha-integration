@@ -189,6 +189,10 @@ class TelemetrySender:
             return None
         return {"market": market, "currency": currency, "intervals": intervals}, fp
 
+    def _unsupported(self) -> tuple[str, ...]:
+        """Nastawy, które wykonawca uznał za nieobsługiwane (brak encji, długo niedostępna)."""
+        return tuple(getattr(self._executor, "unsupported_settings", None) or ())
+
     def _extra(self) -> dict:
         try:
             summary = self._executor.exec_summary()
@@ -235,8 +239,10 @@ class TelemetrySender:
             return direct_driver_block(profile=self._choice.profile, access="direct",
                                        capabilities=None if self._direct.trial else self._direct_caps,
                                        local_switch=local, limits=self._limits)
+        unsupported = self._unsupported()
         return driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
-                            mapped_keys=self._profile_map.keys(), local_switch=local, limits=self._limits)
+                            mapped_keys=[k for k in self._profile_map if k not in unsupported],
+                            local_switch=local, limits=self._limits)
 
     async def async_flush(self) -> bool:
         """Jeden odczyt do chmury; True = przyjęty. Nigdy nie rzuca."""
