@@ -121,7 +121,8 @@ class SignalChannel:
 
     async def async_update(self, cfg: ChannelCfg | None) -> None:
         """Ustawia konfigurację kanału; nie czeka na połączenie (to robi zadanie tła)."""
-        if cfg == self._cfg and (cfg is None or self._task is not None):
+        alive = self._task is not None and not self._task.done()
+        if cfg == self._cfg and (cfg is None or alive):
             return
         await self.async_stop()
         if cfg is None:
@@ -157,6 +158,8 @@ class SignalChannel:
                 _LOGGER.debug("signal channel %s closed: %s", name, err)
             except _NET_ERRORS as err:
                 _LOGGER.debug("signal channel %s failed: %s", name, type(err).__name__)
+            except Exception as err:  # noqa: BLE001 — nic poza anulowaniem nie kończy pętli na stałe
+                _LOGGER.warning("signal channel %s unexpected error: %s", name, type(err).__name__)
             finally:
                 self._connected = False
             if self._healthy:
@@ -241,7 +244,9 @@ class SignalChannel:
                 continue
             event = frame["event"]
             if frame["topic"] == "phoenix":
-                if event == "phx_reply" and frame.get("ref") in pending:
+                ref_in = frame.get("ref")
+                # `ref` z sieci może być dowolnym JSON-em (lista/obiekt są niehashowalne)
+                if event == "phx_reply" and isinstance(ref_in, str) and ref_in in pending:
                     pending.clear()
                     self._healthy = True
             elif frame["topic"] == topic:

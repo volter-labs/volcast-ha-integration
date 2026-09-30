@@ -549,3 +549,53 @@ def test_new_aiohttp_uses_client_ws_timeout_without_receive_limit():
         assert isinstance(t, aiohttp.ClientWSTimeout) and t.ws_receive is None and t.ws_close == 10.0
         await ch.async_stop()
     run(main())
+
+
+# ------------------------------------------------ odporność pętli na nieoczekiwane
+
+def test_phx_reply_with_unhashable_ref_is_ignored():
+    async def main():
+        clock = Clock()
+        bad = json.dumps({"topic": "phoenix", "event": "phx_reply", "ref": [1],
+                          "payload": {"status": "ok"}})
+        bad2 = json.dumps({"topic": "phoenix", "event": "phx_reply", "ref": {"a": 1},
+                           "payload": {"status": "ok"}})
+        ws = FakeWs(clock, reply(), bad, bad2, HOLD)
+        s = FakeWsSession(ws)
+        ch, _ = make(s, clock)
+        await ch.async_update(CFG)
+        await settle(lambda: len(ws.timeouts) >= 4)
+        assert not ch._task.done() and ch.connected and len(s.connects) == 1
+        await ch.async_stop()
+    run(main())
+
+
+def test_unexpected_exception_reconnects_with_backoff(caplog):
+    async def main():
+        clock = Clock()
+        ws = FakeWs(clock, reply(), HOLD)
+        s = FakeWsSession(RuntimeError(f"secret {KEY}"), KeyError("x"), ws)
+        ch, _ = make(s, clock)
+        await ch.async_update(CFG)
+        await settle(lambda: ch.connected)
+        assert ch.connected and len(s.connects) == 3 and clock.sleeps == [1.0, 2.0]
+        await ch.async_stop()
+    caplog.set_level(logging.DEBUG, logger="custom_components.volcast.cloud")
+    run(main())
+    assert "RuntimeError" in caplog.text and KEY not in caplog.text
+
+
+def test_dead_task_with_same_cfg_is_restarted():
+    async def main():
+        clock = Clock()
+        s = FakeWsSession(FakeWs(clock, reply(), HOLD), FakeWs(clock, reply(), HOLD))
+        ch, _ = make(s, clock)
+        await ch.async_update(CFG)
+        await settle(lambda: ch.connected)
+        ch._task.cancel()                                        # zadanie zakończone poza nami
+        await settle(lambda: ch._task.done())
+        await ch.async_update(CFG)
+        await settle(lambda: len(s.connects) == 2 and ch.connected)
+        assert len(s.connects) == 2 and ch.connected
+        await ch.async_stop()
+    run(main())
