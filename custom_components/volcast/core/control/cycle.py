@@ -114,6 +114,12 @@ class Telemetry:
     battery_temp_c: float | None
     previous_soc: float | None = None
     previous_soc_gap_s: float | None = None
+    # Moc PV i pobór domu [W] z wiekiem odczytu per klucz; None = brak mapowania albo odczytu.
+    # Świadomie poza `soc_age_s`: opcjonalny czujnik nie może wstrzymać zapisów przez I-9.
+    pv_power_w: float | None = None
+    pv_age_s: float | None = None
+    load_power_w: float | None = None
+    load_age_s: float | None = None
 
 
 @dataclass(frozen=True)

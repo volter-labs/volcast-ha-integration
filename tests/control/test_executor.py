@@ -48,12 +48,13 @@ class Clock:
 
 
 def make(h=None, *, options=None, store=None, verified=True, choice=GW, monkeypatch=None,
-         utc=lambda: NOW + timedelta(seconds=30), clock=None, writer=None):
+         utc=lambda: NOW + timedelta(seconds=30), clock=None, writer=None, mapped=None):
     h = h or goodwe_hass()
     entry = SimpleNamespace(entry_id="e1", options=options if options is not None else {"control_mode": "entities"})
     if monkeypatch is not None:
         monkeypatch.setattr(ex_mod, "control_verified", lambda *_: verified)
-    ex = VolcastExecutor(h, entry, choice=choice, mapped=E if choice and choice.integration_domain else {},
+    ex = VolcastExecutor(h, entry, choice=choice, mapped=(mapped if mapped is not None
+                                                    else E if choice and choice.integration_domain else {}),
                          rated_power_w=8000.0, store=store or ControlStore(h, "e1"),
                          writer=writer or EntityServiceWriter(h), clock=clock or Clock(), utcnow=utc)
     return h, ex
@@ -1526,3 +1527,83 @@ def test_repeated_failed_brake_warns_once(monkeypatch, caplog):
             await ex.async_tick()
     asyncio.run(go())
     assert caplog.text.count("cannot be applied safely") == 1
+
+
+# ── Odczyty PV i poboru domu: wartość i wiek per klucz (osobno od wieku SoC) ──
+
+E_LIVE = {**E, "pv_power_w": "sensor.goodwe_pv_power", "load_power_w": "sensor.goodwe_house_consumption"}
+
+
+def _live_hass(pv="513", load="319", pv_at=None, load_at=None):
+    h = goodwe_hass()
+    h.states.set(E_LIVE["pv_power_w"], pv, {"unit_of_measurement": "W"}, reported=pv_at or NOW)
+    h.states.set(E_LIVE["load_power_w"], load, {"unit_of_measurement": "W"}, reported=load_at or NOW)
+    return h
+
+
+def _capture_tele(monkeypatch):
+    """Przechwytuje `Telemetry` przekazaną do cyklu — prawdziwy cykl działa dalej."""
+    seen = []
+    real = ex_mod.decide_cycle
+
+    def spy(**kw):
+        seen.append(kw["tele"])
+        return real(**kw)
+    monkeypatch.setattr(ex_mod, "decide_cycle", spy)
+    return seen
+
+
+def _tick_live(h, monkeypatch, mapped=E_LIVE):
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=mapped)
+    seen = _capture_tele(monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    return ex, seen[-1]
+
+
+def test_fresh_pv_and_load_reach_telemetry_with_small_age(monkeypatch):
+    _, tele = _tick_live(_live_hass(pv="513", load="319"), monkeypatch)
+    assert tele.pv_power_w == 513.0 and tele.load_power_w == 319.0
+    assert tele.pv_age_s == 30.0 and tele.load_age_s == 30.0     # utc = NOW + 30 s
+    assert tele.soc_age_s == 30.0                                 # wiek SoC bez zmian
+
+
+def test_stale_load_has_large_age_and_soc_age_unchanged(monkeypatch):
+    h = _live_hass(load_at=NOW - timedelta(hours=1))
+    _, tele = _tick_live(h, monkeypatch)
+    assert tele.load_age_s == 3630.0
+    assert tele.pv_age_s == 30.0
+    assert tele.soc_age_s == 30.0
+
+
+def test_unmapped_pv_and_load_have_no_reading_and_no_age(monkeypatch):
+    _, tele = _tick_live(_live_hass(), monkeypatch, mapped=E)
+    assert tele.pv_power_w is None and tele.pv_age_s is None
+    assert tele.load_power_w is None and tele.load_age_s is None
+
+
+@pytest.mark.parametrize("state", ["unavailable", "unknown"])
+def test_unavailable_load_has_no_reading_and_no_age(monkeypatch, state):
+    _, tele = _tick_live(_live_hass(load=state), monkeypatch)
+    assert tele.load_power_w is None and tele.load_age_s is None
+    assert tele.pv_power_w == 513.0 and tele.pv_age_s == 30.0
+
+
+def test_mapped_entity_without_state_has_no_age(monkeypatch):
+    h = goodwe_hass()                                  # encje PV/poboru zmapowane, ale bez stanu
+    _, tele = _tick_live(h, monkeypatch)
+    assert tele.pv_age_s is None and tele.load_age_s is None
+
+
+def test_stale_load_sensor_does_not_trip_guard_i9(monkeypatch):
+    # Opcjonalny czujnik poboru nie wchodzi do wieku stanu: prawdziwy guard I-9 przepuszcza zapis.
+    h = _live_hass(pv="unavailable", load_at=NOW - timedelta(hours=1))
+    ex, tele = _tick_live(h, monkeypatch)
+    assert tele.load_age_s == 3630.0
+    assert ex.last_decision.status == "write"
+    assert "I-9" not in (ex.last_decision.reason or "")
+    assert h.states.get(E["mode"]).state == "sell_power"
+    assert h.states.get(E["power_w"]).state == "2000.0"      # nastawa bez zmian w tym zadaniu

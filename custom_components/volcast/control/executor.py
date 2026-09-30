@@ -77,7 +77,7 @@ import asyncio
 import logging
 import math
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Callable, Mapping
 from zoneinfo import ZoneInfo
@@ -106,6 +106,8 @@ _LOGGER = logging.getLogger(__name__)
 
 RESTORE = "restore"
 _NO_READING = ("unavailable", "unknown", "")
+# Odczyty mocy na żywo z własnym wiekiem (osobno od wieku SoC i guardu I-9).
+_LIVE_KEYS = ("pv_power_w", "load_power_w")
 # Ile razy z rzędu cykl powtarza się po tikach zgłoszonych w jego trakcie.
 _MAX_RERUNS = 2
 # Ile ostatnich obcych zmian trzymamy w atrybutach (lokalnie).
@@ -130,6 +132,15 @@ class _Reading:
     units: dict[str, str | None]
     attrs: dict[str, dict]                # atrybuty encji, także `options` wyboru trybu
     soc_age_s: float
+    # wiek odczytu kluczy mocy na żywo (PV, pobór) — tylko gdy odczyt jest w `readings`
+    live_ages: dict[str, float] = field(default_factory=dict)
+
+    def live(self, key: str) -> tuple[float | None, float | None]:
+        """Wartość i wiek odczytu mocy na żywo; (None, None) bez odczytu."""
+        value = self.readings.get(key)
+        if not isinstance(value, float) or key not in self.live_ages:
+            return None, None
+        return value, self.live_ages[key]
 
     @property
     def foreign_mode(self) -> bool:
@@ -562,6 +573,7 @@ class VolcastExecutor:
         attrs: dict[str, dict] = {}
         soc_state = None
         raw_mode = None
+        states = {}
         for key, eid in self._mapped.items():
             st = self._hass.states.get(eid)
             if st is None:
@@ -573,8 +585,11 @@ class VolcastExecutor:
                 raw_mode = st.state
             if key == "soc":
                 soc_state = st
+            states[key] = st
         readings = normalize_readings(raw, self._profile, self._domain) if self._domain else {}
-        return _Reading(readings, raw_mode, units, attrs, self._age(soc_state, now_utc))
+        # Wiek tylko dla czytelnego odczytu: `unavailable`/`unknown` znika z `readings` → brak wieku.
+        live_ages = {k: self._age(states[k], now_utc) for k in _LIVE_KEYS if k in readings}
+        return _Reading(readings, raw_mode, units, attrs, self._age(soc_state, now_utc), live_ages)
 
     def _age(self, st, now_utc) -> float:
         if st is None:
@@ -619,11 +634,13 @@ class VolcastExecutor:
         soc = soc if isinstance(soc, float) else None
         temp = readings.get("battery_temp_c")
         prev_soc, gap = (self._prev_soc[0], now_mono - self._prev_soc[1]) if self._prev_soc else (None, None)
+        (pv, pv_age), (load, load_age) = rd.live("pv_power_w"), rd.live("load_power_w")
         decision = decide_cycle(
             profile=self._profile, schedule=self.schedule, now_utc=now_utc, now_mono=now_mono,
             tele=Telemetry(soc=soc, soc_age_s=rd.soc_age_s,
                            battery_temp_c=temp if isinstance(temp, float) else None,
-                           previous_soc=prev_soc, previous_soc_gap_s=gap),
+                           previous_soc=prev_soc, previous_soc_gap_s=gap,
+                           pv_power_w=pv, pv_age_s=pv_age, load_power_w=load, load_age_s=load_age),
             limits=Limits(rated_power_w=float(self._rated or 0.0)),
             ents=EntityContext(domain=self._domain or "", mapped=live_map, units=rd.units,
                                attrs=rd.attrs, readings=rd.for_cycle(),
