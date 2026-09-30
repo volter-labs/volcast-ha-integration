@@ -1,6 +1,9 @@
 """Nastawa eksportu slotu sprzedaży liczona z odczytów — parytet z implementacją referencyjną."""
 from __future__ import annotations
 
+import math
+import random
+
 import pytest
 
 from custom_components.volcast.core.engines.sell_xset import SELL_XSET_HYSTERESIS_W, sell_xset
@@ -14,7 +17,7 @@ INF = float("inf")
 
 
 def _num(v):
-    """Wartość z wektora: null → None, napisy "nan"/"inf"/"-inf" → float niefinitywny."""
+    """Wartość z wektora: null → None, napisy "nan"/"inf"/"-inf" → float niefinitny."""
     return float(v) if isinstance(v, str) else v
 
 
@@ -150,6 +153,64 @@ def test_hysteresis_does_not_keep_negative_or_non_finite_previous():
     assert _x(513, 978, 319, limit=1520, prev=-50) == 1172
     assert _x(prev=NAN) == 1300
     assert _x(prev=INF) == 1300
+
+
+def test_hysteresis_does_not_keep_negative_previous_inside_band():
+    # świeża 50, poprzednia −40 mieści się w paśmie histerezy, ale ujemnej nie trzymamy
+    assert _x(300, 100, 350, prev=-40) == 50
+
+
+def test_negative_zero_previous_is_returned_as_positive_zero():
+    got = _x(300, 100, 350, prev=-0.0)
+    assert got == 0
+    assert math.copysign(1.0, got) == 1.0
+
+
+HUGE = 10 ** 400  # int poza zakresem float — float() rzuca OverflowError
+
+
+def test_huge_int_inputs_count_as_non_finite():
+    assert _x(HUGE, 500, 200) == 300
+    assert _x(1000, HUGE, 200, last=400) == 600
+    assert _x(1000, 500, HUGE, last=None) == 0
+    assert _x(1000, None, None, ok=False, last=HUGE) == 0
+    assert _x(limit=HUGE) == 0
+    assert _x(limit=None, rated=HUGE) == 0
+    assert _x(prev=HUGE) == 1300
+    assert _x(1000, 500, 200, prev=-HUGE) == 1300
+
+
+def _ceiling(limit, rated):
+    """Pułap liczony niezależnie od modułu: niefinitny albo niedodatni = 0."""
+    def ok(v):
+        try:
+            f = float(v)
+        except (TypeError, OverflowError):
+            return 0.0
+        return f if math.isfinite(f) and f > 0.0 else 0.0
+    cap = ok(rated)
+    return cap if limit is None else min(cap, ok(limit))
+
+
+def test_invariant_finite_non_negative_and_capped():
+    rnd = random.Random(20260930)
+    special = [None, NAN, INF, -INF, -0.0, 0.0, -1.0, 149.0, 150.0, 151.0, 1e30, -1e30,
+               HUGE, -HUGE]
+
+    def draw():
+        if rnd.random() < 0.4:
+            return rnd.choice(special)
+        return rnd.uniform(-2000.0, 12000.0)
+
+    for _ in range(5000):
+        kw = dict(battery_w=draw(), pv_w=draw(), load_w=draw(),
+                  readings_ok=rnd.random() < 0.7, last_known_load_w=draw(),
+                  export_limit_w=draw(), rated_power_w=draw(), prev_xset_w=draw())
+        got = sell_xset(**kw)
+        cap = _ceiling(kw["export_limit_w"], kw["rated_power_w"])
+        assert math.isfinite(got), kw
+        assert 0.0 <= got <= cap, kw
+        assert math.copysign(1.0, got) == 1.0, kw
 
 
 def test_hysteresis_does_not_keep_nonzero_previous_when_fresh_is_zero():

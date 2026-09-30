@@ -66,7 +66,7 @@ def main(box: Path, exported: Path, sha: str) -> None:
         "frames.json": json.dumps(frames, indent=1) + "\n",
         "plan_live.json": json.dumps(plan, indent=1) + "\n",
     }
-    for name in ("mapper", "guards", "applier"):
+    for name in ("mapper", "guards", "applier", "sell"):
         doc = json.loads((exported / f"{name}.json").read_text())
         doc["source"] = f"reference firmware {sha} ({doc['source']})"
         texts[f"{name}.json"] = json.dumps(doc, indent=0) + "\n"

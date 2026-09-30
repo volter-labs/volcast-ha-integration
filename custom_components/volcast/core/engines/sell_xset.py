@@ -18,12 +18,12 @@ SELL_XSET_HYSTERESIS_W = 150.0
 
 
 def _finite(x: float | None) -> float | None:
-    """Liczba skończona albo `None` (None/NaN/±inf/nie-liczba → brak odczytu)."""
+    """Liczba skończona albo `None` (None/NaN/±inf/nie-liczba/poza zakresem float → brak odczytu)."""
     if x is None:
         return None
     try:
         v = float(x)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return v if math.isfinite(v) else None
 
@@ -48,7 +48,7 @@ def sell_xset(
     """Nastawa eksportu (W) dla slotu sprzedaży.
 
     * odczyty świeże i kompletne: `bateria + PV − dom`;
-    * `readings_ok=False` albo PV/dom brak lub niefinitywny: `bateria − ostatni znany dom`,
+    * `readings_ok=False` albo PV/dom brak lub niefinitny: `bateria − ostatni znany dom`,
       a bez ostatniego znanego domu → 0 (nie eksportujemy w ciemno);
     * moce ujemne / NaN / inf liczą się jak 0;
     * wynik przycięty do `[0, min(limit eksportu, moc znamionowa)]`; limit `None` = brak
@@ -81,5 +81,5 @@ def sell_xset(
     prev = _finite(prev_xset_w)
     if (fresh > 0.0 and prev is not None and 0.0 <= prev <= ceiling
             and abs(fresh - prev) < SELL_XSET_HYSTERESIS_W):
-        return prev
+        return prev + 0.0  # −0.0 z pamięci wołającego oddajemy jako +0.0
     return fresh
