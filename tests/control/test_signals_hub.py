@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from custom_components.volcast.control.signals_hub import SignalsHub
 
 BASE = "https://staging.volcast.app"
@@ -451,5 +453,163 @@ def test_eager_task_factory_and_task_cancelled_before_start_do_not_wedge_refresh
         assert n["c"] == 3
         await hub.async_stop()
         await hub2.async_stop()
+
+    asyncio.run(go())
+
+
+# --- symulacja w czasie wirtualnym: sen i pobrania trwają, aż test przesunie zegar ---
+
+def make_sim(refresh):
+    clock = Clock()
+
+    async def sleep(d):
+        end = clock.t + d
+        while clock.t < end - 1e-9:
+            await asyncio.sleep(0)
+
+    hub = SignalsHub(base_url=BASE, channel=Channel(), live=Live(), refresh=refresh,
+                     monotonic=clock, sleep=sleep)
+    return hub, clock
+
+
+async def until(clock, t):
+    """Przesuwa zegar krokami po 0,5 s aż do `t`, oddając pętli sterowanie po każdym kroku."""
+    while clock.t < t - 1e-9:
+        clock.t += 0.5
+        await settle()
+
+
+def test_pings_during_slow_fetch_coalesce_into_one_more_fetch():
+    async def go():
+        gate = asyncio.Event()
+        starts = []
+        clock_ref = {}
+
+        async def refresh():
+            starts.append(clock_ref["c"].t)
+            if len(starts) == 1:
+                await gate.wait()                   # pierwsze pobranie trwa 12 s
+
+        hub, clock = make_sim(refresh)
+        clock_ref["c"] = clock
+        await hub.request_refresh()
+        await settle()
+        assert starts == [100.0]
+        max_tasks = 0
+        for _ in range(20):                         # 20 pingów rozłożonych na 12 s, z oddaniem pętli
+            clock.t += 0.6
+            await hub.request_refresh()
+            await settle()
+            max_tasks = max(max_tasks, len(hub._tasks))
+        gate.set()
+        await until(clock, clock.t + 10)
+        assert len(starts) == 2                     # jedno dodatkowe pobranie, nie 20
+        assert starts[1] - starts[0] >= 5.0
+        assert max_tasks <= 2                       # pobranie w toku + najwyżej jedno czekające
+        await hub.async_stop()
+
+    asyncio.run(go())
+
+
+def test_fetch_starts_are_at_least_one_window_apart_under_continuous_pings():
+    async def go():
+        starts = []
+        clock_ref = {}
+
+        async def refresh():
+            c = clock_ref["c"]
+            starts.append(c.t)
+            end = c.t + (8.0 if len(starts) % 3 == 1 else 0.5)   # przeplot długich i krótkich pobrań
+            while c.t < end - 1e-9:
+                await asyncio.sleep(0)
+
+        hub, clock = make_sim(refresh)
+        clock_ref["c"] = clock
+        for _ in range(80):                         # ping co 0,5 s przez 40 s
+            await hub.request_refresh()
+            clock.t += 0.5
+            await settle()
+        await until(clock, clock.t + 20)
+        gaps = [b - a for a, b in zip(starts, starts[1:])]
+        assert gaps and min(gaps) >= 5.0 - 1e-9
+        assert starts[-1] <= 100.0 + 40.0 + 8.0 + 1e-9   # po ostatnim pingu co najwyżej jedno pobranie
+        await hub.async_stop()
+
+    asyncio.run(go())
+
+
+def test_two_pings_early_in_a_fetch_give_exactly_one_more_fetch():
+    async def go():
+        gate = asyncio.Event()
+        starts = []
+        clock_ref = {}
+
+        async def refresh():
+            starts.append(clock_ref["c"].t)
+            if len(starts) == 1:
+                await gate.wait()
+
+        hub, clock = make_sim(refresh)
+        clock_ref["c"] = clock
+        await hub.request_refresh()
+        await settle()
+        await until(clock, 101.0)
+        await hub.request_refresh()
+        await settle()
+        await until(clock, 102.0)
+        await hub.request_refresh()
+        await settle()
+        await until(clock, 103.0)
+        gate.set()
+        await until(clock, 115.0)
+        assert starts == [100.0, 105.0]
+        await hub.async_stop()
+
+    asyncio.run(go())
+
+
+def test_task_factory_error_does_not_leave_hub_waiting():
+    async def go():
+        n = {"c": 0}
+
+        async def refresh():
+            n["c"] += 1
+
+        def broken(coro, name):
+            coro.close()
+            raise RuntimeError("no loop")
+
+        loop = asyncio.get_running_loop()
+        hub, _, _ = make(refresh=refresh, task_factory=broken)
+        with pytest.raises(RuntimeError):
+            await hub.request_refresh()
+        hub._task_factory = lambda coro, name: loop.create_task(coro, name=name)
+        await hub.request_refresh()
+        await settle()
+        assert n["c"] == 1
+        await hub.async_stop()
+
+    asyncio.run(go())
+
+
+def test_apply_in_flight_at_stop_does_not_start_live():
+    async def go():
+        gate = asyncio.Event()
+
+        class SlowChannel(Channel):
+            async def async_update(self, cfg):
+                self.calls.append(cfg)
+                await gate.wait()                   # np. czekanie na zamknięcie starego gniazda
+
+        ch, lv = SlowChannel(), Live()
+        hub, _, _ = make(channel=ch, live=lv)
+        pending = asyncio.ensure_future(hub.apply(block()))   # np. odpowiedź telemetrii — nie śledzona
+        await settle()
+        await hub.async_stop()
+        gate.set()
+        await pending
+        assert lv.calls == []                       # spóźnione apply nie wznawia nadawania live
+        await hub.apply(block())
+        assert len(ch.calls) == 1 and lv.calls == []
 
     asyncio.run(go())

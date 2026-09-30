@@ -72,6 +72,8 @@ class SignalsHub:
             await self._channel.async_update(cfg)
         except Exception as err:  # noqa: BLE001 — blok nie może wywrócić planu
             _LOGGER.warning("signals: channel update failed: %s", type(err).__name__)
+        if self._stopped:
+            return          # hub zatrzymany w trakcie zmiany kanału (np. apply z telemetrii) — bez live
         try:
             res = self._live.update(live_for_s)
             if inspect.isawaitable(res):
@@ -87,7 +89,11 @@ class SignalsHub:
             return
         wait = 0.0 if self._last is None else max(0.0, REFRESH_WINDOW_S - (self._mono() - self._last))
         self._waiting, self._waiting_task = True, None
-        task = self._task_factory(self._delayed(wait), "volcast-signals-refresh")
+        try:
+            task = self._task_factory(self._delayed(wait), "volcast-signals-refresh")
+        except BaseException:
+            self._waiting = False   # zadanie nie powstało — nie blokujemy kolejnych żądań
+            raise
         if self._waiting:
             self._waiting_task = task
         if not task.done():
@@ -95,26 +101,33 @@ class SignalsHub:
             task.add_done_callback(self._tasks.discard)
 
     async def _delayed(self, wait: float) -> None:
+        """Czekające pobranie: okno, potem kolejka do blokady — przez cały ten czas zlewa pingi.
+
+        Znacznik „czeka" schodzi dopiero po wzięciu blokady, razem z zapisem początku pobrania
+        (bez `await` pomiędzy). Ping w trakcie pobrania planuje więc co najwyżej JEDNO kolejne,
+        z oknem liczonym od startu bieżącego — dowolnie wiele pingów w długim pobraniu to jedno
+        pobranie po nim, nie wcześniej niż `REFRESH_WINDOW_S` od startu poprzedniego.
+        """
+        waiting = True
         try:
             if wait > 0:
                 await self._sleep(wait)
+            async with self._lock:
+                self._waiting, self._waiting_task, waiting = False, None, False
+                if self._stopped:
+                    return
+                self._last = self._mono()
+                self._refreshing = asyncio.current_task()
+                try:
+                    await self._refresh()
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning("signals: refresh failed: %s", type(err).__name__)
+                finally:
+                    self._refreshing = None
         finally:
-            # zwalniamy miejsce przed pobraniem — kolejne żądanie może zaplanować następne
-            self._waiting, self._waiting_task = False, None
-        await self._run()
-
-    async def _run(self) -> None:
-        async with self._lock:
-            if self._stopped:
-                return
-            self._last = self._mono()
-            self._refreshing = asyncio.current_task()
-            try:
-                await self._refresh()
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("signals: refresh failed: %s", type(err).__name__)
-            finally:
-                self._refreshing = None
+            if waiting:
+                # anulowane w oknie albo w kolejce do blokady — zwalniamy miejsce czekającego
+                self._waiting, self._waiting_task = False, None
 
     def freeze(self) -> None:
         """Synchronicznie: koniec nowych pobrań i `apply`; czekające anulowane, pobranie w toku zostaje."""
