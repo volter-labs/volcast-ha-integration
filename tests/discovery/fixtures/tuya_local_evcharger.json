@@ -1,0 +1,378 @@
+{
+  "_note": "Registry snapshot of a real Tuya local charger. Identifiers, ids and host replaced with placeholders. State values are representative (the registry does not store them); attributes come from the registry.",
+  "config_entries": [
+    {
+      "entry_id": "entry-0001",
+      "domain": "tuya_local",
+      "title": "EV charger",
+      "host": "192.0.2.10"
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-0001",
+      "manufacturer": "Tuya",
+      "model": null,
+      "name": "EV charger",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "tuya_local",
+          "DEVICE0001"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-0001"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "select.ev_charger_charging_operation",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-select_charging_operation",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": null,
+      "unit": null,
+      "translation_key": null,
+      "original_name": "Charging operation",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "options": [
+          "Start charging",
+          "Stop charging",
+          "No operation"
+        ]
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_status",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-sensor_status",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "enum",
+      "unit": null,
+      "translation_key": "status",
+      "original_name": "Status",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": {
+        "options": [
+          "available",
+          "plugged_in",
+          "charging",
+          "waiting_for_authorization",
+          "charged",
+          "waiting",
+          "fault"
+        ]
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_energia",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-sensor_energia",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Energia",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_napiecie",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-sensor_napiecie",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "voltage",
+      "unit": "V",
+      "translation_key": null,
+      "original_name": "Napięcie",
+      "disabled": false,
+      "entity_category": "diagnostic",
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_natezenie_pradu",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-sensor_natezenie_pradu",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "current",
+      "unit": "A",
+      "translation_key": null,
+      "original_name": "Natężenie prądu",
+      "disabled": false,
+      "entity_category": "diagnostic",
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_moc",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-sensor_moc",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "power",
+      "unit": "kW",
+      "translation_key": null,
+      "original_name": "Moc",
+      "disabled": false,
+      "entity_category": "diagnostic",
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_temperatura",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-sensor_temperatura",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "temperature",
+      "unit": "°C",
+      "translation_key": null,
+      "original_name": "Temperatura",
+      "disabled": false,
+      "entity_category": "diagnostic",
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_charging_time",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-sensor_charging_time",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "duration",
+      "unit": "h",
+      "translation_key": null,
+      "original_name": "Charging time",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": null
+    },
+    {
+      "entity_id": "number.ev_charger_charge_current",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-number_charge_current",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "current",
+      "unit": "A",
+      "translation_key": null,
+      "original_name": "Charge current",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "min": 6.0,
+        "max": 16.0,
+        "step": 1.0,
+        "mode": "auto"
+      }
+    },
+    {
+      "entity_id": "number.ev_charger_delay",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-number_delay",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "duration",
+      "unit": "h",
+      "translation_key": null,
+      "original_name": "Delay",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "min": 0.0,
+        "max": 15.0,
+        "step": 1.0,
+        "mode": "auto"
+      }
+    },
+    {
+      "entity_id": "number.ev_charger_charging_duration",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-number_charging_duration",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": null,
+      "unit": "h",
+      "translation_key": null,
+      "original_name": "Charging duration",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "min": 0.0,
+        "max": 15.0,
+        "step": 1.0,
+        "mode": "auto"
+      }
+    },
+    {
+      "entity_id": "binary_sensor.ev_charger_problem",
+      "platform": "tuya_local",
+      "unique_id": "UID0001-binary_sensor_problem",
+      "device_id": "device-0001",
+      "config_entry_id": "entry-0001",
+      "device_class": "problem",
+      "unit": null,
+      "translation_key": null,
+      "original_name": "Problem",
+      "disabled": false,
+      "entity_category": "diagnostic",
+      "capabilities": null
+    }
+  ],
+  "states": [
+    {
+      "entity_id": "select.ev_charger_charging_operation",
+      "state": "No operation",
+      "attributes": {
+        "options": [
+          "Start charging",
+          "Stop charging",
+          "No operation"
+        ],
+        "friendly_name": "EV charger Charging operation"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_status",
+      "state": "charging",
+      "attributes": {
+        "options": [
+          "available",
+          "plugged_in",
+          "charging",
+          "waiting_for_authorization",
+          "charged",
+          "waiting",
+          "fault"
+        ],
+        "device_class": "enum",
+        "friendly_name": "EV charger Status"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_energia",
+      "state": "12.4",
+      "attributes": {
+        "unit_of_measurement": "kWh",
+        "device_class": "energy",
+        "state_class": "total_increasing",
+        "friendly_name": "EV charger Energia"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_napiecie",
+      "state": "231.0",
+      "attributes": {
+        "unit_of_measurement": "V",
+        "device_class": "voltage",
+        "state_class": "measurement",
+        "friendly_name": "EV charger Napięcie"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_natezenie_pradu",
+      "state": "10.0",
+      "attributes": {
+        "unit_of_measurement": "A",
+        "device_class": "current",
+        "state_class": "measurement",
+        "friendly_name": "EV charger Natężenie prądu"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_moc",
+      "state": "2.3",
+      "attributes": {
+        "unit_of_measurement": "kW",
+        "device_class": "power",
+        "state_class": "measurement",
+        "friendly_name": "EV charger Moc"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_temperatura",
+      "state": "28.0",
+      "attributes": {
+        "unit_of_measurement": "°C",
+        "device_class": "temperature",
+        "state_class": "measurement",
+        "friendly_name": "EV charger Temperatura"
+      }
+    },
+    {
+      "entity_id": "sensor.ev_charger_charging_time",
+      "state": "1.2",
+      "attributes": {
+        "unit_of_measurement": "h",
+        "device_class": "duration",
+        "friendly_name": "EV charger Charging time"
+      }
+    },
+    {
+      "entity_id": "number.ev_charger_charge_current",
+      "state": "10.0",
+      "attributes": {
+        "min": 6.0,
+        "max": 16.0,
+        "step": 1.0,
+        "mode": "auto",
+        "unit_of_measurement": "A",
+        "device_class": "current",
+        "friendly_name": "EV charger Charge current"
+      }
+    },
+    {
+      "entity_id": "number.ev_charger_delay",
+      "state": "0.0",
+      "attributes": {
+        "min": 0.0,
+        "max": 15.0,
+        "step": 1.0,
+        "mode": "auto",
+        "unit_of_measurement": "h",
+        "device_class": "duration",
+        "friendly_name": "EV charger Delay"
+      }
+    },
+    {
+      "entity_id": "number.ev_charger_charging_duration",
+      "state": "0.0",
+      "attributes": {
+        "min": 0.0,
+        "max": 15.0,
+        "step": 1.0,
+        "mode": "auto",
+        "unit_of_measurement": "h",
+        "friendly_name": "EV charger Charging duration"
+      }
+    },
+    {
+      "entity_id": "binary_sensor.ev_charger_problem",
+      "state": "off",
+      "attributes": {
+        "device_class": "problem",
+        "friendly_name": "EV charger Problem"
+      }
+    }
+  ]
+}

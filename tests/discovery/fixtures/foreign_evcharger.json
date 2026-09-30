@@ -1,0 +1,207 @@
+{
+  "_note": "Hand-built snapshot modelled on the go-e Charger integration entity set; not exported from a live system.",
+  "config_entries": [
+    {
+      "entry_id": "entry-0002",
+      "domain": "go_echarger",
+      "title": "go-e Charger",
+      "host": "192.0.2.20"
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-0002",
+      "manufacturer": "go-e",
+      "model": "HOME",
+      "name": "go-e Charger",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "go_echarger",
+          "GOE0001"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-0002"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "sensor.go_e_charger_status",
+      "platform": "go_echarger",
+      "unique_id": "GOE0001-car_status",
+      "device_id": "device-0002",
+      "config_entry_id": "entry-0002",
+      "device_class": "enum",
+      "unit": null,
+      "translation_key": "car_status",
+      "original_name": "Status",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": {
+        "options": [
+          "idle",
+          "charging",
+          "wait_car",
+          "complete",
+          "error"
+        ]
+      }
+    },
+    {
+      "entity_id": "sensor.go_e_charger_charging_power",
+      "platform": "go_echarger",
+      "unique_id": "GOE0001-nrg_total",
+      "device_id": "device-0002",
+      "config_entry_id": "entry-0002",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Charging power",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.go_e_charger_energy_total",
+      "platform": "go_echarger",
+      "unique_id": "GOE0001-eto",
+      "device_id": "device-0002",
+      "config_entry_id": "entry-0002",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Energy total",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "number.go_e_charger_max_current",
+      "platform": "go_echarger",
+      "unique_id": "GOE0001-amp",
+      "device_id": "device-0002",
+      "config_entry_id": "entry-0002",
+      "device_class": "current",
+      "unit": "A",
+      "translation_key": null,
+      "original_name": "Max current",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "min": 6,
+        "max": 16,
+        "step": 1,
+        "mode": "auto"
+      }
+    },
+    {
+      "entity_id": "select.go_e_charger_transaction",
+      "platform": "go_echarger",
+      "unique_id": "GOE0001-trx",
+      "device_id": "device-0002",
+      "config_entry_id": "entry-0002",
+      "device_class": null,
+      "unit": null,
+      "translation_key": null,
+      "original_name": "Transaction",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "options": [
+          "Without authentication",
+          "Authenticate by RFID"
+        ]
+      }
+    },
+    {
+      "entity_id": "switch.go_e_charger_charging_allowed",
+      "platform": "go_echarger",
+      "unique_id": "GOE0001-alw",
+      "device_id": "device-0002",
+      "config_entry_id": "entry-0002",
+      "device_class": null,
+      "unit": null,
+      "translation_key": null,
+      "original_name": "Charging allowed",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": null
+    }
+  ],
+  "states": [
+    {
+      "entity_id": "sensor.go_e_charger_status",
+      "state": "charging",
+      "attributes": {
+        "options": [
+          "idle",
+          "charging",
+          "wait_car",
+          "complete",
+          "error"
+        ],
+        "device_class": "enum",
+        "friendly_name": "go-e Charger Status"
+      }
+    },
+    {
+      "entity_id": "sensor.go_e_charger_charging_power",
+      "state": "4100",
+      "attributes": {
+        "unit_of_measurement": "W",
+        "device_class": "power",
+        "state_class": "measurement",
+        "friendly_name": "go-e Charger Charging power"
+      }
+    },
+    {
+      "entity_id": "sensor.go_e_charger_energy_total",
+      "state": "310.5",
+      "attributes": {
+        "unit_of_measurement": "kWh",
+        "device_class": "energy",
+        "state_class": "total_increasing",
+        "friendly_name": "go-e Charger Energy total"
+      }
+    },
+    {
+      "entity_id": "number.go_e_charger_max_current",
+      "state": "16",
+      "attributes": {
+        "min": 6,
+        "max": 16,
+        "step": 1,
+        "mode": "auto",
+        "unit_of_measurement": "A",
+        "device_class": "current",
+        "friendly_name": "go-e Charger Max current"
+      }
+    },
+    {
+      "entity_id": "select.go_e_charger_transaction",
+      "state": "Without authentication",
+      "attributes": {
+        "options": [
+          "Without authentication",
+          "Authenticate by RFID"
+        ],
+        "friendly_name": "go-e Charger Transaction"
+      }
+    },
+    {
+      "entity_id": "switch.go_e_charger_charging_allowed",
+      "state": "on",
+      "attributes": {
+        "friendly_name": "go-e Charger Charging allowed"
+      }
+    }
+  ]
+}

@@ -1,0 +1,146 @@
+{
+  "_note": "Hand-built negative case: a dimmer with number entities and no charging status role.",
+  "config_entries": [
+    {
+      "entry_id": "entry-0003",
+      "domain": "tuya_local",
+      "title": "Dimmer",
+      "host": "192.0.2.30"
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-0003",
+      "manufacturer": "Tuya",
+      "model": null,
+      "name": "Dimmer",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "tuya_local",
+          "DEVICE0003"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-0003"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "light.dimmer_light",
+      "platform": "tuya_local",
+      "unique_id": "DIM0001-light",
+      "device_id": "device-0003",
+      "config_entry_id": "entry-0003",
+      "device_class": null,
+      "unit": null,
+      "translation_key": null,
+      "original_name": "Light",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": null
+    },
+    {
+      "entity_id": "number.dimmer_delay",
+      "platform": "tuya_local",
+      "unique_id": "DIM0001-number_delay",
+      "device_id": "device-0003",
+      "config_entry_id": "entry-0003",
+      "device_class": "duration",
+      "unit": "h",
+      "translation_key": null,
+      "original_name": "Delay",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "min": 0.0,
+        "max": 15.0,
+        "step": 1.0,
+        "mode": "auto"
+      }
+    },
+    {
+      "entity_id": "number.dimmer_fade_time",
+      "platform": "tuya_local",
+      "unique_id": "DIM0001-number_fade",
+      "device_id": "device-0003",
+      "config_entry_id": "entry-0003",
+      "device_class": null,
+      "unit": "s",
+      "translation_key": null,
+      "original_name": "Fade time",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "min": 0,
+        "max": 10,
+        "step": 1,
+        "mode": "auto"
+      }
+    },
+    {
+      "entity_id": "sensor.dimmer_power",
+      "platform": "tuya_local",
+      "unique_id": "DIM0001-sensor_power",
+      "device_id": "device-0003",
+      "config_entry_id": "entry-0003",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Power",
+      "disabled": false,
+      "entity_category": null,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    }
+  ],
+  "states": [
+    {
+      "entity_id": "light.dimmer_light",
+      "state": "on",
+      "attributes": {
+        "brightness": 128,
+        "friendly_name": "Dimmer Light"
+      }
+    },
+    {
+      "entity_id": "number.dimmer_delay",
+      "state": "0.0",
+      "attributes": {
+        "min": 0.0,
+        "max": 15.0,
+        "step": 1.0,
+        "mode": "auto",
+        "unit_of_measurement": "h",
+        "device_class": "duration",
+        "friendly_name": "Dimmer Delay"
+      }
+    },
+    {
+      "entity_id": "number.dimmer_fade_time",
+      "state": "2",
+      "attributes": {
+        "min": 0,
+        "max": 10,
+        "step": 1,
+        "mode": "auto",
+        "unit_of_measurement": "s",
+        "friendly_name": "Dimmer Fade time"
+      }
+    },
+    {
+      "entity_id": "sensor.dimmer_power",
+      "state": "12.0",
+      "attributes": {
+        "unit_of_measurement": "W",
+        "device_class": "power",
+        "state_class": "measurement",
+        "friendly_name": "Dimmer Power"
+      }
+    }
+  ]
+}
