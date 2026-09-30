@@ -418,15 +418,15 @@ def test_loads_warning_rearms_after_recovery(monkeypatch, caplog):
 # ── sygnały: cechy, stan kanału, odpowiedź, odczyt na żywo ─────────────────
 
 
-def test_driver_declares_signal_features_in_every_variant():
+def test_driver_declares_only_live_feature_in_every_variant():
     for options in ({"control_mode": "entities"}, None):
         h, cloud = goodwe_hass(), Cloud()
         asyncio.run(sender(h, cloud, options=options).async_flush())
-        assert cloud.sent[0]["driver"]["features"] == ["signals", "live"]
+        assert cloud.sent[0]["driver"]["features"] == ["live"]
     from .test_telemetry_direct import _sender
     s, c = _sender(_direct_conn())
     asyncio.run(s.async_flush())
-    assert c.sent[0]["driver"]["access"] == "direct" and c.sent[0]["driver"]["features"] == ["signals", "live"]
+    assert c.sent[0]["driver"]["access"] == "direct" and c.sent[0]["driver"]["features"] == ["live"]
 
 
 def _direct_conn():

@@ -53,8 +53,11 @@ TELEMETRY_FIELDS = {
     "pv_energy_total_kwh": "pv_energy_total_kwh", "grid_import_total_kwh": "grid_import_total_kwh",
     "grid_export_total_kwh": "grid_export_total_kwh",
 }
-# Cechy integracji deklarowane chmurze w bloku `driver` (zamknięty słownik kontraktu sygnałów).
-DRIVER_FEATURES = ("signals", "live")
+# Cechy integracji deklarowane chmurze w bloku `driver` (zamknięty słownik kontraktu sygnałów;
+# chmura przyjmuje dowolny jego podzbiór). `signals` w kontrakcie znaczy także obsługę wznowienia
+# (`resume_requested_at`) — deklarujemy ją dopiero razem z tą obsługą, inaczej aplikacja pokazałaby
+# „Wznów”, którego HA nigdy nie wykona.
+DRIVER_FEATURES = ("live",)
 
 
 def driver_block(*, choice: ProfileChoice | None, control_mode: str | None, mapped_keys: Iterable[str],
