@@ -100,3 +100,48 @@ def test_label_falls_back_to_none_and_cap_at_four():
     r = _reader([{"device_id": f"d{i}", "roles": {}} for i in range(6)], FakeStates())
     out = r.read()
     assert len(out) == 4 and out[0]["label"] is None
+
+
+def test_milli_units_are_unknown_not_mega():
+    e = _one(_states(power=("3", "mW"), energy=("500", "mWh")))
+    assert "power_w" not in e and e["energy_kwh"] is None
+
+
+def test_unit_case_is_exact_for_supported_units():
+    e = _one(_states(power=("2", "kW"), energy=("3", "MWh")))
+    assert e["power_w"] == 2000.0 and e["energy_kwh"] == 3000.0
+    e = _one(_states(power=("5", "W"), energy=("500", "Wh")))
+    assert e["power_w"] == 5.0 and e["energy_kwh"] == 0.5
+    assert _one(_states(power=("1", "GW")))["power_w"] == 1e9
+    assert _one(_states(energy=("2", "kWh")))["energy_kwh"] == 2.0
+
+
+def test_negative_power_is_null():
+    assert _one(_states(power=("-3.5", "kW")))["power_w"] is None
+
+
+def test_setpoint_with_unavailable_value_keeps_null_value():
+    e = _one(_states(setpoint=("unavailable", {"unit_of_measurement": "A", "min": 6, "max": 32, "step": 1})))
+    assert e["setpoint"] == {"unit": "A", "value": None, "min": 6.0, "max": 32.0, "step": 1.0}
+
+
+def test_unavailable_status_keeps_options():
+    e = _one(_states(status="unavailable", options=["available", "charging"]))
+    assert e["status_raw"] == "unavailable" and e["status_options"] == ["available", "charging"]
+
+
+def test_one_broken_charger_does_not_drop_the_rest(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.WARNING, logger="custom_components.volcast.control")
+    r = _reader([{"device_id": "bad", "roles": {}}, {"device_id": "ok", "label": "B", "roles": {}}], FakeStates())
+    real = LoadsReader._entry_for
+
+    def flaky(self, key, charger):
+        if key == "bad":
+            raise RuntimeError("sensor.secret")
+        return real(self, key, charger)
+    monkeypatch.setattr(LoadsReader, "_entry_for", flaky)
+    assert [e["key"] for e in r.read()] == ["ok"]
+    assert [e["key"] for e in r.read()] == ["ok"]
+    warns = [x for x in caplog.records if x.levelno == logging.WARNING]
+    assert len(warns) == 1 and "secret" not in caplog.text and "RuntimeError" in caplog.text

@@ -7,13 +7,18 @@ jednostek (moc do W, energia do kWh, nastawa do A albo W). Nieznana jednostka ni
 from __future__ import annotations
 
 import math
+import logging
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 _UNAVAILABLE = ("unavailable", "unknown")
 _MAX_LOADS = 4
-_POWER_TO_W = {"w": 1.0, "kw": 1e3, "mw": 1e6}
-_ENERGY_TO_KWH = {"wh": 1e-3, "kwh": 1.0, "mwh": 1e3}
-_SETPOINT_UNITS = {"a": ("A", 1.0), "w": ("W", 1.0), "kw": ("W", 1e3)}
+# Jednostki dokładnie w zapisie HA (wielkość liter ma znaczenie: `mW` to nie `MW`). Wszystko poza
+# tą listą, także `mW` i `mWh`, jest jednostką nieznaną: pole pominięte albo null, bez zgadywania.
+_POWER_TO_W = {"W": 1.0, "kW": 1e3, "MW": 1e6, "GW": 1e9, "TW": 1e12}
+_ENERGY_TO_KWH = {"Wh": 1e-3, "kWh": 1.0, "MWh": 1e3, "GWh": 1e6, "TWh": 1e9}
+_SETPOINT_UNITS = {"A": ("A", 1.0), "W": ("W", 1.0), "kW": ("W", 1e3)}
 
 
 def _num(v) -> float | None:
@@ -28,12 +33,13 @@ def _num(v) -> float | None:
 
 def _unit(state) -> str | None:
     u = state.attributes.get("unit_of_measurement")
-    return u.strip().lower() if isinstance(u, str) else None
+    return u.strip() if isinstance(u, str) else None
 
 
 class LoadsReader:
     def __init__(self, hass, entry) -> None:
         self._hass, self._entry = hass, entry
+        self._warned = False
 
     def read(self) -> list[dict] | None:
         """Wpisy bloku `loads`; None, gdy nie ma potwierdzonej ładowarki."""
@@ -42,6 +48,7 @@ class LoadsReader:
             return None
         out: list[dict] = []
         seen: set[str] = set()
+        failed = False
         for c in saved:
             if not isinstance(c, dict):
                 continue
@@ -49,9 +56,17 @@ class LoadsReader:
             if not key or key in seen:
                 continue
             seen.add(key)
-            out.append(self._entry_for(str(key), c))
+            try:
+                out.append(self._entry_for(str(key), c))
+            except Exception as err:  # noqa: BLE001 — błąd jednej ładowarki nie gubi reszty bloku
+                failed = True
+                if not self._warned:
+                    self._warned = True
+                    _LOGGER.warning("Volcast EV charger readout skipped one charger (%s)", type(err).__name__)
             if len(out) >= _MAX_LOADS:
                 break
+        if not failed:
+            self._warned = False
         return out or None
 
     def _state(self, roles: dict, role: str):
@@ -69,8 +84,9 @@ class LoadsReader:
             "status_options": [str(o) for o in options] if isinstance(options, (list, tuple)) else None,
         }
         power = self._scaled(self._state(roles, "power"), _POWER_TO_W)
+        # Ujemna moc (przepływ wsteczny) nie jest zerem: idzie null, nie przycięcie.
         if power is not None:
-            entry["power_w"] = max(0.0, round(power, 3))
+            entry["power_w"] = round(power, 3) if power >= 0 else None
         energy = self._scaled(self._state(roles, "energy"), _ENERGY_TO_KWH)
         entry["energy_kwh"] = round(energy, 6) if energy is not None else None
         entry["setpoint"] = self._setpoint(self._state(roles, "setpoint"))
