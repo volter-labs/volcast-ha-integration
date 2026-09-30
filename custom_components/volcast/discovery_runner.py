@@ -78,6 +78,12 @@ def _host(data: Any) -> str | None:
     return None
 
 
+def _capabilities(entry: Any) -> dict[str, Any] | None:
+    """Kopia capabilities wpisu rejestru encji (w HA to mapowanie tylko do odczytu)."""
+    raw = getattr(entry, "capabilities", None)
+    return dict(raw) if raw else None
+
+
 class DiscoveryRunner:
     """Jeden przebieg wykrywania na żądanie; przechowuje ostatni raport."""
 
@@ -215,6 +221,9 @@ class DiscoveryRunner:
                 unit=e.unit_of_measurement,
                 translation_key=getattr(e, "translation_key", None),
                 original_name=e.original_name, disabled=e.disabled_by is not None,
+                # options/min/max/step z rejestru — klasyfikacja ładowarek działa bez stanów;
+                # raport do chmury ich nie serializuje (pola wybierane jawnie)
+                capabilities=_capabilities(e),
             )
             for e in er.async_get(self.hass).entities.values()
             if e.device_id not in skipped_devices

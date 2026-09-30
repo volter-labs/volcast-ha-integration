@@ -370,3 +370,33 @@ async def test_serial_of_non_inverter_energy_device_masked(make_hass):
     assert [s["entity_id"] for s in rep["energy_sensors"]] == [
         "sensor.envoy_<SN>_lifetime_energy_production"]
     assert sn not in str(rep)
+
+
+async def test_entity_capabilities_reach_snapshot_and_charger_is_found(make_hass):
+    # rejestr encji niesie options/min/max/step; runner klasyfikuje bez stanów
+    dev = _device(id="c1", manufacturer="Tuya", model=None, name="EV charger",
+                  serial_number=None, identifiers={("tuya_local", "DEV1")},
+                  config_entries={"t1"})
+    common = dict(platform="tuya_local", device_id="c1", config_entry_id="t1",
+                  original_device_class=None, translation_key=None)
+    status = _entity(entity_id="sensor.ev_charger_status", unique_id="u-status",
+                     device_class="enum", unit_of_measurement=None, original_name="Status",
+                     capabilities={"options": ["available", "plugged_in", "charging"]}, **common)
+    current = _entity(entity_id="number.ev_charger_charge_current", unique_id="u-current",
+                      device_class="current", unit_of_measurement="A",
+                      original_name="Charge current",
+                      capabilities={"min": 6.0, "max": 16.0, "step": 1.0, "cap_marker": "zz9"},
+                      **common)
+    entry = SimpleNamespace(entry_id="t1", domain="tuya_local", title="EV charger", data={})
+    hass = make_hass(devices=[dev], entities=[status, current], entries=[entry],
+                     components={"recorder"})
+    with _ok_probe(), patch.object(dr_mod, "build_report", wraps=dr_mod.build_report) as br:
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    chargers = br.call_args.kwargs["classification"].chargers
+    assert [f.device_id for f in chargers] == ["c1"]
+    sp = chargers[0].roles["setpoint"]
+    assert (sp.min, sp.max, sp.step) == (6.0, 16.0, 1.0)
+    assert "plugged_in" in chargers[0].roles["status"].options
+    # raport do chmury serializuje pola jawnie: bez capabilities i bez sekcji ładowarek
+    assert "cap_marker" not in str(rep) and "capabilities" not in str(rep)
+    assert "chargers" not in rep
