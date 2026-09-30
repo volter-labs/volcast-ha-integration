@@ -6,6 +6,9 @@ Czyste funkcje, bez importów HA. Klasyfikator tylko wskazuje encje pełniące r
 Znane ograniczenie: status musi mieć listę `options` (sensor enum) albo być czujnikiem
 wtyczki (binary_sensor, device_class plug). Tekstowy sensor statusu bez `options` nie
 jest wykrywany — taką rolę użytkownik wskazuje sam przy potwierdzaniu ładowarki.
+Opcje statusu dzielimy na słowa tylko po znakach innych niż litery/cyfry, więc zbiór w
+CamelCase ("SuspendedEV", "Charging", "Available") bez osobnego stanu złącza w rodzaju
+"Preparing" też nie daje statusu ("SuspendedEV" to jedno słowo).
 """
 from __future__ import annotations
 
@@ -38,14 +41,20 @@ def _tokens(text: str) -> list[str]:
     return [t for t in _TOKEN_RE.split(text.lower()) if t]
 
 
-def _text(e: EntitySnap) -> str:
-    return f"{e.entity_id} {e.unique_id} {e.original_name or ''} {e.translation_key or ''}"
+def _slug(text: str) -> str:
+    return "_".join(_tokens(text))
 
 
-def _has(e: EntitySnap, hints: tuple[str, ...], skip: frozenset[str]) -> bool:
-    # początek słowa, nie podciąg: "restart" to nie "start", "discharge" to nie "charg";
-    # `skip` to słowa nazwy urządzenia — slug "ev_charger" jest w każdym entity_id
-    return any(t.startswith(hints) for t in _tokens(_text(e)) if t not in skip)
+def _text(e: EntitySnap, prefix: str) -> str:
+    # entity_id zaczyna się od slugu nazwy urządzenia ("ev_charger_child_lock") — zdejmujemy
+    # tylko ten prefiks; nazwa encji i translation_key liczą się w całości
+    object_id = e.entity_id.split(".", 1)[-1].removeprefix(prefix)
+    return f"{object_id} {e.unique_id} {e.original_name or ''} {e.translation_key or ''}"
+
+
+def _has(e: EntitySnap, hints: tuple[str, ...], prefix: str) -> bool:
+    # początek słowa, nie podciąg: "restart" to nie "start", "discharge" to nie "charg"
+    return any(t.startswith(hints) for t in _tokens(_text(e, prefix)))
 
 
 def _kind(e: EntitySnap) -> str:
@@ -100,28 +109,28 @@ def _connector_option(options: tuple[str, ...]) -> bool:
 
 
 def _pick(cands: list[EntitySnap], hints: tuple[str, ...],
-          skip: frozenset[str]) -> EntitySnap | None:
+          prefix: str) -> EntitySnap | None:
     # pierwszeństwo encji z podpowiedzią w nazwie, potem stabilnie po entity_id
     if not cands:
         return None
-    return sorted(cands, key=lambda e: (not _has(e, hints, skip), e.entity_id))[0]
+    return sorted(cands, key=lambda e: (not _has(e, hints, prefix), e.entity_id))[0]
 
 
 def _status(ents: list[EntitySnap], states: dict[str, StateSnap],
-            skip: frozenset[str]) -> ChargerRole | None:
+            prefix: str) -> ChargerRole | None:
     enums = [e for e in ents if _kind(e) == "sensor"
              and _any_option(_options(e, states), _CHARGE_PREFIXES)
              and _connector_option(_options(e, states))]
-    best = _pick(enums, _STATUS_HINTS, skip)
+    best = _pick(enums, _STATUS_HINTS, prefix)
     if best is not None:
         return ChargerRole(best.entity_id, "sensor", options=_options(best, states))
     plugs = [e for e in ents if _kind(e) == "binary_sensor" and _device_class(e, states) == "plug"]
-    best = _pick(plugs, _STATUS_HINTS, skip)
+    best = _pick(plugs, _STATUS_HINTS, prefix)
     return ChargerRole(best.entity_id, "binary_sensor") if best is not None else None
 
 
 def _setpoint(ents: list[EntitySnap], states: dict[str, StateSnap],
-              skip: frozenset[str]) -> ChargerRole | None:
+              prefix: str) -> ChargerRole | None:
     cands: list[tuple[EntitySnap, str, float, float, float | None]] = []
     for e in ents:
         unit = _unit(e, states)
@@ -131,7 +140,7 @@ def _setpoint(ents: list[EntitySnap], states: dict[str, StateSnap],
         if lo is None or hi is None or not 0 <= lo < hi <= _SETPOINT_MAX[unit]:
             continue
         cands.append((e, unit, lo, hi, _num(_attr(e, states, "step"))))
-    best = _pick([c[0] for c in cands], _SETPOINT_HINTS, skip)
+    best = _pick([c[0] for c in cands], _SETPOINT_HINTS, prefix)
     if best is None:
         return None
     _, unit, lo, hi, step = next(c for c in cands if c[0] is best)
@@ -139,28 +148,28 @@ def _setpoint(ents: list[EntitySnap], states: dict[str, StateSnap],
 
 
 def _start_stop(ents: list[EntitySnap], states: dict[str, StateSnap],
-                skip: frozenset[str]) -> dict[str, ChargerRole]:
-    switch = _pick([e for e in ents if _kind(e) == "switch" and _has(e, _SWITCH_HINTS, skip)],
-                   _CHARGE_PREFIXES, skip)
+                prefix: str) -> dict[str, ChargerRole]:
+    switch = _pick([e for e in ents if _kind(e) == "switch" and _has(e, _SWITCH_HINTS, prefix)],
+                   _CHARGE_PREFIXES, prefix)
     if switch is not None:
         return {"start_stop": ChargerRole(switch.entity_id, "switch")}
     selects = [e for e in ents if _kind(e) == "select"
                and _any_option(_options(e, states), _START_HINTS)
                and _any_option(_options(e, states), _STOP_HINTS)]
-    select = _pick(selects, _CHARGE_PREFIXES, skip)
+    select = _pick(selects, _CHARGE_PREFIXES, prefix)
     if select is not None:
         return {"start_stop": ChargerRole(select.entity_id, "select",
                                           options=_options(select, states))}
     buttons = [e for e in ents if _kind(e) == "button"]
-    start = _pick([e for e in buttons if _has(e, _START_HINTS, skip)], _CHARGE_PREFIXES, skip)
-    stop = _pick([e for e in buttons if _has(e, _STOP_HINTS, skip)], _CHARGE_PREFIXES, skip)
+    start = _pick([e for e in buttons if _has(e, _START_HINTS, prefix)], _CHARGE_PREFIXES, prefix)
+    stop = _pick([e for e in buttons if _has(e, _STOP_HINTS, prefix)], _CHARGE_PREFIXES, prefix)
     if start is not None and stop is not None and start is not stop:
         return {"start": ChargerRole(start.entity_id, "button"),
                 "stop": ChargerRole(stop.entity_id, "button")}
     return {}
 
 
-def _measure(ents: list[EntitySnap], states: dict[str, StateSnap], skip: frozenset[str],
+def _measure(ents: list[EntitySnap], states: dict[str, StateSnap], prefix: str,
              device_class: str, units: tuple[str, ...], prefer_total: bool) -> ChargerRole | None:
     cands = [e for e in ents if _kind(e) == "sensor"
              and (_device_class(e, states) == device_class or _unit(e, states) in units)]
@@ -169,7 +178,7 @@ def _measure(ents: list[EntitySnap], states: dict[str, StateSnap], skip: frozens
 
     def key(e: EntitySnap) -> tuple[bool, bool, str]:
         total = _attr(e, states, "state_class") in ("total", "total_increasing")
-        return (prefer_total and not total, not _has(e, _CHARGE_PREFIXES, skip), e.entity_id)
+        return (prefer_total and not total, not _has(e, _CHARGE_PREFIXES, prefix), e.entity_id)
 
     best = sorted(cands, key=key)[0]
     return ChargerRole(best.entity_id, "sensor", unit=_unit(best, states))
@@ -184,22 +193,23 @@ def _confidence(status: ChargerRole, missing: tuple[str, ...]) -> str:
 
 def _finding(dev: DeviceSnap, ents: list[EntitySnap],
              states: dict[str, StateSnap]) -> ChargerFinding | None:
-    skip = frozenset(_tokens(dev.name or ""))
-    status = _status(ents, states, skip)
+    slug = _slug(dev.name or "")
+    prefix = f"{slug}_" if slug else ""
+    status = _status(ents, states, prefix)
     if status is None:
         return None
     roles: dict[str, ChargerRole] = {"status": status}
-    setpoint = _setpoint(ents, states, skip)
+    setpoint = _setpoint(ents, states, prefix)
     if setpoint is not None:
         roles["setpoint"] = setpoint
-    roles.update(_start_stop(ents, states, skip))
+    roles.update(_start_stop(ents, states, prefix))
     has_control = "setpoint" in roles or "start_stop" in roles or "start" in roles
     if not has_control:
         return None
-    power = _measure(ents, states, skip, "power", ("W", "kW"), prefer_total=False)
+    power = _measure(ents, states, prefix, "power", ("W", "kW"), prefer_total=False)
     if power is not None:
         roles["power"] = power
-    energy = _measure(ents, states, skip, "energy", ("Wh", "kWh", "MWh"), prefer_total=True)
+    energy = _measure(ents, states, prefix, "energy", ("Wh", "kWh", "MWh"), prefer_total=True)
     if energy is not None:
         roles["energy"] = energy
     present = set(roles) | ({"start_stop"} if "start" in roles else set())

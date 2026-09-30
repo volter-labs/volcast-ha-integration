@@ -2,6 +2,8 @@ import importlib
 import json
 from pathlib import Path
 
+import pytest
+
 from custom_components.volcast.core.discovery.charger import classify_chargers
 from custom_components.volcast.core.discovery.classify import classify
 from custom_components.volcast.core.discovery.models import (
@@ -109,8 +111,9 @@ def _dev(id="d1", name="Box"):
                       config_entry_ids=("e1",))
 
 
-def _ent(eid, device_class=None, unit=None, caps=None, disabled=False, name=None, device="d1"):
-    return EntitySnap(entity_id=eid, platform="p", unique_id=eid, device_id=device,
+def _ent(eid, device_class=None, unit=None, caps=None, disabled=False, name=None, device="d1",
+         uid=None):
+    return EntitySnap(entity_id=eid, platform="p", unique_id=uid or eid, device_id=device,
                       config_entry_id="e1", device_class=device_class, unit=unit,
                       translation_key=None, original_name=name, disabled=disabled,
                       capabilities=caps)
@@ -262,3 +265,18 @@ def test_package_exports_charger_api():
     from custom_components.volcast.core import discovery
     assert {"classify_chargers", "ChargerFinding", "ChargerRole"} <= set(discovery.__all__)
     assert discovery.classify_chargers is classify_chargers
+
+
+@pytest.mark.parametrize("dev_name, eid, name, with_setpoint", [
+    ("Charging station", "switch.charging_station_charging", "Charging", False),
+    ("Charger", "switch.charger_charger", "Charger", False),
+    ("Charge Point", "switch.charge_point_charge_control", "Charge control", True),
+    ("Wallbox Charge", "switch.wallbox_charge_charge", "Charge", True),
+])
+def test_hint_word_in_device_name_still_matches_entity_name(dev_name, eid, name, with_setpoint):
+    # nazwa urządzenia zdejmowana tylko jako prefiks entity_id; nazwa encji liczy się w całości
+    sw = _ent(eid, name=name, uid="u-switch")
+    ents = [_STATUS, sw] + ([_SETPOINT] if with_setpoint else [])
+    found = classify_chargers([_dev(name=dev_name)], ents, {})
+    assert len(found) == 1
+    assert found[0].roles["start_stop"].entity_id == eid
