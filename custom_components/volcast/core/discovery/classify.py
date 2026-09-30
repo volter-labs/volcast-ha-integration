@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 
+from .charger import classify_chargers
 from .known import (INVERTER_DOMAINS, INVERTER_MANUFACTURERS, LOAD_HINTS,
                     MAX_ENERGY_CANDIDATES, PRICE_PLATFORMS)
 from .models import (Classification, ConfigEntrySnap, DeviceSnap, EntitySnap,
@@ -80,4 +81,5 @@ def classify(
     energy = sorted((e for e in entities if _energy_like(e, states)),
                     key=lambda e: (_load_score(e), e.entity_id))[:MAX_ENERGY_CANDIDATES]
     return Classification(inverters=list(findings.values()), price_entities=prices,
-                          energy_candidates=energy)
+                          energy_candidates=energy,
+                          chargers=classify_chargers(devices, entities, states))
