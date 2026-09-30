@@ -45,7 +45,12 @@ _JITTER = 0.2
 # Połączenie uznajemy za zdrowe (reset backoffu) dopiero po odpowiedzi na heartbeat
 # albo po tylu sekundach od join — krótko żyjący join nie może zapętlić szybkiego łączenia.
 _STABLE_S = 30.0
-_WS_TIMEOUT = aiohttp.ClientWSTimeout(ws_receive=None, ws_close=10.0)
+_WS_CLOSE_TIMEOUT_S = 10.0
+# `ClientWSTimeout` jest od aiohttp 3.11 (HA 2024.12). Starsze (wspierane HA od 2024.4) biorą
+# `timeout: float` = czas zamknięcia, a `receive_timeout` i tak domyślnie None — import modułu
+# nie może rzucać na starym aiohttp, bo pociągnąłby za sobą całą integrację.
+_WS_TIMEOUT: Any = (aiohttp.ClientWSTimeout(ws_receive=None, ws_close=_WS_CLOSE_TIMEOUT_S)
+                    if hasattr(aiohttp, "ClientWSTimeout") else _WS_CLOSE_TIMEOUT_S)
 _JOIN_PAYLOAD = {"config": {"broadcast": {"ack": False, "self": False},
                             "presence": {"key": ""}, "private": False}}
 _CLOSING = (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING,

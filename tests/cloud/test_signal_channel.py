@@ -498,3 +498,54 @@ def test_secrets_never_logged(caplog):
     assert caplog.records
     assert KEY not in caplog.text and HEX not in caplog.text and HEX2 not in caplog.text
     assert "apikey" not in caplog.text
+
+
+# ------------------------------------------------- zgodność ze starszym aiohttp
+
+def _load_fresh_module(name):
+    """Świeża kopia modułu kanału spoza `sys.modules` — import wykonany od nowa."""
+    import importlib.util
+    import pathlib
+
+    import custom_components.volcast.cloud.signal_channel as mod
+    spec = importlib.util.spec_from_file_location(
+        f"custom_components.volcast.cloud.{name}", pathlib.Path(mod.__file__))
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
+    return fresh
+
+
+def test_import_and_connect_without_client_ws_timeout(monkeypatch):
+    """aiohttp < 3.11 (HA sprzed 2024.12) nie zna `ClientWSTimeout` — `timeout` to wtedy float."""
+    monkeypatch.delattr(aiohttp, "ClientWSTimeout")
+    fresh = _load_fresh_module("_signal_channel_old_aiohttp")
+
+    async def main():
+        clock = Clock()
+        ws = FakeWs(clock, reply(), HOLD)
+        s = FakeWsSession(ws)
+
+        async def wake():
+            pass
+
+        ch = fresh.SignalChannel(s, on_wake=wake, sleep=clock.sleep, rand=lambda: 0.5,
+                                 monotonic=clock.monotonic)
+        await ch.async_update(CFG)
+        await settle(lambda: ch.connected)
+        assert ch.connected
+        assert s.connects[0]["timeout"] == 10.0
+        await ch.async_stop()
+    run(main())
+
+
+def test_new_aiohttp_uses_client_ws_timeout_without_receive_limit():
+    async def main():
+        clock = Clock()
+        s = FakeWsSession(FakeWs(clock, reply(), HOLD))
+        ch, _ = make(s, clock)
+        await ch.async_update(CFG)
+        await settle(lambda: ch.connected)
+        t = s.connects[0]["timeout"]
+        assert isinstance(t, aiohttp.ClientWSTimeout) and t.ws_receive is None and t.ws_close == 10.0
+        await ch.async_stop()
+    run(main())
