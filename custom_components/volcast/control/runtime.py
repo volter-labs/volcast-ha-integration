@@ -457,6 +457,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
             # Zadanie HA startuje gorliwie, czyli zanim wołający zapisze jego uchwyt (kanał → wake →
             # hub → update wołałby się rekurencyjnie i osierocił pierwsze zadanie) — pierwszy krok
             # oddaje więc sterowanie (bez `eager_start`, którego starsze wersje HA nie znają).
+            # Kanał, hub i nadajnik są na to odporne same; to tylko dodatkowy bezpiecznik.
             async def _deferred():
                 try:
                     await asyncio.sleep(0)
@@ -505,7 +506,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     except BaseException:
         # Nieudane złożenie nie zostawia żywego wykonawcy (bez encji wyłącznika nikt by go
         # nie zatrzymał, a każde przeładowanie dokładałoby kolejnego).
-        await _async_abort_setup(hass, entry, executor, telemetry, rt, signals=(live, hub, channel))
+        await _async_abort_setup(hass, entry, executor, telemetry, rt, signals=(hub, live, channel))
         if conn is not None:
             await conn.async_stop()
         raise
@@ -537,7 +538,11 @@ async def _async_start_direct(conn, executor) -> None:
 
 
 async def _async_stop_signals(parts) -> None:
-    """Zatrzymuje nadajnik „na żywo”, hub i kanał (w tej kolejności); awaria jednego nie blokuje reszty."""
+    """Zatrzymuje hub, nadajnik „na żywo” i kanał (w tej kolejności); awaria jednego nie blokuje reszty.
+
+    Hub pierwszy: od tej chwili spóźnione `apply` (odpowiedź telemetrii, pobranie w toku) nie
+    wskrzesza nadawania ani kanału, a pobranie w toku kończy się bez ucinania zapisu wykonawcy.
+    """
     for part in parts:
         if part is None:
             continue
@@ -560,7 +565,7 @@ async def _async_abort_setup(hass, entry, executor, telemetry, rt, signals=()) -
     if isinstance(entry_data, dict) and rt is not None and entry_data.get("control") is rt:
         entry_data["control"] = None
     if rt is not None and not signals:
-        signals = (rt.live, rt.hub, rt.channel)
+        signals = (rt.hub, rt.live, rt.channel)
     await _async_stop_signals(signals)
     for stop in ((telemetry.async_stop,) if telemetry is not None else ()) + (executor.async_stop,):
         try:
@@ -616,6 +621,11 @@ def freeze_control(rt: ControlRuntime) -> None:
     for unsub in rt.unsubs:
         unsub()
     rt.unsubs.clear()
+    # Pingi kanału nie planują już pobrań (czekające anulowane; pobranie w toku dobiega końca,
+    # a jego cykl i tak zatrzyma zamrożony wykonawca). Resztę sygnałów zamyka rozładunek.
+    hub_freeze = getattr(rt.hub, "freeze", None)
+    if hub_freeze is not None:
+        hub_freeze()
     freeze = getattr(rt.executor, "freeze", None)
     if freeze is not None:
         freeze()
@@ -631,13 +641,14 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
     for unsub in rt.unsubs:
         unsub()
     rt.unsubs.clear()
+    # Sygnały przed powrotem: cykl z pingu po powrocie do trybu bazowego zapisałby plan z powrotem.
+    await _async_stop_signals((rt.hub, rt.live, rt.channel))
     if restore:
         try:
             await rt.executor.async_restore_now()
         except Exception as err:  # noqa: BLE001 — rozładunek wpisu nie może się przez to wywrócić
             _LOGGER.warning("Volcast control: restore before disabling the entry failed (%s)",
                             type(err).__name__)
-    await _async_stop_signals((rt.live, rt.hub, rt.channel))
     await rt.telemetry.async_stop()
     await rt.executor.async_stop()
     if rt.direct is not None:

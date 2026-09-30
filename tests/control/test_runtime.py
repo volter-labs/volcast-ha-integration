@@ -622,7 +622,8 @@ async def test_unload_stops_live_hub_channel_in_order_despite_failures(boom):
     rt = rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=Telemetry(), cloud=None, choice=None,
                                mapped={}, rated_power_w=None, live=mk("live"), hub=mk("hub"), channel=mk("channel"))
     await rt_mod.async_unload_control(object(), rt)
-    assert order == ["live", "hub", "channel", "telemetry", "executor"]
+    # hub pierwszy: po nim spóźnione `apply` (telemetria, pobranie) nie wskrzesi nadawania ani kanału
+    assert order == ["hub", "live", "channel", "telemetry", "executor"]
 
 
 @pytest.mark.asyncio
@@ -679,4 +680,55 @@ async def test_abort_setup_stops_signal_parts_in_order_despite_failure():
                                mapped={}, rated_power_w=None, live=mk("live"), hub=mk("hub"), channel=mk("channel"))
     hass = SimpleNamespace(data={})
     await rt_mod._async_abort_setup(hass, SimpleNamespace(entry_id="e"), rt.executor, None, rt)
-    assert order == ["live", "hub", "channel", "executor"]
+    assert order == ["hub", "live", "channel", "executor"]
+
+
+@pytest.mark.asyncio
+async def test_unload_with_restore_stops_signals_before_restoring():
+    """Cykl wywołany pingiem po powrocie do trybu bazowego zapisałby plan z powrotem."""
+    order = []
+    mk = _stoppers(order)
+
+    class Exec:
+        async def async_restore_now(self):
+            order.append("restore")
+
+        async def async_stop(self):
+            order.append("executor")
+
+    class Telemetry:
+        async def async_stop(self):
+            order.append("telemetry")
+    rt = rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=Telemetry(), cloud=None, choice=None,
+                               mapped={}, rated_power_w=None, live=mk("live"), hub=mk("hub"), channel=mk("channel"))
+    await rt_mod.async_unload_control(object(), rt, restore=True)
+    assert order == ["hub", "live", "channel", "restore", "telemetry", "executor"]
+
+
+def test_freeze_control_freezes_the_signals_hub_synchronously():
+    calls = []
+
+    class Exec:
+        def freeze(self):
+            calls.append("executor")
+
+    class Hub:
+        def freeze(self):
+            calls.append("hub")
+    rt = rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=None, cloud=None, choice=None,
+                               mapped={}, rated_power_w=None, hub=Hub())
+    rt.unsubs.append(lambda: calls.append("unsub"))
+    rt_mod.freeze_control(rt)
+    assert calls == ["unsub", "hub", "executor"] and rt.unsubs == []
+
+
+def test_freeze_control_without_hub_still_freezes_executor():
+    calls = []
+
+    class Exec:
+        def freeze(self):
+            calls.append("executor")
+    rt = rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=None, cloud=None, choice=None,
+                               mapped={}, rated_power_w=None)
+    rt_mod.freeze_control(rt)
+    assert calls == ["executor"]
