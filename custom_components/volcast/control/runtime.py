@@ -43,6 +43,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
+from ..cloud.signal_channel import SignalChannel
 from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
@@ -59,6 +60,8 @@ from .direct import DirectConnection
 from .executor import VolcastExecutor
 from .ha_writer import EntityServiceWriter
 from .history_import import async_import_history_once
+from .live import LiveSender
+from .signals_hub import SignalsHub
 from .store import ControlStore, async_installation_salt
 from .telemetry import TelemetrySender
 
@@ -92,6 +95,10 @@ class ControlRuntime:
     direct: object | None = None
     # ostatnie wyszukiwanie falownika (raporty sondy) — opcje i onboarding oceniają z niego „Bezpośrednio”
     last_probe: list = field(default_factory=list)
+    # sygnały z chmury: kanał (wss), nadajnik „na żywo” i hub łączący je z pobieraniem planu
+    channel: object | None = None
+    live: object | None = None
+    hub: object | None = None
 
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
@@ -443,9 +450,34 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     await executor.async_start()
     telemetry = None
     rt = None
+    channel = live = hub = None
     try:
-        fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
-                                  on_auth_failure=executor.async_on_auth_failure)
+        def _task(coro, name):
+            # Zadania sygnałów należą do HA — zatrzymuje je teardown, nie anulowanie wpisu w pół kroku.
+            # Zadanie HA startuje gorliwie, czyli zanim wołający zapisze jego uchwyt (kanał → wake →
+            # hub → update wołałby się rekurencyjnie i osierocił pierwsze zadanie) — pierwszy krok
+            # oddaje więc sterowanie (bez `eager_start`, którego starsze wersje HA nie znają).
+            async def _deferred():
+                try:
+                    await asyncio.sleep(0)
+                except BaseException:
+                    coro.close()
+                    raise
+                await coro
+            return hass.async_create_background_task(_deferred(), name)
+
+        async def _wake() -> None:
+            await hub.request_refresh()         # hub powstaje niżej; wołane dopiero po złożeniu
+
+        async def _apply(raw) -> None:
+            await hub.apply(raw)
+
+        async def _fetch(_now=None) -> None:
+            # Odświeżenie planu (i zgody) — zaraz po nim cykl: cofnięta zgoda działa od razu.
+            await fetcher.async_refresh()
+            await executor.async_tick()
+
+        channel = SignalChannel(async_get_clientsession(hass), on_wake=_wake, task_factory=_task)
         if conn is not None:
             limits = direct_limits(opts, conn.target)
         else:
@@ -454,16 +486,17 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         telemetry = TelemetrySender(hass, entry, cloud, executor, choice=choice, profile_map=mapped,
                                     manual_map=opts.get(OPT_TELEMETRY_MAP) or {},
                                     grid_negate=bool(opts.get(OPT_GRID_NEGATE)), limits=limits, direct=conn,
-                                    direct_capabilities=direct_caps_for(opts, choice.profile) if conn else None)
+                                    direct_capabilities=direct_caps_for(opts, choice.profile) if conn else None,
+                                    on_signals=_apply, signal_connected=lambda: channel.connected)
+        live = LiveSender(cloud=cloud, telemetry=telemetry, on_signals=_apply, task_factory=_task)
+        hub = SignalsHub(base_url=backend.base_url, channel=channel, live=live, refresh=_fetch, task_factory=_task)
+        fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
+                                  on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply)
         await telemetry.async_start()
         rt = ControlRuntime(executor, fetcher, telemetry, cloud, choice, mapped, rated,
                             options_at_setup=dict(opts),
-                            inverter_entities=inverter_entity_ids(hass, choice, mapped), direct=conn)
-
-        async def _fetch(_now=None) -> None:
-            # Odświeżenie planu (i zgody) — zaraz po nim cykl: cofnięta zgoda działa od razu.
-            await fetcher.async_refresh()
-            await executor.async_tick()
+                            inverter_entities=inverter_entity_ids(hass, choice, mapped), direct=conn,
+                            channel=channel, live=live, hub=hub)
 
         rt.unsubs.append(async_track_time_interval(hass, _fetch, timedelta(seconds=SCHEDULE_FETCH_INTERVAL_S)))
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").
@@ -472,7 +505,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     except BaseException:
         # Nieudane złożenie nie zostawia żywego wykonawcy (bez encji wyłącznika nikt by go
         # nie zatrzymał, a każde przeładowanie dokładałoby kolejnego).
-        await _async_abort_setup(hass, entry, executor, telemetry, rt)
+        await _async_abort_setup(hass, entry, executor, telemetry, rt, signals=(live, hub, channel))
         if conn is not None:
             await conn.async_stop()
         raise
@@ -503,7 +536,18 @@ async def _async_start_direct(conn, executor) -> None:
         _LOGGER.warning("Volcast direct connection start failed (%s)", type(err).__name__)
 
 
-async def _async_abort_setup(hass, entry, executor, telemetry, rt) -> None:
+async def _async_stop_signals(parts) -> None:
+    """Zatrzymuje nadajnik „na żywo”, hub i kanał (w tej kolejności); awaria jednego nie blokuje reszty."""
+    for part in parts:
+        if part is None:
+            continue
+        try:
+            await part.async_stop()
+        except Exception as err:  # noqa: BLE001 — CancelledError przechodzi dalej
+            _LOGGER.warning("Volcast control: stopping the signals failed (%s)", type(err).__name__)
+
+
+async def _async_abort_setup(hass, entry, executor, telemetry, rt, signals=()) -> None:
     """Sprzątanie po błędzie za `executor.async_start()`; samo nigdy nie rzuca."""
     for unsub in (rt.unsubs if rt is not None else ()):
         try:
@@ -515,6 +559,9 @@ async def _async_abort_setup(hass, entry, executor, telemetry, rt) -> None:
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if isinstance(entry_data, dict) and rt is not None and entry_data.get("control") is rt:
         entry_data["control"] = None
+    if rt is not None and not signals:
+        signals = (rt.live, rt.hub, rt.channel)
+    await _async_stop_signals(signals)
     for stop in ((telemetry.async_stop,) if telemetry is not None else ()) + (executor.async_stop,):
         try:
             await stop()
@@ -590,6 +637,7 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
         except Exception as err:  # noqa: BLE001 — rozładunek wpisu nie może się przez to wywrócić
             _LOGGER.warning("Volcast control: restore before disabling the entry failed (%s)",
                             type(err).__name__)
+    await _async_stop_signals((rt.live, rt.hub, rt.channel))
     await rt.telemetry.async_stop()
     await rt.executor.async_stop()
     if rt.direct is not None:

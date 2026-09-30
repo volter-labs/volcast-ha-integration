@@ -480,3 +480,203 @@ def test_remove_entry_passes_mode_unique_id(monkeypatch):
     asyncio.run(store.async_save(ControlState(owned=True)))
     asyncio.run(rt_mod.async_remove_control(hass, entry))
     assert seen["mode_unique_id"] == "goodwe-ems_mode-X"
+
+
+# ── kanał sygnałów, hub i nadajnik „na żywo” w złożeniu ──────────────────
+
+TOPIC = "ha-sig:" + "a" * 64
+SIG_BLOCK = {"version": 1, "live_for_s": 90,
+             "channel": {"url": "wss://s.example.test/realtime/v1/websocket", "apikey": "k" * 20, "topic": TOPIC}}
+
+
+class FakeChannel:
+    made = []
+
+    def __init__(self, session, *, on_wake, task_factory=None, **_kw):
+        self.on_wake, self.task_factory, self.cfgs, self.stopped = on_wake, task_factory, [], 0
+        self.connected = False
+        FakeChannel.made.append(self)
+
+    async def async_update(self, cfg):
+        self.cfgs.append(cfg)
+
+    async def async_stop(self):
+        self.stopped += 1
+
+
+class FakeLive:
+    made = []
+
+    def __init__(self, *, cloud, telemetry, on_signals, task_factory=None, **_kw):
+        self.on_signals, self.task_factory, self.lives, self.stopped = on_signals, task_factory, [], 0
+        FakeLive.made.append(self)
+
+    def update(self, n):
+        self.lives.append(n)
+
+    async def async_stop(self):
+        self.stopped += 1
+
+
+def _patch_signals(monkeypatch, plan):
+    _patch(monkeypatch)
+    FakeChannel.made, FakeLive.made = [], []
+    monkeypatch.setattr(rt_mod, "SignalChannel", FakeChannel)
+    monkeypatch.setattr(rt_mod, "LiveSender", FakeLive)
+
+    async def get_schedule(self):
+        return plan
+    monkeypatch.setattr(FakeCloud, "async_get_schedule", get_schedule)
+
+
+@pytest.mark.asyncio
+async def test_setup_builds_channel_live_hub_and_passes_on_signals(monkeypatch):
+    from tests.setup_harness import drain
+    _patch_signals(monkeypatch, {"signals": SIG_BLOCK})
+    hass, entry = _setup_hass(), _entry()
+    rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    await drain(hass)
+    ch, live = FakeChannel.made[0], FakeLive.made[0]
+    assert rt.channel is ch and rt.live is live and rt.hub is not None
+    assert rt.fetcher._on_signals == rt.hub.apply
+    assert rt.telemetry._on_signals is not None and rt.telemetry._signal_connected() is False
+    ch.connected = True
+    assert rt.telemetry._signal_connected() is True
+    # blok z planu dotarł do kanału i do nadajnika (pierwsze pobranie planu)
+    assert ch.cfgs and ch.cfgs[-1].topic == TOPIC and ch.cfgs[-1].url.startswith("wss://s.example.test/")
+    assert live.lives and live.lives[-1] == 90
+    # zadania tła idą przez HA, nie przez gołe create_task
+    assert ch.task_factory is not None and live.task_factory is not None
+    await rt_mod.async_unload_control(hass, rt)
+    assert (ch.stopped, live.stopped) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_wake_and_live_callbacks_reach_the_hub(monkeypatch):
+    _patch_signals(monkeypatch, None)
+    hass, entry = _setup_hass(), _entry()
+    rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    calls = []
+
+    async def apply(raw):
+        calls.append(("apply", raw))
+
+    async def refresh():
+        calls.append("refresh")
+    rt.hub.apply, rt.hub.request_refresh = apply, refresh
+    await FakeChannel.made[0].on_wake()
+    await FakeLive.made[0].on_signals({"x": 1})
+    await rt.telemetry._on_signals({"y": 2})
+    assert calls == ["refresh", ("apply", {"x": 1}), ("apply", {"y": 2})]
+    await rt_mod.async_unload_control(hass, rt)
+
+
+@pytest.mark.asyncio
+async def test_plan_without_signals_never_opens_a_websocket(monkeypatch):
+    from tests.setup_harness import drain
+    _patch(monkeypatch)
+    opened = []
+
+    class Session:
+        def ws_connect(self, *a, **k):
+            opened.append(a)
+            raise AssertionError("ws_connect bez bloku signals")
+    monkeypatch.setattr(rt_mod, "async_get_clientsession", lambda hass: Session())
+
+    async def get_schedule(self):
+        return {"control_enabled": False}                      # plan bez bloku `signals`
+    monkeypatch.setattr(FakeCloud, "async_get_schedule", get_schedule)
+    hass, entry = _setup_hass(), _entry()
+    rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    await drain(hass)
+    await asyncio.sleep(0)
+    assert opened == [] and rt.channel.connected is False and rt.live.running is False
+    await rt_mod.async_unload_control(hass, rt)
+    assert opened == []
+
+
+def _stoppers(order, boom=()):
+    def mk(name):
+        class S:
+            async def async_stop(self):
+                order.append(name)
+                if name in boom:
+                    raise RuntimeError("x")
+        return S()
+    return mk
+
+
+@pytest.mark.parametrize("boom", [(), ("live",), ("hub",), ("channel",), ("live", "hub", "channel")])
+@pytest.mark.asyncio
+async def test_unload_stops_live_hub_channel_in_order_despite_failures(boom):
+    order = []
+    mk = _stoppers(order, boom)
+
+    class Exec:
+        async def async_stop(self):
+            order.append("executor")
+
+    class Telemetry:
+        async def async_stop(self):
+            order.append("telemetry")
+    rt = rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=Telemetry(), cloud=None, choice=None,
+                               mapped={}, rated_power_w=None, live=mk("live"), hub=mk("hub"), channel=mk("channel"))
+    await rt_mod.async_unload_control(object(), rt)
+    assert order == ["live", "hub", "channel", "telemetry", "executor"]
+
+
+@pytest.mark.asyncio
+async def test_unload_lets_cancellation_through():
+    class Cancelling:
+        async def async_stop(self):
+            raise asyncio.CancelledError
+
+    class Ok:
+        async def async_stop(self):
+            pass
+    rt = rt_mod.ControlRuntime(executor=Ok(), fetcher=None, telemetry=Ok(), cloud=None, choice=None, mapped={},
+                               rated_power_w=None, live=Cancelling(), hub=Ok(), channel=Ok())
+    with pytest.raises(asyncio.CancelledError):
+        await rt_mod.async_unload_control(object(), rt)
+
+
+@pytest.mark.parametrize("where", ["telemetry", "timer", "onboarding"])
+@pytest.mark.asyncio
+async def test_failed_setup_stops_live_hub_channel(monkeypatch, where):
+    _patch_signals(monkeypatch, None)
+
+    class Telemetry(rt_mod.TelemetrySender):
+        async def async_start(self):
+            if where == "telemetry":
+                raise RuntimeError("x")
+            await super().async_start()
+    monkeypatch.setattr(rt_mod, "TelemetrySender", Telemetry)
+
+    def track(hass, action, interval):
+        if where == "timer":
+            raise RuntimeError("x")
+        return lambda: None
+    monkeypatch.setattr(rt_mod, "async_track_time_interval", track)
+    if where == "onboarding":
+        def boom(*_a):
+            raise RuntimeError("x")
+        monkeypatch.setattr(rt_mod, "_maybe_start_onboarding", boom)
+    hass, entry = _setup_hass(), _entry()
+    with pytest.raises(RuntimeError):
+        await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    assert (FakeChannel.made[0].stopped, FakeLive.made[0].stopped) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_abort_setup_stops_signal_parts_in_order_despite_failure():
+    order = []
+    mk = _stoppers(order, ("hub",))
+
+    class Exec:
+        async def async_stop(self):
+            order.append("executor")
+    rt = rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=None, cloud=None, choice=None,
+                               mapped={}, rated_power_w=None, live=mk("live"), hub=mk("hub"), channel=mk("channel"))
+    hass = SimpleNamespace(data={})
+    await rt_mod._async_abort_setup(hass, SimpleNamespace(entry_id="e"), rt.executor, None, rt)
+    assert order == ["live", "hub", "channel", "executor"]
