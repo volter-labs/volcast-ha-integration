@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from ..params import Params
 from ..profile import Profile
+from ..profile_schema import SLOT_POWER_KINDS
 from ..slot import Action, Slot, slot_direction
 
 NOTE_OK = "ok"
@@ -71,7 +72,7 @@ def map_slot(slot: Slot, profile: Profile, rated_power_w: float, *,
     intent, note = slot_intent(slot)
     spec = profile.intent(intent)
     power: float | None = None
-    if spec["power"] == "slot":
+    if spec["power"] in SLOT_POWER_KINDS:
         # Intencja gwarantuje moc; walidator profilu (POWERED_INTENTS) odrzuca `slot`
         # na intencjach, które tej gwarancji nie dają. Tor zapisu i tak jej nie ufa ślepo:
         # brak liczby jest błędem danych, nie zerem, więc kończymy jawnym wyjątkiem
