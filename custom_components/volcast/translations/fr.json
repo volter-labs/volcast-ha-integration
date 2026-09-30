@@ -235,7 +235,8 @@
       "logger_serial_required": "Saisissez le numéro de série de l'enregistreur de données (jusqu'à 10 chiffres).",
       "direct_not_found": "Aucun onduleur pris en charge n'a répondu à cette adresse.",
       "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état).",
-      "role_required": "L'entité d'état est obligatoire."
+      "role_required": "L'entité d'état est obligatoire.",
+      "status_without_options": "Choisissez un capteur ou un select avec une liste d'états possibles. Un capteur marche/arrêt n'indique pas la charge."
     },
     "progress": {
       "direct_search": "Recherche de l'onduleur sur le réseau local. Cela peut prendre jusqu'à une minute."

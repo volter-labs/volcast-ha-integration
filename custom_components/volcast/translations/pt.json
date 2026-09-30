@@ -235,7 +235,8 @@
       "logger_serial_required": "Introduza o número de série do registador de dados (até 10 dígitos).",
       "direct_not_found": "Nenhum inversor suportado respondeu neste endereço.",
       "restore_failed": "O Volcast não conseguiu repor o inversor nas definições anteriores ao controlo, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controlo do Volcast (o Volcast continua a tentar repor o inversor).",
-      "role_required": "A entidade de estado é obrigatória."
+      "role_required": "A entidade de estado é obrigatória.",
+      "status_without_options": "Escolha um sensor ou select com uma lista de estados possíveis. Um sensor ligado/desligado não mostra o carregamento."
     },
     "progress": {
       "direct_search": "A procurar o inversor na rede local. Pode demorar até um minuto."

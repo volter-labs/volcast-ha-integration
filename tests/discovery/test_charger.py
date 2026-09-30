@@ -185,11 +185,11 @@ def test_restart_button_is_not_start():
     assert classify_chargers([_dev()], [_STATUS, restart, stop], {}) == []
 
 
-def test_plug_binary_sensor_counts_as_status():
+def test_plug_binary_sensor_is_not_a_status():
+    # status musi mieć listę stanów (options); on/off wtyczki jej nie ma
     plug = _ent("binary_sensor.plug", "plug")
-    f = classify_chargers([_dev()], [plug, _SETPOINT], {})[0]
-    assert f.roles["status"].kind == "binary_sensor"
-    assert f.confidence == "low"
+    sw = _ent("switch.charge", name="Charging")
+    assert classify_chargers([_dev()], [plug, _SETPOINT, sw], {}) == []
 
 
 def test_disabled_entities_and_other_devices_ignored():

@@ -22,6 +22,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_API_KEY
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import instance_id, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -683,6 +684,17 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             description_placeholders={"charger": _ev_label(
                 finding.name, finding.manufacturer, finding.model, finding.device_id)})
 
+    def _ev_status_has_options(self, entity_id: str) -> bool:
+        """Status ładowarki to encja z listą stanów (options) — on/off nie odróżnia ładowania."""
+        if entity_id.split(".", 1)[0] not in _EV_ROLE_DOMAINS["status"]:
+            return False
+        state = self.hass.states.get(entity_id)
+        options = state.attributes.get("options") if state is not None else None
+        if not options:
+            reg = er.async_get(self.hass).async_get(entity_id)
+            options = (reg.capabilities or {}).get("options") if reg is not None else None
+        return isinstance(options, (list, tuple)) and len(options) > 0
+
     async def async_step_ev_charger_roles(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         queue = getattr(self, "_ev_queue", None)
         if not queue:
@@ -693,6 +705,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         roles = {r: v.strip() for r, v in user_input.items() if isinstance(v, str) and v.strip()}
         if "status" not in roles:
             return self._ev_roles_form(finding, {"status": "role_required"})
+        if not self._ev_status_has_options(roles["status"]):
+            return self._ev_roles_form(finding, {"status": EV_STATUS_WITHOUT_OPTIONS})
         self._ev_done.append({"device_id": finding.device_id, "roles": roles,
                               "label": finding.name or finding.model or ""})
         queue.pop(0)
@@ -937,10 +951,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 _SEARCH = "direct_search"
 OPT_EV_CHARGERS = "ev_chargers"
 EV_NONE_FOUND = "no_ev_chargers"
+EV_STATUS_WITHOUT_OPTIONS = "status_without_options"
 _EV_SELECT = "chargers"
 _EV_ROLES = ("status", "setpoint", "start_stop", "power", "energy")
 _EV_ROLE_DOMAINS = {
-    "status": ("sensor", "binary_sensor", "select"), "setpoint": ("number",),
+    "status": ("sensor", "select"), "setpoint": ("number",),
     "start_stop": ("switch", "select"), "start": ("button",), "stop": ("button",),
     "power": ("sensor",), "energy": ("sensor",)}
 

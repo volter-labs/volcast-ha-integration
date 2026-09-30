@@ -235,7 +235,8 @@
       "logger_serial_required": "Zadejte sériové číslo datalogeru (až 10 číslic).",
       "direct_not_found": "Na této adrese neodpověděl žádný podporovaný střídač.",
       "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit).",
-      "role_required": "Entita stavu je povinná."
+      "role_required": "Entita stavu je povinná.",
+      "status_without_options": "Vyberte senzor nebo select se seznamem možných stavů. Senzor zapnuto/vypnuto nabíjení neukazuje."
     },
     "progress": {
       "direct_search": "Vyhledávání střídače v místní síti. Může to trvat až minutu."

@@ -3,9 +3,9 @@
 Czyste funkcje, bez importów HA. Klasyfikator tylko wskazuje encje pełniące role
 (status, nastawa, start/stop, moc, energia); wartości statusu nie są tu interpretowane.
 
-Znane ograniczenie: status musi mieć listę `options` (sensor enum) albo być czujnikiem
-wtyczki (binary_sensor, device_class plug). Tekstowy sensor statusu bez `options` nie
-jest wykrywany — taką rolę użytkownik wskazuje sam przy potwierdzaniu ładowarki.
+Znane ograniczenie: status musi mieć listę stanów `options` (sensor enum). Ładowarka bez
+enumerowanego statusu — tylko tekstowy sensor albo czujnik wtyczki on/off (binary_sensor)
+— nie jest wykrywana automatycznie; on/off nie odróżnia podłączenia od ładowania.
 Opcje statusu dzielimy na słowa tylko po znakach innych niż litery/cyfry, więc zbiór w
 CamelCase ("SuspendedEV", "Charging", "Available") bez osobnego stanu złącza w rodzaju
 "Preparing" też nie daje statusu ("SuspendedEV" to jedno słowo).
@@ -131,11 +131,9 @@ def _status(ents: list[EntitySnap], states: dict[str, StateSnap],
              and _any_option(_options(e, states), _CHARGE_PREFIXES)
              and _connector_option(_options(e, states))]
     best = _pick(enums, _STATUS_HINTS, prefix)
-    if best is not None:
-        return ChargerRole(best.entity_id, "sensor", options=_options(best, states))
-    plugs = [e for e in ents if _kind(e) == "binary_sensor" and _device_class(e, states) == "plug"]
-    best = _pick(plugs, _STATUS_HINTS, prefix)
-    return ChargerRole(best.entity_id, "binary_sensor") if best is not None else None
+    if best is None:
+        return None
+    return ChargerRole(best.entity_id, "sensor", options=_options(best, states))
 
 
 def _setpoint(ents: list[EntitySnap], states: dict[str, StateSnap],
@@ -193,9 +191,9 @@ def _measure(ents: list[EntitySnap], states: dict[str, StateSnap], prefix: str,
     return ChargerRole(best.entity_id, "sensor", unit=_unit(best, states))
 
 
-def _confidence(status: ChargerRole, missing: tuple[str, ...]) -> str:
-    # bez licznika energii albo ze statusem tylko z czujnika wtyczki — niska
-    if status.kind != "sensor" or "energy" in missing:
+def _confidence(missing: tuple[str, ...]) -> str:
+    # bez licznika energii — niska
+    if "energy" in missing:
         return "low"
     return "high" if not missing else "medium"
 
@@ -228,7 +226,7 @@ def _finding(dev: DeviceSnap, ents: list[EntitySnap],
         device_id=dev.id, name=dev.name, manufacturer=dev.manufacturer, model=dev.model,
         config_entry_id=dev.config_entry_ids[0] if dev.config_entry_ids else None,
         platform=platform, roles=roles, missing=missing,
-        confidence=_confidence(status, missing),
+        confidence=_confidence(missing),
     )
 
 

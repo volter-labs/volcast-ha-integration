@@ -235,7 +235,8 @@
       "logger_serial_required": "Enter the data logger serial number (up to 10 digits).",
       "direct_not_found": "No supported inverter answered at this address.",
       "restore_failed": "Volcast could not return the inverter to its settings from before control, so nothing was changed. Try again when the inverter is reachable, or turn off the Volcast control switch (Volcast keeps trying to return the inverter).",
-      "role_required": "The status entity is required."
+      "role_required": "The status entity is required.",
+      "status_without_options": "Choose a sensor or select that lists its possible states. An on/off sensor cannot show charging."
     },
     "progress": {
       "direct_search": "Searching the local network for the inverter. This can take up to a minute."

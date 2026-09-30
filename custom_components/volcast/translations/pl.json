@@ -235,7 +235,8 @@
       "logger_serial_required": "Wpisz numer seryjny rejestratora danych (do 10 cyfr).",
       "direct_not_found": "Żaden obsługiwany falownik nie odpowiedział pod tym adresem.",
       "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik).",
-      "role_required": "Encja statusu jest wymagana."
+      "role_required": "Encja statusu jest wymagana.",
+      "status_without_options": "Wybierz sensor lub select z listą możliwych stanów. Czujnik włącz/wyłącz nie pokazuje ładowania."
     },
     "progress": {
       "direct_search": "Wyszukiwanie falownika w sieci lokalnej. Może to potrwać do minuty."

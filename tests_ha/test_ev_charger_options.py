@@ -5,10 +5,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
 from custom_components.volcast.const import DOMAIN
 from custom_components.volcast.core.discovery import ChargerFinding, ChargerRole, Classification
@@ -28,6 +29,12 @@ def _finding(device_id="dev1", name="Wallbox", **roles) -> ChargerFinding:
     base.update(roles)
     return ChargerFinding(device_id=device_id, name=name, manufacturer="Acme", model="W1",
                           config_entry_id="ce1", platform="acme", roles=base, confidence="high")
+
+
+def _status(hass: HomeAssistant, *entity_ids: str) -> None:
+    """Encje statusu z listą stanów (options) — jedyny dopuszczalny kształt statusu."""
+    for eid in entity_ids:
+        hass.states.async_set(eid, "charging", {"options": ["available", "charging"]})
 
 
 def _provide(hass: HomeAssistant, entry, chargers) -> None:
@@ -71,6 +78,7 @@ async def test_no_chargers_found_aborts(hass: HomeAssistant, network_down):
 
 async def test_confirm_charger_saves_only_id_roles_label(hass: HomeAssistant, network_down):
     entry = make_entry(hass, options={"update_interval": 30})
+    _status(hass, "sensor.wb_status")
     _provide(hass, entry, [_finding()])
     form = await _open(hass, entry)
     assert form["type"] is FlowResultType.FORM and form["step_id"] == "ev_charger"
@@ -89,6 +97,7 @@ async def test_confirm_charger_saves_only_id_roles_label(hass: HomeAssistant, ne
 
 async def test_role_can_be_corrected_and_optional_role_dropped(hass: HomeAssistant, network_down):
     entry = make_entry(hass)
+    _status(hass, "sensor.other_status")
     _provide(hass, entry, [_finding()])
     form = await _open(hass, entry)
     roles = await hass.config_entries.options.async_configure(form["flow_id"], {"chargers": ["dev1"]})
@@ -102,6 +111,7 @@ async def test_role_can_be_corrected_and_optional_role_dropped(hass: HomeAssista
 
 async def test_only_selected_charger_is_saved(hass: HomeAssistant, network_down):
     entry = make_entry(hass)
+    _status(hass, "sensor.wb_status")
     _provide(hass, entry, [_finding("dev1", "Wallbox"), _finding("dev2", "Garage")])
     form = await _open(hass, entry)
     roles = await hass.config_entries.options.async_configure(form["flow_id"], {"chargers": ["dev2"]})
@@ -111,6 +121,7 @@ async def test_only_selected_charger_is_saved(hass: HomeAssistant, network_down)
 
 async def test_two_selected_chargers_go_through_roles_one_by_one(hass: HomeAssistant, network_down):
     entry = make_entry(hass)
+    _status(hass, "sensor.a", "sensor.b")
     _provide(hass, entry, [_finding("dev1", "Wallbox"), _finding("dev2", "Garage")])
     form = await _open(hass, entry)
     r1 = await hass.config_entries.options.async_configure(form["flow_id"], {"chargers": ["dev1", "dev2"]})
@@ -152,6 +163,47 @@ async def test_saved_charger_missing_from_discovery_can_be_kept(hass: HomeAssist
     assert done["type"] is FlowResultType.CREATE_ENTRY and entry.options["ev_chargers"] == saved
 
 
+async def _roles_form(hass):
+    entry = make_entry(hass)
+    _provide(hass, entry, [_finding()])
+    form = await _open(hass, entry)
+    return entry, await hass.config_entries.options.async_configure(form["flow_id"], {"chargers": ["dev1"]})
+
+
+async def test_binary_sensor_rejected_as_status(hass: HomeAssistant, network_down):
+    # on/off nie niesie stanów ładowarki — pole statusu przyjmuje tylko sensor/select
+    hass.states.async_set("binary_sensor.wb_plug", "on", {"device_class": "plug"})
+    entry, roles = await _roles_form(hass)
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            roles["flow_id"], {"status": "binary_sensor.wb_plug"})
+    assert "ev_chargers" not in entry.options
+
+
+@pytest.mark.parametrize("attrs", [{}, {"options": []}])
+async def test_status_without_options_shows_error(hass: HomeAssistant, network_down, attrs):
+    hass.states.async_set("sensor.wb_text", "Charging", attrs)
+    entry, roles = await _roles_form(hass)
+    res = await hass.config_entries.options.async_configure(roles["flow_id"], {"status": "sensor.wb_text"})
+    assert res["type"] is FlowResultType.FORM and res["step_id"] == "ev_charger_roles"
+    assert res["errors"] == {"status": "status_without_options"}
+    assert "ev_chargers" not in entry.options
+
+
+async def test_missing_status_entity_shows_error(hass: HomeAssistant, network_down):
+    entry, roles = await _roles_form(hass)
+    res = await hass.config_entries.options.async_configure(roles["flow_id"], {"status": "sensor.nope"})
+    assert res["errors"] == {"status": "status_without_options"}
+
+
+async def test_select_with_options_accepted_as_status(hass: HomeAssistant, network_down):
+    hass.states.async_set("select.wb_state", "Charging", {"options": ["Idle", "Charging"]})
+    entry, roles = await _roles_form(hass)
+    done = await hass.config_entries.options.async_configure(roles["flow_id"], {"status": "select.wb_state"})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["ev_chargers"][0]["roles"] == {"status": "select.wb_state"}
+
+
 def test_translations_cover_every_locale():
     strings = json.loads((COMPONENT / "strings.json").read_text("utf-8"))["options"]
     files = sorted((COMPONENT / "translations").glob("*.json"))
@@ -165,3 +217,4 @@ def test_translations_cover_every_locale():
             strings["step"]["ev_charger_roles"]["data"]), path.name
         assert opts["step"]["ev_charger"]["data"]["chargers"], path.name
         assert opts["abort"]["no_ev_chargers"], path.name
+        assert opts["error"]["status_without_options"], path.name
