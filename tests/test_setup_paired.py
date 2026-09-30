@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from custom_components.volcast.cloud.client import TelemetryResult
 from custom_components.volcast.control import runtime as rt_mod
 
 from .setup_harness import API_KEY, run_setup, unique_ids
@@ -503,7 +504,7 @@ def _patch_control(monkeypatch, store, schedule):
             return None                                              # chmura nieosiągalna
 
         async def async_post_telemetry(self, reading):
-            return False
+            return TelemetryResult(500, None)
 
         async def async_import_history(self, hours):
             return None

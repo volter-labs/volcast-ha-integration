@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from custom_components.volcast.cloud.client import TelemetryResult
 from custom_components.volcast.control.direct import DirectConnection
 from custom_components.volcast.control.telemetry import TelemetrySender, direct_driver_block
 from custom_components.volcast.core.control.caps import direct_capabilities
@@ -30,7 +31,7 @@ class Cloud:
 
     async def async_post_telemetry(self, reading):
         self.sent.append(reading)
-        return True
+        return TelemetryResult(200, None)
 
 
 class Executor:

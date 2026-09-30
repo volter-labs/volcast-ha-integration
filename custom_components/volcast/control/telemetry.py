@@ -296,7 +296,7 @@ class TelemetrySender:
             extra=self._extra(), prices=priced[0] if priced else None)
         if reading is None:
             return False
-        ok = await self._cloud.async_post_telemetry(reading) is True
+        ok = (await self._cloud.async_post_telemetry(reading)).ok is True
         if ok and priced:
             self._prices_fp, self._prices_at = priced[1], now
         return ok

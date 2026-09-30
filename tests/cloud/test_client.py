@@ -6,7 +6,7 @@ import pytest
 
 from custom_components.volcast.cloud.client import (Backend, CloudAuthError, PairingClient,
                                                     PairingDisabled, PairingError, PairingSession,
-                                                    VolcastCloud)
+                                                    TelemetryResult, VolcastCloud)
 
 from .fakes import FakeSession
 
@@ -61,12 +61,12 @@ def test_backend_round_trip_ignores_extra_keys():
 
 # ----------------------------------------------------------------- VolcastCloud
 
-def test_schedule_url_has_contract_2_and_key_header():
+def test_schedule_url_has_contract_3_and_key_header():
     s = FakeSession()
     s.add("GET", BACKEND["schedule"], 200, {"slots": [], "control_enabled": False})
     out = run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_get_schedule())
     assert out == {"slots": [], "control_enabled": False}
-    assert s.calls[0]["url"] == BACKEND["schedule"] + "?contract=2"
+    assert s.calls[0]["url"] == BACKEND["schedule"] + "?contract=3"
     assert s.calls[0]["headers"] == {"X-API-Key": KEY}
 
 
@@ -97,8 +97,8 @@ def test_telemetry_and_history_bodies():
     s.add("POST", BACKEND["telemetry"], 200, {"stored": 1})
     s.add("POST", BACKEND["history_import"], 200, {"accepted": 1, "inserted": 1})
     cloud = VolcastCloud(s, KEY, Backend.from_dict(BACKEND))
-    assert run(cloud.async_post_telemetry({"timestamp": "t"})) is True
-    assert s.calls[0]["json"] == {"readings": [{"timestamp": "t"}]}
+    assert run(cloud.async_post_telemetry({"timestamp": "t"})).ok is True
+    assert s.calls[0]["json"] == {"source": "ha", "readings": [{"timestamp": "t"}]}
     assert s.calls[0]["headers"] == {"X-API-Key": KEY}
     hours = [{"start": "2026-09-01T10:00:00Z", "load_kwh": 0.4}]
     assert run(cloud.async_import_history(hours)) == {"accepted": 1, "inserted": 1}
@@ -110,7 +110,7 @@ def test_telemetry_and_history_bodies():
 def test_telemetry_failure_is_false_never_raises(status):
     s = FakeSession()
     s.add("POST", BACKEND["telemetry"], status, {"error": "x"})
-    assert run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_post_telemetry({})) is False
+    assert run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_post_telemetry({})).ok is False
 
 
 @pytest.mark.parametrize("status,body", [(400, {"error": "too_many_hours"}), (500, {"inserted": 3}),
@@ -323,7 +323,7 @@ def test_schedule_redirect_is_refused_and_key_stays_home(code):
     s.add("GET", BACKEND["schedule"], code, None, headers={"Location": EVIL})
     s.add("GET", EVIL, 200, {"slots": []})
     assert run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_get_schedule()) is None
-    assert [c["url"] for c in s.calls] == [BACKEND["schedule"] + "?contract=2"]
+    assert [c["url"] for c in s.calls] == [BACKEND["schedule"] + "?contract=3"]
     assert _all_calls_safe(s)
 
 
@@ -334,7 +334,7 @@ def test_post_redirects_never_forward_key_or_body(code):
         s.add("POST", url, code, None, headers={"Location": EVIL})
     s.add("POST", EVIL, 200, {"ok": True})
     cloud = VolcastCloud(s, KEY, Backend.from_dict(BACKEND))
-    assert run(cloud.async_post_telemetry({"timestamp": "t"})) is False
+    assert run(cloud.async_post_telemetry({"timestamp": "t"})).ok is False
     assert run(cloud.async_import_history([{"start": "x"}])) is None
     client = PairingClient(s, PAIR)
     assert run(client.async_poll(SESSION)).status == "error"
@@ -364,7 +364,7 @@ def test_history_import_gets_longer_timeout_than_telemetry():
     s.add("POST", BACKEND["telemetry"], 200, {}, delay_s=25)
     cloud = VolcastCloud(s, KEY, Backend.from_dict(BACKEND))
     assert run(cloud.async_import_history([])) == {"accepted": 1}
-    assert run(cloud.async_post_telemetry({})) is False
+    assert run(cloud.async_post_telemetry({})).ok is False
 
 
 @pytest.mark.parametrize("bad", [
@@ -424,3 +424,47 @@ def test_oversized_body_is_a_failure():
     assert run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_get_schedule()) is None
     s.add("POST", PAIR, 200, {"status": "consumed", "choices": {}}, content_length=10_000_000)
     assert run(PairingClient(s, PAIR).async_poll(SESSION)).status == "error"
+
+
+# ------------------------------------------------ telemetria: persist i blok signals
+
+def _tel(s):
+    return VolcastCloud(s, KEY, Backend.from_dict(BACKEND))
+
+
+def test_telemetry_persist_key_only_when_false():
+    s = FakeSession()
+    s.add("POST", BACKEND["telemetry"], 200, {"success": True})
+    s.add("POST", BACKEND["telemetry"], 200, {"success": True})
+    run(_tel(s).async_post_telemetry({"a": 1}))
+    run(_tel(s).async_post_telemetry({"a": 1}, persist=False))
+    assert "persist" not in s.calls[0]["json"]
+    assert s.calls[1]["json"] == {"source": "ha", "readings": [{"a": 1}], "persist": False}
+
+
+def test_telemetry_not_live_409_has_no_signals():
+    s = FakeSession()
+    s.add("POST", BACKEND["telemetry"], 409, {"error": "not_live"})
+    assert run(_tel(s).async_post_telemetry({}, persist=False)) == TelemetryResult(409, None)
+
+
+def test_telemetry_returns_signals_raw_from_200():
+    s = FakeSession()
+    block = {"version": 1, "consent": True, "live_for_s": 12}
+    s.add("POST", BACKEND["telemetry"], 200, {"success": True, "signals": block})
+    out = run(_tel(s).async_post_telemetry({}))
+    assert out == TelemetryResult(200, block) and out.ok
+
+
+@pytest.mark.parametrize("body", [{"success": True}, {"success": True, "signals": "x"},
+                                  {"success": True, "signals": [1]}, ["x"], None])
+def test_telemetry_non_dict_signals_is_none(body):
+    s = FakeSession()
+    s.add("POST", BACKEND["telemetry"], 200, body)
+    assert run(_tel(s).async_post_telemetry({})).signals_raw is None
+
+
+def test_telemetry_oversized_body_is_refused():
+    s = FakeSession()
+    s.add("POST", BACKEND["telemetry"], 200, {"signals": {}}, content_length=10_000_000)
+    assert run(_tel(s).async_post_telemetry({})) == TelemetryResult(0, None)

@@ -166,8 +166,19 @@ async def _post_json(session, url: str, body: dict, headers: dict | None, what: 
         return 0, None
 
 
+@dataclass(frozen=True)
+class TelemetryResult:
+    """Wynik POST-a telemetrii: status HTTP (0 = brak odpowiedzi) i surowy blok `signals`."""
+    status: int
+    signals_raw: dict | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.status == 200
+
+
 class VolcastCloud:
-    """Plan (`get-schedule`, zawsze `?contract=2`), telemetria i import historii."""
+    """Plan (`get-schedule`, zawsze `?contract=3`), telemetria i import historii."""
 
     def __init__(self, session, api_key: str, backend: Backend) -> None:
         self._s = session
@@ -179,7 +190,7 @@ class VolcastCloud:
 
     async def async_get_schedule(self) -> dict | None:
         try:
-            async with self._s.get(f"{self._b.schedule}?contract=2", headers=self._headers(),
+            async with self._s.get(f"{self._b.schedule}?contract=3", headers=self._headers(),
                                    timeout=_TIMEOUT, allow_redirects=False) as resp:
                 if resp.status == 401:
                     raise CloudAuthError
@@ -194,10 +205,16 @@ class VolcastCloud:
             return None
         return data if isinstance(data, dict) else None
 
-    async def async_post_telemetry(self, reading: dict) -> bool:
-        status, _ = await _post_json(self._s, self._b.telemetry, {"readings": [reading]},
-                                     self._headers(), "device-telemetry")
-        return status == 200
+    async def async_post_telemetry(self, reading: dict, *, persist: bool = True) -> "TelemetryResult":
+        """Odczyt do chmury (ścieżka HA: `source: "ha"`). `persist=False` = tylko rozgłoszenie
+        na żywo (chmura odpowie 409, gdy okno na żywo jest zamknięte)."""
+        body: dict[str, Any] = {"source": "ha", "readings": [reading]}
+        if not persist:
+            body["persist"] = False
+        status, data = await _post_json(self._s, self._b.telemetry, body,
+                                        self._headers(), "device-telemetry")
+        signals = data.get("signals") if isinstance(data, dict) else None
+        return TelemetryResult(status, signals if isinstance(signals, dict) else None)
 
     async def async_import_history(self, hours: list[dict]) -> dict | None:
         status, data = await _post_json(self._s, self._b.history_import,

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from custom_components.volcast.cloud.client import TelemetryResult
 from custom_components.volcast.control import runtime as rt_mod
 from custom_components.volcast.control.store import ControlState, ControlStore
 from custom_components.volcast.core.control.select import ProfileChoice
@@ -177,7 +178,7 @@ class FakeCloud:
         return None
 
     async def async_post_telemetry(self, reading):
-        return True
+        return TelemetryResult(200, None)
 
     async def async_import_history(self, hours):
         return None

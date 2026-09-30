@@ -9,6 +9,7 @@ import pytest
 from homeassistant.core import Context
 from homeassistant.helpers import event as ha_event
 
+from custom_components.volcast.cloud.client import TelemetryResult
 from custom_components.volcast.control import telemetry as tm
 from custom_components.volcast.control.telemetry import TelemetrySender, build_reading, driver_block
 from custom_components.volcast.core.control.select import ProfileChoice
@@ -81,7 +82,7 @@ class Cloud:
         self.sent.append(reading)
         if isinstance(self.ok, BaseException):
             raise self.ok
-        return self.ok
+        return TelemetryResult(200 if self.ok is True else 500, None)
 
 
 class Exec:

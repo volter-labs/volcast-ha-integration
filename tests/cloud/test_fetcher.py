@@ -18,8 +18,11 @@ class Cloud:
         return r
 
 
-def make(*responses):
-    got = {"plans": [], "consent": [], "auth": []}
+def make(*responses, on_signals=None):
+    got = {"plans": [], "consent": [], "auth": [], "signals": []}
+
+    async def default_signals(v):
+        got["signals"].append(v)
 
     async def on_plan(raw, sched):
         got["plans"].append(raw["schedule_id"])
@@ -31,7 +34,8 @@ def make(*responses):
         got["auth"].append(n)
 
     return ScheduleFetcher(Cloud(*responses), on_plan=on_plan, on_consent=on_consent,
-                           on_auth_failure=on_auth), got
+                           on_auth_failure=on_auth,
+                           on_signals=on_signals or default_signals), got
 
 
 def doc(sid="a", slots=(SLOT,), control=True, **extra):
@@ -61,7 +65,7 @@ def test_non_bool_consent_is_ignored():
 
 def test_network_keeps_everything():
     f, got = make(None)
-    assert asyncio.run(f.async_refresh()) == "network" and got == {"plans": [], "consent": [], "auth": []}
+    assert asyncio.run(f.async_refresh()) == "network" and got == {"plans": [], "consent": [], "auth": [], "signals": []}
 
 
 def test_auth_failures_counted_and_reset():
@@ -139,3 +143,36 @@ def test_rejected_plan_warning_logged_once_per_distinct_body(caplog):
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "rejected" in r.getMessage()]
     assert len(warnings) == 3                    # bad, bad2, bad po zaakceptowanym planie
     assert got["plans"] == ["a"]
+
+
+def test_on_signals_gets_block_or_none():
+    block = {"version": 1, "live_for_s": 5}
+    f, got = make(doc(signals=block), doc(), doc(signals="x"))
+    for _ in range(3):
+        asyncio.run(f.async_refresh())
+    assert got["signals"] == [block, None, None]
+
+
+def test_signals_change_does_not_break_dedup():
+    f, got = make(doc(signals={"live_for_s": 100}), doc(signals={"live_for_s": 90}))
+    assert asyncio.run(f.async_refresh()) == "accepted"
+    assert asyncio.run(f.async_refresh()) == "unchanged"
+    assert len(got["signals"]) == 2 and got["plans"] == ["a"]
+
+
+def test_on_signals_not_called_on_none_or_auth():
+    f, got = make(None, CloudAuthError())
+    assert asyncio.run(f.async_refresh()) == "network"
+    assert asyncio.run(f.async_refresh()) == "auth"
+    assert got["signals"] == []
+
+
+def test_on_signals_exception_does_not_abort_refresh(caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.volcast.cloud")
+
+    async def boom(_):
+        raise RuntimeError("secret-detail")
+
+    f, got = make(doc(), on_signals=boom)
+    assert asyncio.run(f.async_refresh()) == "accepted" and got["plans"] == ["a"]
+    assert "secret-detail" not in caplog.text and "RuntimeError" in caplog.text
