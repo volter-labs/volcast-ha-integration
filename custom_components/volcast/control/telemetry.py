@@ -15,13 +15,18 @@ Tryb bezpośredni: wartości z odczytu rejestrów (`DirectReading.values` + tryb
 ma `access: "direct"`, możliwości z sondy (poza próbą) i limity (`registers` albo `user`);
 `extra.volcast.direct` niesie nazwę transportu, stan łącza i liczniki. Nigdy adres, port, numer
 seryjny, odcisk urządzenia ani sól.
+
+Sygnały: blok `driver` deklaruje cechy (`features`), `extra.volcast.signal_connected` mówi, czy
+kanał sygnałów jest dołączony, a blok `signals` z przyjętej odpowiedzi idzie do `on_signals`.
+`build_live_reading` to lekki odczyt na żywo (same wartości + `live: true`, bez cen, `driver`,
+`extra` i ładowarek) — wysyła go `LiveSender`, nie ten nadawca.
 """
 from __future__ import annotations
 
 import logging
 import math
 from datetime import datetime, timedelta
-from typing import Iterable, Mapping
+from typing import Awaitable, Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
@@ -48,6 +53,8 @@ TELEMETRY_FIELDS = {
     "pv_energy_total_kwh": "pv_energy_total_kwh", "grid_import_total_kwh": "grid_import_total_kwh",
     "grid_export_total_kwh": "grid_export_total_kwh",
 }
+# Cechy integracji deklarowane chmurze w bloku `driver` (zamknięty słownik kontraktu sygnałów).
+DRIVER_FEATURES = ("signals", "live")
 
 
 def driver_block(*, choice: ProfileChoice | None, control_mode: str | None, mapped_keys: Iterable[str],
@@ -85,6 +92,28 @@ def _number(v) -> float | None:
     return round(float(v), 3)
 
 
+def _values(profile_readings: Mapping[str, float | str], manual: Mapping[str, float | None]) -> dict:
+    """Wartości monitoringu; encja wskazana ręcznie ma pierwszeństwo (także gdy nieczytelna)."""
+    values: dict = {}
+    for key, name in TELEMETRY_FIELDS.items():
+        v = _number(manual.get(key) if key in manual else profile_readings.get(key))
+        if v is not None:
+            values[name] = v
+    mode = profile_readings.get("mode")
+    if isinstance(mode, str):
+        values["ems_mode"] = mode
+    return values
+
+
+def build_live_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | str],
+                       manual: Mapping[str, float | None]) -> dict | None:
+    """Odczyt na żywo: same wartości z `live: true`; None, gdy nie ma czego wysłać."""
+    values = _values(profile_readings, manual)
+    if not values:
+        return None
+    return {"timestamp": now_utc.isoformat(), "live": True, **values}
+
+
 def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | str],
                   manual: Mapping[str, float | None], driver: dict | None, extra: dict,
                   prices: dict | None, loads: list | None = None) -> dict | None:
@@ -94,14 +123,7 @@ def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | s
     z HA żadnego zapasu, a blok `driver` jedzie razem z nimi. None tylko wtedy, gdy nie
     ma ani wartości, ani cen.
     """
-    values: dict = {}
-    for key, name in TELEMETRY_FIELDS.items():
-        v = _number(manual.get(key) if key in manual else profile_readings.get(key))
-        if v is not None:
-            values[name] = v
-    mode = profile_readings.get("mode")
-    if isinstance(mode, str):
-        values["ems_mode"] = mode
+    values = _values(profile_readings, manual)
     if not values and prices is None:
         return None
     reading = {"timestamp": now_utc.isoformat(), **values, "extra": {"volcast": extra}}
@@ -118,7 +140,9 @@ class TelemetrySender:
     def __init__(self, hass, entry, cloud, executor, *, choice: ProfileChoice | None,
                  profile_map: Mapping[str, str], manual_map: Mapping[str, str], grid_negate: bool,
                  limits: dict | None, utcnow=dt_util.utcnow, direct=None,
-                 direct_capabilities: Mapping[str, bool] | None = None) -> None:
+                 direct_capabilities: Mapping[str, bool] | None = None,
+                 signal_connected: Callable[[], bool] | None = None,
+                 on_signals: Callable[[dict | None], Awaitable[None]] | None = None) -> None:
         self._hass, self._entry, self._cloud, self._executor = hass, entry, cloud, executor
         self._choice = choice
         self._profile_map = dict(profile_map) if choice and choice.integration_domain else {}
@@ -128,6 +152,8 @@ class TelemetrySender:
         self._utcnow = utcnow
         self._direct = direct
         self._direct_caps = dict(direct_capabilities) if direct_capabilities is not None else None
+        self._signal_connected = signal_connected
+        self._on_signals = on_signals
         self._prices_fp: str | None = None
         self._prices_at: datetime | None = None
         self._unsub = None
@@ -211,6 +237,11 @@ class TelemetrySender:
                                  "status": self._direct_status(), "stray": int(stats.stray),
                                  "timeouts": int(stats.timeouts),
                                  "nvm_budget_hit": bool(getattr(self._executor, "nvm_budget_hit", False))}
+        if self._signal_connected is not None:
+            try:
+                summary["signal_connected"] = bool(self._signal_connected())
+            except Exception as err:  # noqa: BLE001 — stan kanału nie zabiera odczytu
+                _LOGGER.debug("Volcast telemetry: signal state skipped (%s)", type(err).__name__)
         return summary
 
     def _direct_fresh(self):
@@ -239,15 +270,20 @@ class TelemetrySender:
         return out
 
     def _driver(self) -> dict | None:
+        """Blok `driver` (oba tryby) z cechami integracji dopisanymi w jednym miejscu."""
         local = bool(getattr(self._executor, "local_switch", False))
         if self._direct is not None:
-            return direct_driver_block(profile=self._choice.profile, access="direct",
-                                       capabilities=None if self._direct.trial else self._direct_caps,
-                                       local_switch=local, limits=self._limits)
-        unsupported = self._unsupported()
-        return driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
-                            mapped_keys=[k for k in self._profile_map if k not in unsupported],
-                            local_switch=local, limits=self._limits)
+            block = direct_driver_block(profile=self._choice.profile, access="direct",
+                                        capabilities=None if self._direct.trial else self._direct_caps,
+                                        local_switch=local, limits=self._limits)
+        else:
+            unsupported = self._unsupported()
+            block = driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
+                                 mapped_keys=[k for k in self._profile_map if k not in unsupported],
+                                 local_switch=local, limits=self._limits)
+        if block is not None:
+            block["features"] = list(DRIVER_FEATURES)
+        return block
 
     def _loads_block(self) -> list | None:
         try:
@@ -273,8 +309,8 @@ class TelemetrySender:
         finally:
             self._busy = False
 
-    async def _async_flush(self) -> bool:
-        now = self._utcnow()
+    def _current(self) -> tuple[dict, dict[str, float | None]]:
+        """Bieżące odczyty profilu (albo rejestrów) i encji wskazanych ręcznie."""
         domain = self._choice.integration_domain if self._choice else None
         if self._direct is not None:
             prof = self._direct_readings()
@@ -284,6 +320,18 @@ class TelemetrySender:
         manual: dict[str, float | None] = {}
         for key, eid in self._manual_map.items():
             manual[key] = self._manual(key, eid)
+        return prof, manual
+
+    def build_live_reading(self) -> dict | None:
+        """Lekki odczyt na żywo (bez cen, `driver`, `extra`, ładowarek); None = nic do wysłania.
+
+        Nie rusza stanu cen ani ładowarek — minutowy odczyt idzie dalej bez zmian."""
+        prof, manual = self._current()
+        return build_live_reading(now_utc=self._utcnow(), profile_readings=prof, manual=manual)
+
+    async def _async_flush(self) -> bool:
+        now = self._utcnow()
+        prof, manual = self._current()
         try:
             priced = self._prices(now)
         except Exception as err:  # noqa: BLE001 — ceny nigdy nie zabierają telemetrii
@@ -296,7 +344,13 @@ class TelemetrySender:
             extra=self._extra(), prices=priced[0] if priced else None)
         if reading is None:
             return False
-        ok = (await self._cloud.async_post_telemetry(reading)).ok is True
+        result = await self._cloud.async_post_telemetry(reading)
+        ok = result.ok is True
         if ok and priced:
             self._prices_fp, self._prices_at = priced[1], now
+        if ok and self._on_signals is not None:
+            try:
+                await self._on_signals(result.signals_raw)
+            except Exception as err:  # noqa: BLE001 — sygnały nie psują przyjętej telemetrii
+                _LOGGER.debug("Volcast telemetry: signals handling failed (%s)", type(err).__name__)
         return ok

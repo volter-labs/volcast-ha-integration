@@ -75,14 +75,14 @@ def test_driver_block_capabilities_only_in_entity_mode():
 
 
 class Cloud:
-    def __init__(self, ok=True):
-        self.ok, self.sent = ok, []
+    def __init__(self, ok=True, signals=None):
+        self.ok, self.sent, self.signals = ok, [], signals
 
     async def async_post_telemetry(self, reading):
         self.sent.append(reading)
         if isinstance(self.ok, BaseException):
             raise self.ok
-        return TelemetryResult(200 if self.ok is True else 500, None)
+        return TelemetryResult(200, self.signals) if self.ok is True else TelemetryResult(500, None)
 
 
 class Exec:
@@ -99,12 +99,13 @@ def _nordpool(h, value=0.5, eid="sensor.nordpool"):
                                    "value": value}]})
 
 
-def sender(h, cloud, options=None, *, clock=None, executor=None, manual=None, negate=False, limits=None):
+def sender(h, cloud, options=None, *, clock=None, executor=None, manual=None, negate=False, limits=None,
+           **kw):
     _nordpool(h)
     entry = SimpleNamespace(entry_id="e1", options=options or {"entity_price_buy": "sensor.nordpool"})
     return TelemetrySender(h, entry, cloud, executor or Exec(), choice=GW, profile_map=E,
                            manual_map=manual or {}, grid_negate=negate, limits=limits,
-                           utcnow=clock or (lambda: NOW))
+                           utcnow=clock or (lambda: NOW), **kw)
 
 
 def test_extra_reports_dropped_keys_and_prices_once():
@@ -412,3 +413,108 @@ def test_loads_warning_rearms_after_recovery(monkeypatch, caplog):
     for _ in range(3):
         asyncio.run(s.async_flush())
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 2
+
+
+# ── sygnały: cechy, stan kanału, odpowiedź, odczyt na żywo ─────────────────
+
+
+def test_driver_declares_signal_features_in_every_variant():
+    for options in ({"control_mode": "entities"}, None):
+        h, cloud = goodwe_hass(), Cloud()
+        asyncio.run(sender(h, cloud, options=options).async_flush())
+        assert cloud.sent[0]["driver"]["features"] == ["signals", "live"]
+    from .test_telemetry_direct import _sender
+    s, c = _sender(_direct_conn())
+    asyncio.run(s.async_flush())
+    assert c.sent[0]["driver"]["access"] == "direct" and c.sent[0]["driver"]["features"] == ["signals", "live"]
+
+
+def _direct_conn():
+    from .test_telemetry_direct import FakeConn
+    return FakeConn(load_builtin("goodwe-et"))
+
+
+def test_signal_connected_from_provider_and_absent_without_it():
+    for connected in (True, False):
+        h, cloud = goodwe_hass(), Cloud()
+        asyncio.run(sender(h, cloud, signal_connected=lambda c=connected: c).async_flush())
+        assert cloud.sent[0]["extra"]["volcast"]["signal_connected"] is connected
+    h, cloud = goodwe_hass(), Cloud()
+    asyncio.run(sender(h, cloud).async_flush())
+    assert "signal_connected" not in cloud.sent[0]["extra"]["volcast"]
+
+
+def test_signal_connected_provider_error_drops_only_that_field(caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+
+    def boom():
+        raise RuntimeError("wss://secret")
+    h, cloud = goodwe_hass(), Cloud()
+    assert asyncio.run(sender(h, cloud, signal_connected=boom).async_flush()) is True
+    v = cloud.sent[0]["extra"]["volcast"]
+    assert "signal_connected" not in v and v["decision"]["dropped_unsupported"] == ["export_limit_enabled"]
+    assert "secret" not in caplog.text and "RuntimeError" in caplog.text
+
+
+def test_on_signals_called_after_accepted_post_only():
+    got = []
+
+    async def on_signals(raw):
+        got.append(raw)
+    sig = {"version": 1, "live_for_s": 60}
+    h, cloud = goodwe_hass(), Cloud(signals=sig)
+    s = sender(h, cloud, on_signals=on_signals)
+    assert asyncio.run(s.async_flush()) is True
+    assert got == [sig]
+    cloud.signals = None
+    asyncio.run(s.async_flush())
+    assert got == [sig, None]                                # 200 bez bloku też przekazujemy
+    cloud.ok = False
+    assert asyncio.run(s.async_flush()) is False
+    cloud.ok = OSError("x")
+    assert asyncio.run(s.async_flush()) is False
+    assert len(got) == 2
+
+
+def test_on_signals_error_keeps_flush_success_and_marks_prices(caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+
+    async def on_signals(raw):
+        raise ValueError("wss://secret")
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, on_signals=on_signals)
+    assert asyncio.run(s.async_flush()) is True
+    asyncio.run(s.async_flush())
+    assert "prices" not in cloud.sent[1]                     # ceny uznane za wysłane
+    assert "secret" not in caplog.text and "ValueError" in caplog.text
+
+
+def test_build_live_reading_is_light():
+    h, cloud = goodwe_hass(), Cloud()
+    h.states.set("sensor.wb_status", "charging", {})
+    s = sender(h, cloud, _loads_options(), manual={"load_power_w": "sensor.load"})
+    h.states.set("sensor.load", "250", {"unit_of_measurement": "W"})
+    r = s.build_live_reading()
+    assert r["live"] is True and r["timestamp"] == NOW.isoformat()
+    assert r["battery_soc"] == 60.0 and r["load_power_w"] == 250.0
+    assert not set(r) & {"prices", "driver", "extra", "loads"}
+    assert cloud.sent == []                                  # sam odczyt niczego nie wysyła
+    # stan cen nietknięty — minutowy odczyt nadal niesie ceny
+    asyncio.run(s.async_flush())
+    assert "prices" in cloud.sent[0]
+
+
+def test_build_live_reading_none_without_values_even_with_prices():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud)
+    for eid in E.values():
+        h.states.set(eid, "unavailable")
+    assert s.build_live_reading() is None
+
+
+def test_build_live_reading_direct_values():
+    from .test_telemetry_direct import _sender
+    s, _ = _sender(_direct_conn())
+    r = s.build_live_reading()
+    assert r["live"] is True and r["battery_soc"] == 83 and r["ems_mode"] == "charge_battery"
+    assert not set(r) & {"prices", "driver", "extra", "loads"}
