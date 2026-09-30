@@ -28,6 +28,7 @@ from ..guards import state_fresh
 LIVE_EXPORT_KIND = "slot_live_export"
 NOTE_SELL_XSET = "sell_xset"
 NOTE_SELL_NO_LOAD = "sell_no_load"
+NOTE_SELL_NO_RATED = "sell_no_rated"
 NOTE_SELL_BELOW_MIN = "sell_below_min"
 # Odczyt ponad tyle × moc znamionowa to błąd czujnika, nie moc.
 _ABSURD_RATED_FACTOR = 2.0
@@ -67,6 +68,8 @@ class LiveExport:
     load_w: float | None
     xset_w: float
     no_load: bool
+    # pułap nieznany (ani mocy znamionowej, ani zakresu encji mocy) — nastawa 0 W
+    no_rated: bool = False
 
     def note(self) -> str:
         def w(v: float | None) -> str:
@@ -97,7 +100,7 @@ def export_ceiling(export_limit_enabled: bool | None, export_limit_w: float | No
 
 
 def compute(*, key: SlotKey, battery_w: float, pv_w: float | None, load_w: float | None,
-            export_limit_w: float | None, rated_power_w: float, memory: LiveExportMemory
+            export_limit_w: float | None, rated_power_w: float | None, memory: LiveExportMemory
             ) -> tuple[LiveExport, LiveExportMemory]:
     """Nastawa eksportu i pamięć po odczycie (`pv_w`/`load_w` już zwalidowane albo None)."""
     memory = memory.with_load(load_w)
@@ -108,5 +111,5 @@ def compute(*, key: SlotKey, battery_w: float, pv_w: float | None, load_w: float
                      last_known_load_w=memory.last_load_w, export_limit_w=export_limit_w,
                      rated_power_w=rated_power_w, prev_xset_w=memory.prev_for(key))
     live = LiveExport(key=key, battery_w=battery_w, pv_w=pv_w, load_w=load_w, xset_w=xset,
-                      no_load=memory.last_load_w is None)
+                      no_load=memory.last_load_w is None, no_rated=rated_power_w is None)
     return live, memory

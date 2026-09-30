@@ -302,7 +302,9 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
                                          ents.units, ents.attrs)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
-        return CycleDecision(BLOCKED, "entity_range_unknown", unmapped=unfit, **common)
+        # Notatki sprzedaży zostają: bez nich blokada nie mówi, że sprzedaż stoi i dlaczego.
+        return CycleDecision(BLOCKED, "entity_range_unknown", unmapped=unfit, notes=tuple(live_notes),
+                             live_export=live, **common)
     flat = params.flatten()
     unsupported = _unsupported_group(flat, profile, ents, memory)
     if unsupported:
@@ -402,7 +404,9 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
 
     Końcowa = po strażnikach i `_degrade`: slot zdjęty do trybu neutralnego (I-1, brak
     encji) ma już inny tryb i nie jest przeliczany. Moc baterii — z nastaw po strażnikach;
-    pułap — ogranicznik z nastaw po strażnikach, tylko gdy włączony (zakaz = 0 W); PV
+    pułap — ogranicznik z nastaw po strażnikach, tylko gdy włączony (zakaz = 0 W), i moc
+    znamionowa, a gdy jej nie znamy (konfiguracja bez tej opcji) — górna granica zakresu
+    encji mocy; bez obu sprzedaż stoi (0 W, notatka `sell_no_rated`). PV
     i pobór wyłącznie z `tele` (wartość i wiek z jednego odczytu). Nastawa poniżej minimum
     encji mocy nie idzie ani podniesiona, ani pominięta: cały slot schodzi do trybu
     neutralnego jak przy degradacji. `keep` (próba na sucho) = pamięć nietknięta.
@@ -413,14 +417,18 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
         if not keep:
             memory.live_export = mem.forget_written()
         return planned, None, ()
-    max_age, rated = profile.max_state_age_s, limits.rated_power_w
+    max_age = profile.max_state_age_s
+    rated = limits.rated_power_w
+    if not (math.isfinite(rated) and rated > 0.0):
+        rated = _power_entity_max_w(profile, ents)
     live, mem = lx.compute(
         key=(slot.start, slot.end, intent), battery_w=planned.power_w,
-        pv_w=lx.valid_reading(tele.pv_power_w, tele.pv_age_s, max_age, rated),
-        load_w=lx.valid_reading(tele.load_power_w, tele.load_age_s, max_age, rated),
+        pv_w=lx.valid_reading(tele.pv_power_w, tele.pv_age_s, max_age, rated or 0.0),
+        load_w=lx.valid_reading(tele.load_power_w, tele.load_age_s, max_age, rated or 0.0),
         export_limit_w=lx.export_ceiling(guarded.export_limit_enabled, guarded.export_limit_w),
         rated_power_w=rated, memory=mem)
-    notes = [live.note()] + ([lx.NOTE_SELL_NO_LOAD] if live.no_load else [])
+    notes = ([live.note()] + ([lx.NOTE_SELL_NO_LOAD] if live.no_load else [])
+             + ([lx.NOTE_SELL_NO_RATED] if live.no_rated else []))
     if _below_entity_min(live.xset_w, profile, ents):
         planned, _ = _degrade(planned, {"power_w"}, profile)
         if not keep:
@@ -441,9 +449,38 @@ def _below_entity_min(power_w: float, profile, ents: EntityContext) -> bool:
     if "power_w" not in unfit:
         return False
     attrs = ents.attrs.get(ents.mapped.get("power_w", "")) or {}
+    return _entity_range(attrs) is not None
+
+
+def _entity_range(attrs: Mapping[str, Any]) -> tuple[float, float] | None:
+    """(min, max) encji w jej jednostkach; None bez poprawnego zakresu."""
     lo, hi = attrs.get("min"), attrs.get("max")
-    return all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
-               for v in (lo, hi)) and lo <= hi
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+               for v in (lo, hi)) or lo > hi:
+        return None
+    return float(lo), float(hi)
+
+
+def _power_entity_max_w(profile, ents: EntityContext) -> float | None:
+    """Największa nastawa [W], jaką przyjmie encja mocy — ta sama granica co w `fit_params`.
+
+    Zakres przeliczony tą samą drogą co odczyt encji (jednostka, transformacja profilu);
+    None bez encji, bez poprawnego zakresu albo bez dodatniej granicy.
+    """
+    rng = _entity_range(ents.attrs.get(ents.mapped.get("power_w", "")) or {})
+    if rng is None:
+        return None
+    bounds = []
+    for v in rng:
+        try:
+            w = entity_value("power_w", repr(v), profile, ents.domain, unit=ents.units.get("power_w"))
+        except (KeyError, ValueError, TypeError):
+            return None
+        if not isinstance(w, float) or not math.isfinite(w):
+            return None
+        bounds.append(w)
+    top = max(bounds)
+    return top if top > 0.0 else None
 
 
 def _degrade(params: Params, without: set[str], profile) -> tuple[Params, bool]:

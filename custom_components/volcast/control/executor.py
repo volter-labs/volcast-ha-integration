@@ -197,7 +197,8 @@ class VolcastExecutor:
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
         self._consistent: dict[str, float | str] = {}
         self._brake_warned = False                    # ostrzeżenie hamulca raz na epizod
-        self._no_load_warned_for: tuple | None = None # slot sprzedaży z ostrzeżeniem o braku poboru
+        # powód wstrzymania sprzedaży → slot, dla którego już ostrzegliśmy (raz na slot)
+        self._sell_warned_for: dict[str, tuple] = {}
         # klucze ostatniej decyzji z planem — zablokowany cykl (bez `flat`) nie gubi odniesienia
         self._plan_keys: frozenset[str] = frozenset()
         self._disabled = False
@@ -647,7 +648,7 @@ class VolcastExecutor:
                                attrs=rd.attrs, readings=rd.for_cycle(),
                                owner_values=self._owner_export_values()),
             gates=gates, memory=self._memory)
-        self._warn_sell_without_load(decision)
+        self._warn_sell_suspended(decision)
         if soc is not None:
             self._prev_soc = (soc, now_mono)
         # Odniesienie przejęcia: odczyty kluczy, którymi plan steruje (przy włączonym sterowaniu).
@@ -758,17 +759,23 @@ class VolcastExecutor:
                             "neutral mode", d.reason)
         return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
 
-    def _warn_sell_without_load(self, d: CycleDecision) -> None:
-        """Sprzedaż wstrzymana (nastawa eksportu 0 W), bo nie ma żadnego odczytu poboru domu.
+    def _warn_sell_suspended(self, d: CycleDecision) -> None:
+        """Sprzedaż wstrzymana (nastawa eksportu 0 W): brak odczytu poboru domu albo pułapu.
 
-        Raz na slot, nie co cykl; decyzja niesie notatkę `sell_no_load` w każdym cyklu.
+        Raz na slot i powód, nie co cykl; decyzja niesie notatkę (`sell_no_load`,
+        `sell_no_rated`) w każdym cyklu.
         """
         live = d.live_export
-        if live is None or not live.no_load or live.key == self._no_load_warned_for:
+        if live is None:
             return
-        self._no_load_warned_for = live.key
-        _LOGGER.warning("Volcast control: selling suspended for this slot — no house load reading is "
-                        "available (map or restore the house consumption sensor)")
+        reasons = (("load", live.no_load, "no house load reading is available (map or restore the "
+                                          "house consumption sensor)"),
+                   ("rated", live.no_rated, "no inverter rated power and no power-entity range "
+                                            "(set the rated power in the options)"))
+        for reason, active, text in reasons:
+            if active and self._sell_warned_for.get(reason) != live.key:
+                self._sell_warned_for[reason] = live.key
+                _LOGGER.warning("Volcast control: selling suspended for this slot — %s", text)
 
     def _gates(self) -> Gates:
         return Gates(consent=self._state.consent, local_switch=self._state.local_switch,

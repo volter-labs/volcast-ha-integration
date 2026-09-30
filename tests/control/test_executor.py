@@ -58,7 +58,7 @@ class Clock:
 
 
 def make(h=None, *, options=None, store=None, verified=True, choice=GW, monkeypatch=None,
-         utc=lambda: NOW + timedelta(seconds=30), clock=None, writer=None, mapped=None):
+         utc=lambda: NOW + timedelta(seconds=30), clock=None, writer=None, mapped=None, rated=8000.0):
     h = h or goodwe_hass()
     if mapped is None and choice and choice.integration_domain:
         mapped = E_LIVE
@@ -68,7 +68,7 @@ def make(h=None, *, options=None, store=None, verified=True, choice=GW, monkeypa
         monkeypatch.setattr(ex_mod, "control_verified", lambda *_: verified)
     ex = VolcastExecutor(h, entry, choice=choice, mapped=(mapped if mapped is not None
                                                     else E if choice and choice.integration_domain else {}),
-                         rated_power_w=8000.0, store=store or ControlStore(h, "e1"),
+                         rated_power_w=rated, store=store or ControlStore(h, "e1"),
                          writer=writer or EntityServiceWriter(h), clock=clock or Clock(), utcnow=utc)
     return h, ex
 
@@ -1623,7 +1623,7 @@ def test_stale_load_sensor_does_not_trip_guard_i9(monkeypatch):
 
 # ── Sprzedaż: nastawa eksportu liczona na żywo w cyklu ──
 
-NO_LOAD_WARNING = "selling suspended"
+NO_LOAD_WARNING = "no house load reading"
 
 
 def _sell_plan(*slots):
@@ -1667,10 +1667,8 @@ def test_executor_small_live_change_writes_nothing(monkeypatch):
     assert len(h.services.calls) == n and h.states.get(E["power_w"]).state == "1172.0"
 
 
-def test_no_load_mapping_suspends_selling_with_one_warning_per_slot(monkeypatch, caplog):
-    caplog.set_level(logging.DEBUG, logger=LOGGER)
-    clock = Clock()
-    h, ex = make(goodwe_hass(power="1500"), monkeypatch=monkeypatch, mapped=E, clock=clock)
+def _two_sell_slots(h, ex, clock):
+    """Sześć cykli w pierwszym slocie sprzedaży i trzy w drugim, ze świeżym SoC."""
     utc = [NOW + timedelta(seconds=30)]
     ex._utcnow = lambda: utc[0]
     raw = _sell_plan(("10:00", "10:30", 2000, {}), ("10:30", "11:00", 1500, {}))
@@ -1689,11 +1687,44 @@ def test_no_load_mapping_suspends_selling_with_one_warning_per_slot(monkeypatch,
         for _ in range(3):
             await tick()
     asyncio.run(go())
+
+
+def test_no_load_mapping_suspends_selling_with_one_warning_per_slot(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    clock = Clock()
+    h, ex = make(goodwe_hass(power="1500"), monkeypatch=monkeypatch, mapped=E, clock=clock)
+    _two_sell_slots(h, ex, clock)
     assert h.states.get(E["mode"]).state == "sell_power" and h.states.get(E["power_w"]).state == "0.0"
     assert "sell_no_load" in ex.last_decision.notes
     warnings = [r for r in caplog.records if NO_LOAD_WARNING in r.getMessage()]
     assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
     assert no_entity_ids_in(caplog.text)
+
+
+NO_RATED_WARNING = "no inverter rated power and no power-entity range"
+
+
+def test_sell_without_rated_power_uses_the_power_entity_range(monkeypatch):
+    # Tryb encji bez opcji mocy znamionowej (konfiguracja bez niej): pułap z zakresu encji mocy.
+    h = _live_hass(pv="978", load="319")
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, rated=None)
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 1, Clock())
+    assert h.states.get(E["mode"]).state == "sell_power"
+    assert h.states.get(E["power_w"]).state == "1172.0"
+
+
+def test_sell_without_rated_power_and_entity_range_warns_once_per_slot(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    clock = Clock()
+    h = goodwe_hass()
+    h.states.set(E["power_w"], "0", {"unit_of_measurement": "W"})          # encja mocy bez min/max
+    h, ex = make(h, monkeypatch=monkeypatch, clock=clock, rated=None)
+    _two_sell_slots(h, ex, clock)
+    assert h.states.get(E["mode"]).state == "auto" and h.states.get(E["power_w"]).state == "0"
+    assert "sell_no_rated" in ex.last_decision.notes
+    warnings = [r for r in caplog.records if NO_RATED_WARNING in r.getMessage()]
+    assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
+    assert not [r for r in caplog.records if NO_LOAD_WARNING in r.getMessage()]
 
 
 def test_failed_power_write_forgets_the_written_setpoint(monkeypatch):

@@ -10,7 +10,7 @@ from dataclasses import replace
 
 import pytest
 
-from custom_components.volcast.core.control.cycle import (DRY_RUN, WRITE, ControlMemory, EntityContext,
+from custom_components.volcast.core.control.cycle import (BLOCKED, DRY_RUN, WRITE, ControlMemory, EntityContext,
                                                           Limits, Telemetry, commit, decide_cycle)
 from custom_components.volcast.core.control.group_writes import GroupReport
 from custom_components.volcast.core.control.live_export import (LIVE_EXPORT_KIND, NOTE_SELL_BELOW_MIN,
@@ -153,9 +153,70 @@ def test_negative_load_is_not_clamped_to_zero():
     assert power(d) == 0.0
 
 
-def test_unknown_rated_power_caps_export_at_zero():
-    d, _ = tick(rated=0.0, pv=978.0, pv_age=10.0, load=319.0, load_age=10.0)
-    assert power(d) == 0.0                     # pułap nieznanej mocy znamionowej = 0 (jak referencja)
+# ── Moc znamionowa nieznana (brak opcji w konfiguracji): pułapem jest zakres encji mocy ──
+
+NO_POWER_RANGE = {**ATTRS, "number.ems_power": {"step": 1}}
+
+
+@pytest.mark.parametrize("rated", [0.0, math.nan, -1.0])
+def test_unknown_rated_power_uses_the_power_entity_range(rated):
+    d, _ = tick(rated=rated, **FRESH)
+    assert power(d) == 1172.0 and "sell_no_rated" not in d.notes
+
+
+def test_unknown_rated_power_night_sell():
+    d, _ = tick(rated=0.0, schedule=plan(slot("10:00", "11:00", **SELL, power_w=2000)),
+                pv=0.0, pv_age=5.0, load=319.0, load_age=5.0)
+    assert power(d) == 1681.0
+
+
+def test_unknown_rated_power_never_exceeds_the_entity_max():
+    attrs = {**ATTRS, "number.ems_power": {"min": 0, "max": 6000, "step": 1}}
+    d, _ = tick(rated=0.0, attrs=attrs, schedule=plan(slot("10:00", "11:00", **SELL, power_w=5000)),
+                pv=4000.0, pv_age=5.0, load=100.0, load_age=5.0)
+    assert power(d) == 6000.0 and xset_notes(d)[0].endswith("xset=6000")
+
+
+def test_unknown_rated_power_reads_the_entity_range_in_its_unit():
+    units = {**UNITS, "power_w": "kW"}
+    attrs = {**ATTRS, "number.ems_power": {"min": 0, "max": 3, "step": 0.1}}
+    memory = ControlMemory.for_profile(GW)
+    d = decide_cycle(
+        profile=GW, schedule=plan(slot("10:00", "11:00", **SELL, power_w=5000)), now_utc=NOW, now_mono=1000.0,
+        tele=Telemetry(soc=60.0, soc_age_s=10.0, battery_temp_c=25.0, pv_power_w=0.0, pv_age_s=5.0,
+                       load_power_w=0.0, load_age_s=5.0),
+        limits=Limits(rated_power_w=0.0),
+        ents=EntityContext(domain="goodwe", mapped=MAPPED, units=units, attrs=attrs, readings={}),
+        gates=OPEN, memory=memory)
+    assert d.flat["power_w"] == 3000.0 and power(d) == 3.0
+
+
+def test_known_rated_power_is_the_ceiling_and_the_entity_max_still_clips():
+    small = tick(rated=1000.0, **FRESH)[0]
+    assert power(small) == 1000.0
+    attrs = {**ATTRS, "number.ems_power": {"min": 0, "max": 5000, "step": 1}}
+    big = tick(rated=8000.0, attrs=attrs, schedule=plan(slot("10:00", "11:00", **SELL, power_w=7000)),
+               pv=1000.0, pv_age=5.0, load=0.0, load_age=5.0)[0]
+    assert xset_notes(big)[0].endswith("xset=8000") and power(big) == 5000.0 and "power_w" in big.adjusted
+
+
+def test_no_rated_power_and_no_entity_range_suspends_selling_visibly():
+    d, _ = tick(rated=0.0, attrs=NO_POWER_RANGE, **FRESH)
+    # Bez zakresu encji mocy nic nie idzie (jak przy każdej intencji z mocą) — ale widać dlaczego.
+    assert (d.status, d.reason, d.writes) == (BLOCKED, "entity_range_unknown", [])
+    assert "sell_no_rated" in d.notes and d.live_export.xset_w == 0.0 and d.live_export.no_rated
+
+
+@pytest.mark.parametrize("slot_kw", [
+    dict(mode="charge", charge_source="grid", power_w=1500),
+    dict(mode="discharge", power_w=2000),
+    dict(mode="idle"),
+])
+def test_unknown_entity_range_blocks_other_powered_intents_exactly_as_before(slot_kw):
+    sched = plan(slot("10:00", "11:00", price_pln_kwh=0.8, **slot_kw))
+    plain, _ = tick(schedule=sched, rated=0.0, attrs=NO_POWER_RANGE)
+    live, _ = tick(schedule=sched, rated=0.0, attrs=NO_POWER_RANGE, **FRESH)
+    assert live == plain and (plain.status, plain.reason, plain.notes) == (BLOCKED, "entity_range_unknown", ())
 
 
 # ── Histereza i pamięć zapisanej nastawy ──
