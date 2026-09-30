@@ -16,7 +16,7 @@ from custom_components.volcast.core.control.group_writes import GroupReport
 from custom_components.volcast.core.control.live_export import (LIVE_EXPORT_KIND, LOAD_MAX_W,
                                                                 NOTE_SELL_BELOW_MIN, NOTE_SELL_NO_LOAD,
                                                                 NOTE_SELL_XSET, LiveExportMemory, compute,
-                                                                export_ceiling)
+                                                                export_ceiling, valid_load)
 from custom_components.volcast.core.profile import profile_from_dict
 from custom_components.volcast.core.write_sequence import WriteReport
 
@@ -355,6 +355,19 @@ def test_sell_right_after_a_charge_slot_falls_back_to_its_load():
     assert power(d) == 1600.0 and NOTE_SELL_NO_LOAD not in d.notes
 
 
+def test_load_above_the_rating_is_used_as_the_fresh_reading_on_the_sell_path():
+    # PV > 0 odróżnia świeży odczyt (5000 + 9000 − 10500) od ścieżki zapasowej (5000 − pobór).
+    d, _ = tick(rated=5000.0, schedule=plan(slot("10:00", "11:00", **SELL, power_w=5000)),
+                pv=9000.0, pv_age=5.0, load=10500.0, load_age=5.0)
+    assert power(d) == 3500.0
+
+
+@pytest.mark.parametrize("load,valid", [(60_000.0, True), (100_000.0, True), (100_001.0, False),
+                                        (150_000.0, False)])
+def test_house_load_bound_is_100_kw(load, valid):
+    assert (valid_load(load, 5.0, 300.0) == load) if valid else valid_load(load, 5.0, 300.0) is None
+
+
 def test_load_above_the_inverter_rating_is_a_real_load():
     # Dom może brać z sieci więcej niż moc małego falownika — to nie błąd czujnika.
     d, mem = tick(rated=5000.0, schedule=plan(slot("10:00", "11:00", **SELL, power_w=3000)),
@@ -384,6 +397,15 @@ def test_plan_cap_is_the_ceiling_even_without_limiter_entities():
     d, _ = tick(mapped=mapped, schedule=plan(slot("10:00", "11:00", **SELL, power_w=2000, export_limit_w=1520)),
                 **FRESH)
     assert "export_limit_w" not in d.flat and power(d) == 1520.0
+
+
+def test_our_ban_on_the_device_is_not_read_back_when_owner_values_exist():
+    # Zakaz na falowniku jest nasz (właściciel miał ogranicznik wyłączony) — pułapem jest wartość
+    # właściciela, nie odczyt, inaczej nasz własny zakaz zatrzymałby sprzedaż w następnym slocie.
+    owner = {"export_limit_enabled": 0.0, "export_limit_w": 4000.0}
+    d, _ = tick(schedule=plan(slot("10:00", "11:00", **SELL, power_w=2000)), owner_values=owner,
+                readings={"mode": "sell_power", "export_limit_enabled": 1.0, "export_limit_w": 0.0}, **FRESH)
+    assert power(d) == 2659.0 and d.flat["export_limit_enabled"] == 0.0
 
 
 @pytest.mark.parametrize("dev,expected", [

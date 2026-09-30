@@ -193,7 +193,7 @@ def _ceiling(limit, rated):
 
 
 def test_invariant_finite_non_negative_and_capped():
-    rnd = random.Random(20260930)
+    rnd = random.Random(1234567)
     special = [None, NAN, INF, -INF, -0.0, 0.0, -1.0, 149.0, 150.0, 151.0, 1e30, -1e30,
                HUGE, -HUGE]
 

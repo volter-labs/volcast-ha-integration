@@ -1629,7 +1629,8 @@ NO_LOAD_WARNING = "no house load reading"
 
 
 def _sell_plan(*slots):
-    return plan(slots=[{"from": f"2026-09-23T{a}:00Z", "to": f"2026-09-23T{b}:00Z", "mode": "discharge",
+    day = NOW.strftime("%Y-%m-%d")                     # doba zegara atrapy
+    return plan(slots=[{"from": f"{day}T{a}:00Z", "to": f"{day}T{b}:00Z", "mode": "discharge",
                         "discharge_purpose": "sell", "power_w": p, "price_pln_kwh": 0.8, **kw}
                        for a, b, p, kw in slots])
 
@@ -1780,6 +1781,39 @@ def test_below_minimum_degrade_warns_once_per_slot(monkeypatch, caplog):
     assert h.states.get(E["mode"]).state == "auto" and "sell_below_min" in ex.last_decision.notes
     warnings = [r for r in caplog.records if BELOW_MIN_WARNING in r.getMessage()]
     assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
+
+
+@pytest.mark.parametrize("owner_on", ["on", "off"])
+def test_our_export_ban_is_not_read_back_as_the_owner_cap_in_the_next_slot(monkeypatch, owner_on):
+    h = _live_hass(pv="0", load="319")
+    h.states.set(E["export_limit_enabled"], owner_on, {})                # ogranicznik właściciela: 4000 W
+    clock = Clock()
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    utc = [NOW + timedelta(seconds=30)]
+    ex._utcnow = lambda: utc[0]
+    raw = _sell_plan(("10:00", "10:30", 2000, {"export_allowed": False}), ("10:30", "11:00", 2000, {}))
+    second = []
+
+    async def tick():
+        for key, value in (("soc", "60"), ("load_power_w", "319"), ("pv_power_w", "0")):
+            eid = E_LIVE[key]
+            h.states.set(eid, value, None, reported=utc[0])
+        await ex.async_tick()
+        if utc[0] >= NOW + timedelta(minutes=30):
+            second.append(ex.last_decision.flat.get("power_w"))
+        clock.t += 70.0
+        utc[0] += timedelta(seconds=70)
+
+    async def go():
+        await ready(ex, raw=raw)
+        for _ in range(4):                                              # slot A: nasz zakaz (0 W)
+            await tick()
+        assert h.states.get(E["export_limit_w"]).state == "0.0"
+        utc[0] = NOW + timedelta(minutes=31)
+        for _ in range(4):                                              # slot B: bez zdania o ograniczniku
+            await tick()
+    asyncio.run(go())
+    assert second and all(p == 2000.0 - 319.0 for p in second)          # nigdy 0 W z odczytu naszego zakazu
 
 
 def _sold(monkeypatch):
