@@ -251,6 +251,10 @@ def decide_cycle(*, profile, schedule: Schedule | None, now_utc: datetime, now_m
 
 
 def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, memory) -> CycleDecision:
+    # Obserwacja poboru domu w KAŻDYM cyklu (każdy tryb, także na sucho i przy blokadzie):
+    # ścieżka zapasowa sprzedaży potrzebuje najnowszego ważnego odczytu, nie tego ze sprzedaży.
+    memory.live_export = memory.live_export.with_load(
+        lx.valid_load(tele.load_power_w, tele.load_age_s, profile.max_state_age_s))
     if gates.control_mode != "entities":
         return CycleDecision(IDLE, "no_mode_chosen")
     if profile.control_model != "mode_setpoint":
@@ -404,12 +408,14 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
 
     Końcowa = po strażnikach i `_degrade`: slot zdjęty do trybu neutralnego (I-1, brak
     encji) ma już inny tryb i nie jest przeliczany. Moc baterii — z nastaw po strażnikach;
-    pułap — ogranicznik z nastaw po strażnikach, tylko gdy włączony (zakaz = 0 W), i moc
+    pułap — ogranicznik z nastaw po strażnikach, tylko gdy włączony (zakaz = 0 W; bez
+    zdania planu — włączony ogranicznik odczytany z falownika), i moc
     znamionowa, a gdy jej nie znamy (konfiguracja bez tej opcji) — górna granica zakresu
     encji mocy; bez obu sprzedaż stoi (0 W, notatka `sell_no_rated`). PV
     i pobór wyłącznie z `tele` (wartość i wiek z jednego odczytu). Nastawa poniżej minimum
     encji mocy nie idzie ani podniesiona, ani pominięta: cały slot schodzi do trybu
-    neutralnego jak przy degradacji. `keep` (próba na sucho) = pamięć nietknięta.
+    neutralnego jak przy degradacji. `keep` (próba na sucho) = pamięć zapisanej nastawy
+    nietknięta (pobór obserwuje każdy cykl, na początku `_decide`).
     """
     mem = memory.live_export
     live_kind = profile.power_kind(intent) == lx.LIVE_EXPORT_KIND
@@ -421,19 +427,26 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
     rated = limits.rated_power_w
     if not (math.isfinite(rated) and rated > 0.0):
         rated = _power_entity_max_w(profile, ents)
+    enabled, limit = guarded.export_limit_enabled, guarded.export_limit_w
+    if enabled is None and limit is None:
+        # Plan bez zdania o ograniczniku i nie my go ustawialiśmy: włączony ogranicznik
+        # właściciela na falowniku (np. wymóg operatora) i tak tnie eksport — to też pułap.
+        dev = _device_view(ents.readings, dict.fromkeys(EXPORT_PAIR), profile, ents)
+        on, value = dev.get("export_limit_enabled"), dev.get("export_limit_w")
+        if isinstance(on, float) and on >= 0.5 and isinstance(value, float):
+            enabled, limit = True, value
     live, mem = lx.compute(
         key=(slot.start, slot.end, intent), battery_w=planned.power_w,
-        pv_w=lx.valid_reading(tele.pv_power_w, tele.pv_age_s, max_age, rated or 0.0),
-        load_w=lx.valid_reading(tele.load_power_w, tele.load_age_s, max_age, rated or 0.0),
-        export_limit_w=lx.export_ceiling(guarded.export_limit_enabled, guarded.export_limit_w),
-        rated_power_w=rated, memory=mem)
+        pv_w=lx.valid_reading(tele.pv_power_w, tele.pv_age_s, max_age, lx.pv_limit_w(rated)),
+        load_w=lx.valid_load(tele.load_power_w, tele.load_age_s, max_age),
+        export_limit_w=lx.export_ceiling(enabled, limit), rated_power_w=rated, memory=mem)
     notes = ([live.note()] + ([lx.NOTE_SELL_NO_LOAD] if live.no_load else [])
              + ([lx.NOTE_SELL_NO_RATED] if live.no_rated else []))
     if _below_entity_min(live.xset_w, profile, ents):
         planned, _ = _degrade(planned, {"power_w"}, profile)
         if not keep:
             memory.live_export = mem.forget_written()
-        return planned, None, (*notes, lx.NOTE_SELL_BELOW_MIN)
+        return planned, replace(live, below_min=True), (*notes, lx.NOTE_SELL_BELOW_MIN)
     if not keep:
         memory.live_export = mem
     return replace(planned, power_w=live.xset_w), live, tuple(notes)
@@ -665,7 +678,7 @@ def _commit_live_export(decision: CycleDecision, report: WriteReport, memory: Co
     """
     live = decision.live_export
     mem = memory.live_export
-    if live is None:
+    if live is None or live.below_min:
         memory.live_export = mem.forget_written()
         return
     if report.failed or report.unsupported or ambiguous or restored or restore_failed:

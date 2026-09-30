@@ -95,3 +95,5 @@ def test_status_sensor_reports_decision_and_foreign_changes():
     rt.executor.last_decision = CycleDecision("idle", "no_plan")
     assert s.native_value == "idle" and s.extra_state_attributes["reason"] == "no_plan"
     assert s.extra_state_attributes["foreign_changes"][0]["key"] == "mode"
+    # Notatki decyzji zmieniają się co cykl (nastawa sprzedaży) — bez wiersza rekordera na tik.
+    assert "notes" in s._unrecorded_attributes

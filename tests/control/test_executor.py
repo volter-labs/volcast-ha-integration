@@ -1,6 +1,8 @@
 import asyncio
+import copy
 import logging
 import weakref
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -1741,7 +1743,66 @@ def test_dry_run_diagnostics_do_not_touch_live_export_memory(monkeypatch):
     _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
     before = ex._memory.live_export
     _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 3, clock, consent=False)
+    observed = ex._memory.live_export
     summary = ex.exec_summary()
     assert summary["decision"]["status"] == "dry_run" and "power_w" in summary["decision"]["would_write"]
     assert "sell_xset:battery=513,pv=978,load=319,xset=1172" in summary["decision"]["notes"]
-    assert ex._memory.live_export == before and h.services.calls == []
+    # Na sucho: obserwacja poboru tak, zapisana nastawa nie; odczyt diagnostyki nie zmienia niczego.
+    assert observed == replace(before, last_load_w=319.0) and h.services.calls == []
+    ex.last_decision.summary()
+    assert ex._memory.live_export is observed
+
+
+def test_diagnostics_read_mutates_nothing(monkeypatch):
+    h = _live_hass(pv="978", load="319")
+    clock = Clock()
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 1, clock)
+    memory = copy.deepcopy(ex._memory.live_export), dict(ex._memory.last_written), ex._memory.paused_until
+    decision = ex.last_decision
+    for _ in range(3):
+        ex.exec_summary()
+        decision.summary()
+    assert (ex._memory.live_export, dict(ex._memory.last_written), ex._memory.paused_until) == memory
+    assert ex.last_decision is decision
+
+
+BELOW_MIN_WARNING = "below the power entity minimum"
+
+
+def test_below_minimum_degrade_warns_once_per_slot(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    clock = Clock()
+    h = _live_hass(pv="0", load="1950")                                  # 2000−1950 = 50 W, 1500−1950 → 0 W
+    h.states.set(E["power_w"], "0", {"min": 200, "max": 10000, "step": 1, "unit_of_measurement": "W"})
+    h, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    _two_sell_slots(h, ex, clock)
+    assert h.states.get(E["mode"]).state == "auto" and "sell_below_min" in ex.last_decision.notes
+    warnings = [r for r in caplog.records if BELOW_MIN_WARNING in r.getMessage()]
+    assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
+
+
+def _sold(monkeypatch):
+    h = _live_hass(pv="978", load="319")
+    clock = Clock()
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 1, clock)
+    assert ex._memory.live_export.written_w == 1172.0
+    return h, ex
+
+
+def test_foreign_change_pause_forgets_the_written_setpoint(monkeypatch):
+    _, ex = _sold(monkeypatch)
+    ex._pause_for_foreign("power_w", E["power_w"])
+    assert ex.paused and ex._memory.live_export.written_for is None
+    assert ex._memory.live_export.last_load_w == 319.0                  # obserwacja zostaje
+
+
+def test_restore_to_baseline_forgets_the_written_setpoint(monkeypatch):
+    h, ex = _sold(monkeypatch)
+
+    async def go():
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert not ex.owned and ex._memory.live_export.written_for is None

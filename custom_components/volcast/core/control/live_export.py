@@ -5,16 +5,21 @@ jako eksport do sieci ponad pokrycie domu. Cykl zamienia więc moc baterii na na
 `sell_xset(bateria + PV − dom)` — PO strażnikach (działają na mocy baterii) i PRZED
 dopasowaniem do encji i throttlingiem (te działają już na nastawie eksportu).
 
-Odczyt PV albo poboru jest ważny tylko, gdy jest liczbą skończoną, NIEUJEMNĄ, nie większą
-niż 2 × moc znamionowa (gdy ją znamy) i świeżą według reguły strażnika I-9 (ten sam limit
-wieku profilu; wiek `inf` = brak znacznika czasu, wiek ujemny = przesunięcie zegara —
-oba nieświeże). Odczyt ujemny albo absurdalny NIE jest przycinany do 0: pobór liczony
-(PV + bateria − sieć) bywa chwilowo ujemny, a przycięty do 0 podniósłby nastawę eksportu.
-Nieważny odczyt = brak odczytu (ścieżka zapasowa `bateria − ostatni ważny pobór`).
+Odczyt PV albo poboru jest ważny tylko, gdy jest liczbą skończoną, NIEUJEMNĄ, wiarygodną
+i świeżą według reguły strażnika I-9 (ten sam limit wieku profilu; wiek `inf` = brak
+znacznika czasu, wiek ujemny = przesunięcie zegara — oba nieświeże). Wiarygodność: PV nie
+większe niż 2 × moc znamionowa (gdy ją znamy; przewymiarowanie DC mieści się w tym z
+zapasem), pobór nie większy niż `LOAD_MAX_W` — dom bierze z sieci niezależnie od mocy
+falownika, więc pobór ponad jego moc to prawdziwy pobór, nie błąd czujnika. Odczyt ujemny
+albo absurdalny NIE jest przycinany do 0: pobór liczony (PV + bateria − sieć) bywa chwilowo
+ujemny, a przycięty do 0 podniósłby nastawę eksportu. Nieważny odczyt = brak odczytu
+(ścieżka zapasowa `bateria − ostatni ważny pobór`).
 
 Pamięć (`LiveExportMemory`) jest niezmienna — cykl i `commit` podmieniają ją w całości.
-Ostatni ważny pobór odświeża każdy ważny odczyt; nastawę pamiętamy dopiero po udanym
-zapisie i tylko dla tego samego slotu i intencji.
+Ostatni ważny pobór to OBSERWACJA: odświeża go każdy ważny odczyt w każdym cyklu, w każdym
+trybie, także na sucho (jak w implementacji referencyjnej — ścieżka zapasowa ma najnowszy
+ważny odczyt). Nastawę pamiętamy dopiero po udanym zapisie i tylko dla tego samego slotu
+i intencji; pauza, powrót do stanu bazowego i każda porażka zapisu ją kasują.
 """
 from __future__ import annotations
 
@@ -31,7 +36,9 @@ NOTE_SELL_NO_LOAD = "sell_no_load"
 NOTE_SELL_NO_RATED = "sell_no_rated"
 NOTE_SELL_BELOW_MIN = "sell_below_min"
 # Odczyt ponad tyle × moc znamionowa to błąd czujnika, nie moc.
-_ABSURD_RATED_FACTOR = 2.0
+PV_MAX_RATED_FACTOR = 2.0
+# Pobór domu ponad tyle to błąd czujnika (przyłącze domu jest dużo mniejsze).
+LOAD_MAX_W = 100_000.0
 
 SlotKey = tuple[datetime, datetime, str]
 
@@ -70,6 +77,8 @@ class LiveExport:
     no_load: bool
     # pułap nieznany (ani mocy znamionowej, ani zakresu encji mocy) — nastawa 0 W
     no_rated: bool = False
+    # nastawa pod minimum encji mocy — slot zszedł do trybu neutralnego, nic nie zapisujemy
+    below_min: bool = False
 
     def note(self) -> str:
         def w(v: float | None) -> str:
@@ -78,18 +87,30 @@ class LiveExport:
                 f"load={w(self.load_w)},xset={w(self.xset_w)}")
 
 
+def pv_limit_w(rated_power_w: float | None) -> float | None:
+    """Górna granica wiarygodnego PV; None = moc znamionowa nieznana (bez granicy)."""
+    if rated_power_w is None or not math.isfinite(rated_power_w) or rated_power_w <= 0.0:
+        return None
+    return PV_MAX_RATED_FACTOR * rated_power_w
+
+
 def valid_reading(value: float | None, age_s: float | None, max_state_age_s: float,
-                  rated_power_w: float) -> float | None:
+                  limit_w: float | None) -> float | None:
     """Odczyt mocy, któremu wolno ufać, albo None (reguła w opisie modułu)."""
     if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
         return None
     if value < 0.0:
         return None
-    if math.isfinite(rated_power_w) and rated_power_w > 0.0 and value > _ABSURD_RATED_FACTOR * rated_power_w:
+    if limit_w is not None and value > limit_w:
         return None
     if not state_fresh(age_s, max_state_age_s):
         return None
     return float(value)
+
+
+def valid_load(value: float | None, age_s: float | None, max_state_age_s: float) -> float | None:
+    """Pobór domu, któremu wolno ufać, albo None."""
+    return valid_reading(value, age_s, max_state_age_s, LOAD_MAX_W)
 
 
 def export_ceiling(export_limit_enabled: bool | None, export_limit_w: float | None) -> float | None:
@@ -102,8 +123,10 @@ def export_ceiling(export_limit_enabled: bool | None, export_limit_w: float | No
 def compute(*, key: SlotKey, battery_w: float, pv_w: float | None, load_w: float | None,
             export_limit_w: float | None, rated_power_w: float | None, memory: LiveExportMemory
             ) -> tuple[LiveExport, LiveExportMemory]:
-    """Nastawa eksportu i pamięć po odczycie (`pv_w`/`load_w` już zwalidowane albo None)."""
-    memory = memory.with_load(load_w)
+    """Nastawa eksportu i pamięć po zmianie slotu (`pv_w`/`load_w` już zwalidowane albo None).
+
+    Wołający odświeżył już w `memory` ostatni ważny pobór obserwacją tego cyklu.
+    """
     if memory.written_for is not None and memory.written_for != key:
         memory = memory.forget_written()        # inny slot albo intencja — histereza od nowa
     xset = sell_xset(battery_w=battery_w, pv_w=pv_w, load_w=load_w,

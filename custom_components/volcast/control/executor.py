@@ -403,6 +403,8 @@ class VolcastExecutor:
 
     def _pause_for_foreign(self, key: str, eid: str | None) -> None:
         self._memory.paused_until = self._clock() + FOREIGN_PAUSE_S
+        # Ktoś inny zmienia falownik: zapisana nastawa sprzedaży nie jest już pewna.
+        self._memory.live_export = self._memory.live_export.forget_written()
         self._take_over_key(key)
         self.foreign_changes = (self.foreign_changes + [
             {"key": key, "entity_id": eid, "at": self._utcnow().isoformat()}])[-_FOREIGN_KEEP:]
@@ -760,10 +762,11 @@ class VolcastExecutor:
         return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
 
     def _warn_sell_suspended(self, d: CycleDecision) -> None:
-        """Sprzedaż wstrzymana (nastawa eksportu 0 W): brak odczytu poboru domu albo pułapu.
+        """Sprzedaż wstrzymana: brak odczytu poboru domu, brak pułapu (nastawa 0 W) albo nastawa
+        pod minimum encji mocy (slot w trybie neutralnym).
 
         Raz na slot i powód, nie co cykl; decyzja niesie notatkę (`sell_no_load`,
-        `sell_no_rated`) w każdym cyklu.
+        `sell_no_rated`, `sell_below_min`) w każdym cyklu.
         """
         live = d.live_export
         if live is None:
@@ -771,7 +774,9 @@ class VolcastExecutor:
         reasons = (("load", live.no_load, "no house load reading is available (map or restore the "
                                           "house consumption sensor)"),
                    ("rated", live.no_rated, "no inverter rated power and no power-entity range "
-                                            "(set the rated power in the options)"))
+                                            "(set the rated power in the options)"),
+                   ("minimum", live.below_min, "the export setpoint is below the power entity minimum "
+                                               "(the slot runs in the neutral mode)"))
         for reason, active, text in reasons:
             if active and self._sell_warned_for.get(reason) != live.key:
                 self._sell_warned_for[reason] = live.key
@@ -984,6 +989,7 @@ class VolcastExecutor:
         self._state.restore_keys = None
         self._state.taken_over = []
         self._memory.last_written.clear()
+        self._memory.live_export = self._memory.live_export.forget_written()
         await self._async_save("baseline state", force=True)
         self.last_decision = CycleDecision(RESTORE, "baseline_mode_kept" if mode_kept else "baseline",
                                            writes=writes, flat=target, takeover=mode_kept)
