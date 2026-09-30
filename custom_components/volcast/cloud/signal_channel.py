@@ -37,7 +37,11 @@ _CONNECT_TIMEOUT_S = 15.0
 _HEARTBEAT_S = 25.0
 # Tyle heartbeatów bez odpowiedzi = połączenie zerwane.
 _MAX_MISSED_HEARTBEATS = 2
+# Ramki większe niż `_MAX_FRAME` ignorujemy (ping jest pusty). aiohttp przy przekroczeniu
+# `max_msg_size` nie pozwala pominąć ramki — zwraca ERROR i zamyka gniazdo — więc jego limit
+# jest wyższy (twarda ochrona pamięci); dopiero ramka ponad `_MAX_WS_MSG` kończy się reconnectem.
 _MAX_FRAME = 64 * 1024
+_MAX_WS_MSG = 1024 * 1024
 _BACKOFF_MIN_S = 1.0
 _BACKOFF_MAX_S = 60.0
 _BACKOFF_MAX_STEP = 6            # 2**6 > 60 — dalej rośnie już tylko sufit
@@ -134,8 +138,12 @@ class SignalChannel:
             alive = self._task is not None and not self._task.done()
             if cfg == self._cfg and (cfg is None or alive):
                 return
+            had = self._cfg is not None
             await self._stop_locked()
             if cfg is None:
+                if had:
+                    # diagnostyka: blok bez kanału (np. różny adres publiczny w plan/telemetrii)
+                    _LOGGER.debug("signal channel removed by the cloud block")
                 return
             self._cfg = cfg
             self._task = self._task_factory(self._run(cfg), "volcast signal channel")
@@ -190,8 +198,14 @@ class SignalChannel:
         url = f"{cfg.url}?{urlencode({'apikey': cfg.apikey, 'vsn': _VSN})}"
         async with asyncio.timeout(_CONNECT_TIMEOUT_S):
             ws = await self._session.ws_connect(
-                url, autoping=True, heartbeat=None, timeout=_WS_TIMEOUT, max_msg_size=_MAX_FRAME)
+                url, autoping=True, heartbeat=None, timeout=_WS_TIMEOUT, max_msg_size=_MAX_WS_MSG)
         try:
+            # `ws_connect` nie przyjmuje `allow_redirects` i podąża za 3xx; walidacja adresu dotyczy
+            # tylko pierwszego skoku, więc po przekierowaniu nie wysyłamy join (temat) — jak `client.py`,
+            # który 3xx odrzuca. `_response` to jedyny dostęp do historii (aiohttp 3.x).
+            response = getattr(ws, "_response", None)
+            if getattr(response, "history", None):
+                raise _ChannelDown("redirected")
             await self._serve(ws, cfg)
         finally:
             try:

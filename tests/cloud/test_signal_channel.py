@@ -150,7 +150,7 @@ def test_join_ok_wakes_and_connects_with_contract_frames():
         assert ch.connected and wakes == [1]
         c = s.connects[0]
         assert c["url"] == f"{URL}?apikey={KEY}&vsn=1.0.0"
-        assert c["autoping"] is True and c["heartbeat"] is None and c["max_msg_size"] == 65536
+        assert c["autoping"] is True and c["heartbeat"] is None and c["max_msg_size"] == 1024 * 1024
         assert isinstance(c["timeout"], aiohttp.ClientWSTimeout)
         assert ws.sent[0] == {
             "topic": TOPIC, "event": "phx_join", "ref": "1", "join_ref": "1",
@@ -714,3 +714,53 @@ def test_eager_task_factory_does_not_start_second_task_from_wake():
         await ch.async_stop()
         assert all(t.done() for t in tasks)
     run(main())
+
+
+
+# ------------------------------------------------------ przekierowania i duże ramki
+
+def test_redirected_handshake_is_closed_before_join():
+    """ws_connect podąża za 3xx — po przekierowaniu nie wysyłamy join (temat) i łączymy od nowa."""
+    from types import SimpleNamespace
+
+    async def main():
+        clock = Clock()
+        redirected = FakeWs(clock, reply(), HOLD)
+        redirected._response = SimpleNamespace(history=(object(),))
+        ok = FakeWs(clock, reply(), HOLD)
+        ok._response = SimpleNamespace(history=())
+        s = FakeWsSession(redirected, ok)
+        ch, _ = make(s, clock)
+        await ch.async_update(CFG)
+        await settle(lambda: ch.connected)
+        assert redirected.sent == [] and redirected.closed
+        assert ch.connected and len(s.connects) == 2 and clock.sleeps == [1.0]
+        await ch.async_stop()
+    run(main())
+
+
+def test_oversized_text_frame_is_ignored_without_reconnect():
+    async def main():
+        clock = Clock()
+        big = json.dumps({"topic": TOPIC, "event": "broadcast", "payload": {"x": "a" * (70 * 1024)}})
+        ws = FakeWs(clock, reply(), big, ping(), HOLD)
+        s = FakeWsSession(ws)
+        ch, wakes = make(s, clock)
+        await ch.async_update(CFG)
+        await settle(lambda: len(wakes) == 2)
+        assert wakes == [1, 1] and len(s.connects) == 1 and ch.connected   # join + ping, duża pominięta
+        await ch.async_stop()
+    run(main())
+
+
+def test_channel_removed_by_cloud_is_logged_at_debug(caplog):
+    async def main():
+        clock = Clock()
+        s = FakeWsSession(FakeWs(clock, reply(), HOLD))
+        ch, _ = make(s, clock)
+        await ch.async_update(CFG)
+        await settle(lambda: ch.connected)
+        await ch.async_update(None)
+    caplog.set_level(logging.DEBUG, logger="custom_components.volcast.cloud")
+    run(main())
+    assert "signal channel removed" in caplog.text and HEX not in caplog.text
