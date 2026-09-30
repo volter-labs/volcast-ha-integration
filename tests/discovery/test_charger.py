@@ -280,3 +280,22 @@ def test_hint_word_in_device_name_still_matches_entity_name(dev_name, eid, name,
     found = classify_chargers([_dev(name=dev_name)], ents, {})
     assert len(found) == 1
     assert found[0].roles["start_stop"].entity_id == eid
+
+
+def test_unique_id_with_device_name_does_not_hint_a_role():
+    # kształt OCPP: unique_id niesie nazwę urządzenia ("charger"), więc nie może podpowiadać
+    avail = _ent("switch.charger_availability", name="Availability",
+                 uid="switch.ocpp.charger.availability")
+    control = _ent("switch.charger_charge_control", name="Charge control",
+                   uid="switch.ocpp.charger.charge_control")
+    f = classify_chargers([_dev(name="charger")], [_STATUS, avail, control], {})[0]
+    assert f.roles["start_stop"].entity_id == "switch.charger_charge_control"
+
+
+def test_non_ascii_device_name_prefix_is_stripped():
+    # HA transliteruje nazwę urządzenia w entity_id: "Ładowarka EV Charger" -> ladowarka_ev_charger
+    lock = _ent("switch.ladowarka_ev_charger_child_lock", name="Child lock", uid="u-lock")
+    op = _ent("select.ladowarka_ev_charger_operation", name="Operation", uid="u-op",
+              caps={"options": ["Start charging", "Stop charging"]})
+    f = classify_chargers([_dev(name="Ładowarka EV Charger")], [_STATUS, lock, op], {})[0]
+    assert f.roles["start_stop"].entity_id == "select.ladowarka_ev_charger_operation"

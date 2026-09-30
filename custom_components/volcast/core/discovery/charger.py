@@ -13,6 +13,7 @@ CamelCase ("SuspendedEV", "Charging", "Available") bez osobnego stanu złącza w
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from .models import ChargerFinding, ChargerRole, DeviceSnap, EntitySnap, StateSnap
@@ -41,15 +42,23 @@ def _tokens(text: str) -> list[str]:
     return [t for t in _TOKEN_RE.split(text.lower()) if t]
 
 
+# litery, których NFKD nie rozkłada na literę bazową + znak diakrytyczny
+_FOLD = str.maketrans({"ł": "l", "đ": "d", "ø": "o", "ß": "ss", "æ": "ae", "œ": "oe",
+                       "þ": "th", "ı": "i"})
+
+
 def _slug(text: str) -> str:
-    return "_".join(_tokens(text))
+    # przybliżenie slugu HA: transliteracja do ASCII, potem słowa łączone "_"
+    folded = unicodedata.normalize("NFKD", text.lower().translate(_FOLD))
+    return "_".join(_tokens(folded.encode("ascii", "ignore").decode("ascii")))
 
 
 def _text(e: EntitySnap, prefix: str) -> str:
     # entity_id zaczyna się od slugu nazwy urządzenia ("ev_charger_child_lock") — zdejmujemy
-    # tylko ten prefiks; nazwa encji i translation_key liczą się w całości
+    # tylko ten prefiks; nazwa encji i translation_key liczą się w całości. unique_id pomijamy:
+    # jego kształt zależy od integracji i często niesie nazwę urządzenia
     object_id = e.entity_id.split(".", 1)[-1].removeprefix(prefix)
-    return f"{object_id} {e.unique_id} {e.original_name or ''} {e.translation_key or ''}"
+    return f"{object_id} {e.original_name or ''} {e.translation_key or ''}"
 
 
 def _has(e: EntitySnap, hints: tuple[str, ...], prefix: str) -> bool:
