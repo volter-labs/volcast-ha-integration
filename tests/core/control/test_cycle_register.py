@@ -110,7 +110,12 @@ def test_same_cycle_code_as_entities(goodwe_profile, sell_schedule, reading_auto
                      memory=ControlMemory.for_profile(goodwe_profile), ents=ents)
     r, _ = _run(goodwe_profile, sell_schedule, reading_auto)
     assert [w.key for w in e.writes] == [w.key for w in r.writes]
-    assert e.flat == r.flat and e.status == r.status == WRITE
+    # Moc sprzedaży (`slot_live_export`) liczy się z odczytów PV/poboru tylko w trybie encji —
+    # tu bez tych odczytów encje dają 0 W; cel rejestrowy zachowuje moc baterii z planu.
+    assert {k: v for k, v in e.flat.items() if k != "power_w"} == \
+        {k: v for k, v in r.flat.items() if k != "power_w"}
+    assert e.flat["power_w"] == 0.0 and r.flat["power_w"] == 2500.0
+    assert e.status == r.status == WRITE
 
 
 def test_target_and_ents_exclusive(goodwe_profile, sell_schedule, reading_auto):

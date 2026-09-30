@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
@@ -34,6 +34,8 @@ from ..core.write_sequence import ERROR
 from .direct import target_fingerprint
 
 NO_READING = ("unavailable", "unknown", "")
+# Odczyty mocy na żywo z własnym wiekiem (osobno od wieku SoC i guardu I-9).
+LIVE_KEYS = ("pv_power_w", "load_power_w")
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,15 @@ class Reading:
     attrs: dict[str, dict]                # atrybuty encji, także `options` wyboru trybu
     soc_age_s: float
     source: Any = None                    # tryb bezpośredni: `DirectReading` cyklu (None = brak odczytu)
+    # wiek odczytu kluczy mocy na żywo (PV, pobór) — tylko gdy odczyt jest w `readings`
+    live_ages: dict[str, float] = field(default_factory=dict)
+
+    def live(self, key: str) -> tuple[float | None, float | None]:
+        """Wartość i wiek odczytu mocy na żywo; (None, None) bez odczytu."""
+        value = self.readings.get(key)
+        if not isinstance(value, float) or key not in self.live_ages:
+            return None, None
+        return value, self.live_ages[key]
 
     @property
     def foreign_mode(self) -> bool:
@@ -107,6 +118,7 @@ class EntityIO:
         attrs: dict[str, dict] = {}
         soc_state = None
         raw_mode = None
+        states = {}
         for key, eid in self.mapped.items():
             st = self._hass.states.get(eid)
             if st is None:
@@ -118,8 +130,12 @@ class EntityIO:
                 raw_mode = st.state
             if key == "soc":
                 soc_state = st
+            states[key] = st
         readings = normalize_readings(raw, self._profile, self._domain) if self._domain else {}
-        return Reading(readings, raw_mode, units, attrs, self.age(soc_state, now_utc))
+        # Wiek tylko dla czytelnego odczytu: `unavailable`/`unknown` znika z `readings` → brak wieku.
+        live_ages = {k: self.age(states[k], now_utc) for k in LIVE_KEYS if k in readings}
+        return Reading(readings, raw_mode, units, attrs, self.age(soc_state, now_utc),
+                       live_ages=live_ages)
 
     @staticmethod
     def age(st, now_utc) -> float:

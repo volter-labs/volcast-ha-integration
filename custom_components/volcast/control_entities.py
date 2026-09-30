@@ -113,6 +113,8 @@ class VolcastPlanSensor(_ControlEntity, SensorEntity):
 
 class VolcastControlStatusSensor(_ControlEntity, SensorEntity):
     _attr_icon = "mdi:content-save-check-outline"
+    # notatki decyzji zmieniają się co cykl (nastawa sprzedaży) — widoczne na żywo, bez historii
+    _unrecorded_attributes = frozenset({"notes"})
 
     def __init__(self, entry, rt) -> None:
         super().__init__(entry, rt, "status")

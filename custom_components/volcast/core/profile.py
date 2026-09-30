@@ -78,6 +78,16 @@ class Profile:
     def intent(self, name: str) -> Mapping[str, Any] | None:
         return self.raw["intents"][name]
 
+    def power_kind(self, name: str) -> str | None:
+        """Rodzaj mocy intencji: "slot" | "slot_live_export" | "zero" | "none" | "max".
+
+        None = intencja nieobsługiwana przez profil. Wykonawca sprawdza tu, czy końcowa
+        intencja wymaga przeliczenia mocy slotu na nastawę eksportu z bieżących odczytów
+        (`slot_live_export`); mapper traktuje ten rodzaj tak samo jak "slot".
+        """
+        spec = self.raw["intents"].get(name)
+        return spec["power"] if isinstance(spec, dict) else None
+
     def mode_value(self, name: str) -> int:
         return self.modes[name].value
 

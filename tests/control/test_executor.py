@@ -1,6 +1,8 @@
 import asyncio
+import copy
 import logging
 import weakref
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -22,6 +24,16 @@ from .ha_fakes import GOODWE_ENTITIES as E, NOW, goodwe_hass
 
 GW = ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET")
 LOGGER = "custom_components.volcast.control"
+# Domyślny dom testów: PV i pobór zmapowane, oba 0 W — nastawa eksportu slotu sprzedaży
+# (`slot_live_export`) równa mocy baterii ze slotu, więc testy mechaniki widzą moc planu.
+E_LIVE = {**E, "pv_power_w": "sensor.goodwe_pv_power", "load_power_w": "sensor.goodwe_house_consumption"}
+
+
+def _idle_house(h):
+    for key in ("pv_power_w", "load_power_w"):
+        if h.states.get(E_LIVE[key]) is None:
+            h.states.set(E_LIVE[key], "0", {"unit_of_measurement": "W"})
+    return h
 
 
 def plan(power=2000, sid="p1", control=True, slots=None):
@@ -48,13 +60,17 @@ class Clock:
 
 
 def make(h=None, *, options=None, store=None, verified=True, choice=GW, monkeypatch=None,
-         utc=lambda: NOW + timedelta(seconds=30), clock=None, writer=None):
+         utc=lambda: NOW + timedelta(seconds=30), clock=None, writer=None, mapped=None, rated=8000.0):
     h = h or goodwe_hass()
+    if mapped is None and choice and choice.integration_domain:
+        mapped = E_LIVE
+        _idle_house(h)
     entry = SimpleNamespace(entry_id="e1", options=options if options is not None else {"control_mode": "entities"})
     if monkeypatch is not None:
         monkeypatch.setattr(ex_mod, "control_verified", lambda *_: verified)
-    ex = VolcastExecutor(h, entry, choice=choice, mapped=E if choice and choice.integration_domain else {},
-                         rated_power_w=8000.0, store=store or ControlStore(h, "e1"),
+    ex = VolcastExecutor(h, entry, choice=choice, mapped=(mapped if mapped is not None
+                                                    else E if choice and choice.integration_domain else {}),
+                         rated_power_w=rated, store=store or ControlStore(h, "e1"),
                          writer=writer or EntityServiceWriter(h), clock=clock or Clock(), utcnow=utc)
     return h, ex
 
@@ -1635,3 +1651,301 @@ def test_repeated_failed_brake_warns_once(monkeypatch, caplog):
             await ex.async_tick()
     asyncio.run(go())
     assert caplog.text.count("cannot be applied safely") == 1
+
+
+# ── Odczyty PV i poboru domu: wartość i wiek per klucz (osobno od wieku SoC) ──
+
+def _live_hass(pv="513", load="319", pv_at=None, load_at=None):
+    h = goodwe_hass()
+    h.states.set(E_LIVE["pv_power_w"], pv, {"unit_of_measurement": "W"}, reported=pv_at or NOW)
+    h.states.set(E_LIVE["load_power_w"], load, {"unit_of_measurement": "W"}, reported=load_at or NOW)
+    return h
+
+
+def _capture_tele(monkeypatch):
+    """Przechwytuje `Telemetry` przekazaną do cyklu — prawdziwy cykl działa dalej."""
+    seen = []
+    real = ex_mod.decide_cycle
+
+    def spy(**kw):
+        seen.append(kw["tele"])
+        return real(**kw)
+    monkeypatch.setattr(ex_mod, "decide_cycle", spy)
+    return seen
+
+
+def _tick_live(h, monkeypatch, mapped=E_LIVE):
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=mapped)
+    seen = _capture_tele(monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+    asyncio.run(go())
+    return ex, seen[-1]
+
+
+def test_fresh_pv_and_load_reach_telemetry_with_small_age(monkeypatch):
+    _, tele = _tick_live(_live_hass(pv="513", load="319"), monkeypatch)
+    assert tele.pv_power_w == 513.0 and tele.load_power_w == 319.0
+    assert tele.pv_age_s == 30.0 and tele.load_age_s == 30.0     # utc = NOW + 30 s
+    assert tele.soc_age_s == 30.0                                 # wiek SoC bez zmian
+
+
+def test_stale_load_has_large_age_and_soc_age_unchanged(monkeypatch):
+    h = _live_hass(load_at=NOW - timedelta(hours=1))
+    _, tele = _tick_live(h, monkeypatch)
+    assert tele.load_age_s == 3630.0
+    assert tele.pv_age_s == 30.0
+    assert tele.soc_age_s == 30.0
+
+
+def test_unmapped_pv_and_load_have_no_reading_and_no_age(monkeypatch):
+    _, tele = _tick_live(_live_hass(), monkeypatch, mapped=E)
+    assert tele.pv_power_w is None and tele.pv_age_s is None
+    assert tele.load_power_w is None and tele.load_age_s is None
+
+
+@pytest.mark.parametrize("state", ["unavailable", "unknown"])
+def test_unavailable_load_has_no_reading_and_no_age(monkeypatch, state):
+    _, tele = _tick_live(_live_hass(load=state), monkeypatch)
+    assert tele.load_power_w is None and tele.load_age_s is None
+    assert tele.pv_power_w == 513.0 and tele.pv_age_s == 30.0
+
+
+def test_mapped_entity_without_state_has_no_age(monkeypatch):
+    h = goodwe_hass()                                  # encje PV/poboru zmapowane, ale bez stanu
+    _, tele = _tick_live(h, monkeypatch)
+    assert tele.pv_age_s is None and tele.load_age_s is None
+
+
+def test_stale_load_sensor_does_not_trip_guard_i9(monkeypatch):
+    # Opcjonalny czujnik poboru nie wchodzi do wieku stanu: prawdziwy guard I-9 przepuszcza zapis.
+    h = _live_hass(pv="unavailable", load_at=NOW - timedelta(hours=1))
+    ex, tele = _tick_live(h, monkeypatch)
+    assert tele.load_age_s == 3630.0
+    assert ex.last_decision.status == "write"
+    assert "I-9" not in (ex.last_decision.reason or "")
+    assert h.states.get(E["mode"]).state == "sell_power"
+    # Pobór nieświeży i żadnego wcześniejszego: sprzedaż wstrzymana (nastawa eksportu 0 W, już na falowniku).
+    assert h.states.get(E["power_w"]).state == "0"
+    assert "sell_no_load" in ex.last_decision.notes
+
+
+# ── Sprzedaż: nastawa eksportu liczona na żywo w cyklu ──
+
+NO_LOAD_WARNING = "no house load reading"
+
+
+def _sell_plan(*slots):
+    day = NOW.strftime("%Y-%m-%d")                     # doba zegara atrapy
+    return plan(slots=[{"from": f"{day}T{a}:00Z", "to": f"{day}T{b}:00Z", "mode": "discharge",
+                        "discharge_purpose": "sell", "power_w": p, "price_pln_kwh": 0.8, **kw}
+                       for a, b, p, kw in slots])
+
+
+def _ticks(ex, raw, n, clock, *, step=70.0, **gates):
+    async def go():
+        await ready(ex, raw=raw, **gates)
+        for _ in range(n):
+            await ex.async_tick()
+            clock.t += step
+    asyncio.run(go())
+
+
+def test_executor_writes_battery_plus_pv_minus_load_for_sell(monkeypatch):
+    h = _live_hass(pv="978", load="319")
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE)
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 1, Clock())
+    assert h.states.get(E["mode"]).state == "sell_power"
+    assert h.states.get(E["power_w"]).state == "1172.0"
+    assert "sell_xset:battery=513,pv=978,load=319,xset=1172" in ex.last_decision.notes
+    assert "sell_xset:battery=513,pv=978,load=319,xset=1172" in ex.exec_summary()["decision"]["notes"]
+    assert ex._memory.live_export.written_w == 1172.0
+
+
+def test_executor_small_live_change_writes_nothing(monkeypatch):
+    h = _live_hass(pv="978", load="319")
+    clock = Clock()
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    raw = _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520}))
+    _ticks(ex, raw, 1, clock)
+    n = len(h.services.calls)
+    h.states.set(E_LIVE["pv_power_w"], "1100")                  # świeża 1294 W, różnica < 150 W
+
+    async def go():
+        await ex.async_tick()
+    asyncio.run(go())
+    assert len(h.services.calls) == n and h.states.get(E["power_w"]).state == "1172.0"
+
+
+def _two_sell_slots(h, ex, clock):
+    """Sześć cykli w pierwszym slocie sprzedaży i trzy w drugim, ze świeżym SoC."""
+    utc = [NOW + timedelta(seconds=30)]
+    ex._utcnow = lambda: utc[0]
+    raw = _sell_plan(("10:00", "10:30", 2000, {}), ("10:30", "11:00", 1500, {}))
+
+    async def tick():
+        h.states.set(E["soc"], "60", reported=utc[0])           # świeży SoC (I-9)
+        await ex.async_tick()
+        clock.t += 70.0
+        utc[0] += timedelta(seconds=70)
+
+    async def go():
+        await ready(ex, raw=raw)
+        for _ in range(6):                                      # sześć cykli w pierwszym slocie
+            await tick()
+        utc[0] = NOW + timedelta(minutes=40)                    # drugi slot
+        for _ in range(3):
+            await tick()
+    asyncio.run(go())
+
+
+def test_no_load_mapping_suspends_selling_with_one_warning_per_slot(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    clock = Clock()
+    h, ex = make(goodwe_hass(power="1500"), monkeypatch=monkeypatch, mapped=E, clock=clock)
+    _two_sell_slots(h, ex, clock)
+    assert h.states.get(E["mode"]).state == "sell_power" and h.states.get(E["power_w"]).state == "0.0"
+    assert "sell_no_load" in ex.last_decision.notes
+    warnings = [r for r in caplog.records if NO_LOAD_WARNING in r.getMessage()]
+    assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
+    assert no_entity_ids_in(caplog.text)
+
+
+NO_RATED_WARNING = "no inverter rated power and no power-entity range"
+
+
+def test_sell_without_rated_power_uses_the_power_entity_range(monkeypatch):
+    # Tryb encji bez opcji mocy znamionowej (konfiguracja bez niej): pułap z zakresu encji mocy.
+    h = _live_hass(pv="978", load="319")
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, rated=None)
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 1, Clock())
+    assert h.states.get(E["mode"]).state == "sell_power"
+    assert h.states.get(E["power_w"]).state == "1172.0"
+
+
+def test_sell_without_rated_power_and_entity_range_warns_once_per_slot(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    clock = Clock()
+    h = goodwe_hass()
+    h.states.set(E["power_w"], "0", {"unit_of_measurement": "W"})          # encja mocy bez min/max
+    h, ex = make(h, monkeypatch=monkeypatch, clock=clock, rated=None)
+    _two_sell_slots(h, ex, clock)
+    assert h.states.get(E["mode"]).state == "auto" and h.states.get(E["power_w"]).state == "0"
+    assert "sell_no_rated" in ex.last_decision.notes
+    warnings = [r for r in caplog.records if NO_RATED_WARNING in r.getMessage()]
+    assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
+    assert not [r for r in caplog.records if NO_LOAD_WARNING in r.getMessage()]
+
+
+def test_failed_power_write_forgets_the_written_setpoint(monkeypatch):
+    h = _live_hass(pv="978", load="319")
+    h.services.fail[E["power_w"]] = ServiceValidationError("rejected")
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE)
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 1, Clock())
+    assert ex._memory.live_export.written_for is None and ex._memory.live_export.written_w is None
+
+
+def test_dry_run_diagnostics_do_not_touch_live_export_memory(monkeypatch):
+    h = _live_hass(pv="978", load="319")
+    clock = Clock()
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    before = ex._memory.live_export
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 3, clock, consent=False)
+    observed = ex._memory.live_export
+    summary = ex.exec_summary()
+    assert summary["decision"]["status"] == "dry_run" and "power_w" in summary["decision"]["would_write"]
+    assert "sell_xset:battery=513,pv=978,load=319,xset=1172" in summary["decision"]["notes"]
+    # Na sucho: obserwacja poboru tak, zapisana nastawa nie; odczyt diagnostyki nie zmienia niczego.
+    assert observed == replace(before, last_load_w=319.0) and h.services.calls == []
+    ex.last_decision.summary()
+    assert ex._memory.live_export is observed
+
+
+def test_diagnostics_read_mutates_nothing(monkeypatch):
+    h = _live_hass(pv="978", load="319")
+    clock = Clock()
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 1, clock)
+    memory = copy.deepcopy(ex._memory.live_export), dict(ex._memory.last_written), ex._memory.paused_until
+    decision = ex.last_decision
+    for _ in range(3):
+        ex.exec_summary()
+        decision.summary()
+    assert (ex._memory.live_export, dict(ex._memory.last_written), ex._memory.paused_until) == memory
+    assert ex.last_decision is decision
+
+
+BELOW_MIN_WARNING = "below the power entity minimum"
+
+
+def test_below_minimum_degrade_warns_once_per_slot(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    clock = Clock()
+    h = _live_hass(pv="0", load="1950")                                  # 2000−1950 = 50 W, 1500−1950 → 0 W
+    h.states.set(E["power_w"], "0", {"min": 200, "max": 10000, "step": 1, "unit_of_measurement": "W"})
+    h, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    _two_sell_slots(h, ex, clock)
+    assert h.states.get(E["mode"]).state == "auto" and "sell_below_min" in ex.last_decision.notes
+    warnings = [r for r in caplog.records if BELOW_MIN_WARNING in r.getMessage()]
+    assert len(warnings) == 2 and all(r.levelno == logging.WARNING for r in warnings)
+
+
+@pytest.mark.parametrize("owner_on", ["on", "off"])
+def test_our_export_ban_is_not_read_back_as_the_owner_cap_in_the_next_slot(monkeypatch, owner_on):
+    h = _live_hass(pv="0", load="319")
+    h.states.set(E["export_limit_enabled"], owner_on, {})                # ogranicznik właściciela: 4000 W
+    clock = Clock()
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    utc = [NOW + timedelta(seconds=30)]
+    ex._utcnow = lambda: utc[0]
+    raw = _sell_plan(("10:00", "10:30", 2000, {"export_allowed": False}), ("10:30", "11:00", 2000, {}))
+    second = []
+
+    async def tick():
+        for key, value in (("soc", "60"), ("load_power_w", "319"), ("pv_power_w", "0")):
+            eid = E_LIVE[key]
+            h.states.set(eid, value, None, reported=utc[0])
+        await ex.async_tick()
+        if utc[0] >= NOW + timedelta(minutes=30):
+            second.append(ex.last_decision.flat.get("power_w"))
+        clock.t += 70.0
+        utc[0] += timedelta(seconds=70)
+
+    async def go():
+        await ready(ex, raw=raw)
+        for _ in range(4):                                              # slot A: nasz zakaz (0 W)
+            await tick()
+        assert h.states.get(E["export_limit_w"]).state == "0.0"
+        utc[0] = NOW + timedelta(minutes=31)
+        for _ in range(4):                                              # slot B: bez zdania o ograniczniku
+            await tick()
+    asyncio.run(go())
+    assert second and all(p == 2000.0 - 319.0 for p in second)          # nigdy 0 W z odczytu naszego zakazu
+
+
+def _sold(monkeypatch):
+    h = _live_hass(pv="978", load="319")
+    clock = Clock()
+    _, ex = make(h, monkeypatch=monkeypatch, mapped=E_LIVE, clock=clock)
+    _ticks(ex, _sell_plan(("10:00", "11:00", 513, {"export_limit_w": 1520})), 1, clock)
+    assert ex._memory.live_export.written_w == 1172.0
+    return h, ex
+
+
+def test_foreign_change_pause_forgets_the_written_setpoint(monkeypatch):
+    _, ex = _sold(monkeypatch)
+    ex._pause_for_foreign("power_w", E["power_w"])
+    assert ex.paused and ex._memory.live_export.written_for is None
+    assert ex._memory.live_export.last_load_w == 319.0                  # obserwacja zostaje
+
+
+def test_restore_to_baseline_forgets_the_written_setpoint(monkeypatch):
+    h, ex = _sold(monkeypatch)
+
+    async def go():
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+    asyncio.run(go())
+    assert not ex.owned and ex._memory.live_export.written_for is None
