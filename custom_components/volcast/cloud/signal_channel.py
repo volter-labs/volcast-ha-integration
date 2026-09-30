@@ -113,6 +113,7 @@ class SignalChannel:
         self._task: asyncio.Task[None] | None = None
         self._connected = False
         self._healthy = False
+        self._lock = asyncio.Lock()
 
     @property
     def connected(self) -> bool:
@@ -120,23 +121,40 @@ class SignalChannel:
         return self._connected
 
     async def async_update(self, cfg: ChannelCfg | None) -> None:
-        """Ustawia konfigurację kanału; nie czeka na połączenie (to robi zadanie tła)."""
-        alive = self._task is not None and not self._task.done()
-        if cfg == self._cfg and (cfg is None or alive):
-            return
-        await self.async_stop()
-        if cfg is None:
-            return
-        self._cfg = cfg
-        self._task = self._task_factory(self._run(cfg), "volcast signal channel")
+        """Ustawia konfigurację kanału; nie czeka na połączenie (to robi zadanie tła).
+
+        Wywołania są szeregowane jednym zamkiem (z `async_stop`): stop starego gniazda trwa
+        do `ws_close`, a w tym czasie może przyjść kolejny cfg (telemetria, live, plan) —
+        bez zamka oba startowałyby własne zadanie i jedno zostałoby osierocone. Zadanie
+        tworzymy pod zamkiem, więc nawet fabryka startująca je gorliwie (kanał → wake →
+        `async_update` przed zapisem uchwytu) nie wystartuje drugiego — wewnętrzne wywołanie
+        poczeka na zamek i zobaczy już zapisany uchwyt.
+        """
+        async with self._lock:
+            alive = self._task is not None and not self._task.done()
+            if cfg == self._cfg and (cfg is None or alive):
+                return
+            await self._stop_locked()
+            if cfg is None:
+                return
+            self._cfg = cfg
+            self._task = self._task_factory(self._run(cfg), "volcast signal channel")
 
     async def async_stop(self) -> None:
         """Anuluje zadanie (także w trakcie backoffu), zamyka gniazdo i czeka na koniec."""
+        async with self._lock:
+            await self._stop_locked()
+
+    async def _stop_locked(self) -> None:
         task, self._task, self._cfg = self._task, None, None
         self._connected = False
         if task is None:
             return
         task.cancel()
+        if task is asyncio.current_task():
+            # stop z wnętrza własnego zadania: anulowanie dotrze przy najbliższym await
+            return
+        # Zadanie czekające na zamek (wake → update) też dostaje anulowanie — bez zakleszczenia.
         await asyncio.wait({task})
         if not task.cancelled() and task.exception() is not None:
             _LOGGER.debug("signal channel ended: %s", type(task.exception()).__name__)

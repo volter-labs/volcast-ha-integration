@@ -599,3 +599,118 @@ def test_dead_task_with_same_cfg_is_restarted():
         assert len(s.connects) == 2 and ch.connected
         await ch.async_stop()
     run(main())
+
+
+# ------------------------------------------------------------- współbieżność
+
+class SlowCloseWs(FakeWs):
+    def __init__(self, clock, gate, *frames):
+        super().__init__(clock, *frames)
+        self.gate = gate
+
+    async def close(self):
+        await self.gate.wait()
+        return await super().close()
+
+
+def _counting_factory(tasks, eager=False):
+    def factory(coro, name):
+        loop = asyncio.get_running_loop()
+        t = asyncio.eager_task_factory(loop, coro, name=name) if eager else loop.create_task(coro, name=name)
+        tasks.append(t)
+        return t
+    return factory
+
+
+def test_parallel_updates_with_new_cfg_start_exactly_one_task():
+    async def main():
+        clock = Clock()
+        gate = asyncio.Event()
+        ws1 = SlowCloseWs(clock, gate, reply(), HOLD)
+        ws2 = FakeWs(clock, reply(topic=f"realtime:ha-sig:{HEX2}"), HOLD)
+        s = FakeWsSession(ws1, ws2, FakeWs(clock, HOLD))
+        tasks = []
+
+        async def wake():
+            pass
+
+        ch = SignalChannel(s, on_wake=wake, sleep=clock.sleep, rand=lambda: 0.5,
+                           monotonic=clock.monotonic, task_factory=_counting_factory(tasks))
+        await ch.async_update(CFG)
+        await settle(lambda: ch.connected)
+        a = asyncio.ensure_future(ch.async_update(CFG2))
+        b = asyncio.ensure_future(ch.async_update(CFG2))
+        await settle()
+        gate.set()
+        await asyncio.gather(a, b)
+        await settle(lambda: ch.connected)
+        assert len(tasks) == 2 and len(s.connects) == 2
+        await ch.async_stop()
+        assert all(t.done() for t in tasks)
+    run(main())
+
+
+def test_parallel_update_to_none_during_switch_wins():
+    """Ostatnie wywołanie wygrywa: None w trakcie przełączania nie zostawia kanału starego cfg."""
+    async def main():
+        clock = Clock()
+        gate = asyncio.Event()
+        ws1 = SlowCloseWs(clock, gate, reply(), HOLD)
+        s = FakeWsSession(ws1, FakeWs(clock, HOLD))
+        tasks = []
+
+        async def wake():
+            pass
+
+        ch = SignalChannel(s, on_wake=wake, sleep=clock.sleep, rand=lambda: 0.5,
+                           monotonic=clock.monotonic, task_factory=_counting_factory(tasks))
+        await ch.async_update(CFG)
+        await settle(lambda: ch.connected)
+        a = asyncio.ensure_future(ch.async_update(CFG2))
+        await settle()
+        b = asyncio.ensure_future(ch.async_update(None))
+        await settle()
+        gate.set()
+        await asyncio.gather(a, b)
+        await settle()
+        assert all(t.done() for t in tasks) and not ch.connected
+        await ch.async_stop()
+    run(main())
+
+
+class InstantWs(FakeWs):
+    """Gniazdo bez oddawania sterowania do pierwszego HOLD — jak eager start do pierwszego I/O."""
+
+    async def receive(self, timeout=None):
+        item = self.frames.pop(0) if self.frames else HOLD
+        if item == HOLD:
+            self.frames.insert(0, HOLD)
+            await asyncio.get_running_loop().create_future()
+        return Msg(aiohttp.WSMsgType.TEXT, item, None)
+
+
+class InstantSession(FakeWsSession):
+    async def ws_connect(self, url, **kw):
+        self.connects.append({"url": url, **kw})
+        return self.items.pop(0)
+
+
+def test_eager_task_factory_does_not_start_second_task_from_wake():
+    async def main():
+        clock = Clock()
+        s = InstantSession(InstantWs(clock, reply(), HOLD), InstantWs(clock, reply(), HOLD))
+        tasks = []
+        holder = {}
+
+        async def wake():
+            await holder["ch"].async_update(CFG)                # wake → pobranie → ten sam cfg
+
+        ch = SignalChannel(s, on_wake=wake, sleep=clock.sleep, rand=lambda: 0.5,
+                           monotonic=clock.monotonic, task_factory=_counting_factory(tasks, eager=True))
+        holder["ch"] = ch
+        await ch.async_update(CFG)
+        await settle()
+        assert len(tasks) == 1 and len(s.connects) == 1 and ch.connected
+        await ch.async_stop()
+        assert all(t.done() for t in tasks)
+    run(main())

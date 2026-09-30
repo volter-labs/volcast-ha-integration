@@ -57,10 +57,13 @@ class LiveSender:
         self._interval = interval_s
         self._deadline = 0.0
         self._task: asyncio.Task[None] | None = None
+        # Fabryka może wystartować pętlę gorliwie: pierwszy tik (200 → hub → `update`) biegnie,
+        # zanim uchwyt trafi do `_task`. Znacznik ustawiony PRZED fabryką mówi wtedy „pętla już jest”.
+        self._starting = False
 
     @property
     def running(self) -> bool:
-        return self._task is not None and not self._task.done()
+        return self._starting or (self._task is not None and not self._task.done())
 
     def update(self, live_for_s: int) -> None:
         """Ustawia koniec okna na teraz + min(live_for_s, sufit); ≤ 0 gasi. Nie blokuje."""
@@ -74,7 +77,11 @@ class LiveSender:
             return
         self._deadline = self._mono() + min(n, LIVE_MAX_S)
         if not self.running:
-            self._task = self._task_factory(self._run(), "volcast-live")
+            self._starting = True
+            try:
+                self._task = self._task_factory(self._run(), "volcast-live")
+            finally:
+                self._starting = False
 
     def _open(self) -> bool:
         return self._mono() < self._deadline

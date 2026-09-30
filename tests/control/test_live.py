@@ -357,3 +357,33 @@ def test_non_int_live_for_s_treated_as_zero():
 
 async def _noop(raw):
     return None
+
+
+def test_eager_task_factory_does_not_start_second_loop_from_on_signals():
+    """Fabryka startująca zadanie gorliwie: pierwszy tik (odpowiedź 200 → hub → `update`) biegnie,
+    zanim `update` zapisze uchwyt — przedłużenie okna nie może stworzyć drugiej pętli."""
+    tasks = []
+    holder = {}
+
+    async def on_signals(raw):
+        if len(tasks) < 5:                       # bez fiksa rekurencja — przerwij po kilku
+            holder["live"].update(60)
+
+    def factory(coro, name):
+        t = asyncio.eager_task_factory(asyncio.get_running_loop(), coro, name=name)
+        tasks.append(t)
+        return t
+
+    clock = Clock()
+    live = LiveSender(cloud=Cloud(), telemetry=Telemetry(), on_signals=on_signals,
+                      monotonic=clock.mono, sleep=clock.sleep, task_factory=factory)
+    holder["live"] = live
+
+    async def go():
+        live.update(9)
+        assert live.running
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert len(tasks) == 1
+        await live.async_stop()
+    asyncio.run(go())
