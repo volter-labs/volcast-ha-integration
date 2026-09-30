@@ -24,7 +24,10 @@ trybie ładuje z sieci). Zasady, które trzymają grupę:
 * zmiana trybu wstrzymana (I-6, I-8) wstrzymuje moc — chyba że falownik już ma tryb
   z planu, wtedy sama moc jest zwykłą korektą nastawy;
 * tryb albo moc, których falownik nie obsługuje, wyłączają intencję na całą sesję;
-* parametr niedopasowalny do zakresu encji blokuje cały cykl.
+* parametr niedopasowalny do zakresu encji blokuje cały cykl;
+* sprzedaż z mocą `slot_live_export`: moc baterii po strażnikach zamieniana na nastawę
+  eksportu z odczytów PV i poboru tego cyklu (`live_export`), zanim zobaczy ją dopasowanie
+  i throttling; nastawa pod minimum encji mocy = slot w trybie neutralnym.
 Awaria zapisu w trakcie cyklu to już sprawa wykonawcy grupowego (`group_writes`):
 cykl układa grupę w bezpiecznej kolejności i podaje zapisy cofające (`restore`).
 Po każdym cofnięciu grupa czeka (odwrót: max(min_interval_s, 300 s), podwajany do
@@ -55,6 +58,8 @@ from ..params import Params
 from .entity_fit import control_writes, fit_params
 from .group_writes import order_group, power_first
 from .latch import ReserveLatch
+from . import live_export as lx
+from .live_export import LiveExport, LiveExportMemory
 
 WRITE, DRY_RUN, IDLE, BLOCKED, ERROR = "write", "dry_run", "idle", "blocked", "error"
 
@@ -86,6 +91,8 @@ class ControlMemory:
     group_backoff_s: float = 0.0
     group_backoff_until: float | None = None
     backoff_base_s: float = _BACKOFF_MIN_S
+    # sprzedaż z mocą `slot_live_export`: ostatni ważny pobór i nastawa zapisana w slocie
+    live_export: LiveExportMemory = field(default_factory=LiveExportMemory)
 
     @classmethod
     def for_profile(cls, profile) -> "ControlMemory":
@@ -163,6 +170,8 @@ class CycleDecision:
     restore_ambiguous_safe: tuple[str, ...] = ()
     # urządzenie ma czytelny tryb spoza profilu — zmiana z zewnątrz, nie nadpisujemy
     takeover: bool = False
+    # sprzedaż przeliczona na nastawę eksportu z odczytów (None = intencja bez przeliczenia)
+    live_export: LiveExport | None = None
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -283,6 +292,12 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     without = tuple(k for k in _with_pair(missing) if getattr(guard.params, k, None) is not None)
     planned, degraded = _degrade(guard.params, set(without), profile)
     planned = replace(planned, **{k: None for k in without})
+    # Sprzedaż: moc baterii → nastawa eksportu z odczytów tego cyklu (po strażnikach, przed
+    # dopasowaniem i throttlingiem — histereza i uzgadnianie widzą już nastawę eksportu).
+    dry = _gate_reason(gates, memory, now_mono) is not None
+    planned, live, live_notes = _live_export(planned, guard.params, mapped_slot.intent, slot, profile,
+                                             tele, limits, ents, memory, keep=dry)
+    degraded = degraded or lx.NOTE_SELL_BELOW_MIN in live_notes
     params, adjusted, unfit = fit_params(planned, profile, ents.domain, ents.mapped,
                                          ents.units, ents.attrs)
     if unfit:
@@ -317,7 +332,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
     unsupported = _with_pair(memory.unsupported)
     allowed = due - unsupported - set(runtime_unmapped)
 
-    notes: list[str] = ["degraded"] if degraded else []
+    notes: list[str] = (["degraded"] if degraded else []) + list(live_notes)
     # Para ogranicznika: członek, który musi się zmienić, a nie pójdzie → nie idzie żaden
     # (i wstrzymuje tryb jak każdy niedoszły warunek — niżej).
     if EXPORT_PAIR & (need - allowed) and EXPORT_PAIR & allowed:
@@ -376,7 +391,59 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, ents, gates, mem
         notes=tuple(notes),
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
-                           if "mode" in restore_flat else None), **common)
+                           if "mode" in restore_flat else None), live_export=live, **common)
+
+
+
+def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, tele: Telemetry,
+                 limits: Limits, ents: EntityContext, memory: ControlMemory, *, keep: bool
+                 ) -> tuple[Params, LiveExport | None, tuple[str, ...]]:
+    """Nastawa eksportu dla KOŃCOWEJ intencji sprzedaży z mocą `slot_live_export`.
+
+    Końcowa = po strażnikach i `_degrade`: slot zdjęty do trybu neutralnego (I-1, brak
+    encji) ma już inny tryb i nie jest przeliczany. Moc baterii — z nastaw po strażnikach;
+    pułap — ogranicznik z nastaw po strażnikach, tylko gdy włączony (zakaz = 0 W); PV
+    i pobór wyłącznie z `tele` (wartość i wiek z jednego odczytu). Nastawa poniżej minimum
+    encji mocy nie idzie ani podniesiona, ani pominięta: cały slot schodzi do trybu
+    neutralnego jak przy degradacji. `keep` (próba na sucho) = pamięć nietknięta.
+    """
+    mem = memory.live_export
+    live_kind = profile.power_kind(intent) == lx.LIVE_EXPORT_KIND
+    if not live_kind or planned.mode != profile.intent(intent)["mode"] or planned.power_w is None:
+        if not keep:
+            memory.live_export = mem.forget_written()
+        return planned, None, ()
+    max_age, rated = profile.max_state_age_s, limits.rated_power_w
+    live, mem = lx.compute(
+        key=(slot.start, slot.end, intent), battery_w=planned.power_w,
+        pv_w=lx.valid_reading(tele.pv_power_w, tele.pv_age_s, max_age, rated),
+        load_w=lx.valid_reading(tele.load_power_w, tele.load_age_s, max_age, rated),
+        export_limit_w=lx.export_ceiling(guarded.export_limit_enabled, guarded.export_limit_w),
+        rated_power_w=rated, memory=mem)
+    notes = [live.note()] + ([lx.NOTE_SELL_NO_LOAD] if live.no_load else [])
+    if _below_entity_min(live.xset_w, profile, ents):
+        planned, _ = _degrade(planned, {"power_w"}, profile)
+        if not keep:
+            memory.live_export = mem.forget_written()
+        return planned, None, (*notes, lx.NOTE_SELL_BELOW_MIN)
+    if not keep:
+        memory.live_export = mem
+    return replace(planned, power_w=live.xset_w), live, tuple(notes)
+
+
+def _below_entity_min(power_w: float, profile, ents: EntityContext) -> bool:
+    """Nastawa mocy pod minimum encji: dopasowanie nie przyjmie jej bez podniesienia.
+
+    Encja bez poprawnego zakresu to inny przypadek (cykl blokuje `entity_range_unknown`).
+    """
+    _, _, unfit = fit_params(Params(power_w=power_w), profile, ents.domain, ents.mapped,
+                             ents.units, ents.attrs)
+    if "power_w" not in unfit:
+        return False
+    attrs = ents.attrs.get(ents.mapped.get("power_w", "")) or {}
+    lo, hi = attrs.get("min"), attrs.get("max")
+    return all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+               for v in (lo, hi)) and lo <= hi
 
 
 def _degrade(params: Params, without: set[str], profile) -> tuple[Params, bool]:
@@ -539,6 +606,7 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
         # jest nieznany — następna zmiana liczy się w każdą stronę.
         if "mode" in ambiguous or (back_maybe and decision.restore_direction not in _DIRECTIONAL):
             memory.limiter.mark_unknown()
+    _commit_live_export(decision, report, memory, restored, restore_failed, ambiguous)
     group = [w.key for w in decision.writes if w.key in _MODE_GROUP]
     if restored or restore_failed:
         step = (memory.backoff_base_s if memory.group_backoff_s <= 0.0
@@ -548,3 +616,22 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     elif group and all(k in report.written for k in group):
         memory.group_backoff_s = 0.0
         memory.group_backoff_until = None
+
+
+def _commit_live_export(decision: CycleDecision, report: WriteReport, memory: ControlMemory,
+                        restored: list[str], restore_failed: list[str], ambiguous: list[str]) -> None:
+    """Nastawa eksportu sprzedaży staje się „zapisaną" dopiero po udanym zapisie mocy.
+
+    Każda porażka w cyklu (odrzucenie, wynik niepewny, cofnięcie) kasuje pamięć — następny
+    cykl liczy od nowa zamiast trzymać wartość, której falownik mógł nie dostać. Moc, która
+    w tym cyklu nie szła (interwał, już zgodna), pamięci nie zmienia.
+    """
+    live = decision.live_export
+    mem = memory.live_export
+    if live is None:
+        memory.live_export = mem.forget_written()
+        return
+    if report.failed or report.unsupported or ambiguous or restored or restore_failed:
+        memory.live_export = mem.forget_written()
+    elif "power_w" in report.written and "power_w" in decision.flat:
+        memory.live_export = mem.with_written(live.key, float(decision.flat["power_w"]))

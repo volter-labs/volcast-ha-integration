@@ -197,6 +197,7 @@ class VolcastExecutor:
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
         self._consistent: dict[str, float | str] = {}
         self._brake_warned = False                    # ostrzeżenie hamulca raz na epizod
+        self._no_load_warned_for: tuple | None = None # slot sprzedaży z ostrzeżeniem o braku poboru
         # klucze ostatniej decyzji z planem — zablokowany cykl (bez `flat`) nie gubi odniesienia
         self._plan_keys: frozenset[str] = frozenset()
         self._disabled = False
@@ -646,6 +647,7 @@ class VolcastExecutor:
                                attrs=rd.attrs, readings=rd.for_cycle(),
                                owner_values=self._owner_export_values()),
             gates=gates, memory=self._memory)
+        self._warn_sell_without_load(decision)
         if soc is not None:
             self._prev_soc = (soc, now_mono)
         # Odniesienie przejęcia: odczyty kluczy, którymi plan steruje (przy włączonym sterowaniu).
@@ -755,6 +757,18 @@ class VolcastExecutor:
             _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
                             "neutral mode", d.reason)
         return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
+
+    def _warn_sell_without_load(self, d: CycleDecision) -> None:
+        """Sprzedaż wstrzymana (nastawa eksportu 0 W), bo nie ma żadnego odczytu poboru domu.
+
+        Raz na slot, nie co cykl; decyzja niesie notatkę `sell_no_load` w każdym cyklu.
+        """
+        live = d.live_export
+        if live is None or not live.no_load or live.key == self._no_load_warned_for:
+            return
+        self._no_load_warned_for = live.key
+        _LOGGER.warning("Volcast control: selling suspended for this slot — no house load reading is "
+                        "available (map or restore the house consumption sensor)")
 
     def _gates(self) -> Gates:
         return Gates(consent=self._state.consent, local_switch=self._state.local_switch,

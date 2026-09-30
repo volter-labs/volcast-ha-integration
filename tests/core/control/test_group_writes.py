@@ -25,6 +25,8 @@ ATTRS = {"number.ems_power": {"min": 0, "max": 10000, "step": 1},
          "number.export_limit": {"min": 0, "max": 10000, "step": 1}}
 OPEN = Gates(consent=True, local_switch=True, control_mode="entities", verified=True)
 NOW = "2026-09-27T10:30:00+00:00"
+# Świeże PV 0 W i pobór 0 W: nastawa eksportu sprzedaży równa mocy baterii ze slotu.
+HOUSE_IDLE = dict(pv_power_w=0.0, pv_age_s=1.0, load_power_w=0.0, load_age_s=1.0)
 
 
 @dataclass(frozen=True)
@@ -194,7 +196,7 @@ SHAPES = [
 def tick(dev, mem, sched, t, hide=()):
     from datetime import datetime
     d = decide_cycle(profile=GW, schedule=sched, now_utc=datetime.fromisoformat(NOW), now_mono=t,
-                     tele=Telemetry(soc=60.0, soc_age_s=5.0, battery_temp_c=25.0),
+                     tele=Telemetry(soc=60.0, soc_age_s=5.0, battery_temp_c=25.0, **HOUSE_IDLE),
                      limits=Limits(rated_power_w=8000.0),
                      ents=EntityContext(domain="goodwe", mapped=MAPPED, units=UNITS, attrs=ATTRS,
                                         readings={k: v for k, v in dev.state.items() if k not in hide}),

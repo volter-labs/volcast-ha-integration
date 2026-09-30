@@ -28,6 +28,9 @@ ATTRS = {"number.ems_power": {"min": 0, "max": 10000, "step": 1},
          "number.soc_upper": {"min": 10, "max": 100, "step": 1},
          "number.export_limit": {"min": 0, "max": 10000, "step": 1}}
 OPEN = Gates(consent=True, local_switch=True, control_mode="entities", verified=True)
+# Świeże PV 0 W i pobór 0 W: nastawa eksportu sprzedaży (`slot_live_export`) równa mocy
+# baterii ze slotu — testy mechaniki grupy tryb+moc widzą moc slotu jak dotąd.
+HOUSE_IDLE = dict(pv_power_w=0.0, pv_age_s=1.0, load_power_w=0.0, load_age_s=1.0)
 
 
 def sched(**slot_over):
@@ -64,7 +67,7 @@ def run(memory=None, *, schedule="default", gates=OPEN, soc=60.0, age=10.0, temp
     return decide_cycle(
         profile=profile, schedule=sched() if schedule == "default" else schedule,
         now_utc=now_utc, now_mono=now_mono,
-        tele=Telemetry(soc=soc, soc_age_s=age, battery_temp_c=temp),
+        tele=Telemetry(soc=soc, soc_age_s=age, battery_temp_c=temp, **HOUSE_IDLE),
         limits=Limits(rated_power_w=8000.0),
         ents=EntityContext(domain="goodwe", mapped=mapped, units=units, attrs=attrs, readings=readings or {},
                            owner_values=owner_values or {}),
@@ -78,7 +81,8 @@ def _written(d):
 # ── Ścieżka podstawowa ──
 
 def test_sell_slot_writes_conditions_then_group_in_safe_order():
-    d, _ = run(schedule=sched(export_allowed=False))
+    # Pułap eksportu (nie zakaz: przy zakazie nastawa eksportu sprzedaży to 0 W i moc idzie pierwsza).
+    d, _ = run(schedule=sched(export_limit_w=1500))
     assert d.status == WRITE and d.intent == "sell" and d.direction == "discharge"
     # Moc nieznana → tryb przed mocą (postój z dużym Xset to znana pułapka).
     assert [w.key for w in d.writes] == ["export_limit_w", "export_limit_enabled", "mode", "power_w"]
@@ -538,10 +542,11 @@ def test_power_never_written_into_pending_standby():
 @pytest.mark.parametrize("gap", [5.0, 30.0, 59.9])
 def test_mode_change_with_pending_condition_param_holds_group(gap):
     # Warunek trybu (blokada eksportu) czeka w interwale → tryb i moc też czekają.
-    d, mem = run(schedule=sched(export_allowed=False), now_mono=1000.0)
+    # Sprzedaż z pułapem ponad moc slotu: nastawa eksportu ta sama przed i po powrocie limitu.
+    d, mem = run(schedule=sched(export_limit_w=2500), now_mono=1000.0)
     commit(d, _written(d), mem, 1000.0)
     owner = {"export_limit_enabled": 0.0, "export_limit_w": 4000.0}
-    d1, _ = run(mem, now_mono=1070.0, owner_values=owner)          # eksport znów dozwolony → limit właściciela
+    d1, _ = run(mem, now_mono=1070.0, owner_values=owner)          # plan bez pułapu → limit właściciela
     assert [w.key for w in d1.writes] == ["export_limit_w", "export_limit_enabled"]
     commit(d1, _written(d1), mem, 1070.0)
     blocked = plan(slot("10:00", "11:00", export_allowed=False, **STANDBY))
