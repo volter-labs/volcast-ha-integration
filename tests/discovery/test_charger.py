@@ -1,3 +1,4 @@
+import importlib
 import json
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from custom_components.volcast.core.discovery.models import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+# moduł, nie funkcję: pakiet eksportuje funkcję `classify` pod tą samą nazwą
+classify_mod = importlib.import_module("custom_components.volcast.core.discovery.classify")
 
 
 def _load(name):
@@ -78,11 +81,15 @@ def test_second_brand_all_roles_found():
 
 def test_dimmer_is_not_a_charger():
     devices, entities, states, _ = _load("dimmer_trap")
+    # pułapka ma nastawę w W z zakresem i enum ze stanem "charging" — bez stanu złącza
+    ids = {e.entity_id for e in entities}
+    assert {"number.dimmer_minimum_power", "sensor.dimmer_battery_state"} <= ids
     assert classify_chargers(devices, entities, states) == []
 
 
 def test_roles_found_from_registry_capabilities_without_states():
-    # runner klasyfikuje bez stanów — min/max/step i opcje muszą przyjść z rejestru
+    # discovery_runner woła classify z states={}; min/max/step i opcje przychodzą wtedy
+    # wyłącznie z capabilities rejestru encji (EntitySnap.capabilities)
     devices, entities, _, _ = _load("tuya_local_evcharger")
     f = classify_chargers(devices, entities, {})[0]
     assert f.roles["setpoint"].max == 16.0
@@ -96,8 +103,8 @@ def test_setpoint_range_falls_back_to_state_attributes():
     assert (f.roles["setpoint"].min, f.roles["setpoint"].max) == (6, 16)
 
 
-def _dev(id="d1"):
-    return DeviceSnap(id=id, manufacturer="X", model=None, name="Box", sw_version=None,
+def _dev(id="d1", name="Box"):
+    return DeviceSnap(id=id, manufacturer="X", model=None, name=name, sw_version=None,
                       hw_version=None, serial_number=None, identifiers=(),
                       config_entry_ids=("e1",))
 
@@ -197,3 +204,61 @@ def test_classify_adds_chargers_without_touching_other_fields():
     assert [f.device_id for f in c.chargers] == ["device-0001"]
     assert c.inverters == [] and c.price_entities == []
     assert Classification([], [], []).chargers == []
+
+
+def test_device_name_tokens_do_not_make_any_switch_a_start_stop():
+    # entity_id zawiera slug nazwy urządzenia ("ev_charger") — nie może podpowiadać roli
+    devices, entities, states, _ = _load("tuya_local_evcharger")
+    lock = EntitySnap(entity_id="switch.ev_charger_child_lock", platform="tuya_local",
+                      unique_id="UID0001-switch_child_lock", device_id="device-0001",
+                      config_entry_id="entry-0001", device_class=None, unit=None,
+                      translation_key=None, original_name="Child lock", disabled=False)
+    f = classify_chargers(devices, entities + [lock], states)[0]
+    assert f.roles["start_stop"].entity_id == "select.ev_charger_charging_operation"
+
+
+def test_robot_vacuum_is_not_a_charger():
+    status = _ent("sensor.robot_status", "enum", caps={"options": [
+        "cleaning", "returning", "charging", "charger_disconnected", "idle"]})
+    resume = _ent("switch.robot_resume", name="Resume cleaning")
+    assert classify_chargers([_dev(name="Robot")], [status, resume], {}) == []
+
+
+def test_inverter_battery_with_available_state_is_not_a_charger():
+    batt = _ent("sensor.battery_status", "enum",
+                caps={"options": ["available", "charging", "discharging"]})
+    cur = _ent("number.battery_charge_current", "current", "A",
+               caps={"min": 0, "max": 25, "step": 1})
+    assert classify_chargers([_dev(name="Inverter")], [batt, cur], {}) == []
+
+
+def test_car_integration_is_still_found():
+    # integracja auta ma te same role co ładowarka; użytkownik potwierdza ręcznie
+    status = _ent("sensor.car_charging", "enum", caps={"options": [
+        "starting", "charging", "stopped", "complete", "disconnected", "no_power"]})
+    cable = _ent("binary_sensor.car_charge_cable", "plug")
+    sw = _ent("switch.car_charge", name="Charge")
+    cur = _ent("number.car_charge_current", "current", "A",
+               caps={"min": 0, "max": 32, "step": 1})
+    found = classify_chargers([_dev(name="Model 3")], [status, cable, sw, cur], {})
+    assert len(found) == 1
+    assert {"status", "setpoint", "start_stop"} <= set(found[0].roles)
+
+
+def test_charger_classifier_failure_does_not_break_classify(monkeypatch, caplog):
+    devices, entities, states, entries = _load("tuya_local_evcharger")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(classify_mod, "classify_chargers", boom)
+    c = classify(devices, entities, entries, states)
+    assert c.chargers == []
+    assert c.energy_candidates  # reszta klasyfikacji nietknięta
+    assert any("charger" in r.getMessage() and r.levelname == "WARNING" for r in caplog.records)
+
+
+def test_package_exports_charger_api():
+    from custom_components.volcast.core import discovery
+    assert {"classify_chargers", "ChargerFinding", "ChargerRole"} <= set(discovery.__all__)
+    assert discovery.classify_chargers is classify_chargers

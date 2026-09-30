@@ -1,14 +1,16 @@
 """Klasyfikacja migawek rejestrów HA. Czyste funkcje, bez importów HA."""
 from __future__ import annotations
 
+import logging
 import re
 
 from .charger import classify_chargers
 from .known import (INVERTER_DOMAINS, INVERTER_MANUFACTURERS, LOAD_HINTS,
                     MAX_ENERGY_CANDIDATES, PRICE_PLATFORMS)
-from .models import (Classification, ConfigEntrySnap, DeviceSnap, EntitySnap,
-                     InverterFinding, StateSnap)
+from .models import (ChargerFinding, Classification, ConfigEntrySnap, DeviceSnap,
+                     EntitySnap, InverterFinding, StateSnap)
 
+_LOGGER = logging.getLogger(__name__)
 _TOKEN_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -82,4 +84,14 @@ def classify(
                     key=lambda e: (_load_score(e), e.entity_id))[:MAX_ENERGY_CANDIDATES]
     return Classification(inverters=list(findings.values()), price_entities=prices,
                           energy_candidates=energy,
-                          chargers=classify_chargers(devices, entities, states))
+                          chargers=_chargers(devices, entities, states))
+
+
+def _chargers(devices: list[DeviceSnap], entities: list[EntitySnap],
+              states: dict[str, StateSnap]) -> list[ChargerFinding]:
+    # błąd wykrywania ładowarek nie może zabrać falowników, cen i energii z tej klasyfikacji
+    try:
+        return classify_chargers(devices, entities, states)
+    except Exception:  # noqa: BLE001 — izolacja kroku
+        _LOGGER.warning("Volcast discovery: charger classification failed", exc_info=True)
+        return []

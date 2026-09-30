@@ -2,6 +2,10 @@
 
 Czyste funkcje, bez importów HA. Klasyfikator tylko wskazuje encje pełniące role
 (status, nastawa, start/stop, moc, energia); wartości statusu nie są tu interpretowane.
+
+Znane ograniczenie: status musi mieć listę `options` (sensor enum) albo być czujnikiem
+wtyczki (binary_sensor, device_class plug). Tekstowy sensor statusu bez `options` nie
+jest wykrywany — taką rolę użytkownik wskazuje sam przy potwierdzaniu ładowarki.
 """
 from __future__ import annotations
 
@@ -15,11 +19,11 @@ _TOKEN_RE = re.compile(r"[^a-z0-9]+")
 # role opcjonalne w kolejności raportowania braków (status jest zawsze wymagany)
 OPTIONAL_ROLES: tuple[str, ...] = ("setpoint", "start_stop", "power", "energy")
 
-# opcje statusu: musi być stan ładowania ORAZ stan złącza/auta — samo "charging"
-# ma też stan baterii falownika
+# opcje statusu: musi być stan ładowania ORAZ osobny stan złącza/auta — samo "charging"
+# ma też stan baterii falownika, a "charger_disconnected" to stacja dokująca odkurzacza
 _CHARGE_PREFIXES = ("charg",)
 _CONNECTOR_PREFIXES = ("plug", "unplug", "connect", "disconnect", "vehicle", "prepar")
-_CONNECTOR_WORDS = frozenset({"car", "ev", "available"})
+_CONNECTOR_WORDS = frozenset({"car", "ev"})
 
 # nastawa: jednostka i rozsądny górny zakres (odsiewa np. prąd ładowania baterii falownika)
 _SETPOINT_MAX: dict[str, float] = {"A": 80.0, "W": 50_000.0}
@@ -38,9 +42,10 @@ def _text(e: EntitySnap) -> str:
     return f"{e.entity_id} {e.unique_id} {e.original_name or ''} {e.translation_key or ''}"
 
 
-def _has(e: EntitySnap, hints: tuple[str, ...]) -> bool:
-    # początek słowa, nie podciąg: "restart" to nie "start", "discharge" to nie "charg"
-    return any(t.startswith(hints) for t in _tokens(_text(e)))
+def _has(e: EntitySnap, hints: tuple[str, ...], skip: frozenset[str]) -> bool:
+    # początek słowa, nie podciąg: "restart" to nie "start", "discharge" to nie "charg";
+    # `skip` to słowa nazwy urządzenia — slug "ev_charger" jest w każdym entity_id
+    return any(t.startswith(hints) for t in _tokens(_text(e)) if t not in skip)
 
 
 def _kind(e: EntitySnap) -> str:
@@ -79,35 +84,44 @@ def _num(v: Any) -> float | None:
         return None
 
 
-def _any_option(options: tuple[str, ...], prefixes: tuple[str, ...],
-                words: frozenset[str] = frozenset()) -> bool:
+def _any_option(options: tuple[str, ...], prefixes: tuple[str, ...]) -> bool:
+    return any(t.startswith(prefixes) for o in options for t in _tokens(o))
+
+
+def _connector_option(options: tuple[str, ...]) -> bool:
+    # stan złącza/auta w opcji BEZ słowa o ładowaniu ("charger_disconnected" się nie liczy)
     for o in options:
-        for t in _tokens(o):
-            if t in words or t.startswith(prefixes):
-                return True
+        toks = _tokens(o)
+        if any(t.startswith(_CHARGE_PREFIXES) for t in toks):
+            continue
+        if any(t in _CONNECTOR_WORDS or t.startswith(_CONNECTOR_PREFIXES) for t in toks):
+            return True
     return False
 
 
-def _pick(cands: list[EntitySnap], hints: tuple[str, ...]) -> EntitySnap | None:
+def _pick(cands: list[EntitySnap], hints: tuple[str, ...],
+          skip: frozenset[str]) -> EntitySnap | None:
     # pierwszeństwo encji z podpowiedzią w nazwie, potem stabilnie po entity_id
     if not cands:
         return None
-    return sorted(cands, key=lambda e: (not _has(e, hints), e.entity_id))[0]
+    return sorted(cands, key=lambda e: (not _has(e, hints, skip), e.entity_id))[0]
 
 
-def _status(ents: list[EntitySnap], states: dict[str, StateSnap]) -> ChargerRole | None:
+def _status(ents: list[EntitySnap], states: dict[str, StateSnap],
+            skip: frozenset[str]) -> ChargerRole | None:
     enums = [e for e in ents if _kind(e) == "sensor"
              and _any_option(_options(e, states), _CHARGE_PREFIXES)
-             and _any_option(_options(e, states), _CONNECTOR_PREFIXES, _CONNECTOR_WORDS)]
-    best = _pick(enums, _STATUS_HINTS)
+             and _connector_option(_options(e, states))]
+    best = _pick(enums, _STATUS_HINTS, skip)
     if best is not None:
         return ChargerRole(best.entity_id, "sensor", options=_options(best, states))
     plugs = [e for e in ents if _kind(e) == "binary_sensor" and _device_class(e, states) == "plug"]
-    best = _pick(plugs, _STATUS_HINTS)
+    best = _pick(plugs, _STATUS_HINTS, skip)
     return ChargerRole(best.entity_id, "binary_sensor") if best is not None else None
 
 
-def _setpoint(ents: list[EntitySnap], states: dict[str, StateSnap]) -> ChargerRole | None:
+def _setpoint(ents: list[EntitySnap], states: dict[str, StateSnap],
+              skip: frozenset[str]) -> ChargerRole | None:
     cands: list[tuple[EntitySnap, str, float, float, float | None]] = []
     for e in ents:
         unit = _unit(e, states)
@@ -117,36 +131,37 @@ def _setpoint(ents: list[EntitySnap], states: dict[str, StateSnap]) -> ChargerRo
         if lo is None or hi is None or not 0 <= lo < hi <= _SETPOINT_MAX[unit]:
             continue
         cands.append((e, unit, lo, hi, _num(_attr(e, states, "step"))))
-    best = _pick([c[0] for c in cands], _SETPOINT_HINTS)
+    best = _pick([c[0] for c in cands], _SETPOINT_HINTS, skip)
     if best is None:
         return None
     _, unit, lo, hi, step = next(c for c in cands if c[0] is best)
     return ChargerRole(best.entity_id, "number", unit=unit, min=lo, max=hi, step=step)
 
 
-def _start_stop(ents: list[EntitySnap], states: dict[str, StateSnap]) -> dict[str, ChargerRole]:
-    switch = _pick([e for e in ents if _kind(e) == "switch" and _has(e, _SWITCH_HINTS)],
-                   _CHARGE_PREFIXES)
+def _start_stop(ents: list[EntitySnap], states: dict[str, StateSnap],
+                skip: frozenset[str]) -> dict[str, ChargerRole]:
+    switch = _pick([e for e in ents if _kind(e) == "switch" and _has(e, _SWITCH_HINTS, skip)],
+                   _CHARGE_PREFIXES, skip)
     if switch is not None:
         return {"start_stop": ChargerRole(switch.entity_id, "switch")}
     selects = [e for e in ents if _kind(e) == "select"
                and _any_option(_options(e, states), _START_HINTS)
                and _any_option(_options(e, states), _STOP_HINTS)]
-    select = _pick(selects, _CHARGE_PREFIXES)
+    select = _pick(selects, _CHARGE_PREFIXES, skip)
     if select is not None:
         return {"start_stop": ChargerRole(select.entity_id, "select",
                                           options=_options(select, states))}
     buttons = [e for e in ents if _kind(e) == "button"]
-    start = _pick([e for e in buttons if _has(e, _START_HINTS)], _CHARGE_PREFIXES)
-    stop = _pick([e for e in buttons if _has(e, _STOP_HINTS)], _CHARGE_PREFIXES)
+    start = _pick([e for e in buttons if _has(e, _START_HINTS, skip)], _CHARGE_PREFIXES, skip)
+    stop = _pick([e for e in buttons if _has(e, _STOP_HINTS, skip)], _CHARGE_PREFIXES, skip)
     if start is not None and stop is not None and start is not stop:
         return {"start": ChargerRole(start.entity_id, "button"),
                 "stop": ChargerRole(stop.entity_id, "button")}
     return {}
 
 
-def _measure(ents: list[EntitySnap], states: dict[str, StateSnap], device_class: str,
-             units: tuple[str, ...], prefer_total: bool) -> ChargerRole | None:
+def _measure(ents: list[EntitySnap], states: dict[str, StateSnap], skip: frozenset[str],
+             device_class: str, units: tuple[str, ...], prefer_total: bool) -> ChargerRole | None:
     cands = [e for e in ents if _kind(e) == "sensor"
              and (_device_class(e, states) == device_class or _unit(e, states) in units)]
     if not cands:
@@ -154,7 +169,7 @@ def _measure(ents: list[EntitySnap], states: dict[str, StateSnap], device_class:
 
     def key(e: EntitySnap) -> tuple[bool, bool, str]:
         total = _attr(e, states, "state_class") in ("total", "total_increasing")
-        return (prefer_total and not total, not _has(e, _CHARGE_PREFIXES), e.entity_id)
+        return (prefer_total and not total, not _has(e, _CHARGE_PREFIXES, skip), e.entity_id)
 
     best = sorted(cands, key=key)[0]
     return ChargerRole(best.entity_id, "sensor", unit=_unit(best, states))
@@ -169,21 +184,22 @@ def _confidence(status: ChargerRole, missing: tuple[str, ...]) -> str:
 
 def _finding(dev: DeviceSnap, ents: list[EntitySnap],
              states: dict[str, StateSnap]) -> ChargerFinding | None:
-    status = _status(ents, states)
+    skip = frozenset(_tokens(dev.name or ""))
+    status = _status(ents, states, skip)
     if status is None:
         return None
     roles: dict[str, ChargerRole] = {"status": status}
-    setpoint = _setpoint(ents, states)
+    setpoint = _setpoint(ents, states, skip)
     if setpoint is not None:
         roles["setpoint"] = setpoint
-    roles.update(_start_stop(ents, states))
+    roles.update(_start_stop(ents, states, skip))
     has_control = "setpoint" in roles or "start_stop" in roles or "start" in roles
     if not has_control:
         return None
-    power = _measure(ents, states, "power", ("W", "kW"), prefer_total=False)
+    power = _measure(ents, states, skip, "power", ("W", "kW"), prefer_total=False)
     if power is not None:
         roles["power"] = power
-    energy = _measure(ents, states, "energy", ("Wh", "kWh", "MWh"), prefer_total=True)
+    energy = _measure(ents, states, skip, "energy", ("Wh", "kWh", "MWh"), prefer_total=True)
     if energy is not None:
         roles["energy"] = energy
     present = set(roles) | ({"start_stop"} if "start" in roles else set())

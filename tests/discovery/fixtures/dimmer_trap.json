@@ -1,5 +1,5 @@
 {
-  "_note": "Hand-built negative case: a dimmer with number entities and no charging status role.",
+  "_note": "Hand-built negative case: a dimmer with number entities and no charging status role, a watt-range number and an enum without connector states.",
   "config_entries": [
     {
       "entry_id": "entry-0003",
@@ -96,6 +96,45 @@
       "capabilities": {
         "state_class": "measurement"
       }
+    },
+    {
+      "entity_id": "number.dimmer_minimum_power",
+      "platform": "tuya_local",
+      "unique_id": "DIM0001-number_min_power",
+      "device_id": "device-0003",
+      "config_entry_id": "entry-0003",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Minimum power",
+      "disabled": false,
+      "entity_category": "config",
+      "capabilities": {
+        "min": 0,
+        "max": 300,
+        "step": 1,
+        "mode": "auto"
+      }
+    },
+    {
+      "entity_id": "sensor.dimmer_battery_state",
+      "platform": "tuya_local",
+      "unique_id": "DIM0001-sensor_battery_state",
+      "device_id": "device-0003",
+      "config_entry_id": "entry-0003",
+      "device_class": "enum",
+      "unit": null,
+      "translation_key": null,
+      "original_name": "Battery state",
+      "disabled": false,
+      "entity_category": "diagnostic",
+      "capabilities": {
+        "options": [
+          "charging",
+          "full",
+          "low"
+        ]
+      }
     }
   ],
   "states": [
@@ -140,6 +179,32 @@
         "device_class": "power",
         "state_class": "measurement",
         "friendly_name": "Dimmer Power"
+      }
+    },
+    {
+      "entity_id": "number.dimmer_minimum_power",
+      "state": "20",
+      "attributes": {
+        "min": 0,
+        "max": 300,
+        "step": 1,
+        "mode": "auto",
+        "unit_of_measurement": "W",
+        "device_class": "power",
+        "friendly_name": "Dimmer Minimum power"
+      }
+    },
+    {
+      "entity_id": "sensor.dimmer_battery_state",
+      "state": "full",
+      "attributes": {
+        "options": [
+          "charging",
+          "full",
+          "low"
+        ],
+        "device_class": "enum",
+        "friendly_name": "Dimmer Battery state"
       }
     }
   ]
