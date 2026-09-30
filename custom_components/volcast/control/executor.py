@@ -1231,6 +1231,11 @@ class VolcastExecutor:
         Raz na slot i powód, nie co cykl; decyzja niesie notatkę (`sell_no_load`,
         `sell_no_rated`, `sell_below_min`) w każdym cyklu.
         """
+        if d.sell_live_unavailable is not None and \
+                self._sell_warned_for.get("register") != d.sell_live_unavailable:
+            self._sell_warned_for["register"] = d.sell_live_unavailable
+            _LOGGER.warning("Volcast control: live sell conversion is not available in direct register "
+                            "mode: the plan's battery power is written as the setpoint")
         live = d.live_export
         if live is None:
             return

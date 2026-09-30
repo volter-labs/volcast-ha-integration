@@ -35,6 +35,7 @@ NOTE_SELL_XSET = "sell_xset"
 NOTE_SELL_NO_LOAD = "sell_no_load"
 NOTE_SELL_NO_RATED = "sell_no_rated"
 NOTE_SELL_BELOW_MIN = "sell_below_min"
+NOTE_SELL_LIVE_UNAVAILABLE = "sell_live_unavailable"
 # Odczyt ponad tyle × moc znamionowa to błąd czujnika, nie moc.
 PV_MAX_RATED_FACTOR = 2.0
 # Pobór domu ponad tyle to błąd czujnika (przyłącze domu jest dużo mniejsze).

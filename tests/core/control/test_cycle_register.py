@@ -116,6 +116,8 @@ def test_same_cycle_code_as_entities(goodwe_profile, sell_schedule, reading_auto
         {k: v for k, v in r.flat.items() if k != "power_w"}
     assert e.flat["power_w"] == 0.0 and r.flat["power_w"] == 2500.0
     assert e.status == r.status == WRITE
+    # Tylko cel rejestrowy niesie notatkę o braku przeliczenia mocy sprzedaży.
+    assert "sell_live_unavailable" in r.notes and "sell_live_unavailable" not in e.notes
 
 
 def test_target_and_ents_exclusive(goodwe_profile, sell_schedule, reading_auto):
@@ -127,3 +129,16 @@ def test_target_and_ents_exclusive(goodwe_profile, sell_schedule, reading_auto):
     both = decide_cycle(**kw, target=RegisterTarget(reading_auto),
                         ents=EntityContext("goodwe", {}, {}, {}, {}))
     assert (both.status, both.reason) == (ERROR, "exception:TypeError")
+
+
+def test_register_sell_notes_live_unavailable_and_writes_plan_battery_power(
+        goodwe_profile, sell_schedule, reading_auto, charge_schedule):
+    d, _ = _run(goodwe_profile, sell_schedule, reading_auto)
+    assert "sell_live_unavailable" in d.notes
+    assert d.sell_live_unavailable is not None and d.sell_live_unavailable[2] == "sell"
+    # Przypięte: moc baterii z planu idzie bez przeliczenia. Prawdziwa konwersja musi świadomie
+    # zmienić tę asercję.
+    assert d.flat["power_w"] == 2500.0 and d.live_export is None
+    # Zamiary inne niż sprzedaż — bez notatki.
+    c, _ = _run(goodwe_profile, charge_schedule, reading_auto)
+    assert "sell_live_unavailable" not in c.notes and c.sell_live_unavailable is None

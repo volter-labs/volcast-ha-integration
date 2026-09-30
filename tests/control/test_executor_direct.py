@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -206,6 +207,28 @@ async def test_direct_sell_slot_end_to_end(make_hass, goodwe_udp_sim, goodwe_ban
         n = len(goodwe_bank.writes)
         await h.cycle()
         assert len(goodwe_bank.writes) == n and h.ex.last_decision.reason == "nothing_to_write"
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_sell_warns_once_per_slot_about_missing_live_conversion(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues, caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.volcast")
+    text = "live sell conversion is not available in direct register mode"
+    count = lambda: len([r for r in caplog.records if text in r.getMessage()])  # noqa: E731
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
+    try:
+        await h.ex.async_tick()
+        for _ in range(4):
+            await h.cycle()
+        d = h.ex.last_decision
+        assert "sell_live_unavailable" in d.notes
+        assert gw_raw_word(goodwe_bank, POWER) == 2000            # nastawa z planu, bez przeliczenia
+        assert count() == 1 and all(r.levelno == logging.WARNING for r in caplog.records if text in r.getMessage())
+        start, end, intent = d.sell_live_unavailable
+        h.ex._warn_sell_suspended(replace(d, sell_live_unavailable=(end, end + (end - start), intent)))
+        assert count() == 2                                        # nowy slot — nowe ostrzeżenie
     finally:
         await h.close()
 

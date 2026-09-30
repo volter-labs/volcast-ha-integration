@@ -217,6 +217,9 @@ class CycleDecision:
     device: dict[str, float | str] = field(default_factory=dict)
     # sprzedaż przeliczona na nastawę eksportu z odczytów (None = intencja bez przeliczenia)
     live_export: LiveExport | None = None
+    # sprzedaż z mocą na żywo na celu rejestrowym: brak przeliczenia, zapis mocy baterii z planu
+    # (klucz slotu: początek, koniec, intencja; dla ostrzeżenia raz na slot)
+    sell_live_unavailable: tuple | None = None
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -317,6 +320,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     planned, live, live_notes = _live_export(planned, guard.params, mapped_slot.intent, slot, profile,
                                              tele, limits, target, memory, keep=dry)
     degraded = degraded or lx.NOTE_SELL_BELOW_MIN in live_notes
+    if lx.NOTE_SELL_LIVE_UNAVAILABLE in live_notes:
+        common["sell_live_unavailable"] = (slot.start, slot.end, mapped_slot.intent)
     params, adjusted, unfit = target.fit(planned, profile)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
@@ -537,6 +542,10 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
     if not live_kind or planned.mode != profile.intent(intent)["mode"] or planned.power_w is None:
         if not keep:
             memory.live_export = mem.forget_written()
+        # Cel rejestrowy: moc baterii z planu idzie bez przeliczenia — tylko widoczna notatka.
+        if (profile.power_kind(intent) == lx.LIVE_EXPORT_KIND and not isinstance(target, EntityTarget)
+                and planned.mode == profile.intent(intent)["mode"] and planned.power_w is not None):
+            return planned, None, (lx.NOTE_SELL_LIVE_UNAVAILABLE,)
         return planned, None, ()
     ents = target.ents
     max_age = profile.max_state_age_s
