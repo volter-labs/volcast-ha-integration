@@ -357,3 +357,57 @@ def test_time_window_profile_has_no_capabilities_even_in_entity_mode():
     deye = ProfileChoice(load_builtin("deye-sg"), "solarman", None)
     b = driver_block(choice=deye, control_mode="entities", mapped_keys=ALL, local_switch=True, limits=None)
     assert b is not None and "capabilities" not in b
+
+
+def _loads_options():
+    return {"entity_price_buy": "sensor.nordpool",
+            "ev_chargers": [{"device_id": "dev1", "label": "Wallbox",
+                             "roles": {"status": "sensor.wb_status", "energy": "sensor.wb_energy"}}]}
+
+
+def test_loads_in_every_reading_and_absent_without_chargers():
+    h, cloud = goodwe_hass(), Cloud()
+    h.states.set("sensor.wb_status", "charging", {})
+    h.states.set("sensor.wb_energy", "1500", {"unit_of_measurement": "Wh"})
+    s = sender(h, cloud, _loads_options())
+    asyncio.run(s.async_flush())
+    asyncio.run(s.async_flush())
+    assert len(cloud.sent) == 2
+    for r in cloud.sent:
+        (load,) = r["loads"]
+        assert load["key"] == "dev1" and load["status_raw"] == "charging" and load["energy_kwh"] == 1.5
+    cloud2 = Cloud()
+    asyncio.run(sender(h, cloud2).async_flush())
+    assert "loads" not in cloud2.sent[0]
+
+
+def test_loads_error_sends_reading_without_loads_and_warns_once(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+
+    def boom(self):
+        raise RuntimeError("sensor.wb_secret")
+    monkeypatch.setattr(tm.LoadsReader, "read", boom)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, _loads_options())
+    assert asyncio.run(s.async_flush()) is True and asyncio.run(s.async_flush()) is True
+    assert all("loads" not in r for r in cloud.sent) and len(cloud.sent) == 2
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warns) == 1 and "secret" not in caplog.text and "RuntimeError" in caplog.text
+
+
+def test_loads_warning_rearms_after_recovery(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    calls = {"n": 0}
+    real = tm.LoadsReader.read
+
+    def flaky(self):
+        calls["n"] += 1
+        if calls["n"] in (1, 3):
+            raise RuntimeError("x")
+        return real(self)
+    monkeypatch.setattr(tm.LoadsReader, "read", flaky)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, _loads_options())
+    for _ in range(3):
+        asyncio.run(s.async_flush())
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 2

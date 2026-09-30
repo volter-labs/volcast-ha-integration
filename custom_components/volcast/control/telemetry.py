@@ -33,6 +33,7 @@ from ..core.control.caps import capabilities_for
 from ..core.control.readings import RawState, manual_reading, normalize_readings
 from ..core.control.select import ProfileChoice
 from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
+from .loads_reader import LoadsReader
 from .direct_sensors import STALE_FACTOR as _STALE_FACTOR   # jedna reguła świeżości z sensorami
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ def _number(v) -> float | None:
 
 def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | str],
                   manual: Mapping[str, float | None], driver: dict | None, extra: dict,
-                  prices: dict | None) -> dict | None:
+                  prices: dict | None, loads: list | None = None) -> dict | None:
     """Odczyt kontraktu; encja wskazana ręcznie ma pierwszeństwo (także gdy nieczytelna).
 
     Bez wartości monitoringu odczyt i tak idzie, gdy niesie ceny — chmura nie ma dla cen
@@ -106,6 +107,8 @@ def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | s
     reading = {"timestamp": now_utc.isoformat(), **values, "extra": {"volcast": extra}}
     if driver is not None:
         reading["driver"] = driver
+    if loads:
+        reading["loads"] = loads
     if prices is not None:
         reading["prices"] = prices
     return reading
@@ -129,6 +132,8 @@ class TelemetrySender:
         self._prices_at: datetime | None = None
         self._unsub = None
         self._busy = False
+        self._loads = LoadsReader(hass, entry)
+        self._loads_warned = False
 
     async def async_start(self) -> None:
         if self._unsub is None:
@@ -244,6 +249,17 @@ class TelemetrySender:
                             mapped_keys=[k for k in self._profile_map if k not in unsupported],
                             local_switch=local, limits=self._limits)
 
+    def _loads_block(self) -> list | None:
+        try:
+            block = self._loads.read()
+        except Exception as err:  # noqa: BLE001 — ładowarki nigdy nie zabierają telemetrii
+            if not self._loads_warned:
+                self._loads_warned = True
+                _LOGGER.warning("Volcast EV charger readout skipped (%s)", type(err).__name__)
+            return None
+        self._loads_warned = False
+        return block
+
     async def async_flush(self) -> bool:
         """Jeden odczyt do chmury; True = przyjęty. Nigdy nie rzuca."""
         if self._busy:
@@ -274,6 +290,7 @@ class TelemetrySender:
             _LOGGER.debug("Volcast prices block skipped (%s)", type(err).__name__)
             priced = None
         reading = build_reading(
+            loads=self._loads_block(),
             now_utc=now, profile_readings=prof, manual=manual,
             driver=self._driver(),
             extra=self._extra(), prices=priced[0] if priced else None)
