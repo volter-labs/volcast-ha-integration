@@ -68,6 +68,20 @@ def _finite(v: object) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
+def max_state_age(max_state_age_s: object) -> float:
+    """Limit wieku odczytu I-9; nieprawidłowy limit nie wyłącza kontroli (domyślne 300 s)."""
+    return float(max_state_age_s) if _finite(max_state_age_s) and max_state_age_s > 0 \
+        else _DEFAULT_MAX_STATE_AGE_S
+
+
+def state_fresh(age_s: object, max_state_age_s: object) -> bool:
+    """Reguła świeżości I-9: wiek skończony, nieujemny i nie większy niż limit.
+
+    Wiek NaN/ujemny to błąd zegara albo odczytu, `inf` = brak znacznika czasu — nieświeży.
+    """
+    return _finite(age_s) and 0 <= age_s <= max_state_age(max_state_age_s)
+
+
 def _pct_ok(v: float | None) -> bool:
     return v is None or (math.isfinite(v) and 0.0 <= v <= 100.0)
 
@@ -110,13 +124,10 @@ def apply_guards(params: Params, ctx: GuardContext, profile: Profile) -> GuardRe
         return _reject("I-10", f"rezerwa SoC={ctx.soc_reserve} poza 0..100 — odrzucam całą komendę")
 
     # ── I-9: świeżość i wiarygodność odczytu ──
-    max_age = ctx.max_state_age_s
-    if not (_finite(max_age) and max_age > 0):
-        max_age = _DEFAULT_MAX_STATE_AGE_S
+    max_age = max_state_age(ctx.max_state_age_s)
     if ctx.soc is None:
         return _reject("I-9", "brak odczytu SoC — wstrzymuję zapisy")
-    # Wiek NaN/ujemny to błąd zegara albo odczytu — traktujemy jak nieświeży.
-    if not _finite(ctx.soc_age_s) or ctx.soc_age_s < 0 or ctx.soc_age_s > max_age:
+    if not state_fresh(ctx.soc_age_s, max_age):
         return _reject("I-9", f"odczyt nieświeży albo o nieznanym wieku (limit {max_age:.0f} s)")
     if not (0.0 <= ctx.soc <= 100.0):
         return _reject("I-9", f"SoC={ctx.soc} fizycznie niemożliwy")

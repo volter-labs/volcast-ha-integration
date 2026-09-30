@@ -65,7 +65,7 @@
     "charge_grid": {"mode": "charge_battery", "power": "slot"},
     "charge_pv": {"mode": "auto", "power": "none"},
     "discharge_forced": {"mode": "discharge_battery", "power": "slot"},
-    "sell": {"mode": "sell_power", "power": "slot"},
+    "sell": {"mode": "sell_power", "power": "slot_live_export"},
     "self_consume": {"mode": "auto", "power": "none"},
     "standby": {"mode": "battery_standby", "power": "zero"}
   },

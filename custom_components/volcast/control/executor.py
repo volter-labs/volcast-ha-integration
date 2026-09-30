@@ -201,6 +201,8 @@ class VolcastExecutor:
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
         self._consistent: dict[str, float | str] = {}
         self._brake_warned = False                    # ostrzeżenie hamulca raz na epizod
+        # powód wstrzymania sprzedaży → slot, dla którego już ostrzegliśmy (raz na slot)
+        self._sell_warned_for: dict[str, tuple] = {}
         # klucze ostatniej decyzji z planem — zablokowany cykl (bez `flat`) nie gubi odniesienia
         self._plan_keys: frozenset[str] = frozenset()
         self._disabled = False
@@ -486,6 +488,8 @@ class VolcastExecutor:
 
     def _pause_for_foreign(self, key: str, eid: str | None) -> None:
         self._memory.paused_until = self._clock() + FOREIGN_PAUSE_S
+        # Ktoś inny zmienia falownik: zapisana nastawa sprzedaży nie jest już pewna.
+        self._memory.live_export = self._memory.live_export.forget_written()
         self._take_over_key(key)
         self.foreign_changes = (self.foreign_changes + [
             {"key": key, "entity_id": eid, "at": self._utcnow().isoformat()}])[-_FOREIGN_KEEP:]
@@ -726,6 +730,7 @@ class VolcastExecutor:
             profile=self._profile, schedule=self.schedule, now_utc=now_utc, now_mono=now_mono, tele=tele,
             limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
             gates=dgates, memory=self._memory, **cycle_in)
+        self._warn_sell_suspended(decision)
         if tele.soc is not None:
             self._prev_soc = (tele.soc, now_mono)
         if entities:
@@ -781,8 +786,10 @@ class VolcastExecutor:
         soc = soc if isinstance(soc, float) else None
         temp = readings.get("battery_temp_c")
         prev_soc, gap = (self._prev_soc[0], now_mono - self._prev_soc[1]) if self._prev_soc else (None, None)
+        (pv, pv_age), (load, load_age) = rd.live("pv_power_w"), rd.live("load_power_w")
         return Telemetry(soc=soc, soc_age_s=rd.soc_age_s, battery_temp_c=temp if isinstance(temp, float) else None,
-                         previous_soc=prev_soc, previous_soc_gap_s=gap)
+                         previous_soc=prev_soc, previous_soc_gap_s=gap,
+                         pv_power_w=pv, pv_age_s=pv_age, load_power_w=load, load_age_s=load_age)
 
     def _rated_power(self) -> float | None:
         if self._rated:
@@ -1217,6 +1224,27 @@ class VolcastExecutor:
                             "neutral mode", d.reason)
         return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
 
+    def _warn_sell_suspended(self, d: CycleDecision) -> None:
+        """Sprzedaż wstrzymana: brak odczytu poboru domu, brak pułapu (nastawa 0 W) albo nastawa
+        pod minimum encji mocy (slot w trybie neutralnym).
+
+        Raz na slot i powód, nie co cykl; decyzja niesie notatkę (`sell_no_load`,
+        `sell_no_rated`, `sell_below_min`) w każdym cyklu.
+        """
+        live = d.live_export
+        if live is None:
+            return
+        reasons = (("load", live.no_load, "no house load reading is available (map or restore the "
+                                          "house consumption sensor)"),
+                   ("rated", live.no_rated, "no inverter rated power and no power-entity range "
+                                            "(set the rated power in the options)"),
+                   ("minimum", live.below_min, "the export setpoint is below the power entity minimum "
+                                               "(the slot runs in the neutral mode)"))
+        for reason, active, text in reasons:
+            if active and self._sell_warned_for.get(reason) != live.key:
+                self._sell_warned_for[reason] = live.key
+                _LOGGER.warning("Volcast control: selling suspended for this slot — %s", text)
+
     def _gates(self) -> Gates:
         direct = self._direct
         if direct is not None:
@@ -1480,6 +1508,7 @@ class VolcastExecutor:
         self._state.taken_over = []
         self._state.tou_snapshot = None
         self._memory.last_written.clear()
+        self._memory.live_export = self._memory.live_export.forget_written()
         await self._async_save("baseline state", force=True)
         if self._on_released is not None:
             try:
