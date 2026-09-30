@@ -176,3 +176,19 @@ def test_on_signals_exception_does_not_abort_refresh(caplog):
     f, got = make(doc(), on_signals=boom)
     assert asyncio.run(f.async_refresh()) == "accepted" and got["plans"] == ["a"]
     assert "secret-detail" not in caplog.text and "RuntimeError" in caplog.text
+
+
+def test_plan_callback_never_receives_signals_block():
+    """Blok `signals` (klucz kanału, temat) nie trafia do planu, który wykonawca zapisuje w magazynie."""
+    seen = []
+
+    async def on_plan(raw, sched):
+        seen.append(raw)
+
+    async def noop(*_a):
+        return None
+
+    f = ScheduleFetcher(Cloud(doc(signals={"channel": {"apikey": "k"}})), on_plan=on_plan,
+                        on_consent=noop, on_auth_failure=noop, on_signals=noop)
+    assert asyncio.run(f.async_refresh()) == "accepted"
+    assert len(seen) == 1 and "signals" not in seen[0]

@@ -77,7 +77,8 @@ class ScheduleFetcher:
                 _LOGGER.debug("Volcast plan still rejected (%s)", err.field)
             self._last_rejected = signature
             return "rejected"
-        await self._on_plan(raw, schedule)
+        # Blok `signals` zostaje przy odbiorcy sygnałów — nie trafia do planu zapisywanego w magazynie.
+        await self._on_plan({k: v for k, v in raw.items() if k != "signals"}, schedule)
         self._last_signature = signature
         self._last_rejected = None
         return "accepted"
