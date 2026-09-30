@@ -558,7 +558,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             if user_input is not None:
                 return await self._finish(self._forecast_options(user_input))
             return self.async_show_form(step_id="init", data_schema=self._forecast_schema())
-        return self.async_show_menu(step_id="init", menu_options=["forecast", "control", "details", "prices"])
+        return self.async_show_menu(
+            step_id="init", menu_options=["forecast", "control", "details", "prices", "ev_charger"])
 
     async def async_step_forecast(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -625,6 +626,77 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return await self._finish(self._merged(patch), retry_form=lambda errors: self.async_show_form(
                 step_id="details", data_schema=self._details_schema(), errors=errors))
         return self.async_show_form(step_id="details", data_schema=self._details_schema())
+
+    # ── ładowarka EV: potwierdzenie znalezisk z wykrywania ─────────────────
+    def _ev_findings(self) -> list:
+        runner = (getattr(self.hass, "data", None) or {}).get(DOMAIN, {}).get(
+            self.config_entry.entry_id, {}).get("discovery")
+        classification = getattr(runner, "classification", None)
+        return list(getattr(classification, "chargers", None) or [])
+
+    def _ev_saved(self) -> list[dict[str, Any]]:
+        saved = self.config_entry.options.get(OPT_EV_CHARGERS)
+        return [c for c in saved if isinstance(c, dict) and c.get("device_id")] if isinstance(saved, list) else []
+
+    async def async_step_ev_charger(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Zaznaczenie ładowarek do śledzenia; zapisane, a niewidoczne w ostatnim wykrywaniu, zostają na liście."""
+        findings = {f.device_id: f for f in self._ev_findings()}
+        saved = {c["device_id"]: c for c in self._ev_saved()}
+        if not findings:
+            return self.async_abort(reason=EV_NONE_FOUND)
+        if user_input is not None:
+            chosen = list(user_input.get(_EV_SELECT) or [])
+            self._ev_done: list[dict[str, Any]] = []
+            self._ev_queue = [findings[d] for d in chosen if d in findings]
+            # zapisane, których wykrywanie nie widzi, zaznaczone nadal — bez zmian
+            kept = {d: saved[d] for d in chosen if d in saved and d not in findings}
+            self._ev_kept = kept
+            self._ev_order = [d for d in chosen if d in findings or d in kept]
+            return await self._async_ev_next()
+        labels = {d: _ev_label(f.name, f.manufacturer, f.model, d) for d, f in findings.items()}
+        labels.update({d: c.get("label") or d for d, c in saved.items() if d not in labels})
+        schema = vol.Schema({vol.Optional(_EV_SELECT, default=[d for d in saved if d in labels]): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[selector.SelectOptionDict(value=d, label=n) for d, n in labels.items()],
+                multiple=True, mode=selector.SelectSelectorMode.LIST))})
+        return self.async_show_form(step_id="ev_charger", data_schema=schema)
+
+    async def _async_ev_next(self) -> ConfigFlowResult:
+        if self._ev_queue:
+            return self._ev_roles_form(self._ev_queue[0])
+        by_id = {c["device_id"]: c for c in self._ev_done}
+        by_id.update(self._ev_kept)
+        chargers = [by_id[d] for d in self._ev_order if d in by_id]
+        return await self._finish(self._merged({OPT_EV_CHARGERS: chargers or None}))
+
+    def _ev_roles_form(self, finding, errors: dict[str, str] | None = None) -> ConfigFlowResult:
+        saved = next((c for c in self._ev_saved() if c["device_id"] == finding.device_id), None)
+        current = dict(saved.get("roles") or {}) if saved else {r: v.entity_id for r, v in finding.roles.items()}
+        fields: dict[Any, Any] = {}
+        for role in _EV_ROLES + tuple(r for r in finding.roles if r not in _EV_ROLES):
+            sel = selector.EntitySelector(selector.EntitySelectorConfig(domain=list(_EV_ROLE_DOMAINS.get(role, ("sensor",)))))
+            key = (vol.Required if role == "status" else vol.Optional)(
+                role, description={"suggested_value": current.get(role)})
+            fields[key] = sel
+        return self.async_show_form(
+            step_id="ev_charger_roles", data_schema=vol.Schema(fields), errors=errors or {},
+            description_placeholders={"charger": _ev_label(
+                finding.name, finding.manufacturer, finding.model, finding.device_id)})
+
+    async def async_step_ev_charger_roles(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        queue = getattr(self, "_ev_queue", None)
+        if not queue:
+            return self.async_abort(reason=EV_NONE_FOUND)
+        finding = queue[0]
+        if user_input is None:
+            return self._ev_roles_form(finding)
+        roles = {r: v.strip() for r, v in user_input.items() if isinstance(v, str) and v.strip()}
+        if "status" not in roles:
+            return self._ev_roles_form(finding, {"status": "role_required"})
+        self._ev_done.append({"device_id": finding.device_id, "roles": roles,
+                              "label": finding.name or finding.model or ""})
+        queue.pop(0)
+        return await self._async_ev_next()
 
     # ── połączenie bezpośrednie: wyszukiwanie, wybór, cel ręczny ──────────
     async def _async_profiles(self) -> list:
@@ -863,6 +935,19 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
 
 _SEARCH = "direct_search"
+OPT_EV_CHARGERS = "ev_chargers"
+EV_NONE_FOUND = "no_ev_chargers"
+_EV_SELECT = "chargers"
+_EV_ROLES = ("status", "setpoint", "start_stop", "power", "energy")
+_EV_ROLE_DOMAINS = {
+    "status": ("sensor", "binary_sensor", "select"), "setpoint": ("number",),
+    "start_stop": ("switch", "select"), "start": ("button",), "stop": ("button",),
+    "power": ("sensor",), "energy": ("sensor",)}
+
+
+def _ev_label(name: str | None, manufacturer: str | None, model: str | None, device_id: str) -> str:
+    """Nazwa ładowarki na liście: nazwa urządzenia albo producent i model, na końcu identyfikator."""
+    return name or " ".join(x for x in (manufacturer, model) if x) or device_id
 _MANUAL = "manual"
 RESTORE_FAILED = "restore_failed"
 _LOGGER_SERIAL = re.compile(r"\d{1,10}")

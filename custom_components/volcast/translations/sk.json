@@ -102,7 +102,8 @@
           "forecast": "Predpoveď",
           "control": "Riadenie striedača",
           "details": "Podrobnosti o inštalácii",
-          "prices": "Ceny energie"
+          "prices": "Ceny energie",
+          "ev_charger": "Nabíjačka EV"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Vyhľadávanie striedača",
         "description": "Volcast číta iba identifikáciu zariadení, ktoré odpovedajú v miestnej sieti; nič sa nezapisuje."
+      },
+      "ev_charger": {
+        "title": "Nabíjačka EV",
+        "description": "Vyberte nabíjačky, ktoré má Volcast sledovať. V zozname sú len nabíjačky nájdené pri poslednom zisťovaní.",
+        "data": {
+          "chargers": "Sledované nabíjačky"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Roly nabíjačky EV",
+        "description": "Skontrolujte, ktorá entita plní akú rolu pri {charger}. Nepovinné roly nechajte prázdne, ak nabíjačka takú entitu nemá.",
+        "data": {
+          "status": "Stav",
+          "setpoint": "Nabíjací prúd alebo limit výkonu",
+          "start_stop": "Štart / stop",
+          "start": "Štart",
+          "stop": "Stop",
+          "power": "Výkon",
+          "energy": "Energia"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "Tento striedač používa iná integrácia ({integration}). Pred voľbou priameho riadenia ju vypnite, aby striedač neriadili dva programy súčasne.",
       "direct_not_found": "Zatiaľ sa nenašiel žiadny striedač. Najprv ho vyhľadajte v Podrobnostiach o inštalácii.",
       "direct_in_use": "K tomuto striedaču sa už pripája iný záznam Volcast.",
-      "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť)."
+      "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť).",
+      "no_ev_chargers": "Nabíjačka EV zatiaľ nebola nájdená. Najprv spustite zisťovanie a overte, že je integrácia nabíjačky nastavená."
     },
     "error": {
       "prices_not_usable": "Tento senzor teraz neposkytuje úplný cenový rad.",
@@ -212,7 +234,8 @@
       "invalid_host": "Zadajte miestnu IP adresu (názov hostiteľa ani verejná adresa sa neakceptuje).",
       "logger_serial_required": "Zadajte sériové číslo dataloggera (až 10 číslic).",
       "direct_not_found": "Na tejto adrese neodpovedal žiadny podporovaný striedač.",
-      "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť)."
+      "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť).",
+      "role_required": "Entita stavu je povinná."
     },
     "progress": {
       "direct_search": "Vyhľadávanie striedača v miestnej sieti. Môže to trvať až minútu."

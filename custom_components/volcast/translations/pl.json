@@ -102,7 +102,8 @@
           "forecast": "Prognoza",
           "control": "Sterowanie falownikiem",
           "details": "Szczegóły instalacji",
-          "prices": "Ceny energii"
+          "prices": "Ceny energii",
+          "ev_charger": "Ładowarka EV"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Wyszukiwanie falownika",
         "description": "Volcast odczytuje wyłącznie identyfikację urządzeń odpowiadających w sieci lokalnej; nic nie jest zapisywane."
+      },
+      "ev_charger": {
+        "title": "Ładowarka EV",
+        "description": "Wybierz ładowarki, które Volcast ma śledzić. Na liście są tylko ładowarki znalezione podczas ostatniego wykrywania.",
+        "data": {
+          "chargers": "Śledzone ładowarki"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Role ładowarki EV",
+        "description": "Sprawdź, która encja pełni każdą rolę w {charger}. Pozostaw puste role opcjonalne, jeśli ładowarka nie ma takiej encji.",
+        "data": {
+          "status": "Status",
+          "setpoint": "Prąd ładowania lub limit mocy",
+          "start_stop": "Start / stop",
+          "start": "Start",
+          "stop": "Stop",
+          "power": "Moc",
+          "energy": "Energia"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "Inna integracja ({integration}) korzysta z tego falownika. Wyłącz ją przed wyborem sterowania bezpośredniego, aby dwa programy nie sterowały falownikiem jednocześnie.",
       "direct_not_found": "Nie znaleziono jeszcze falownika. Najpierw wyszukaj go w Szczegółach instalacji.",
       "direct_in_use": "Inny wpis Volcast już łączy się z tym falownikiem.",
-      "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik)."
+      "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik).",
+      "no_ev_chargers": "Nie znaleziono jeszcze ładowarki EV. Najpierw uruchom wykrywanie i upewnij się, że integracja ładowarki jest skonfigurowana."
     },
     "error": {
       "prices_not_usable": "Ten czujnik nie dostarcza teraz kompletnej serii cen.",
@@ -212,7 +234,8 @@
       "invalid_host": "Wpisz lokalny adres IP (nazwa hosta ani adres publiczny nie są akceptowane).",
       "logger_serial_required": "Wpisz numer seryjny rejestratora danych (do 10 cyfr).",
       "direct_not_found": "Żaden obsługiwany falownik nie odpowiedział pod tym adresem.",
-      "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik)."
+      "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik).",
+      "role_required": "Encja statusu jest wymagana."
     },
     "progress": {
       "direct_search": "Wyszukiwanie falownika w sieci lokalnej. Może to potrwać do minuty."

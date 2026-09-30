@@ -102,7 +102,8 @@
           "forecast": "Previsão",
           "control": "Controle do inversor",
           "details": "Detalhes da instalação",
-          "prices": "Preços da energia"
+          "prices": "Preços da energia",
+          "ev_charger": "Carregador de VE"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Procurando o inversor",
         "description": "O Volcast lê apenas a identificação dos dispositivos que respondem na rede local; nada é escrito."
+      },
+      "ev_charger": {
+        "title": "Carregador de VE",
+        "description": "Escolha os carregadores que o Volcast deve acompanhar. Só aparecem os carregadores da última detecção.",
+        "data": {
+          "chargers": "Carregadores acompanhados"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Funções do carregador de VE",
+        "description": "Confira qual entidade cumpre cada função em {charger}. Deixe vazias as funções opcionais se o carregador não tiver essa entidade.",
+        "data": {
+          "status": "Status",
+          "setpoint": "Corrente de carga ou limite de potência",
+          "start_stop": "Iniciar / parar",
+          "start": "Iniciar",
+          "stop": "Parar",
+          "power": "Potência",
+          "energy": "Energia"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "Outra integração ({integration}) usa este inversor. Desative-a antes de escolher o controle direto, para que dois programas não controlem o inversor ao mesmo tempo.",
       "direct_not_found": "Ainda não foi encontrado nenhum inversor. Procure-o primeiro em Detalhes da instalação.",
       "direct_in_use": "Outra entrada Volcast já se conecta a este inversor.",
-      "restore_failed": "O Volcast não conseguiu restaurar o inversor nas configurações anteriores ao controle, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controle do Volcast (o Volcast continua tentando restaurar o inversor)."
+      "restore_failed": "O Volcast não conseguiu restaurar o inversor nas configurações anteriores ao controle, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controle do Volcast (o Volcast continua tentando restaurar o inversor).",
+      "no_ev_chargers": "Nenhum carregador de VE foi encontrado ainda. Execute primeiro a detecção e confirme que a integração do carregador está configurada."
     },
     "error": {
       "prices_not_usable": "Este sensor não fornece neste momento uma série de preços completa.",
@@ -212,7 +234,8 @@
       "invalid_host": "Insira um endereço IP local (um nome de host ou um endereço público não é aceite).",
       "logger_serial_required": "Insira o número de série do registrador de dados (até 10 dígitos).",
       "direct_not_found": "Nenhum inversor suportado respondeu neste endereço.",
-      "restore_failed": "O Volcast não conseguiu restaurar o inversor nas configurações anteriores ao controle, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controle do Volcast (o Volcast continua tentando restaurar o inversor)."
+      "restore_failed": "O Volcast não conseguiu restaurar o inversor nas configurações anteriores ao controle, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controle do Volcast (o Volcast continua tentando restaurar o inversor).",
+      "role_required": "A entidade de status é obrigatória."
     },
     "progress": {
       "direct_search": "Procurando o inversor na rede local. Pode demorar até um minuto."

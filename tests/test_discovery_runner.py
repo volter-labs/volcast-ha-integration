@@ -400,3 +400,13 @@ async def test_entity_capabilities_reach_snapshot_and_charger_is_found(make_hass
     # raport do chmury serializuje pola jawnie: bez capabilities i bez sekcji ładowarek
     assert "cap_marker" not in str(rep) and "capabilities" not in str(rep)
     assert "chargers" not in rep
+
+
+async def test_runner_keeps_last_classification_outside_the_report(make_hass):
+    hass = make_hass(components={"recorder"})
+    runner = DiscoveryRunner(hass, "v1", "2.0.0b1")
+    assert runner.classification is None
+    with _ok_probe():
+        rep = await runner.async_run()
+    assert runner.classification is not None and runner.classification.chargers == []
+    assert "classification" not in rep and "chargers" not in rep

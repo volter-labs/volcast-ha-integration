@@ -102,7 +102,8 @@
           "forecast": "Voorspelling",
           "control": "Omvormerbesturing",
           "details": "Installatiegegevens",
-          "prices": "Energieprijzen"
+          "prices": "Energieprijzen",
+          "ev_charger": "EV-lader"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Zoeken naar de omvormer",
         "description": "Volcast leest alleen de identificatie van apparaten die antwoorden op het lokale netwerk; er wordt niets geschreven."
+      },
+      "ev_charger": {
+        "title": "EV-lader",
+        "description": "Kies de laders die Volcast moet volgen. Alleen laders uit de laatste detectie staan in de lijst.",
+        "data": {
+          "chargers": "Gevolgde laders"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Rollen van de EV-lader",
+        "description": "Controleer welke entiteit welke rol vervult bij {charger}. Laat optionele rollen leeg als de lader zo'n entiteit niet heeft.",
+        "data": {
+          "status": "Status",
+          "setpoint": "Laadstroom of vermogenslimiet",
+          "start_stop": "Start / stop",
+          "start": "Start",
+          "stop": "Stop",
+          "power": "Vermogen",
+          "energy": "Energie"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "Een andere integratie ({integration}) gebruikt deze omvormer. Schakel die uit voordat je directe besturing kiest, zodat niet twee programma's de omvormer tegelijk besturen.",
       "direct_not_found": "Nog geen omvormer gevonden. Zoek hem eerst onder Installatiegegevens.",
       "direct_in_use": "Een ander Volcast-item is al met deze omvormer verbonden.",
-      "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten)."
+      "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten).",
+      "no_ev_chargers": "Er is nog geen EV-lader gevonden. Voer eerst detectie uit en controleer of de integratie van de lader is ingesteld."
     },
     "error": {
       "prices_not_usable": "Deze sensor levert op dit moment geen volledige prijsreeks.",
@@ -212,7 +234,8 @@
       "invalid_host": "Voer een lokaal IP-adres in (een hostnaam of openbaar adres wordt niet geaccepteerd).",
       "logger_serial_required": "Voer het serienummer van de datalogger in (maximaal 10 cijfers).",
       "direct_not_found": "Op dit adres heeft geen ondersteunde omvormer geantwoord.",
-      "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten)."
+      "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten).",
+      "role_required": "De statusentiteit is verplicht."
     },
     "progress": {
       "direct_search": "Het lokale netwerk wordt doorzocht op de omvormer. Dit kan tot een minuut duren."

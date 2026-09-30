@@ -102,7 +102,8 @@
           "forecast": "Prévision",
           "control": "Pilotage de l'onduleur",
           "details": "Détails de l'installation",
-          "prices": "Prix de l'énergie"
+          "prices": "Prix de l'énergie",
+          "ev_charger": "Borne de recharge VE"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Recherche de l'onduleur",
         "description": "Volcast lit uniquement l'identification des appareils qui répondent sur le réseau local ; rien n'est écrit."
+      },
+      "ev_charger": {
+        "title": "Borne de recharge VE",
+        "description": "Choisissez les bornes que Volcast doit suivre. Seules les bornes trouvées lors de la dernière détection sont listées.",
+        "data": {
+          "chargers": "Bornes suivies"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Rôles de la borne VE",
+        "description": "Vérifiez quelle entité tient chaque rôle pour {charger}. Laissez vides les rôles facultatifs si la borne n'a pas cette entité.",
+        "data": {
+          "status": "État",
+          "setpoint": "Courant de charge ou limite de puissance",
+          "start_stop": "Démarrage / arrêt",
+          "start": "Démarrage",
+          "stop": "Arrêt",
+          "power": "Puissance",
+          "energy": "Énergie"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "Une autre intégration ({integration}) utilise cet onduleur. Désactivez-la avant de choisir le pilotage direct, afin que deux programmes ne pilotent pas l'onduleur en même temps.",
       "direct_not_found": "Aucun onduleur trouvé pour l'instant. Recherchez-le d'abord dans Détails de l'installation.",
       "direct_in_use": "Une autre entrée Volcast se connecte déjà à cet onduleur.",
-      "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état)."
+      "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état).",
+      "no_ev_chargers": "Aucune borne de recharge VE n'a encore été trouvée. Lancez d'abord la détection et vérifiez que l'intégration de la borne est configurée."
     },
     "error": {
       "prices_not_usable": "Ce capteur ne fournit pas de série de prix complète pour le moment.",
@@ -212,7 +234,8 @@
       "invalid_host": "Saisissez une adresse IP locale (un nom d'hôte ou une adresse publique n'est pas accepté).",
       "logger_serial_required": "Saisissez le numéro de série de l'enregistreur de données (jusqu'à 10 chiffres).",
       "direct_not_found": "Aucun onduleur pris en charge n'a répondu à cette adresse.",
-      "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état)."
+      "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état).",
+      "role_required": "L'entité d'état est obligatoire."
     },
     "progress": {
       "direct_search": "Recherche de l'onduleur sur le réseau local. Cela peut prendre jusqu'à une minute."

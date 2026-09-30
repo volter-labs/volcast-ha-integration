@@ -102,7 +102,8 @@
           "forecast": "Prognose",
           "control": "Wechselrichter-Steuerung",
           "details": "Anlagendetails",
-          "prices": "Energiepreise"
+          "prices": "Energiepreise",
+          "ev_charger": "E-Auto-Ladegerät"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Suche nach dem Wechselrichter",
         "description": "Volcast liest nur die Kennung von Geräten, die im lokalen Netzwerk antworten; es wird nichts geschrieben."
+      },
+      "ev_charger": {
+        "title": "E-Auto-Ladegerät",
+        "description": "Wähle die Ladegeräte, denen Volcast folgen soll. Aufgelistet sind nur Ladegeräte aus der letzten Erkennung.",
+        "data": {
+          "chargers": "Verfolgte Ladegeräte"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Rollen des Ladegeräts",
+        "description": "Prüfe, welche Entität welche Rolle bei {charger} übernimmt. Lass optionale Rollen leer, wenn es keine solche Entität gibt.",
+        "data": {
+          "status": "Status",
+          "setpoint": "Ladestrom oder Leistungsgrenze",
+          "start_stop": "Start / Stopp",
+          "start": "Start",
+          "stop": "Stopp",
+          "power": "Leistung",
+          "energy": "Energie"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "Eine andere Integration ({integration}) nutzt diesen Wechselrichter. Deaktiviere sie, bevor du die Direktsteuerung wählst, damit nicht zwei Programme den Wechselrichter gleichzeitig steuern.",
       "direct_not_found": "Noch kein Wechselrichter gefunden. Suche ihn zuerst unter Anlagendetails.",
       "direct_in_use": "Ein anderer Volcast-Eintrag ist bereits mit diesem Wechselrichter verbunden.",
-      "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen)."
+      "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen).",
+      "no_ev_chargers": "Es wurde noch kein E-Auto-Ladegerät gefunden. Starte zuerst die Erkennung und stelle sicher, dass die Integration des Ladegeräts eingerichtet ist."
     },
     "error": {
       "prices_not_usable": "Dieser Sensor liefert derzeit keine vollständige Preisreihe.",
@@ -212,7 +234,8 @@
       "invalid_host": "Gib eine lokale IP-Adresse ein (ein Hostname oder eine öffentliche Adresse wird nicht akzeptiert).",
       "logger_serial_required": "Gib die Seriennummer des Datenloggers ein (bis zu 10 Ziffern).",
       "direct_not_found": "Unter dieser Adresse hat kein unterstützter Wechselrichter geantwortet.",
-      "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen)."
+      "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen).",
+      "role_required": "Die Status-Entität ist erforderlich."
     },
     "progress": {
       "direct_search": "Das lokale Netzwerk wird nach dem Wechselrichter durchsucht. Das kann bis zu einer Minute dauern."

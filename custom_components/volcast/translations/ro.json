@@ -102,7 +102,8 @@
           "forecast": "Prognoză",
           "control": "Controlul invertorului",
           "details": "Detalii instalație",
-          "prices": "Prețurile energiei"
+          "prices": "Prețurile energiei",
+          "ev_charger": "Încărcător EV"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Se caută invertorul",
         "description": "Volcast citește doar identificarea dispozitivelor care răspund în rețeaua locală; nu se scrie nimic."
+      },
+      "ev_charger": {
+        "title": "Încărcător EV",
+        "description": "Alege încărcătoarele pe care Volcast să le urmărească. Sunt listate doar cele găsite la ultima detectare.",
+        "data": {
+          "chargers": "Încărcătoare urmărite"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Rolurile încărcătorului EV",
+        "description": "Verifică ce entitate îndeplinește fiecare rol la {charger}. Lasă goale rolurile opționale dacă încărcătorul nu are o astfel de entitate.",
+        "data": {
+          "status": "Stare",
+          "setpoint": "Curent de încărcare sau limită de putere",
+          "start_stop": "Pornire / oprire",
+          "start": "Pornire",
+          "stop": "Oprire",
+          "power": "Putere",
+          "energy": "Energie"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "O altă integrare ({integration}) folosește acest invertor. Dezactivează-o înainte de a alege controlul direct, ca două programe să nu controleze invertorul în același timp.",
       "direct_not_found": "Nu a fost găsit încă niciun invertor. Caută-l mai întâi în Detalii instalație.",
       "direct_in_use": "O altă intrare Volcast se conectează deja la acest invertor.",
-      "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul)."
+      "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul).",
+      "no_ev_chargers": "Încă nu a fost găsit niciun încărcător EV. Rulează mai întâi detectarea și verifică dacă integrarea încărcătorului este configurată."
     },
     "error": {
       "prices_not_usable": "Acest senzor nu oferă acum o serie completă de prețuri.",
@@ -212,7 +234,8 @@
       "invalid_host": "Introdu o adresă IP locală (un nume de gazdă sau o adresă publică nu este acceptată).",
       "logger_serial_required": "Introdu numărul de serie al data logger-ului (până la 10 cifre).",
       "direct_not_found": "Niciun invertor compatibil nu a răspuns la această adresă.",
-      "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul)."
+      "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul).",
+      "role_required": "Entitatea de stare este obligatorie."
     },
     "progress": {
       "direct_search": "Se caută invertorul în rețeaua locală. Poate dura până la un minut."

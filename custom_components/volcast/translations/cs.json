@@ -102,7 +102,8 @@
           "forecast": "Předpověď",
           "control": "Řízení střídače",
           "details": "Podrobnosti o instalaci",
-          "prices": "Ceny energie"
+          "prices": "Ceny energie",
+          "ev_charger": "Nabíječka EV"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Vyhledávání střídače",
         "description": "Volcast čte pouze identifikaci zařízení, která odpovídají v místní síti; nic se nezapisuje."
+      },
+      "ev_charger": {
+        "title": "Nabíječka EV",
+        "description": "Vyberte nabíječky, které má Volcast sledovat. V seznamu jsou jen nabíječky nalezené při posledním zjišťování.",
+        "data": {
+          "chargers": "Sledované nabíječky"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Role nabíječky EV",
+        "description": "Zkontrolujte, která entita plní jakou roli u {charger}. Nepovinné role nechte prázdné, pokud nabíječka takovou entitu nemá.",
+        "data": {
+          "status": "Stav",
+          "setpoint": "Nabíjecí proud nebo limit výkonu",
+          "start_stop": "Start / stop",
+          "start": "Start",
+          "stop": "Stop",
+          "power": "Výkon",
+          "energy": "Energie"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "Tento střídač používá jiná integrace ({integration}). Před volbou přímého řízení ji vypněte, aby střídač neřídily dva programy současně.",
       "direct_not_found": "Zatím nebyl nalezen žádný střídač. Nejprve ho vyhledejte v Podrobnostech o instalaci.",
       "direct_in_use": "K tomuto střídači se již připojuje jiný záznam Volcast.",
-      "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit)."
+      "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit).",
+      "no_ev_chargers": "Nabíječka EV zatím nebyla nalezena. Nejprve spusťte zjišťování a ověřte, že je integrace nabíječky nastavená."
     },
     "error": {
       "prices_not_usable": "Tento senzor teď neposkytuje úplnou cenovou řadu.",
@@ -212,7 +234,8 @@
       "invalid_host": "Zadejte místní IP adresu (název hostitele ani veřejná adresa se nepřijímá).",
       "logger_serial_required": "Zadejte sériové číslo datalogeru (až 10 číslic).",
       "direct_not_found": "Na této adrese neodpověděl žádný podporovaný střídač.",
-      "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit)."
+      "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit).",
+      "role_required": "Entita stavu je povinná."
     },
     "progress": {
       "direct_search": "Vyhledávání střídače v místní síti. Může to trvat až minutu."

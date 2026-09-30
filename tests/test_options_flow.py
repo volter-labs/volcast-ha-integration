@@ -96,7 +96,7 @@ def test_discovery_only_entry_has_no_options():
 
 def test_paired_entry_shows_menu_without_default():
     r = asyncio.run(flow().async_step_init())
-    assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices"]}
+    assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices", "ev_charger"]}
     c = asyncio.run(flow().async_step_control())
     # trzy pozycje, żadnej domyślnej („Bezpośrednio” sprawdza dostępność dopiero po wyborze)
     assert c == {"type": "menu", "step_id": "control",
@@ -279,7 +279,7 @@ def test_strings_have_new_steps_and_errors():
     for name in ("strings.json", "translations/en.json"):
         opts = json.loads((root / name).read_text(encoding="utf-8"))["options"]
         assert {"init", "forecast", "control", "details", "prices"} <= set(opts["step"])
-        assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices"}
+        assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices", "ev_charger"}
         assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_direct", "control_off"}
         assert "entity_mode_unavailable" in opts["abort"] and "prices_not_usable" in opts["error"]
         assert "currency_invalid" in opts["error"]

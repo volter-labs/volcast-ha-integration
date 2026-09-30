@@ -92,6 +92,8 @@ class DiscoveryRunner:
         self.entry_id = entry_id
         self.integration_version = integration_version
         self.report: dict | None = None
+        # Ostatnia klasyfikacja — tylko dla kroków opcji w tym procesie, nie trafia do raportu.
+        self.classification: Classification | None = None
         self.running: bool = False
         self._inflight: asyncio.Future[dict] | None = None
 
@@ -173,6 +175,7 @@ class DiscoveryRunner:
         classification = self._step(
             "classify", errors, lambda: classify(devices, entities, entries, {}),
             Classification([], [], []))
+        self.classification = classification
         states = self._step(
             "states", errors, lambda: self._snap_states(classification), {})
         history_days = await self._history_days(classification, errors)

@@ -102,7 +102,8 @@
           "forecast": "Previsione",
           "control": "Controllo dell'inverter",
           "details": "Dettagli dell'impianto",
-          "prices": "Prezzi dell'energia"
+          "prices": "Prezzi dell'energia",
+          "ev_charger": "Caricatore EV"
         }
       },
       "forecast": {
@@ -194,6 +195,26 @@
       "direct_search": {
         "title": "Ricerca dell'inverter",
         "description": "Volcast legge solo l'identificazione dei dispositivi che rispondono sulla rete locale; non viene scritto nulla."
+      },
+      "ev_charger": {
+        "title": "Caricatore EV",
+        "description": "Scegli i caricatori che Volcast deve seguire. Sono elencati solo i caricatori trovati nell'ultima rilevazione.",
+        "data": {
+          "chargers": "Caricatori seguiti"
+        }
+      },
+      "ev_charger_roles": {
+        "title": "Ruoli del caricatore EV",
+        "description": "Controlla quale entità svolge ciascun ruolo in {charger}. Lascia vuoti i ruoli facoltativi se il caricatore non ha quell'entità.",
+        "data": {
+          "status": "Stato",
+          "setpoint": "Corrente di ricarica o limite di potenza",
+          "start_stop": "Avvio / arresto",
+          "start": "Avvio",
+          "stop": "Arresto",
+          "power": "Potenza",
+          "energy": "Energia"
+        }
       }
     },
     "abort": {
@@ -202,7 +223,8 @@
       "direct_conflict": "Un'altra integrazione ({integration}) usa questo inverter. Disattivala prima di scegliere il controllo diretto, così due programmi non controllano l'inverter contemporaneamente.",
       "direct_not_found": "Nessun inverter trovato finora. Cercalo prima in Dettagli dell'impianto.",
       "direct_in_use": "Un'altra voce Volcast si connette già a questo inverter.",
-      "restore_failed": "Volcast non è riuscito a riportare l'inverter alle impostazioni precedenti al controllo, quindi non è stato modificato nulla. Riprova quando l'inverter è raggiungibile oppure spegni l'interruttore di controllo di Volcast (Volcast continua a cercare di riportare l'inverter)."
+      "restore_failed": "Volcast non è riuscito a riportare l'inverter alle impostazioni precedenti al controllo, quindi non è stato modificato nulla. Riprova quando l'inverter è raggiungibile oppure spegni l'interruttore di controllo di Volcast (Volcast continua a cercare di riportare l'inverter).",
+      "no_ev_chargers": "Non è ancora stato trovato alcun caricatore EV. Esegui prima la rilevazione e verifica che l'integrazione del caricatore sia configurata."
     },
     "error": {
       "prices_not_usable": "Questo sensore al momento non fornisce una serie di prezzi completa.",
@@ -212,7 +234,8 @@
       "invalid_host": "Inserisci un indirizzo IP locale (un nome host o un indirizzo pubblico non è accettato).",
       "logger_serial_required": "Inserisci il numero di serie del data logger (fino a 10 cifre).",
       "direct_not_found": "Nessun inverter supportato ha risposto a questo indirizzo.",
-      "restore_failed": "Volcast non è riuscito a riportare l'inverter alle impostazioni precedenti al controllo, quindi non è stato modificato nulla. Riprova quando l'inverter è raggiungibile oppure spegni l'interruttore di controllo di Volcast (Volcast continua a cercare di riportare l'inverter)."
+      "restore_failed": "Volcast non è riuscito a riportare l'inverter alle impostazioni precedenti al controllo, quindi non è stato modificato nulla. Riprova quando l'inverter è raggiungibile oppure spegni l'interruttore di controllo di Volcast (Volcast continua a cercare di riportare l'inverter).",
+      "role_required": "L'entità di stato è obbligatoria."
     },
     "progress": {
       "direct_search": "Ricerca dell'inverter sulla rete locale. Può richiedere fino a un minuto."
