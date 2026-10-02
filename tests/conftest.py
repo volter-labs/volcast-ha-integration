@@ -187,6 +187,8 @@ def _fake_parse_datetime(value):
         return None
 
 
+_util_mod.slugify = lambda text, *, separator="_": separator.join(
+    "".join(c if c.isalnum() else " " for c in str(text).lower()).split())
 _util_mod.dt = _make_module("homeassistant.util.dt", {
     "utcnow": lambda: FAKE_UTCNOW,
     "parse_datetime": _fake_parse_datetime,

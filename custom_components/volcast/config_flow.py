@@ -643,7 +643,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         """Zaznaczenie ładowarek do śledzenia; zapisane, a niewidoczne w ostatnim wykrywaniu, zostają na liście."""
         findings = {f.device_id: f for f in self._ev_findings()}
         saved = {c["device_id"]: c for c in self._ev_saved()}
-        if not findings:
+        if not findings and not saved:
             return self.async_abort(reason=EV_NONE_FOUND)
         if user_input is not None:
             chosen = list(user_input.get(_EV_SELECT) or [])
@@ -705,8 +705,15 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         roles = {r: v.strip() for r, v in user_input.items() if isinstance(v, str) and v.strip()}
         if "status" not in roles:
             return self._ev_roles_form(finding, {"status": "role_required"})
+        if self.hass.states.get(roles["status"]) is None:
+            return self._ev_roles_form(finding, {"status": EV_ENTITY_NOT_FOUND})
         if not self._ev_status_has_options(roles["status"]):
             return self._ev_roles_form(finding, {"status": EV_STATUS_WITHOUT_OPTIONS})
+        # role zapisane poza polami formularza (np. start/stop) zostają przy ponownym zapisie
+        shown = set(_EV_ROLES) | set(finding.roles)
+        prev = next((s for s in self._ev_saved() if s["device_id"] == finding.device_id), None)
+        extra = {r: v for r, v in (prev.get("roles") or {}).items() if r not in shown} if prev else {}
+        roles = {**extra, **roles}
         self._ev_done.append({"device_id": finding.device_id, "roles": roles,
                               "label": finding.name or finding.model or ""})
         queue.pop(0)
@@ -952,6 +959,7 @@ _SEARCH = "direct_search"
 OPT_EV_CHARGERS = "ev_chargers"
 EV_NONE_FOUND = "no_ev_chargers"
 EV_STATUS_WITHOUT_OPTIONS = "status_without_options"
+EV_ENTITY_NOT_FOUND = "entity_not_found"
 _EV_SELECT = "chargers"
 _EV_ROLES = ("status", "setpoint", "start_stop", "power", "energy")
 _EV_ROLE_DOMAINS = {

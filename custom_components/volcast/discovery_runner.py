@@ -15,6 +15,7 @@ from datetime import timedelta
 from typing import Any, TypeVar
 
 import homeassistant.util.dt as dt_util
+from homeassistant.util import slugify
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.const import __version__ as HA_VERSION
@@ -208,6 +209,7 @@ class DiscoveryRunner:
                 serial_number=getattr(d, "serial_number", None),
                 identifiers=_identifiers(d.identifiers),
                 config_entry_ids=_config_entry_ids(d),
+                slug=slugify(d.name) if d.name else None,
             )
             for d in active
         ], skipped

@@ -236,6 +236,7 @@
       "direct_not_found": "Op dit adres heeft geen ondersteunde omvormer geantwoord.",
       "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten).",
       "role_required": "De statusentiteit is verplicht.",
+      "entity_not_found": "De entiteit is niet gevonden. Kies een bestaande entiteit.",
       "status_without_options": "Kies een sensor of select met een lijst van mogelijke toestanden. Een aan/uit-sensor laat het laden niet zien."
     },
     "progress": {

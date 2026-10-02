@@ -193,7 +193,8 @@ async def test_status_without_options_shows_error(hass: HomeAssistant, network_d
 async def test_missing_status_entity_shows_error(hass: HomeAssistant, network_down):
     entry, roles = await _roles_form(hass)
     res = await hass.config_entries.options.async_configure(roles["flow_id"], {"status": "sensor.nope"})
-    assert res["errors"] == {"status": "status_without_options"}
+    assert res["type"] is FlowResultType.FORM and res["errors"] == {"status": "entity_not_found"}
+    assert "ev_chargers" not in entry.options
 
 
 async def test_select_with_options_accepted_as_status(hass: HomeAssistant, network_down):
@@ -202,6 +203,55 @@ async def test_select_with_options_accepted_as_status(hass: HomeAssistant, netwo
     done = await hass.config_entries.options.async_configure(roles["flow_id"], {"status": "select.wb_state"})
     assert done["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["ev_chargers"][0]["roles"] == {"status": "select.wb_state"}
+
+
+async def test_no_findings_shows_saved_chargers_and_allows_removal(hass: HomeAssistant, network_down):
+    saved = [{"device_id": "gone", "label": "Old", "roles": {"status": "sensor.old"}},
+             {"device_id": "gone2", "label": "Old2", "roles": {"status": "sensor.old2"}}]
+    entry = make_entry(hass, options={"ev_chargers": saved, "update_interval": 30})
+    _provide(hass, entry, [])
+    form = await _open(hass, entry)
+    assert form["type"] is FlowResultType.FORM and form["step_id"] == "ev_charger"
+    assert _defaults(form) == {"chargers": ["gone", "gone2"]}
+    done = await hass.config_entries.options.async_configure(form["flow_id"], {"chargers": ["gone2"]})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["ev_chargers"] == [saved[1]] and entry.options["update_interval"] == 30
+
+
+async def test_no_findings_and_nothing_saved_aborts(hass: HomeAssistant, network_down):
+    entry = make_entry(hass)
+    _provide(hass, entry, [])
+    form = await _open(hass, entry)
+    assert form["type"] is FlowResultType.ABORT and form["reason"] == "no_ev_chargers"
+
+
+async def test_resave_keeps_saved_roles_outside_form_fields(hass: HomeAssistant, network_down):
+    _status(hass, "sensor.mine")
+    saved = [{"device_id": "dev1", "label": "Wallbox",
+              "roles": {"status": "sensor.old", "start": "button.go", "stop": "button.halt"}}]
+    entry = make_entry(hass, options={"ev_chargers": saved})
+    _provide(hass, entry, [_finding()])
+    form = await _open(hass, entry)
+    roles = await hass.config_entries.options.async_configure(form["flow_id"], {"chargers": ["dev1"]})
+    done = await hass.config_entries.options.async_configure(roles["flow_id"], {"status": "sensor.mine"})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["ev_chargers"][0]["roles"] == {
+        "status": "sensor.mine", "start": "button.go", "stop": "button.halt"}
+
+
+async def test_kept_chargers_keep_chosen_order_among_discovered(hass: HomeAssistant, network_down):
+    _status(hass, "sensor.wb_status", "sensor.wb2_status")
+    saved = [{"device_id": "gone", "label": "Old", "roles": {"status": "sensor.old"}}]
+    entry = make_entry(hass, options={"ev_chargers": saved})
+    _provide(hass, entry, [_finding("dev1"), _finding("dev2", status=ChargerRole(
+        "sensor.wb2_status", "sensor", options=("charging", "connected")))])
+    form = await _open(hass, entry)
+    step = await hass.config_entries.options.async_configure(
+        form["flow_id"], {"chargers": ["dev2", "gone", "dev1"]})
+    step = await hass.config_entries.options.async_configure(step["flow_id"], {"status": "sensor.wb2_status"})
+    done = await hass.config_entries.options.async_configure(step["flow_id"], {"status": "sensor.wb_status"})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert [c["device_id"] for c in entry.options["ev_chargers"]] == ["dev2", "gone", "dev1"]
 
 
 def test_translations_cover_every_locale():
@@ -213,6 +263,7 @@ def test_translations_cover_every_locale():
         assert opts["step"]["init"]["menu_options"]["ev_charger"], path.name
         for step in ("ev_charger", "ev_charger_roles"):
             assert opts["step"][step]["title"], (path.name, step)
+        assert opts["error"]["entity_not_found"], path.name
         assert set(opts["step"]["ev_charger_roles"]["data"]) == set(
             strings["step"]["ev_charger_roles"]["data"]), path.name
         assert opts["step"]["ev_charger"]["data"]["chargers"], path.name

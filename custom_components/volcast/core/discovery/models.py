@@ -16,6 +16,8 @@ class DeviceSnap:
     serial_number: str | None
     identifiers: tuple[tuple[str, str], ...]
     config_entry_ids: tuple[str, ...]
+    # slug nazwy urządzenia policzony przez adapter (homeassistant.util.slugify); None → przybliżenie z core
+    slug: str | None = None
 
 
 @dataclass(frozen=True)

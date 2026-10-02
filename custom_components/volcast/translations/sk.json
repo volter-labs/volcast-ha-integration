@@ -236,6 +236,7 @@
       "direct_not_found": "Na tejto adrese neodpovedal žiadny podporovaný striedač.",
       "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť).",
       "role_required": "Entita stavu je povinná.",
+      "entity_not_found": "Entita sa nenašla. Vyberte existujúcu entitu.",
       "status_without_options": "Vyberte senzor alebo select so zoznamom možných stavov. Senzor zapnuté/vypnuté nabíjanie neukazuje."
     },
     "progress": {

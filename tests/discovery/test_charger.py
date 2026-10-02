@@ -299,3 +299,14 @@ def test_non_ascii_device_name_prefix_is_stripped():
               caps={"options": ["Start charging", "Stop charging"]})
     f = classify_chargers([_dev(name="Ładowarka EV Charger")], [_STATUS, lock, op], {})[0]
     assert f.roles["start_stop"].entity_id == "select.ladowarka_ev_charger_operation"
+
+
+def test_adapter_slug_strips_prefix_for_non_latin_device_name():
+    # nazwa cyrylicą: przybliżenie ASCII daje pusty slug, prefiks "start_" zostałby w tekście encji
+    dev = DeviceSnap(id="d1", manufacturer="X", model=None, name="Старт", sw_version=None,
+                     hw_version=None, serial_number=None, identifiers=(),
+                     config_entry_ids=("e1",), slug="start")
+    sw = _ent("switch.start_socket")
+    assert "start_stop" not in classify_chargers([dev], [_STATUS, _SETPOINT, sw], {})[0].roles
+    bare = DeviceSnap(**{**dev.__dict__, "slug": None})
+    assert "start_stop" in classify_chargers([bare], [_STATUS, _SETPOINT, sw], {})[0].roles

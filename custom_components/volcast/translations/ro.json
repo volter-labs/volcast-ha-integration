@@ -236,6 +236,7 @@
       "direct_not_found": "Niciun invertor compatibil nu a răspuns la această adresă.",
       "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul).",
       "role_required": "Entitatea de stare este obligatorie.",
+      "entity_not_found": "Entitatea nu a fost găsită. Alege o entitate existentă.",
       "status_without_options": "Alegeți un senzor sau un select cu o listă de stări posibile. Un senzor pornit/oprit nu arată încărcarea."
     },
     "progress": {

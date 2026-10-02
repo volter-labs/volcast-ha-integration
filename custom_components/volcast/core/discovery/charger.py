@@ -200,7 +200,7 @@ def _confidence(missing: tuple[str, ...]) -> str:
 
 def _finding(dev: DeviceSnap, ents: list[EntitySnap],
              states: dict[str, StateSnap]) -> ChargerFinding | None:
-    slug = _slug(dev.name or "")
+    slug = dev.slug if dev.slug is not None else _slug(dev.name or "")
     prefix = f"{slug}_" if slug else ""
     status = _status(ents, states, prefix)
     if status is None:

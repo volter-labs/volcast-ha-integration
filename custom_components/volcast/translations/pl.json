@@ -236,6 +236,7 @@
       "direct_not_found": "Żaden obsługiwany falownik nie odpowiedział pod tym adresem.",
       "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik).",
       "role_required": "Encja statusu jest wymagana.",
+      "entity_not_found": "Nie znaleziono encji. Wybierz istniejącą encję.",
       "status_without_options": "Wybierz sensor lub select z listą możliwych stanów. Czujnik włącz/wyłącz nie pokazuje ładowania."
     },
     "progress": {

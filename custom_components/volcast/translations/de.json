@@ -236,6 +236,7 @@
       "direct_not_found": "Unter dieser Adresse hat kein unterstützter Wechselrichter geantwortet.",
       "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen).",
       "role_required": "Die Status-Entität ist erforderlich.",
+      "entity_not_found": "Die Entität wurde nicht gefunden. Wähle eine vorhandene Entität.",
       "status_without_options": "Wähle einen Sensor oder ein Select mit einer Liste möglicher Zustände. Ein Ein/Aus-Sensor zeigt das Laden nicht an."
     },
     "progress": {

@@ -236,6 +236,7 @@
       "direct_not_found": "Nessun inverter supportato ha risposto a questo indirizzo.",
       "restore_failed": "Volcast non è riuscito a riportare l'inverter alle impostazioni precedenti al controllo, quindi non è stato modificato nulla. Riprova quando l'inverter è raggiungibile oppure spegni l'interruttore di controllo di Volcast (Volcast continua a cercare di riportare l'inverter).",
       "role_required": "L'entità di stato è obbligatoria.",
+      "entity_not_found": "Entità non trovata. Scegli un'entità esistente.",
       "status_without_options": "Scegli un sensore o un select con un elenco di stati possibili. Un sensore acceso/spento non mostra la ricarica."
     },
     "progress": {
