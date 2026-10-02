@@ -28,7 +28,7 @@ mobilnej i na serwerze:
 
 - `submit-production` upsertuje po `(user_id, production_date, hour)` — ponowne
   wysłanie tej samej godziny jest bezpieczne,
-- flaga `is_reconciliation: true` (PLAN-040) pomija update Kalmana i nowcastu —
+- flaga `is_reconciliation: true` pomija update Kalmana i nowcastu —
   backfill dzisiejszego dnia nie zatruwa kalibracji,
 - okno akceptacji backendu: 24h + 14h luzu na strefy czasowe (~38h) — pokrywa
   dziś i wczoraj.
