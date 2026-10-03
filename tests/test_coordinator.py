@@ -443,3 +443,25 @@ class TestForecastHistory:
         merged = coord.get_solar_forecast_wh_hours()
         assert merged is not None
         assert 3800 in merged.values()
+
+
+class TestAttribution:
+    """Źródło danych pogodowych z odpowiedzi API."""
+
+    def test_attribution_read_from_response(self):
+        raw = _make_api_response()
+        raw["attribution"] = "Weather data: Open-Meteo (CC BY 4.0); includes experimental data."
+        result = _parse_response(raw, FakeHass())
+        assert result.attribution == raw["attribution"]
+
+    def test_attribution_none_when_missing(self):
+        result = _parse_response(_make_api_response(), FakeHass())
+        assert result.attribution is None
+
+    def test_attribution_none_when_empty(self):
+        raw = _make_api_response()
+        raw["attribution"] = ""
+        assert _parse_response(raw, FakeHass()).attribution is None
+
+    def test_error_data_has_no_attribution(self):
+        assert _error_data("Premium required").attribution is None

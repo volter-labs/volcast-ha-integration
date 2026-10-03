@@ -73,6 +73,8 @@ class VolcastData:
     nowcast_applied: bool = False
     nowcast_ratio: float | None = None
     submit_url: str = ""
+    # Tekst atrybucji z API (licencja źródła); None, gdy serwer go nie podał.
+    attribution: str | None = None
 
 
 class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
@@ -310,6 +312,8 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         nowcast_applied=attrs.get("nowcast_applied", False),
         nowcast_ratio=attrs.get("nowcast_ratio"),
         submit_url=attrs.get("submit_url", ""),
+        # Pole top-level, obecne tylko przy licencjonowanym źródle pogody.
+        attribution=raw.get("attribution") or None,
     )
 
 

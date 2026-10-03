@@ -266,6 +266,16 @@ automation:
 - **Nowcast availability**: Requires a recent hourly reading with meaningful production (>0.01 kWh) in an hour with a forecast above 0.5 kWh. Early morning hours or heavily overcast days may not produce enough data.
 - **Sensor compatibility**: Works with any inverter that exposes an energy or power entity in HA.
 
+## Data sources
+
+Forecasts are built from weather data provided by [Open-Meteo](https://open-meteo.com/) (licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). When the forecast uses a source that requires a credit, the forecast sensors show the text supplied by the server, unchanged, in the standard `attribution` attribute.
+
+Where applicable, forecasts also include experimental data from Google WeatherNext 3. Required credit:
+
+> © 2024-6 Google LLC, whose machine learning models were used to create the experimental data made available under https://storage.googleapis.com/weathernext-public/terms-of-use.pdf. This data is intended for experimental modelling only and is not intended, validated, or approved for real world use.
+
+More details: <https://volcast.app/data-sources>
+
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/volter-labs/volcast-ha-integration/issues)
