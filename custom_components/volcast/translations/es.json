@@ -234,6 +234,7 @@
       "invalid_host": "Introduce una dirección IP local (no se acepta un nombre de host ni una dirección pública).",
       "logger_serial_required": "Introduce el número de serie del registrador de datos (hasta 10 dígitos).",
       "direct_not_found": "Ningún inversor compatible respondió en esta dirección.",
+      "direct_conflict": "Esta dirección la usa otra integración ({integration}). Desactiva esa integración o elige el control a través de la integración del inversor.",
       "restore_failed": "Volcast no pudo devolver el inversor a sus ajustes anteriores al control, por lo que no se cambió nada. Inténtalo de nuevo cuando el inversor sea accesible, o apaga el interruptor de control de Volcast (Volcast sigue intentando devolver el inversor).",
       "role_required": "La entidad de estado es obligatoria.",
       "entity_not_found": "No se encontró la entidad. Elige una entidad existente.",

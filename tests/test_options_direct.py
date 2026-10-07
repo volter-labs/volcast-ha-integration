@@ -232,6 +232,64 @@ def test_manual_target_gets_device_fp_from_probe(monkeypatch):
     assert r["type"] == "form" and r["errors"] == {"base": "direct_not_found"}
 
 
+def _capture_forms(monkeypatch):
+    shown = []
+
+    def show(self, *, step_id, data_schema=None, errors=None, description_placeholders=None, **_):
+        shown.append({"step_id": step_id, "errors": errors or {}, "placeholders": description_placeholders})
+        return {"type": "form", "step_id": step_id, "errors": errors or {}}
+    monkeypatch.setattr(VolcastOptionsFlow, "async_show_form", show, raising=False)
+    return shown
+
+
+def _goodwe_entry(host=HOST):
+    return SimpleNamespace(domain="goodwe", entry_id="g", data={"host": host}, options={}, disabled_by=None)
+
+
+def test_manual_address_used_by_other_integration_names_it(monkeypatch):
+    f = flow(runtime=rt(), entries=[_goodwe_entry()], monkeypatch=monkeypatch)
+    shown = _capture_forms(monkeypatch)
+
+    async def search(hass, entry, *, manual=None, **kw):
+        return [report(identity=False, errors=("conflict",), host=manual.host)]
+    monkeypatch.setattr(cf_mod, "async_direct_search", search)
+    asyncio.run(f.async_step_direct_manual({"host": HOST, "transport": "goodwe_udp", "port": 8899,
+                                             "unit_id": 247}))
+    assert shown[-1] == {"step_id": "direct_manual", "errors": {"base": "direct_conflict"},
+                         "placeholders": {"integration": "goodwe"}}
+
+
+def test_manual_without_conflict_keeps_not_found(monkeypatch):
+    f = flow(runtime=rt(), monkeypatch=monkeypatch)
+    shown = _capture_forms(monkeypatch)
+
+    async def search(hass, entry, *, manual=None, **kw):
+        return [report(identity=False, host=manual.host)]
+    monkeypatch.setattr(cf_mod, "async_direct_search", search)
+    asyncio.run(f.async_step_direct_manual({"host": HOST, "transport": "goodwe_udp", "port": 8899,
+                                             "unit_id": 247}))
+    assert shown[-1]["errors"] == {"base": "direct_not_found"} and not shown[-1]["placeholders"]
+
+
+def test_pick_with_only_conflicting_candidate_names_the_integration(monkeypatch):
+    f = flow(runtime=rt(), entries=[_goodwe_entry()], monkeypatch=monkeypatch)
+    shown = _capture_forms(monkeypatch)
+    f._reports = [report(identity=False, errors=("conflict",))]
+    asyncio.run(f.async_step_direct_pick())
+    assert shown[-1] == {"step_id": "direct_pick", "errors": {"base": "direct_conflict"},
+                         "placeholders": {"integration": "goodwe"}}
+    f._reports = []
+    asyncio.run(f.async_step_direct_pick())
+    assert shown[-1]["errors"] == {"base": "direct_not_found"}
+
+
+def test_clash_label():
+    assert ds_mod.clash_label(("goodwe",)) == "goodwe"
+    assert ds_mod.clash_label(("goodwe", "solarman")) == "goodwe, solarman"
+    assert ds_mod.clash_label(("volcast",)) == "volcast"
+    assert ds_mod.clash_label(("unknown",)) == ds_mod.clash_label(()) == "unknown"
+
+
 # ── połączenie próbne ─────────────────────────────────────────────────────
 
 
@@ -288,7 +346,8 @@ def test_strings_have_direct_steps_errors_and_aborts():
     assert {"direct_unverified", "direct_conflict", "direct_not_found", "direct_in_use"} <= set(opts["abort"])
     assert "{integration}" in opts["abort"]["direct_conflict"]
     assert {"trial_with_entities", "trial_while_owned", "invalid_host", "logger_serial_required",
-            "direct_not_found"} <= set(opts["error"])
+            "direct_not_found", "direct_conflict"} <= set(opts["error"])
+    assert "{integration}" in opts["error"]["direct_conflict"]
     assert {"direct_search", "direct_trial", "direct_poll_s"} <= set(opts["step"]["details"]["data"])
 
 

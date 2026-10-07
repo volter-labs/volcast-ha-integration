@@ -234,6 +234,7 @@
       "invalid_host": "Inserisci un indirizzo IP locale (un nome host o un indirizzo pubblico non è accettato).",
       "logger_serial_required": "Inserisci il numero di serie del data logger (fino a 10 cifre).",
       "direct_not_found": "Nessun inverter supportato ha risposto a questo indirizzo.",
+      "direct_conflict": "Questo indirizzo è usato da un'altra integrazione ({integration}). Disattiva quell'integrazione o scegli il controllo tramite l'integrazione dell'inverter.",
       "restore_failed": "Volcast non è riuscito a riportare l'inverter alle impostazioni precedenti al controllo, quindi non è stato modificato nulla. Riprova quando l'inverter è raggiungibile oppure spegni l'interruttore di controllo di Volcast (Volcast continua a cercare di riportare l'inverter).",
       "role_required": "L'entità di stato è obbligatoria.",
       "entity_not_found": "Entità non trovata. Scegli un'entità esistente.",

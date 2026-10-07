@@ -84,6 +84,11 @@ async def async_clash(hass, entry_id: str, host: str, *, resolve=None) -> tuple[
     return tuple(dict.fromkeys(clash))
 
 
+def clash_label(clash: Sequence[str]) -> str:
+    """Domena(y) integracji z kolizji do komunikatu; bez znanej nazwy → `unknown`."""
+    return ", ".join(d for d in clash if d != "unknown") or "unknown"
+
+
 async def async_search(hass, entry, profiles: Sequence, *, manual: Candidate | None = None,
                        timeout_s: float = DISCOVER_TIMEOUT_S, transport_factory: Callable | None = None,
                        udp_probe: Callable[[], Awaitable] | None = None, allow_loopback: bool | None = None,

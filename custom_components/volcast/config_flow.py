@@ -797,11 +797,24 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 return self.async_abort(reason=ds.NOT_FOUND)
             return await self._finish({**self._pending_options(), OPT_DIRECT_TARGET: target},
                                       retry_form=lambda errors: self._pick_form(labels, errors))
-        return self._pick_form(labels, {} if len(labels) > 1 else {"base": ds.NOT_FOUND})
+        if len(labels) > 1:
+            return self._pick_form(labels, {})
+        placeholders = await self._conflict_placeholders(getattr(self, "_reports", []))
+        return self._pick_form(labels, {"base": ds.CONFLICT if placeholders else ds.NOT_FOUND}, placeholders)
 
-    def _pick_form(self, labels: dict[str, str], errors: dict[str, str]) -> ConfigFlowResult:
-        return self.async_show_form(step_id="direct_pick", errors=errors,
+    def _pick_form(self, labels: dict[str, str], errors: dict[str, str],
+                   placeholders: dict[str, str] | None = None) -> ConfigFlowResult:
+        return self.async_show_form(step_id="direct_pick", errors=errors, description_placeholders=placeholders,
                                     data_schema=vol.Schema({vol.Required("candidate"): vol.In(labels)}))
+
+    async def _conflict_placeholders(self, reports) -> dict[str, str] | None:
+        """Kandydat pominięty przez sondę, bo adres ma inna integracja → nazwa tej integracji
+        (placeholder błędu `direct_conflict`); None = brak takiego kandydata."""
+        hit = next((r for r in reports if "conflict" in r.errors and r.candidate is not None), None)
+        if hit is None:
+            return None
+        clash = await ds.async_clash(self.hass, self.config_entry.entry_id, hit.candidate.host)
+        return {"integration": ds.clash_label(clash)}
 
     async def async_step_direct_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -828,13 +841,17 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 hits = ds.found(reports)
                 target = ds.target_from_report(hits[0]) if hits else None
                 if target is None:
-                    errors["base"] = ds.NOT_FOUND           # cel ręczny też musi przejść sondę (odcisk urządzenia)
-                else:
-                    target.update(port=port, unit_id=unit)
-                    return await self._finish(
-                        {**self._pending_options(), OPT_DIRECT_TARGET: target},
-                        retry_form=lambda errors: self.async_show_form(
-                            step_id="direct_manual", data_schema=self._manual_schema(), errors=errors))
+                    # cel ręczny też musi przejść sondę (odcisk urządzenia); adres innej integracji
+                    # sonda pomija bez ramki — wtedy komunikat z nazwą tej integracji
+                    placeholders = await self._conflict_placeholders(reports)
+                    errors["base"] = ds.CONFLICT if placeholders else ds.NOT_FOUND
+                    return self.async_show_form(step_id="direct_manual", data_schema=self._manual_schema(),
+                                                errors=errors, description_placeholders=placeholders)
+                target.update(port=port, unit_id=unit)
+                return await self._finish(
+                    {**self._pending_options(), OPT_DIRECT_TARGET: target},
+                    retry_form=lambda errors: self.async_show_form(
+                        step_id="direct_manual", data_schema=self._manual_schema(), errors=errors))
             return self.async_show_form(step_id="direct_manual", data_schema=self._manual_schema(), errors=errors)
         return self.async_show_form(step_id="direct_manual", data_schema=self._manual_schema())
 
