@@ -178,3 +178,68 @@ async def test_sim_readback_lost_then_answered_is_ok_single_write_frame(goodwe_w
     assert await goodwe_writer.async_write(RegisterWrite("power_w", 47512, 1500)) == OK
     assert [e[0] for e in goodwe_udp_sim.log].count(0x06) == 1
     assert goodwe_bank.read(47512, 1) == [1500]
+
+
+# ── przerwa przed ponowieniem: nie krótsza niż czekanie transportu na ponowne połączenie ──
+
+
+def _stream_writer(profile, **cfg):
+    from custom_components.volcast.core.transports.base import TransportConfig
+    from custom_components.volcast.core.transports.factory import make_transport
+    t = make_transport(TransportConfig(kind="modbus_tcp", host="127.0.0.1", port=1502, unit=1, **cfg),
+                       allow_loopback=True)
+    return RegisterWriter(RegisterClient(t, profile), profile)
+
+
+def test_stream_transport_retry_waits_out_doubling_reconnect_backoff(deye_profile):
+    # Transport strumieniowy po nieudanym połączeniu czeka backoff_min_s, potem dwa razy dłużej.
+    assert _stream_writer(deye_profile).read_retry_delays() == pytest.approx((1.1, 2.1))
+    assert _stream_writer(deye_profile, backoff_min_s=1.5).read_retry_delays() == pytest.approx((1.6, 3.1))
+
+
+def test_udp_and_unknown_transport_retry_delays(goodwe_profile):
+    assert _writer(_Scripted({}), goodwe_profile).read_retry_delays() == (writer_mod.READ_RETRY_BACKOFF_S,) * 2
+    other = _Scripted({})
+    other.kind = "something_else"                 # bez wiedzy o czekaniu transportu — stała ≥ 1,1 s
+    assert all(d >= 1.1 for d in _writer(other, goodwe_profile).read_retry_delays())
+
+
+@pytest.mark.asyncio
+async def test_retries_sleep_the_derived_delays(goodwe_profile, writer_sleeps, monkeypatch):
+    t = _Scripted({47511: 1}, [LinkDown("connection closed by peer"), LinkDown("connection failed")])
+    w = _writer(t, goodwe_profile)
+    monkeypatch.setattr(w, "read_retry_delays", lambda: (1.1, 2.1))
+    assert await w.async_write_restore(RegisterWrite("mode", 47511, 1)) == OK
+    assert writer_sleeps == [1.1, 2.1] and t.writes == 0
+
+
+# ── gałęzie z przeglądu ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_retried_pre_read_word_is_the_base_for_bit_fields(deye_profile):
+    # Pierwszy odczyt przed zapisem ginie; drugi przynosi słowo z bitem właściciela — złożenie na nim.
+    t = _Scripted({172: 0b100}, [_lost()])
+    assert await _writer(t, deye_profile).async_write(RegisterWrite("tou.1.grid_charge", 172, 0b01)) == OK
+    assert t.regs[172] == 0b101 and t.writes == 1
+
+
+@pytest.mark.asyncio
+async def test_readback_timeout_then_exception_2_is_error_without_more_reads(goodwe_profile, writer_sleeps):
+    t = _Scripted({47512: 0}, [None, _lost(), ModbusException(2), None])
+    assert await _writer(t, goodwe_profile).async_write(RegisterWrite("power_w", 47512, 1500)) == ERROR
+    assert t.writes == 1 and t.reads == 3 and len(writer_sleeps) == 1
+
+
+@pytest.mark.asyncio
+async def test_pre_read_timeout_then_exception_2_is_unsupported_nothing_sent(goodwe_profile):
+    t = _Scripted({47510: 0}, [_lost(), ModbusException(2), None])
+    assert await _writer(t, goodwe_profile).async_write(RegisterWrite("export_limit_w", 47510, 100)) == UNSUPPORTED
+    assert t.writes == 0 and t.reads == 2
+
+
+@pytest.mark.asyncio
+async def test_pre_read_retried_echo_5_and_unchanged_register_is_error_not_denied(goodwe_profile):
+    t = _Scripted({47511: 1}, [_lost()], write_exc=ModbusException(5), apply=lambda a, v: 1)
+    assert await _writer(t, goodwe_profile).async_write(RegisterWrite("mode", 47511, 10)) == ERROR
+    assert t.writes == 1

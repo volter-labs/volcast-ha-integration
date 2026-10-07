@@ -10,11 +10,15 @@ zostać zapamiętana jako odmowa (rdzeń wstrzymuje ponowienie odmówionej proś
 
 „Odczyt” w tabeli to odczyt PO ponowieniach: każdy odczyt (przed zapisem i zwrotny), który
 nie dostał odpowiedzi (cisza, zerwanie, wyjątek Modbus ≠ 2), jest ponawiany najwyżej
-`READ_RETRIES` (2) razy, po jednej próbie transportu i po przerwie `READ_RETRY_BACKOFF_S`
-(0,75 s) przed każdym ponowieniem. Ramka ZAPISU nigdy nie jest ponawiana przez pisarza.
-Dodatkowy czas na jeden odczyt: najwyżej READ_RETRIES × (przerwa + timeout_s), dla GoodWe UDP
-(2 s) ≤ 5,5 s; cały zapis ≤ 2 × (read_tries × timeout_s + 5,5 s) + zapis. Wyjątek 2 przy
-odczycie to odpowiedź ostateczna — bez ponawiania. „Brak” = wszystkie próby bez odpowiedzi.
+`READ_RETRIES` (2) razy, po jednej próbie transportu i po przerwie przed każdym ponowieniem
+(`RegisterWriter.read_retry_delays`): GoodWe UDP 0,75 s; transport strumieniowy przeczekuje
+swoje czekanie na ponowne połączenie (backoff_min_s, potem podwojone; domyślnie 1,1 s i 2,1 s);
+transport nieznany 1,1 s. Ramka ZAPISU nigdy nie jest ponawiana przez pisarza.
+Dodatkowy czas na jeden odczyt: suma przerw + READ_RETRIES × timeout_s (+ odstępy gap_s;
+na transporcie strumieniowym + connect_timeout_s na każde ponowne połączenie). GoodWe UDP
+(timeout 2 s, gap pomijalny): ≤ 5,5 s na odczyt, cały zapis ≤ 2 × (read_tries × timeout_s
++ 5,5 s) + zapis. Wyjątek 2 przy odczycie to odpowiedź ostateczna — bez ponawiania.
+„Brak” = wszystkie próby bez odpowiedzi.
 
 | echo                      | odczyt zwrotny                 | wynik |
 |---------------------------|--------------------------------|-------|
@@ -49,6 +53,7 @@ from typing import Callable, Iterable
 
 from ..registers import RegisterWrite
 from ..transports.base import ModbusException, TransportError
+from ..transports.stream import StreamTransport
 from ..write_sequence import DENIED, ERROR, OK, UNSUPPORTED, AdjustedOutcome
 from .client import RegisterClient
 
@@ -58,9 +63,12 @@ _EXC_ACKNOWLEDGE = 5                   # „przyjęte, w trakcie” — jak brak
 # Klucze liczbowe, dla których wartość przycięta przez urządzenie ma sens jako „zastosowana”.
 _NUMERIC_ENCODINGS = ("watts", "percent")
 # Ponowienie ODCZYTU (przed zapisem i zwrotnego) po porażce pierwszej próby: tyle dodatkowych
-# odczytów, każdy jedną próbą transportu, po takiej przerwie. Ramka zapisu nigdy nie jest ponawiana.
+# odczytów, każdy jedną próbą transportu, po przerwie (`RegisterWriter.read_retry_delays`).
+# Ramka zapisu nigdy nie jest ponawiana.
 READ_RETRIES = 2
-READ_RETRY_BACKOFF_S = 0.75
+READ_RETRY_BACKOFF_S = 0.75            # GoodWe UDP: bez czekania na ponowne połączenie
+READ_RETRY_FALLBACK_S = 1.1            # transport nieznany: ≥ domyślne backoff_min_s (1 s) + zapas
+_RECONNECT_MARGIN_S = 0.1              # zapas ponad czekanie transportu strumieniowego
 _sleep = asyncio.sleep                 # podmieniane w testach
 
 
@@ -224,12 +232,26 @@ class RegisterWriter:
             _LOGGER.debug("read-back failed: %s", type(err).__name__)
             return None
 
+    def read_retry_delays(self) -> tuple[float, ...]:
+        """Przerwy przed kolejnymi ponowieniami odczytu. Transport strumieniowy (TCP, RTU przez TCP,
+        V5) po nieudanym połączeniu albo zerwaniu nie łączy się ponownie przed `backoff_min_s`,
+        a przy kolejnej porażce czeka dwa razy dłużej — przerwa ponowienia i to czekanie przeczekuje
+        (inaczej ponowienie kończy się od razu `LinkDown`). GoodWe UDP nie ma czekania na połączenie."""
+        transport = self.client.transport
+        if isinstance(transport, StreamTransport):
+            base = transport.cfg.backoff_min_s
+            return tuple(max(READ_RETRY_BACKOFF_S, base * 2 ** i + _RECONNECT_MARGIN_S)
+                         for i in range(READ_RETRIES))
+        if getattr(transport, "kind", None) == "goodwe_udp":
+            return (READ_RETRY_BACKOFF_S,) * READ_RETRIES
+        return (READ_RETRY_FALLBACK_S,) * READ_RETRIES
+
     async def _read(self, addr: int) -> int:
         """Odczyt jednego rejestru z ograniczonym ponowieniem (tylko odczyt, nigdy zapis).
 
         Pierwsza próba z pełną liczbą prób transportu; po porażce (cisza, zerwanie, wyjątek
         Modbus ≠ 2) najwyżej `READ_RETRIES` ponowień po jednej próbie transportu, każde po
-        przerwie `READ_RETRY_BACKOFF_S` — przerwa rozdziela odczyt od chwilowego zatoru modułu
+        przerwie z `read_retry_delays` — przerwa rozdziela odczyt od chwilowego zatoru modułu
         (inny klient odpytujący ten sam moduł Wi-Fi). Woła się pod zamkiem pisarza.
         Ostatni błąd wychodzi do wołającego."""
         try:
@@ -238,8 +260,8 @@ class RegisterWriter:
             if _is_illegal_address(err):
                 raise
             last = err
-        for _ in range(READ_RETRIES):
-            await _sleep(READ_RETRY_BACKOFF_S)
+        for delay in self.read_retry_delays():
+            await _sleep(delay)
             try:
                 return await self.client.read_register(addr, tries=1)
             except TransportError as err:
