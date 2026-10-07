@@ -52,7 +52,9 @@ async def test_production_tracking_issue_created_with_real_severity(hass: HomeAs
 
 
 async def test_reload_does_not_restore_but_disable_does_and_enable_sets_up_again(
-        hass: HomeAssistant, network_down, hass_storage):
+        hass: HomeAssistant, network_down, hass_storage, monkeypatch):
+    # scenariusz dotyczy profilu bez weryfikacji (profil GoodWe jest już zweryfikowany)
+    monkeypatch.setattr("custom_components.volcast.control.executor.control_verified", lambda *_: False)
     ents = add_goodwe(hass, mode="sell_power", export_limit_w="0")
     svc = InverterServices(hass)
     _store(hass_storage, "paired01", dict(OWNED))

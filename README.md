@@ -70,7 +70,7 @@ It also adds a plan card and a "Volcast" panel with the current and upcoming pla
 
 Volcast can write plan-driven mode and power settings to your inverter **through your existing inverter integration's entities** (for example a select for mode and a number for power). A direct local connection to the inverter is described in "Direct connection (beta)" below.
 
-**In this pre-release, control is a preview.** Writing is enabled per inverter brand only once that brand's profile has been verified against real hardware — no brand ships verified in this release (GoodWe support is pending a live trial). Until a brand is verified, the status sensor always shows what Volcast *would* write, and nothing actually reaches the inverter.
+**In this pre-release, control is enabled per inverter brand.** Writing is enabled only once a brand's profile has been verified against real hardware. Control through the **GoodWe** integration (the HACS "GoodWe Inverter (experimental)" integration) is verified; other brands are not yet. Until a brand is verified, the status sensor always shows what Volcast *would* write, and nothing actually reaches the inverter.
 
 Once a brand is verified, nothing is written unless all of these are also true at once:
 
@@ -103,7 +103,7 @@ Volcast can connect to a supported inverter directly on your local network — *
 - **Sensors**: state of charge, temperatures, voltages, power flows, lifetime energy counters (Energy dashboard), the inverter mode and diagnostic settings, refreshed every 10 s by default.
 - **Read-only test connection**: for inverters whose direct control is not verified yet, **Installation details → Read-only test connection** shows the sensors and what Volcast *would* write, and never writes.
 
-**Direct control ships disabled.** Writing is enabled per brand only after its register map has been verified on a live inverter, and both built-in direct profiles (GoodWe and Deye) are still draft — so choosing **Options → Inverter control → Directly over the local network** reports that direct control is not available yet. Once a brand is verified, nothing is written unless direct control is selected, consent is given in the Volcast app, the control switch is on, the inverter's identity at the saved address is confirmed and no other client uses the inverter.
+**Direct control ships disabled.** Writing is enabled per brand only after its register map has been verified on a live inverter, and both built-in direct profiles (GoodWe and Deye) are still draft (this applies to direct register control only; control through the GoodWe integration is verified) — so choosing **Options → Inverter control → Directly over the local network** reports that direct control is not available yet. Once a brand is verified, nothing is written unless direct control is selected, consent is given in the Volcast app, the control switch is on, the inverter's identity at the saved address is confirmed and no other client uses the inverter.
 
 Safety rules for the direct connection:
 

@@ -40,7 +40,7 @@ def test_profile_without_model_regex_is_read_only_not_error():
 def test_control_verified_needs_profile_and_integration():
     gw = load_builtin("goodwe-et")
     assert control_verified(gw, None) is False
-    expected = next(i["status"] for i in gw.raw["ha"]["integrations"] if i["domain"] == "goodwe") == "verified"
-    assert control_verified(gw, "goodwe") is expected
+    assert control_verified(gw, "goodwe") is True
+    assert control_verified(gw, "unknown_domain") is False
     assert control_verified(gw, "solarman") is False
     assert control_verified(load_builtin("deye-sg"), "solarman") is False

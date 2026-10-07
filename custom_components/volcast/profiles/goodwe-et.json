@@ -3,7 +3,7 @@
   "id": "goodwe-et",
   "label": "GoodWe ET/EH/BT/BH (hybrid, ET protocol family)",
   "status": "verified",
-  "status_note": "Registers and mode semantics measured on GW8KN-ET; HA entity recognition confirmed with the custom GoodWe integration (HACS, mletenay) 0.9.9.x on a real installation — the core `goodwe` integration lacks the EMS mode/power, SoC ceiling and export-limit switch entities. HA write path not yet tried on a live inverter.",
+  "status_note": "Registers and mode semantics measured on GW8KN-ET; HA entity recognition confirmed with the custom GoodWe integration (HACS, mletenay) 0.9.9.x on a real installation — the core `goodwe` integration lacks the EMS mode/power, SoC ceiling and export-limit switch entities. HA write path confirmed on a live inverter through the goodwe integration 0.9.9.x.",
   "control_model": "mode_setpoint",
   "sources": [
     {"what": "register map", "ref": "goodwe python library (ET family), cross-checked with recorded frames"},
@@ -82,7 +82,7 @@
   "ha": {"integrations": [{
     "domain": "goodwe",
     "ems": true,
-    "status": "draft",
+    "status": "verified",
     "entities": {
       "soc": {"domain": "sensor", "unique_id_regex": "^goodwe-battery_soc-"},
       "pv_power_w": {"domain": "sensor", "unique_id_regex": "^goodwe-ppv-"},
