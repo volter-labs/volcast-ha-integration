@@ -85,8 +85,8 @@ async def async_clash(hass, entry_id: str, host: str, *, resolve=None) -> tuple[
 
 
 def clash_label(clash: Sequence[str]) -> str:
-    """Domena(y) integracji z kolizji do komunikatu; bez znanej nazwy → `unknown`."""
-    return ", ".join(d for d in clash if d != "unknown") or "unknown"
+    """Domena(y) INNYCH integracji z kolizji do komunikatu (bez Volcast); bez znanej nazwy → `unknown`."""
+    return ", ".join(d for d in clash if d not in ("unknown", SELF_DOMAIN)) or "unknown"
 
 
 async def async_search(hass, entry, profiles: Sequence, *, manual: Candidate | None = None,

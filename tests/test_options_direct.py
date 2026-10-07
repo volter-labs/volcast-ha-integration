@@ -283,10 +283,29 @@ def test_pick_with_only_conflicting_candidate_names_the_integration(monkeypatch)
     assert shown[-1]["errors"] == {"base": "direct_not_found"}
 
 
+@pytest.mark.parametrize("step", ["manual", "pick"])
+def test_address_of_other_volcast_entry_is_in_use_not_conflict(monkeypatch, step):
+    # Inny wpis Volcast z żywym połączeniem na tym adresie: „już podłączony”, nie „wyłącz integrację”.
+    f = flow(runtime=rt(), monkeypatch=monkeypatch)
+    f.hass.data[DOMAIN]["direct_hosts"] = {HOST: SimpleNamespace(_entry=SimpleNamespace(entry_id="other"))}
+    shown = _capture_forms(monkeypatch)
+    conflict = [report(identity=False, errors=("conflict",))]
+    if step == "manual":
+        async def search(hass, entry, *, manual=None, **kw):
+            return conflict
+        monkeypatch.setattr(cf_mod, "async_direct_search", search)
+        asyncio.run(f.async_step_direct_manual({"host": HOST, "transport": "goodwe_udp", "port": 8899,
+                                                 "unit_id": 247}))
+    else:
+        f._reports = conflict
+        asyncio.run(f.async_step_direct_pick())
+    assert shown[-1]["errors"] == {"base": "direct_in_use"} and not shown[-1]["placeholders"]
+
+
 def test_clash_label():
     assert ds_mod.clash_label(("goodwe",)) == "goodwe"
     assert ds_mod.clash_label(("goodwe", "solarman")) == "goodwe, solarman"
-    assert ds_mod.clash_label(("volcast",)) == "volcast"
+    assert ds_mod.clash_label(("goodwe", "volcast")) == "goodwe"          # Volcast nie jest „inną integracją”
     assert ds_mod.clash_label(("unknown",)) == ds_mod.clash_label(()) == "unknown"
 
 
@@ -346,7 +365,7 @@ def test_strings_have_direct_steps_errors_and_aborts():
     assert {"direct_unverified", "direct_conflict", "direct_not_found", "direct_in_use"} <= set(opts["abort"])
     assert "{integration}" in opts["abort"]["direct_conflict"]
     assert {"trial_with_entities", "trial_while_owned", "invalid_host", "logger_serial_required",
-            "direct_not_found", "direct_conflict"} <= set(opts["error"])
+            "direct_not_found", "direct_conflict", "direct_in_use"} <= set(opts["error"])
     assert "{integration}" in opts["error"]["direct_conflict"]
     assert {"direct_search", "direct_trial", "direct_poll_s"} <= set(opts["step"]["details"]["data"])
 

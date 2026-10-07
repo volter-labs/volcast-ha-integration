@@ -235,6 +235,7 @@
       "logger_serial_required": "Zadajte sériové číslo dataloggera (až 10 číslic).",
       "direct_not_found": "Na tejto adrese neodpovedal žiadny podporovaný striedač.",
       "direct_conflict": "Túto adresu používa iná integrácia ({integration}). Vypnite túto integráciu alebo zvoľte riadenie cez integráciu striedača.",
+      "direct_in_use": "K tomuto striedaču sa už pripája iný záznam Volcast.",
       "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť).",
       "role_required": "Entita stavu je povinná.",
       "entity_not_found": "Entita sa nenašla. Vyberte existujúcu entitu.",

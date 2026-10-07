@@ -235,6 +235,7 @@
       "logger_serial_required": "Voer het serienummer van de datalogger in (maximaal 10 cijfers).",
       "direct_not_found": "Op dit adres heeft geen ondersteunde omvormer geantwoord.",
       "direct_conflict": "Dit adres wordt gebruikt door een andere integratie ({integration}). Schakel die integratie uit of kies besturing via de omvormerintegratie.",
+      "direct_in_use": "Een ander Volcast-item is al met deze omvormer verbonden.",
       "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten).",
       "role_required": "De statusentiteit is verplicht.",
       "entity_not_found": "De entiteit is niet gevonden. Kies een bestaande entiteit.",

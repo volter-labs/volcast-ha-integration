@@ -235,6 +235,7 @@
       "logger_serial_required": "Gib die Seriennummer des Datenloggers ein (bis zu 10 Ziffern).",
       "direct_not_found": "Unter dieser Adresse hat kein unterstützter Wechselrichter geantwortet.",
       "direct_conflict": "Diese Adresse wird von einer anderen Integration ({integration}) verwendet. Deaktiviere diese Integration oder wähle die Steuerung über die Wechselrichter-Integration.",
+      "direct_in_use": "Ein anderer Volcast-Eintrag ist bereits mit diesem Wechselrichter verbunden.",
       "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen).",
       "role_required": "Die Status-Entität ist erforderlich.",
       "entity_not_found": "Die Entität wurde nicht gefunden. Wähle eine vorhandene Entität.",

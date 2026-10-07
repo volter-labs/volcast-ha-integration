@@ -235,6 +235,7 @@
       "logger_serial_required": "Introduza o número de série do registador de dados (até 10 dígitos).",
       "direct_not_found": "Nenhum inversor suportado respondeu neste endereço.",
       "direct_conflict": "Este endereço é usado por outra integração ({integration}). Desative essa integração ou escolha o controlo através da integração do inversor.",
+      "direct_in_use": "Outra entrada Volcast já se liga a este inversor.",
       "restore_failed": "O Volcast não conseguiu repor o inversor nas definições anteriores ao controlo, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controlo do Volcast (o Volcast continua a tentar repor o inversor).",
       "role_required": "A entidade de estado é obrigatória.",
       "entity_not_found": "A entidade não foi encontrada. Escolha uma entidade existente.",

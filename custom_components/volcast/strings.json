@@ -235,6 +235,7 @@
       "logger_serial_required": "Enter the data logger serial number (up to 10 digits).",
       "direct_not_found": "No supported inverter answered at this address.",
       "direct_conflict": "This address is used by another integration ({integration}). Disable that integration or choose control through the inverter integration.",
+      "direct_in_use": "Another Volcast entry already connects to this inverter.",
       "restore_failed": "Volcast could not return the inverter to its settings from before control, so nothing was changed. Try again when the inverter is reachable, or turn off the Volcast control switch (Volcast keeps trying to return the inverter).",
       "role_required": "The status entity is required.",
       "entity_not_found": "The entity was not found. Choose an existing entity.",

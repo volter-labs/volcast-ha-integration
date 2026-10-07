@@ -235,6 +235,7 @@
       "logger_serial_required": "Saisissez le numéro de série de l'enregistreur de données (jusqu'à 10 chiffres).",
       "direct_not_found": "Aucun onduleur pris en charge n'a répondu à cette adresse.",
       "direct_conflict": "Cette adresse est utilisée par une autre intégration ({integration}). Désactivez cette intégration ou choisissez le pilotage via l'intégration de l'onduleur.",
+      "direct_in_use": "Une autre entrée Volcast se connecte déjà à cet onduleur.",
       "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état).",
       "role_required": "L'entité d'état est obligatoire.",
       "entity_not_found": "L'entité est introuvable. Choisissez une entité existante.",

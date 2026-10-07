@@ -235,6 +235,7 @@
       "logger_serial_required": "Wpisz numer seryjny rejestratora danych (do 10 cyfr).",
       "direct_not_found": "Żaden obsługiwany falownik nie odpowiedział pod tym adresem.",
       "direct_conflict": "Ten adres jest używany przez inną integrację ({integration}). Wyłącz tamtą integrację albo wybierz sterowanie przez integrację falownika.",
+      "direct_in_use": "Inny wpis Volcast już łączy się z tym falownikiem.",
       "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik).",
       "role_required": "Encja statusu jest wymagana.",
       "entity_not_found": "Nie znaleziono encji. Wybierz istniejącą encję.",

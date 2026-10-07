@@ -799,22 +799,25 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                                       retry_form=lambda errors: self._pick_form(labels, errors))
         if len(labels) > 1:
             return self._pick_form(labels, {})
-        placeholders = await self._conflict_placeholders(getattr(self, "_reports", []))
-        return self._pick_form(labels, {"base": ds.CONFLICT if placeholders else ds.NOT_FOUND}, placeholders)
+        error, placeholders = await self._not_found_error(getattr(self, "_reports", []))
+        return self._pick_form(labels, {"base": error}, placeholders)
 
     def _pick_form(self, labels: dict[str, str], errors: dict[str, str],
                    placeholders: dict[str, str] | None = None) -> ConfigFlowResult:
         return self.async_show_form(step_id="direct_pick", errors=errors, description_placeholders=placeholders,
                                     data_schema=vol.Schema({vol.Required("candidate"): vol.In(labels)}))
 
-    async def _conflict_placeholders(self, reports) -> dict[str, str] | None:
-        """Kandydat pominięty przez sondę, bo adres ma inna integracja → nazwa tej integracji
-        (placeholder błędu `direct_conflict`); None = brak takiego kandydata."""
+    async def _not_found_error(self, reports) -> tuple[str, dict[str, str] | None]:
+        """Błąd formularza, gdy nie ma falownika do wyboru. Kandydat pominięty przez sondę z powodu
+        kolizji: inny wpis Volcast na tym adresie → `direct_in_use` (jak w `offer_reason`), inna
+        integracja → `direct_conflict` z jej nazwą; bez kolizji → `direct_not_found`."""
         hit = next((r for r in reports if "conflict" in r.errors and r.candidate is not None), None)
         if hit is None:
-            return None
+            return ds.NOT_FOUND, None
         clash = await ds.async_clash(self.hass, self.config_entry.entry_id, hit.candidate.host)
-        return {"integration": ds.clash_label(clash)}
+        if ds.SELF_DOMAIN in clash:
+            return ds.IN_USE, None
+        return ds.CONFLICT, {"integration": ds.clash_label(clash)}
 
     async def async_step_direct_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -843,8 +846,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 if target is None:
                     # cel ręczny też musi przejść sondę (odcisk urządzenia); adres innej integracji
                     # sonda pomija bez ramki — wtedy komunikat z nazwą tej integracji
-                    placeholders = await self._conflict_placeholders(reports)
-                    errors["base"] = ds.CONFLICT if placeholders else ds.NOT_FOUND
+                    errors["base"], placeholders = await self._not_found_error(reports)
                     return self.async_show_form(step_id="direct_manual", data_schema=self._manual_schema(),
                                                 errors=errors, description_placeholders=placeholders)
                 target.update(port=port, unit_id=unit)
