@@ -190,6 +190,9 @@ async def test_live_cycle_writes_through_real_entities_and_echo_is_ours(
                        "discharge_purpose": "sell", "power_w": 2000, "price_pln_kwh": 0.8}],
             "fallback": {"mode": "self_consume", "soc_reserve": 10}}
     inv = await async_setup_inverter(hass)
+    # Dom: PV 1000 W, pobór 600 W — nastawa eksportu = bateria 2000 + PV 1000 - pobór 600 = 2400 W.
+    hass.states.async_set("sensor.goodwe_pv_power", "1000", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.goodwe_house_consumption", "600", {"unit_of_measurement": "W"})
     store_state(hass_storage, "paired01", {**GATES, "plan_raw": plan})
     entry = make_entry(hass, options={**ENTITY_OPTIONS, "rated_power_w": 8000})
     await setup_entry(hass, entry)
@@ -197,7 +200,7 @@ async def test_live_cycle_writes_through_real_entities_and_echo_is_ours(
     ex = rt.executor
     # Pierwszy cykl biegnie przy setupie (zadanie w tle) — zapisał plan na falownik.
     assert hass.states.get(rt.mapped["mode"]).state == "sell_power" and inv["mode"].calls == 1
-    assert float(hass.states.get(rt.mapped["power_w"]).state) == 2000.0
+    assert float(hass.states.get(rt.mapped["power_w"]).state) == 2400.0
     assert ex.owned and not ex.paused and ex.foreign_changes == []
     saved = hass_storage["volcast.control.paired01"]["data"]
     assert saved["owned"] is True and saved["snapshot"]["export_limit_w"] == 4000.0

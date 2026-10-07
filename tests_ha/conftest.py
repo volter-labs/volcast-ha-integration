@@ -33,6 +33,11 @@ GOODWE = {
     "soc": ("sensor", "battery_soc", "goodwe_battery_soc", "60", {"unit_of_measurement": "%"}),
     "battery_temp_c": ("sensor", "battery_temperature", "goodwe_battery_temperature", "25",
                        {"unit_of_measurement": "°C"}),
+    # PV i pobór domu: nastawa eksportu slotu sprzedaży liczona jest na żywo (bateria + PV - pobór),
+    # bez odczytu poboru sprzedaż jest wstrzymana.
+    "pv_power_w": ("sensor", "ppv", "goodwe_pv_power", "0", {"unit_of_measurement": "W"}),
+    "load_power_w": ("sensor", "house_consumption", "goodwe_house_consumption", "0",
+                     {"unit_of_measurement": "W"}),
     "mode": ("select", "ems_mode", "goodwe_ems_mode", "auto",
              {"options": ["auto", "charge_pv", "battery_standby", "sell_power", "charge_battery",
                           "discharge_battery"]}),
