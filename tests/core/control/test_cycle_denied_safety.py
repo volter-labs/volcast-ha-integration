@@ -90,7 +90,13 @@ def test_refusal_toward_unsafe_direction_still_held_but_capped(goodwe_profile):
 
 @pytest.mark.asyncio
 async def test_transient_pre_read_failure_does_not_hold_return_to_self_consume(
-        goodwe_profile, goodwe_udp_sim, goodwe_bank, sim_faults):
+        goodwe_profile, goodwe_udp_sim, goodwe_bank, sim_faults, monkeypatch):
+    from custom_components.volcast.core.modbus import writer as writer_mod
+
+    async def _no_wait(_delay):
+        return None
+
+    monkeypatch.setattr(writer_mod, "_sleep", _no_wait)
     goodwe_bank.poke(MODE_REG, 10)
     goodwe_bank.poke(POWER_REG, 5000)
     t = make_transport(TransportConfig(kind="goodwe_udp", host=goodwe_udp_sim.host, port=goodwe_udp_sim.port,
@@ -104,7 +110,8 @@ async def test_transient_pre_read_failure_does_not_hold_return_to_self_consume(
         d = _decide(goodwe_profile, SELF_CONSUME, reading, memory, now_mono)
         if d.status == "write":
             if fail_pre_read:
-                sim_faults.drop_next = 2               # odczyt przed zapisem ginie (obie próby)
+                # odczyt przed zapisem ginie cały: obie próby transportu i każde ponowienie pisarza
+                sim_faults.drop_next = 2 + writer_mod.READ_RETRIES
             rep = await async_run_group_writes(d.writes, writer.async_write, restore=d.restore,
                                                ambiguous_safe=d.restore_ambiguous_safe)
             commit(d, rep, memory, now_mono)

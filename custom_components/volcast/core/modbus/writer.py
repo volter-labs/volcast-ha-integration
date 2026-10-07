@@ -8,10 +8,18 @@ poszła, urządzenie odpowiedziało, a rejestr został bez zmian. Wszystko, co n
 (nieudany odczyt przed zapisem, adres spoza profilu), to ERROR — chwilowa awaria nie może
 zostać zapamiętana jako odmowa (rdzeń wstrzymuje ponowienie odmówionej prośby).
 
+„Odczyt” w tabeli to odczyt PO ponowieniach: każdy odczyt (przed zapisem i zwrotny), który
+nie dostał odpowiedzi (cisza, zerwanie, wyjątek Modbus ≠ 2), jest ponawiany najwyżej
+`READ_RETRIES` (2) razy, po jednej próbie transportu i po przerwie `READ_RETRY_BACKOFF_S`
+(0,75 s) przed każdym ponowieniem. Ramka ZAPISU nigdy nie jest ponawiana przez pisarza.
+Dodatkowy czas na jeden odczyt: najwyżej READ_RETRIES × (przerwa + timeout_s), dla GoodWe UDP
+(2 s) ≤ 5,5 s; cały zapis ≤ 2 × (read_tries × timeout_s + 5,5 s) + zapis. Wyjątek 2 przy
+odczycie to odpowiedź ostateczna — bez ponawiania. „Brak” = wszystkie próby bez odpowiedzi.
+
 | echo                      | odczyt zwrotny                 | wynik |
 |---------------------------|--------------------------------|-------|
-| —  (odczyt przed: wyjątek 2) | —                           | UNSUPPORTED (nic nie wysłano) |
-| —  (odczyt przed: inny błąd) | —                           | ERROR (nic nie wysłano) |
+| —  (odczyt przed: wyjątek 2) | —                           | UNSUPPORTED (nic nie wysłano, bez ponowień) |
+| —  (odczyt przed: brak)   | —                              | ERROR (nic nie wysłano) |
 | wyjątek 2                 | —                              | UNSUPPORTED |
 | dowolne                   | = zamówiona                    | OK |
 | dowolne                   | brak                           | ERROR |
@@ -28,9 +36,10 @@ wtedy, gdy harmonogram naprawdę działa. `tou_word` to surowe słowo włącznik
 właściciela, bez składania bitów).
 
 Ponowną wysyłkę (tylko UDP, przy całkowitej ciszy) i reset kanału po przekroczeniu czasu
-robi transport — odczyt zwrotny idzie świeżym kanałem. Odczyt porównuje całe słowo (pola
-bitowe niosą bity właściciela). Jeden zamek na pisarza: odczyt przed, zapis i odczyt zwrotny
-jednego klucza nie przeplatają się z innym zapisem. Pisarz nigdy nie rzuca.
+robi transport — odczyt zwrotny (i każde jego ponowienie) idzie świeżym kanałem. Odczyt
+porównuje całe słowo (pola bitowe niosą bity właściciela). Jeden zamek na pisarza: odczyt przed,
+zapis i odczyt zwrotny jednego klucza (z ponowieniami) nie przeplatają się z innym zapisem.
+Pisarz nigdy nie rzuca.
 """
 from __future__ import annotations
 
@@ -48,6 +57,16 @@ _ECHO_OK, _ECHO_EXCEPTION, _ECHO_NONE = "ok", "exception", "none"
 _EXC_ACKNOWLEDGE = 5                   # „przyjęte, w trakcie” — jak brak potwierdzenia
 # Klucze liczbowe, dla których wartość przycięta przez urządzenie ma sens jako „zastosowana”.
 _NUMERIC_ENCODINGS = ("watts", "percent")
+# Ponowienie ODCZYTU (przed zapisem i zwrotnego) po porażce pierwszej próby: tyle dodatkowych
+# odczytów, każdy jedną próbą transportu, po takiej przerwie. Ramka zapisu nigdy nie jest ponawiana.
+READ_RETRIES = 2
+READ_RETRY_BACKOFF_S = 0.75
+_sleep = asyncio.sleep                 # podmieniane w testach
+
+
+def _is_illegal_address(err: TransportError) -> bool:
+    """Wyjątek Modbus 2: rejestr nie istnieje — odpowiedź ostateczna, bez ponawiania."""
+    return isinstance(err, ModbusException) and err.code == 2
 
 
 _TOU_WORD_KEYS = ("tou_enable", "tou_word")
@@ -151,9 +170,9 @@ class RegisterWriter:
         if _matches(w.key, self.unreadable):
             return UNSUPPORTED             # bez odczytu zwrotnego nie piszemy (nie da się przywrócić)
         try:
-            before = await self.client.read_register(w.addr)
+            before = await self._read(w.addr)
         except TransportError as err:
-            if isinstance(err, ModbusException) and err.code == 2:
+            if _is_illegal_address(err):
                 return UNSUPPORTED
             _LOGGER.debug("pre-write read of %s failed: %s", w.key, type(err).__name__)
             return ERROR                   # nic nie wysłano; chwilowa awaria, nie odmowa
@@ -200,10 +219,34 @@ class RegisterWriter:
 
     async def _read_back(self, addr: int) -> int | None:
         try:
-            return await self.client.read_register(addr)
+            return await self._read(addr)
         except TransportError as err:
             _LOGGER.debug("read-back failed: %s", type(err).__name__)
             return None
+
+    async def _read(self, addr: int) -> int:
+        """Odczyt jednego rejestru z ograniczonym ponowieniem (tylko odczyt, nigdy zapis).
+
+        Pierwsza próba z pełną liczbą prób transportu; po porażce (cisza, zerwanie, wyjątek
+        Modbus ≠ 2) najwyżej `READ_RETRIES` ponowień po jednej próbie transportu, każde po
+        przerwie `READ_RETRY_BACKOFF_S` — przerwa rozdziela odczyt od chwilowego zatoru modułu
+        (inny klient odpytujący ten sam moduł Wi-Fi). Woła się pod zamkiem pisarza.
+        Ostatni błąd wychodzi do wołającego."""
+        try:
+            return await self.client.read_register(addr)
+        except TransportError as err:
+            if _is_illegal_address(err):
+                raise
+            last = err
+        for _ in range(READ_RETRIES):
+            await _sleep(READ_RETRY_BACKOFF_S)
+            try:
+                return await self.client.read_register(addr, tries=1)
+            except TransportError as err:
+                if _is_illegal_address(err):
+                    raise
+                last = err
+        raise last
 
     def _sent(self, key: str) -> None:
         if self._on_send is None:

@@ -86,8 +86,11 @@ class RegisterClient:
     async def read_block(self, addr: int, count: int, *, tries: int | None = None) -> list[int]:
         return await self.transport.read(addr, count, tries=tries)
 
-    async def read_register(self, addr: int) -> int:
-        return (await self.transport.read(addr, 1))[0]
+    async def read_register(self, addr: int, *, tries: int | None = None) -> int:
+        """`tries` — mniej prób transportu niż `read_tries` (None = pełna liczba prób)."""
+        if tries is None:
+            return (await self.transport.read(addr, 1))[0]
+        return (await self.transport.read(addr, 1, tries=tries))[0]
 
     def _link(self) -> tuple[float, int]:
         cfg = getattr(self.transport, "cfg", None)

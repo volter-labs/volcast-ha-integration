@@ -196,7 +196,9 @@ async def test_link_down_is_error(goodwe_profile):
     boom = _Boom(LinkDown("down"))
     w = RegisterWriter(RegisterClient(boom, goodwe_profile), goodwe_profile)
     assert await w.async_write(RegisterWrite("mode", 47511, 10)) == ERROR
-    assert boom.reads == 2 and boom.writes == 1       # odczyt zwrotny spróbowany (zapis mógł dojść)
+    # odczyt zwrotny spróbowany i ponowiony (zapis mógł dojść); ramka zapisu tylko jedna
+    from custom_components.volcast.core.modbus.writer import READ_RETRIES
+    assert boom.reads == 2 + READ_RETRIES and boom.writes == 1
 
 
 @pytest.mark.asyncio
