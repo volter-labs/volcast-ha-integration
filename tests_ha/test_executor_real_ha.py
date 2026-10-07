@@ -178,13 +178,10 @@ async def test_issue_translation_keys_exist(hass: HomeAssistant):
 
 
 async def test_live_cycle_writes_through_real_entities_and_echo_is_ours(
-        hass: HomeAssistant, network_down, hass_storage, freezer, monkeypatch):
-    """Pełny cykl wykonawcy (profil uznany za zweryfikowany) na prawdziwych encjach:
+        hass: HomeAssistant, network_down, hass_storage, freezer):
+    """Pełny cykl wykonawcy (wbudowany, zweryfikowany profil) na prawdziwych encjach:
     zapis przez usługi domen, echo stanu z naszym kontekstem nie jest przejęciem."""
-    from custom_components.volcast.control import executor as ex_mod
-
     freezer.move_to("2026-09-23T10:00:30+00:00")
-    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
     plan = {"schedule_id": "p1", "control_enabled": True,
             "slots": [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "discharge",
                        "discharge_purpose": "sell", "power_w": 2000, "price_pln_kwh": 0.8}],
@@ -247,3 +244,32 @@ async def test_fix_flow_strings_exist(hass: HomeAssistant):
     tr = await async_get_translations(hass, "en", "issues", {DOMAIN})
     key = f"component.{DOMAIN}.issues.foreign_control.fix_flow.step.confirm"
     assert f"{key}.title" in tr and f"{key}.description" in tr
+
+
+async def test_no_write_without_consent_or_with_switch_off_first_write_when_all_gates_open(
+        hass: HomeAssistant, network_down, hass_storage, freezer):
+    """Wbudowany profil goodwe-et jest zweryfikowany: o zapisie decydują wyłącznie bramki zgody i przełącznika."""
+    freezer.move_to("2026-09-23T10:00:30+00:00")
+    plan = {"schedule_id": "p1", "control_enabled": True,
+            "slots": [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "discharge",
+                       "discharge_purpose": "sell", "power_w": 2000, "price_pln_kwh": 0.8}],
+            "fallback": {"mode": "self_consume", "soc_reserve": 10}}
+    inv = await async_setup_inverter(hass)
+    hass.states.async_set("sensor.goodwe_pv_power", "1000", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.goodwe_house_consumption", "600", {"unit_of_measurement": "W"})
+    store_state(hass_storage, "paired01", {"consent": False, "local_switch": True, "plan_raw": plan})
+    entry = make_entry(hass, options={**ENTITY_OPTIONS, "rated_power_w": 8000})
+    await setup_entry(hass, entry)
+    ex = control_of(hass, entry).executor
+    await ex.async_tick()
+    await hass.async_block_till_done()
+    assert inv["mode"].calls == 0 and not ex.owned          # brak zgody
+    await ex.async_set_consent(True)
+    await ex.async_set_local_switch(False)
+    await ex.async_tick()
+    await hass.async_block_till_done()
+    assert inv["mode"].calls == 0 and not ex.owned          # przełącznik wyłączony
+    await ex.async_set_local_switch(True)
+    await ex.async_tick()
+    await hass.async_block_till_done()
+    assert inv["mode"].calls == 1 and ex.owned              # wszystkie bramki otwarte
