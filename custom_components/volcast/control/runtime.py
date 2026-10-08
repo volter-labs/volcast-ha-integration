@@ -53,6 +53,7 @@ from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, resolve_entities
+from ..core.modbus.views import UNCORRELATED_KINDS
 from ..registry_compat import all_devices
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
@@ -335,8 +336,11 @@ def compose_direct(hass, entry, profiles, *, salt: bytes, found: tuple[dict, boo
         return None
     unreadable = _str_keys(target.get("unreadable"))
     caps = target.get("capabilities")
-    # bez rejestru według sondy — poza cyklem odpytywania (`DirectConnection.unsupported`)
-    unsupported = {k for k, v in (caps if isinstance(caps, Mapping) else {}).items() if v is False}
+    # bez rejestru według sondy — poza cyklem odpytywania (`DirectConnection.unsupported`); tylko łącze
+    # bez korelacji odpowiedzi (wyjątek byłby „poprzednią odpowiedzią”), inne odpytują po staremu
+    unsupported = set()
+    if target.get("transport") in UNCORRELATED_KINDS and isinstance(caps, Mapping):
+        unsupported = {k for k, v in caps.items() if v is False}
     poll = entry.options.get(OPT_DIRECT_POLL_S)
     poll_s = float(poll) if isinstance(poll, (int, float)) and not isinstance(poll, bool) else float(DIRECT_POLL_S)
     poll_s = min(max(poll_s, _POLL_RANGE_S[0]), _POLL_RANGE_S[1])
