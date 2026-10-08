@@ -1,7 +1,7 @@
 """Pisarz rejestrów: echo + odczyt zwrotny (tabela wyników), budżet ramek, tryb próbny."""
 import pytest
 
-from custom_components.volcast.core.modbus.writer import NoWriteWriter, RegisterWriter
+from custom_components.volcast.core.modbus.writer import KEPT, NoWriteWriter, RegisterWriter
 from custom_components.volcast.core.registers import RegisterWrite
 from custom_components.volcast.core.transports.base import LinkDown, TransportError
 from custom_components.volcast.core.write_sequence import DENIED, ERROR, OK, OK_ADJUSTED, UNSUPPORTED
@@ -405,3 +405,50 @@ async def test_pre_read_transport_failure_is_error_not_denied(goodwe_profile):
         w = RegisterWriter(RegisterClient(t, goodwe_profile), goodwe_profile)
         assert await w.async_write(RegisterWrite("mode", 47511, 1)) == ERROR, type(exc).__name__
         assert t.writes == 0
+
+
+# ── zapis warunkowy (hamulec do trybu neutralnego): tylko z potwierdzonej wartości ──
+
+
+@pytest.mark.asyncio
+async def test_conditional_restore_writes_only_from_an_expected_word(goodwe_writer, goodwe_bank):
+    goodwe_bank.poke(47511, 10)                       # nasz tryb sprzedaży na falowniku
+    assert await goodwe_writer.async_write_restore(RegisterWrite("mode", 47511, 1), only_from={10}) == OK
+    assert goodwe_bank.read(47511, 1) == [1]
+
+
+@pytest.mark.asyncio
+async def test_conditional_restore_keeps_an_unexpected_word_without_a_frame(goodwe_writer, goodwe_bank,
+                                                                            goodwe_udp_sim):
+    goodwe_bank.poke(47511, 12)                       # tryb zmieniony przez właściciela od ostatniego odczytu
+    assert await goodwe_writer.async_write_restore(RegisterWrite("mode", 47511, 1), only_from={10}) == KEPT
+    assert goodwe_bank.writes == [] and all(fc == 0x03 for fc, _, _ in goodwe_udp_sim.log)
+
+
+@pytest.mark.asyncio
+async def test_conditional_restore_target_already_set_is_ok_without_a_frame(goodwe_writer, goodwe_bank):
+    goodwe_bank.poke(47511, 1)
+    assert await goodwe_writer.async_write_restore(RegisterWrite("mode", 47511, 1), only_from={10}) == OK
+    assert goodwe_bank.writes == []
+
+
+@pytest.mark.asyncio
+async def test_conditional_restore_without_a_fresh_read_sends_nothing(goodwe_writer, goodwe_bank, sim_faults):
+    goodwe_bank.poke(47511, 10)
+    sim_faults.drop_next = 1000                       # łącze nie odpowiada: bez potwierdzonego odczytu nic
+    assert await goodwe_writer.async_write_restore(RegisterWrite("mode", 47511, 1), only_from={10}) == ERROR
+    assert goodwe_bank.writes == []
+
+
+@pytest.mark.asyncio
+async def test_conditional_restore_of_an_echo_only_key_sends_nothing(goodwe_client, goodwe_bank):
+    from custom_components.volcast.core.profile import profile_from_dict
+    from tests.control.test_executor_direct import _thaw
+    raw = _thaw(goodwe_client.profile.raw)
+    raw["modbus"]["echo_only"] = ["mode"]
+    profile = profile_from_dict(raw)
+    w = RegisterWriter(goodwe_client, profile)
+    goodwe_bank.poke(47511, 10)
+    # Bez odczytu przed zapisem warunek nie jest potwierdzony — żadnej ramki na ślepo.
+    assert await w.async_write_restore(RegisterWrite("mode", 47511, 1), only_from={10}) == KEPT
+    assert goodwe_bank.writes == []

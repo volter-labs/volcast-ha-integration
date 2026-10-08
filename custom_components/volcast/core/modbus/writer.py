@@ -70,6 +70,9 @@ sesja na wyłączność łącza (`BaseTransport.exclusive`) na odczyty przed, za
 żądanie odpytywania czeka do jej końca. Na czas odczekania przed ponownym odczytem zwrotnym łącze
 jest zwalniane (odpytywanie nie czeka sekund); każdy ponowny odczyt bierze sesję znowu i dopiero
 w niej wybiera długość odczytu.
+Zapis warunkowy powrotu (`only_from`, hamulec do trybu neutralnego): ramka idzie tylko, gdy odczyt
+przed zapisem pokazał jedną z dozwolonych wartości; inna → `KEPT` bez ramki (klucz tylko z echem —
+zawsze `KEPT`, bo warunku nie da się potwierdzić).
 Pisarz nigdy nie rzuca.
 """
 from __future__ import annotations
@@ -78,7 +81,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import Callable, Collection, Iterable
 
 from ..profile import DEFAULT_READBACK_SETTLE_S
 from ..registers import RegisterWrite
@@ -102,6 +105,10 @@ READ_RETRY_FALLBACK_S = 1.1            # transport nieznany: ≥ domyślne backo
 _RECONNECT_MARGIN_S = 0.1              # zapas ponad czekanie transportu strumieniowego
 # Ponowne odczyty zwrotne po odczekaniu, zanim wartość sprzed zapisu stanie się odmową.
 READBACK_SETTLE_READS = 2
+# Zapis warunkowy (`only_from`): świeży odczyt przed zapisem pokazał wartość spoza dozwolonych —
+# nic nie wysłano (np. tryb zmieniony przez właściciela od ostatniego odpytania). Dla wykonawcy
+# grupowego to porażka bez niejednoznaczności (nie ERROR — rejestr na pewno nietknięty).
+KEPT = "kept"
 _sleep = asyncio.sleep                 # podmieniane w testach
 
 
@@ -207,35 +214,43 @@ class RegisterWriter:
     async def async_write(self, w: RegisterWrite) -> str:
         return await self._guarded(w, skip_equal=False, budgeted=True)
 
-    async def async_write_restore(self, w: RegisterWrite) -> str:
+    async def async_write_restore(self, w: RegisterWrite, *, only_from: Collection[int] | None = None) -> str:
         """Zapis powrotu do trybu bazowego: o tym, czy ramka w ogóle idzie, rozstrzyga świeży odczyt
         PRZED zapisem (rejestr już ma wartość bazową → OK bez ramki), nie odczyt z cyklu. Poza
-        budżetem NVM: ponowna wysyłka po ciszy nigdy nie jest odmawiana (liczona przez `on_send`)."""
-        return await self._guarded(w, skip_equal=True, budgeted=False)
+        budżetem NVM: ponowna wysyłka po ciszy nigdy nie jest odmawiana (liczona przez `on_send`).
+
+        `only_from` (hamulec do trybu neutralnego): ramka idzie tylko, gdy ten sam świeży odczyt
+        (pod wyłącznością łącza) pokazał jedną z tych wartości; inna → `KEPT`, nic nie wysłano.
+        Klucz bez odczytu przed zapisem (tylko echo) nie spełnia warunku nigdy."""
+        return await self._guarded(w, skip_equal=True, budgeted=False, only_from=only_from)
 
     async def async_write_outside_budget(self, w: RegisterWrite) -> str:
         """Zwykły zapis (bez pomijania równych) poza budżetem NVM — powrót do trybu bazowego po
         wyczerpaniu budżetu: ponowna wysyłka po ciszy nie jest odmawiana (liczona przez `on_send`)."""
         return await self._guarded(w, skip_equal=False, budgeted=False)
 
-    async def _guarded(self, w: RegisterWrite, *, skip_equal: bool, budgeted: bool) -> str:
+    async def _guarded(self, w: RegisterWrite, *, skip_equal: bool, budgeted: bool,
+                       only_from: Collection[int] | None = None) -> str:
         try:
             async with self._lock:
                 self._budgeted = budgeted              # pod zamkiem pisarza — jeden zapis naraz
-                return await self._write(w, skip_equal=skip_equal)
+                return await self._write(w, skip_equal=skip_equal, only_from=only_from)
         except Exception as err:  # noqa: BLE001 — pisarz nie rzuca; zapis niepewny
             _LOGGER.warning("direct write of %s failed: %s", w.key, type(err).__name__)
             return ERROR
 
-    async def _write(self, w: RegisterWrite, *, skip_equal: bool = False) -> str:
+    async def _write(self, w: RegisterWrite, *, skip_equal: bool = False,
+                     only_from: Collection[int] | None = None) -> str:
         if expected_address(self.profile, w.key) != w.addr or isinstance(w.value, bool) \
                 or not isinstance(w.value, int) or not 0 <= w.value <= 0xFFFF:
             _LOGGER.error("direct write of %s refused: address or value outside the profile", w.key)
             return ERROR                   # nic nie wysłano — to nie odmowa urządzenia
         if _matches(w.key, self.unreadable):
             return UNSUPPORTED             # bez odczytu zwrotnego nie piszemy (nie da się przywrócić)
+        if only_from is not None and _matches(w.key, self.echo_only):
+            return KEPT                    # warunku nie da się potwierdzić odczytem — nie piszemy na ślepo
         async with self._link():
-            out = await self._exchange(w, skip_equal=skip_equal)
+            out = await self._exchange(w, skip_equal=skip_equal, only_from=only_from)
         if not isinstance(out, _Settle):
             return out
         # Łącze zwolnione na czas odczekania (odpytywanie nie czeka sekund); każdy ponowny odczyt
@@ -265,7 +280,7 @@ class RegisterWriter:
         _LOGGER.warning("direct write of %s applied with a different value by the inverter", w.key)
         return AdjustedOutcome(actual)
 
-    async def _exchange(self, w: RegisterWrite, *, skip_equal: bool):
+    async def _exchange(self, w: RegisterWrite, *, skip_equal: bool, only_from: Collection[int] | None = None):
         """Odczyt(y) przed, zapis, odczyt zwrotny — pod wyłącznością łącza. Wynik albo `_Settle`
         (echo zgodne, odczyt zwrotny = sprzed zapisu: ponowne odczyty po odczekaniu)."""
         if _matches(w.key, self.echo_only):
@@ -280,6 +295,8 @@ class RegisterWriter:
         w = RegisterWrite(w.key, w.addr, _fresh_value(self.profile, w.key, w.value, before))
         if (skip_equal or w.key in _TOU_WORD_KEYS) and w.value == before:
             return OK                      # rejestr już w tym stanie (świeży odczyt) — bez ramki NVM
+        if only_from is not None and before not in only_from:
+            return KEPT                    # wartość spoza warunku (np. tryb właściciela) — bez ramki
         echo = await self._send(w)
         if echo == UNSUPPORTED:
             return UNSUPPORTED

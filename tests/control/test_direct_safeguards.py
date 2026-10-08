@@ -1,0 +1,302 @@
+"""Tryb bezpośredni: zabezpieczenia jak w trybie encji — hamulec do trybu neutralnego, zejście
+z rozładowania przy rezerwie w pauzie, degradacja akcji przy brakującej nastawie.
+
+Na symulatorze modułu Wi-Fi GoodWe (`tests/sim`), profil przełączony na `verified` tylko w teście.
+"""
+from __future__ import annotations
+
+import logging
+from types import SimpleNamespace
+
+import pytest
+
+from custom_components.volcast.control import executor as ex_mod
+from custom_components.volcast.control.direct import target_fingerprint
+from custom_components.volcast.control.store import ControlState, ControlStore
+from custom_components.volcast.core.modbus import writer as writer_mod
+from custom_components.volcast.core.slot import parse_schedule
+from tests.control.test_executor import plan
+from tests.control.test_executor_direct import (GW_DRAFT, GW_V, MODE, SALT, Harness, _owned_sell, gw_raw_word,
+                                                gw_target, issues, regs)  # noqa: F401 — `issues` to fikstura
+
+LOGGER = "custom_components.volcast"
+BRAKE_TEXT = "cannot be applied safely"
+
+
+def _stale(h, age: float = 400.0) -> None:
+    """Odczyt cyklu starszy niż `max_state_age_s` (I-9) — bez nowego odpytania."""
+    r = h.conn.reading
+    h.conn.reading = SimpleNamespace(**{**r.__dict__, "at_mono": h.clock() - age})
+
+
+def _grid_charge(power=3000, sid="gc"):
+    return plan(sid=sid, slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+                                 "charge_source": "grid", "power_w": power, "price_pln_kwh": 0.3}])
+
+
+@pytest.fixture
+def instant_settle(monkeypatch):
+    async def no_wait(_s):
+        return None
+    monkeypatch.setattr(writer_mod, "_sleep", no_wait)
+
+
+# ── hamulec: cykl, którego nie da się bezpiecznie wykonać, przy NASZYM trybie wymuszonym ──
+
+
+@pytest.mark.asyncio
+async def test_direct_stale_soc_during_our_sell_writes_neutral_mode_alone(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                          issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        n = len(goodwe_bank.writes)
+        h.clock.advance(120.0)
+        _stale(h)                                             # I-9: plan nie do wykonania
+        await h.ex.async_tick()
+        d = h.ex.last_decision
+        assert regs(goodwe_bank)[n:] == [MODE] and gw_raw_word(goodwe_bank, MODE) == 1
+        assert d.status == "blocked" and d.reason == "guard:I-9" and "neutral_brake" in d.notes
+        assert h.ex.owned                                     # to nie powrót — sterowanie trwa
+        assert h.ex._memory.last_written["mode"] == "auto"
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_no_plan_during_our_grid_charge_writes_neutral_mode(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                         issues):
+    goodwe_bank.poke(MODE, 1)                                 # właściciel: auto — tryb ładowania piszemy my
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=_grid_charge())
+    try:
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 11 and h.ex.owned and h.ex._memory.last_written["mode"] \
+            == "charge_battery"
+        h.ex.schedule = None                                  # plan zniknął (np. zły plan z chmury)
+        await h.cycle(120.0)
+        assert h.ex.last_decision.reason == "no_plan" and "neutral_brake" in h.ex.last_decision.notes
+        assert gw_raw_word(goodwe_bank, MODE) == 1
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_neutral_brake_respects_write_interval(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        h.clock.advance(10.0)
+        _stale(h)
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 10           # I-6: 60 s od naszego zapisu trybu
+        h.clock.advance(60.0)
+        _stale(h)
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 1
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_no_brake_on_a_mode_we_did_not_write(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    goodwe_bank.poke(MODE, 10)                                # tryb właściciela, nic nie zapisaliśmy
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
+    try:
+        _stale(h)
+        await h.ex.async_tick()
+        assert goodwe_bank.writes == [] and not h.ex.owned
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_no_brake_on_a_mode_taken_over_by_the_owner(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        h.ex._state.taken_over = ["mode"]
+        n = len(goodwe_bank.writes)
+        h.clock.advance(120.0)
+        _stale(h)
+        await h.ex.async_tick()
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 10
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_brake_on_a_stale_reading_keeps_a_mode_changed_since(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                          issues):
+    # Odczyt cyklu stary (pokazuje nasz tryb), a właściciel przełączył tryb w międzyczasie: świeży odczyt
+    # rejestru trybu przed zapisem rozstrzyga — nic nie piszemy na ślepo.
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        goodwe_bank.poke(MODE, 12)                            # discharge_battery — wybór właściciela
+        n = len(goodwe_bank.writes)
+        h.clock.advance(120.0)
+        _stale(h)
+        await h.ex.async_tick()
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 12
+        assert "neutral_brake" not in h.ex.last_decision.notes
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_brake_after_restart_uses_persisted_ownership(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    target = gw_target(goodwe_udp_sim)
+    goodwe_bank.poke(MODE, 11)                                # charge_battery z poprzedniego przebiegu
+    store = ControlStore(make_hass(), "e1")
+    await store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True, snapshot={"mode": "auto", "soc_min": 5.0},
+        owner={"profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(target, SALT),
+               "device": target["device_fp"]},
+        restore_keys=["mode", "power_w"]))
+    h = await Harness(make_hass, GW_V, target, store=store).start()
+    try:
+        assert h.ex.owned and h.ex._memory.last_written.get("mode") is None
+        _stale(h)
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "neutral_brake" in h.ex.last_decision.notes
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_no_brake_with_an_unverified_profile(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    target = gw_target(goodwe_udp_sim)
+    goodwe_bank.poke(MODE, 10)
+    store = ControlStore(make_hass(), "e1")
+    await store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True, snapshot={"mode": "auto"},
+        owner={"profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(target, SALT),
+               "device": target["device_fp"]},
+        restore_keys=["mode"]))
+    h = await Harness(make_hass, GW_DRAFT, target, store=store).start()
+    try:
+        _stale(h)
+        await h.ex.async_tick()
+        assert goodwe_bank.writes == []
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_no_brake_while_only_paused(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        h.ex._memory.paused_until = h.clock() + 3600.0
+        new = plan(power=3000, sid="p2")
+        await h.ex.async_on_plan(new, parse_schedule(new))
+        n = len(goodwe_bank.writes)
+        await h.cycle(120.0)
+        assert h.ex.last_decision.reason == "paused" and len(goodwe_bank.writes) == n
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_exception_in_cycle_still_brakes_our_mode(make_hass, goodwe_udp_sim, goodwe_bank, issues,
+                                                               monkeypatch):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        def boom(**_kw):
+            raise RuntimeError("x")
+        monkeypatch.setattr(ex_mod, "decide_cycle", boom)
+        await h.cycle(120.0)
+        assert h.ex.last_decision.reason == "exception:tick" and "neutral_brake" in h.ex.last_decision.notes
+        assert gw_raw_word(goodwe_bank, MODE) == 1
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_repeated_failed_brake_warns_once(make_hass, goodwe_udp_sim, goodwe_bank, issues, caplog,
+                                                       instant_settle):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        goodwe_bank.ignore_writes.add(MODE)                   # echo jest, rejestr bez zmian (odmowa)
+        for _ in range(3):
+            h.clock.advance(120.0)
+            _stale(h)
+            await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 10
+        assert caplog.text.count(BRAKE_TEXT) == 1
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_bus_conflict_with_a_changed_plan_brakes_our_mode(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                       issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        h.conn.stats.stray += 3
+        await h.conn.async_poll()
+        assert h.conn.conflict
+        new = plan(power=3000, sid="p2")                      # nowa nastawa nie dojdzie (kolizja)
+        await h.ex.async_on_plan(new, parse_schedule(new))
+        h.clock.advance(120.0)
+        await h.ex.async_tick()
+        assert h.ex.last_decision.reason == "bus_conflict" and "neutral_brake" in h.ex.last_decision.notes
+        assert gw_raw_word(goodwe_bank, MODE) == 1
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_link_down_brakes_when_the_link_returns(make_hass, goodwe_udp_sim, goodwe_bank, sim_faults,
+                                                             issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        n = len(goodwe_bank.writes)
+        sim_faults.drop_next = 10 ** 6                       # łącze leży
+        for _ in range(3):
+            await h.cycle(150.0)
+        assert len(goodwe_bank.writes) == n and h.ex.owned   # bez łącza nic (i bez wyjątku)
+        assert h.ex.last_decision.status == "blocked"
+        sim_faults.drop_next = 0                             # łącze wraca przed kolejnym odpytaniem
+        h.clock.advance(61.0)
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "neutral_brake" in h.ex.last_decision.notes
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_brake_without_a_fresh_read_retries_on_a_later_cycle(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                          sim_faults, issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        n = len(goodwe_bank.writes)
+        h.clock.advance(120.0)
+        _stale(h)
+        sim_faults.drop_next = 10 ** 6                       # tożsamość jeszcze potwierdzona, łącze już nie
+        await h.ex.async_tick()
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 10
+        sim_faults.drop_next = 0
+        h.clock.advance(120.0)
+        _stale(h)
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 1
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_direction_budget_exhausted_brakes_our_opposite_mode(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                          issues):
+    goodwe_bank.poke(MODE, 1)
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=_grid_charge())
+    try:
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 11
+        h.clock.advance(120.0)
+        sell = plan(sid="sell2")
+        await h.ex.async_on_plan(sell, parse_schedule(sell))
+        now = h.clock()
+        for i, direction in enumerate(["discharge", "charge", "discharge", "charge"]):
+            h.ex._memory.limiter.record(direction, now - 100 + i)
+        await h.cycle(1.0)
+        assert "I-8" in h.ex.last_decision.notes and "neutral_brake" in h.ex.last_decision.notes
+        assert gw_raw_word(goodwe_bank, MODE) == 1
+    finally:
+        await h.close()

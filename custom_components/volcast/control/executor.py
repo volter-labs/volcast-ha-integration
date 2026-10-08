@@ -57,7 +57,11 @@ Tryb bezpośredni (`DirectIO`, rejestry falownika):
   a przy własności z wcześniejszej sesji nie liczy nic (`trial_while_owned`);
 * każda decyzja, zapis i powrót wymagają potwierdzonej tożsamości urządzenia pod adresem (inaczej
   `BLOCKED identity`, także bez powrotu — pisalibyśmy do cudzego falownika);
-* kolizja na łączu zatrzymuje zapisy planu (`bus_conflict`), nigdy powrotu do trybu bazowego;
+* kolizja na łączu zatrzymuje zapisy planu (`bus_conflict`), nigdy powrotu do trybu bazowego ani hamulca;
+* hamulec do trybu neutralnego jak w trybie encji (`_async_direct_brake`): sam rejestr trybu, przez pisarza
+  z wyłącznością łącza, poza budżetem NVM, tylko przy potwierdzonej tożsamości; przy nieświeżym odczycie
+  cyklu ramka idzie wyłącznie, gdy świeży odczyt rejestru trybu tuż przed nią pokazał nasz tryb
+  (`only_from`), bez odczytu — nic, ponowienie w następnym cyklu;
 * rozjazd odczytu względem naszego ostatniego zapisu liczony raz na cykl sterowania, tylko z odczytu
   rozpoczętego po końcu naszego ostatniego zapisu; drugi rozjazd tego samego klucza w 30 min przy
   niezmienionej wartości planu = przejęcie (pauza jak w trybie encji); zmiana wartości planu kasuje
@@ -107,7 +111,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 
-from ..const import (CONTROL_MODE_ENTITIES, DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S, OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED,
+from ..const import (DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S, OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED,
                      STOP_WRITE_TIMEOUT_S)
 from ..core.control.baseline import baseline_params, needs_restore, snapshot_missing, take_snapshot
 from ..core.control.conflict import drifted_keys
@@ -122,6 +126,7 @@ from ..core.control.tou_writes import (ENABLE, TOU_WORD, TouReport, _snapshot_pr
                                        tou_restore_writes, tou_snapshot)
 from ..core.engines.time_window import baseline_programs, compress
 from ..core.guard_state import WriteBudget
+from ..core.modbus.writer import KEPT
 from ..core.params import Params
 from ..core.profile import direct_verified
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
@@ -148,6 +153,9 @@ _UNSUPPORTED_AFTER_S = 600.0
 # właściciela. „Nic do zapisu" to plan już wykonany — chyba że zmiana trybu czeka
 # (`_HOLD_NOTES`), a falownik ma nasz tryb w innym kierunku niż plan.
 _BRAKE_EXEMPT = ("paused", "foreign_mode")
+# Tryb bezpośredni: także `owner_kept` — właściciel przejął moc z grupy tryb+moc (rozjazd), zapis grupy
+# stoi z jego wyboru, nie z braku danych.
+_DIRECT_BRAKE_EXEMPT = (*_BRAKE_EXEMPT, "owner_kept")
 _HOLD_NOTES = frozenset({"I-8", "group_backoff", "group_held", "mode_held"})
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
@@ -698,6 +706,9 @@ class VolcastExecutor:
         if direct is not None:
             self._update_conflict_issue()
             if not await direct.async_identity_ok():
+                # Bez hamulca: bez potwierdzonego urządzenia pod adresem nie wolno pisać nic (cudzy
+                # falownik albo łącze leży — wtedy i tak nic nie dojdzie). Następny cykl sprawdza znowu;
+                # po potwierdzeniu cykl wykonuje plan albo hamuje (nieświeży odczyt → `_async_direct_brake`).
                 self._finish(CycleDecision(BLOCKED, "identity"))
                 return
             if self._note_drift(rd, now_mono):
@@ -777,6 +788,8 @@ class VolcastExecutor:
             decision = await self._run_budget_restore(decision, now_mono)
         elif entities and live:
             decision = await self._async_neutral_brake(decision, rd, live_map, now_mono) or decision
+        elif direct is not None and self._control_on(gates):
+            decision = await self._async_direct_brake(decision, rd, now_mono) or decision
         self._finish(decision)
         await self._after_direct_cycle(decision)
 
@@ -1201,10 +1214,7 @@ class VolcastExecutor:
         current, neutral = rd.readings.get("mode"), self._profile.neutral_mode
         if current == neutral:
             self._brake_warned = False                  # epizod skończony
-        if not isinstance(current, str) or current == neutral:
-            return None
-        ours, keys = self._memory.last_written.get("mode"), self._state.restore_keys
-        if current != ours and not (ours is None and (keys is None or "mode" in keys)):
+        if not isinstance(current, str) or current == neutral or not self._mode_ours(current):
             return None
         if d.reason == "nothing_to_write" and not self._held_against_plan(d, current):
             return None
@@ -1225,6 +1235,102 @@ class VolcastExecutor:
             _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
                             "neutral mode", d.reason)
         return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
+
+    def _mode_ours(self, current: str) -> bool:
+        """Tryb na falowniku jest nasz: nasz ostatni zapis trybu, a bez niego (restart) — własność
+        obejmuje tryb (`restore_keys` bez listy albo z trybem)."""
+        ours, keys = self._memory.last_written.get("mode"), self._state.restore_keys
+        return current == ours or (ours is None and (keys is None or "mode" in keys))
+
+    def _our_mode_words(self) -> set[int]:
+        """Słowa rejestru trybu, które uznajemy za nasze, gdy odczyt cyklu jest nieświeży: nasz ostatni
+        zapis trybu albo (restart) każdy tryb profilu poza neutralnym — nigdy opcja spoza profilu."""
+        profile, neutral = self._profile, self._profile.neutral_mode
+        ours = self._memory.last_written.get("mode")
+        if isinstance(ours, str):
+            return {profile.mode_value(ours)} if ours != neutral and ours in profile.modes else set()
+        keys = self._state.restore_keys
+        if keys is not None and "mode" not in keys:
+            return set()                                # trybu w tej własności nie pisaliśmy
+        return {m.value for name, m in profile.modes.items() if name != neutral}
+
+    def _reading_fresh(self, rd: Reading) -> bool:
+        """Odczyt cyklu rozpoczęty po końcu naszego ostatniego zapisu i nie starszy niż `max_state_age_s`."""
+        src = rd.source
+        if src is None or (self._last_write_end is not None and src.at_mono <= self._last_write_end):
+            return False
+        return self._clock() - src.at_mono <= self._profile.max_state_age_s
+
+    async def _async_direct_brake(self, d: CycleDecision, rd: Reading, now_mono: float) -> CycleDecision | None:
+        """Hamulec trybu bezpośredniego — te same warunki co `_async_neutral_brake`.
+
+        Obecny tryb: ze świeżego odczytu cyklu; przy nieświeżym (łącze, stary SoC) decyduje świeży odczyt
+        rejestru trybu pod wyłącznością łącza tuż przed ramką (`async_write_restore(only_from=...)`):
+        ramka idzie tylko z naszego trybu, inny (zmiana właściciela od odczytu) zostaje, a bez odczytu
+        (łącze leży) nic nie idzie i następny cykl próbuje znowu. Także `owner_kept` (właściciel przejął
+        moc z grupy tryb+moc) nie hamuje — tryb neutralny unieważniłby jego nastawę.
+        Okna czasowe (Deye) nie mają trybu: hamulca nie ma, powrót do programów właściciela robi `_restore`.
+        """
+        if d.reason in _DIRECT_BRAKE_EXEMPT or self._profile.control_model != "mode_setpoint":
+            return None
+        neutral = self._profile.neutral_mode
+        if self._reading_fresh(rd):
+            current = rd.readings.get("mode")           # opcja spoza profilu: brak klucza — nie nasza
+            if current == neutral:
+                self._brake_warned = False              # epizod skończony
+            if not isinstance(current, str) or current == neutral or not self._mode_ours(current):
+                return None
+            if d.reason == "nothing_to_write" and not self._held_against_plan(d, current):
+                return None
+            words = {self._profile.mode_value(current)}
+        elif d.reason == "nothing_to_write":
+            return None
+        else:
+            words = self._our_mode_words()
+        if not words:
+            return None
+        written = await self._async_direct_neutral(rd, words, now_mono)
+        if written is None:
+            return None
+        if not self._brake_warned:
+            self._brake_warned = True
+            _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
+                            "neutral mode", d.reason)
+        return replace(d, writes=written, notes=(*d.notes, "neutral_brake"))
+
+    async def _async_direct_neutral(self, rd: Reading, words: set[int], now_mono: float) -> list | None:
+        """Sam zapis trybu neutralnego (rejestr trybu), jeśli falownik ma jedno z naszych słów `words`.
+
+        Jak powrót do trybu bazowego: przez pisarza z wyłącznością łącza, poza budżetem NVM (ponowna
+        wysyłka po ciszy nigdy nie jest odmawiana), tylko przy potwierdzonej tożsamości urządzenia; I-6
+        obowiązuje. Własność zostaje. None = nic nie poszło (bramki, odczyt, tryb nie nasz)."""
+        neutral = self._profile.neutral_mode
+        if not self._state.owned or "mode" in self._state.taken_over or neutral is None \
+                or "mode" in self._memory.unsupported or f"mode:{neutral}" in self._memory.unsupported:
+            return None
+        if not self._memory.throttle.filter({"mode": neutral}, now_mono):
+            return None
+        # Tożsamość: bez potwierdzonego urządzenia pod adresem nie piszemy nic (cudzy falownik).
+        if not await self._direct.async_identity_ok():
+            return None
+        write = getattr(self._writer, "async_write_restore", None)
+        writes = self.io.restore_writes(Params(mode=neutral), ["mode"], rd)
+        if write is None or not writes:
+            return None
+        outcomes: dict[str, str] = {}
+
+        async def conditional(w):
+            outcomes[w.key] = out = await write(w, only_from=words)
+            return out
+
+        report = await async_run_group_writes(writes, conditional, on_exception=self._log_write_exception)
+        self._end_direct_writes()
+        if outcomes.get("mode") == KEPT:
+            return None                                 # tryb zmieniony od odczytu — nie nasz
+        self._account_restore({"mode": neutral}, [report], now_mono)
+        if self._note_written([*report.written, *report.ambiguous]):
+            await self._async_save("control state")
+        return writes
 
     def _warn_sell_suspended(self, d: CycleDecision) -> None:
         """Sprzedaż wstrzymana: brak odczytu poboru domu, brak pułapu (nastawa 0 W) albo nastawa
@@ -1265,9 +1371,14 @@ class VolcastExecutor:
         """Wyjątek w cyklu: hamulec na świeżym odczycie, jeśli da się go bezpiecznie ustalić."""
         try:
             if self._profile is None or self._memory is None or self._stopped or self._frozen \
-                    or self._direct is not None or not self._control_on(self._gates()):
+                    or not self._control_on(self._gates()):
                 return
             rd = self.io.read(self._utcnow())
+            if self._direct is not None:
+                braked = await self._async_direct_brake(self.last_decision, rd, self._clock())
+                if braked is not None:
+                    self.last_decision = braked
+                return
             absent = self._absent_keys()
             live_map = {k: v for k, v in self._mapped.items() if k not in absent}
             braked = await self._async_neutral_brake(self.last_decision, rd, live_map, self._clock())
@@ -1325,9 +1436,10 @@ class VolcastExecutor:
         return frozenset(k for k in keys if k not in self._state.taken_over)
 
     def _control_on(self, gates: Gates) -> bool:
-        """Sterowanie włączone (bez względu na pauzę): zgoda, przełącznik, tryb encji, weryfikacja."""
+        """Sterowanie włączone (bez względu na pauzę): zgoda, przełącznik, tryb sterowania tego
+        wykonawcy (encje albo bezpośredni), weryfikacja (próba trybu bezpośredniego — nie)."""
         return (gates.consent is True and gates.local_switch and not self._stopped
-                and gates.control_mode == CONTROL_MODE_ENTITIES and gates.verified)
+                and gates.control_mode == self.io.kind and gates.verified)
 
     def _follow_owner_snapshot(self, live: bool, readings: Mapping[str, float | str]) -> bool:
         """Migawka stanu właściciela przed pierwszym zapisem; True, gdy się zmieniła.
