@@ -19,6 +19,7 @@ W komunikatach i logach wyłącznie rodzaj transportu i nazwy klas błędów —
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import math
@@ -270,6 +271,9 @@ class BaseTransport:
         # odczyt innej długości (`modbus/views.py`).
         self.last_read_count: int | None = None
         self._lock = asyncio.Lock()
+        # sesja na wyłączność (`exclusive`): zadanie-właściciel i zamek sesji
+        self._session = asyncio.Lock()
+        self._session_owner: asyncio.Task | None = None
         self._last_end: float | None = None
         self._dirty = False          # przerwana wymiana — reset kanału przed następnym żądaniem
         self._closed = False
@@ -279,11 +283,28 @@ class BaseTransport:
 
     # ── API ──
 
+    @contextlib.asynccontextmanager
+    async def exclusive(self):
+        """Łącze na wyłączność bieżącego zadania: żądania innych zadań (np. odpytywania) czekają do
+        końca sesji, żądania właściciela przechodzą (sesja jest wielowejściowa w obrębie zadania).
+        Każde pojedyncze żądanie i tak bierze sesję na swój czas — sesja pisarza nie przeplata się
+        z żądaniem odpytywania. Zamek FIFO: czekające żądanie wchodzi zaraz po końcu sesji."""
+        task = asyncio.current_task()
+        if task is not None and self._session_owner is task:
+            yield
+            return
+        async with self._session:
+            self._session_owner = task
+            try:
+                yield
+            finally:
+                self._session_owner = None
+
     async def read(self, addr: int, count: int, *, tries: int | None = None) -> list[int]:
         """`tries` — mniej prób niż `read_tries` (limit czasu cyklu u wołającego); nigdy więcej."""
         req = read_req(addr, count)
         n = self.cfg.read_tries if tries is None else max(1, min(int(tries), self.cfg.read_tries))
-        async with self._lock:
+        async with self.exclusive(), self._lock:
             self.last_read_count = count
             for attempt in range(n):
                 try:
@@ -297,7 +318,7 @@ class BaseTransport:
                     on_send: OnSend | None = None) -> None:
         req = write_req(function, addr, values)
         sends = 2 if self.resend_writes else 1
-        async with self._lock:
+        async with self.exclusive(), self._lock:
             for i in range(sends):
                 try:
                     await self._transact(req, on_send)

@@ -105,6 +105,24 @@ async def test_reply_later_than_timeout_never_answers_next_request(module):
         await t.close()
 
 
+@pytest.mark.asyncio
+async def test_exclusive_session_holds_other_tasks_until_it_ends(module):
+    t = _udp(module)
+    try:
+        async with t.exclusive():
+            await t.read(47509, 4)
+            other = asyncio.ensure_future(t.read(35140, 1))       # np. odpytywanie
+            await asyncio.sleep(0.05)
+            async with t.exclusive():                             # wielowejściowa w obrębie zadania
+                await t.read(45356, 1)
+            await t.write(45356, [5], function=6)
+            assert not other.done()
+        await other
+        assert [(fc, a) for fc, a, _ in module.log] == [(3, 47509), (3, 45356), (6, 45356), (3, 35140)]
+    finally:
+        await t.close()
+
+
 # ── odstęp między żądaniami: 300 ms jak Box ───────────────────────────────
 
 

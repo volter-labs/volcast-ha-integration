@@ -58,13 +58,19 @@ właściciela, bez składania bitów).
 Ponowną wysyłkę (tylko UDP, przy całkowitej ciszy) i reset kanału po przekroczeniu czasu
 robi transport — odczyt zwrotny (i każde jego ponowienie) idzie świeżym kanałem. Odczyt
 porównuje całe słowo (pola bitowe niosą bity właściciela). Jeden zamek na pisarza: odczyt przed,
-zapis i odczyt zwrotny jednego klucza (z ponowieniami) nie przeplatają się z innym zapisem.
+zapis i odczyt zwrotny jednego klucza (z ponowieniami) nie przeplatają się z innym zapisem. Do tego
+sesja na wyłączność łącza (`BaseTransport.exclusive`) na odczyty przed, zapis i odczyt zwrotny —
+żądanie odpytywania czeka do jej końca. Na czas odczekania przed ponownym odczytem zwrotnym łącze
+jest zwalniane (odpytywanie nie czeka sekund); każdy ponowny odczyt bierze sesję znowu i dopiero
+w niej wybiera długość odczytu.
 Pisarz nigdy nie rzuca.
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from ..profile import DEFAULT_READBACK_SETTLE_S
@@ -90,6 +96,13 @@ _RECONNECT_MARGIN_S = 0.1              # zapas ponad czekanie transportu strumie
 # Ponowne odczyty zwrotne po odczekaniu, zanim wartość sprzed zapisu stanie się odmową.
 READBACK_SETTLE_READS = 2
 _sleep = asyncio.sleep                 # podmieniane w testach
+
+
+@dataclass(frozen=True)
+class _Settle:
+    """Wynik wymiany do rozstrzygnięcia po odczekaniu (zapis z wartością już złożoną)."""
+    w: RegisterWrite
+    before: int
 
 
 class _Unconfirmed(TransportError):
@@ -200,10 +213,44 @@ class RegisterWriter:
                 or not isinstance(w.value, int) or not 0 <= w.value <= 0xFFFF:
             _LOGGER.error("direct write of %s refused: address or value outside the profile", w.key)
             return ERROR                   # nic nie wysłano — to nie odmowa urządzenia
-        if _matches(w.key, self.echo_only):
-            return await self._write_echo_only(w)
         if _matches(w.key, self.unreadable):
             return UNSUPPORTED             # bez odczytu zwrotnego nie piszemy (nie da się przywrócić)
+        async with self._link():
+            out = await self._exchange(w, skip_equal=skip_equal)
+        if not isinstance(out, _Settle):
+            return out
+        # Łącze zwolnione na czas odczekania (odpytywanie nie czeka sekund); każdy ponowny odczyt
+        # bierze je znowu i dopiero wtedy wybiera długość (`_read_once`).
+        w, before = out.w, out.before
+        back = await self._settle(w.addr, before)
+        if back is None:
+            return ERROR
+        if back == w.value:
+            return OK
+        return self._judge(w, before, back)
+
+    def _link(self):
+        """Wyłączność łącza na sekwencję klucza (`BaseTransport.exclusive`): żądanie odpytywania nie
+        wejdzie między wybór długości odczytu a jego wysłanie ani między odczyty, zapis i odczyt
+        zwrotny — inaczej powtórzona przez moduł odpowiedź odpytywania tej samej długości byłaby
+        wzięta za odpowiedź pisarza. Transport bez tej funkcji (atrapy) — bez blokady."""
+        exclusive = getattr(self.client.transport, "exclusive", None)
+        return exclusive() if callable(exclusive) else contextlib.nullcontext()
+
+    def _judge(self, w: RegisterWrite, before: int, back: int) -> str:
+        if back == before:
+            return DENIED
+        actual = _numeric_actual(self.profile, w.key, back, w.value)
+        if actual is None:
+            return ERROR                   # tryb/bit/start inny albo odchylenie w groźną stronę
+        _LOGGER.warning("direct write of %s applied with a different value by the inverter", w.key)
+        return AdjustedOutcome(actual)
+
+    async def _exchange(self, w: RegisterWrite, *, skip_equal: bool):
+        """Odczyt(y) przed, zapis, odczyt zwrotny — pod wyłącznością łącza. Wynik albo `_Settle`
+        (echo zgodne, odczyt zwrotny = sprzed zapisu: ponowne odczyty po odczekaniu)."""
+        if _matches(w.key, self.echo_only):
+            return await self._write_echo_only(w)
         try:
             before = await self._read_before(w.addr)
         except TransportError as err:
@@ -225,18 +272,8 @@ class RegisterWriter:
         if echo == _ECHO_NONE:
             return ERROR
         if back == before and echo == _ECHO_OK:
-            back = await self._settle(w.addr, before)
-            if back is None:
-                return ERROR
-            if back == w.value:
-                return OK
-        if back == before:
-            return DENIED
-        actual = _numeric_actual(self.profile, w.key, back, w.value)
-        if actual is None:
-            return ERROR                   # tryb/bit/start inny albo odchylenie w groźną stronę
-        _LOGGER.warning("direct write of %s applied with a different value by the inverter", w.key)
-        return AdjustedOutcome(actual)
+            return _Settle(w, before)
+        return self._judge(w, before, back)
 
     async def _send(self, w: RegisterWrite) -> str:
         try:
@@ -267,7 +304,8 @@ class RegisterWriter:
         back: int | None = before
         for _ in range(READBACK_SETTLE_READS):
             await _sleep(settle)
-            back = await self._read_back(addr)
+            async with self._link():
+                back = await self._read_back(addr)
             if back != before:
                 break
         return back
