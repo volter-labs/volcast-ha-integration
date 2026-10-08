@@ -238,6 +238,7 @@ class VolcastExecutor:
         self._safety_cap_issue_open = False
         self._mode_issue_open = False                  # tryb bezpośredni: rejestr trybu niedostępny
         self._abandoned = False                        # zatrzymanie porzuciło resztę zapisów cyklu
+        self._stop_deadline: float | None = None       # koniec budżetu zatrzymania (zegar monotoniczny)
         # rozjazd policzony, ale jeszcze nieusunięty: ta sama wartość na urządzeniu nie liczy się drugi raz
         self._drift_values: dict[str, float | str] = {}
         # klucze przejęte przez właściciela → nasza wartość planu z chwili przejęcia; nie piszemy ich,
@@ -377,8 +378,11 @@ class VolcastExecutor:
         self._unsupported_issue = ()
         if not self._lock.locked():
             return
+        wait_s = self._stop_timeout_s
+        if self._stop_deadline is not None:
+            wait_s = min(wait_s, max(0.0, self._stop_deadline - time.monotonic()))
         try:
-            await asyncio.wait_for(self._lock.acquire(), self._stop_timeout_s)
+            await asyncio.wait_for(self._lock.acquire(), wait_s)
         except asyncio.TimeoutError:
             _LOGGER.error("Volcast control: write still in progress at stop — giving up waiting")
             return
@@ -416,6 +420,8 @@ class VolcastExecutor:
         if self._disabled or self._stopped or self._profile is None or self._memory is None:
             return False
         self.freeze()
+        # Jeden budżet z `async_stop` (rozładowanie): czekanie na tę samą blokadę nie liczy się dwa razy.
+        self._stop_deadline = time.monotonic() + self._stop_timeout_s
         try:
             return await asyncio.wait_for(self._neutral_at_stop(), self._stop_timeout_s)
         except asyncio.TimeoutError:

@@ -188,6 +188,20 @@ async def test_stop_gives_up_within_the_budget_when_a_write_hangs(make_hass, goo
 
 
 @pytest.mark.asyncio
+async def test_unload_with_a_hanging_write_shares_one_stop_deadline(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Tryb neutralny przy rozładowaniu i zatrzymanie wykonawcy czekają na tę samą blokadę: jeden budżet.
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    h.ex._stop_timeout_s = 0.3
+    await h.ex._lock.acquire()                                  # zapis w toku, który nie kończy się
+    try:
+        t0 = time.monotonic()
+        await rt_mod.async_unload_control(h.hass, _rt(h.ex, h.conn))
+        assert time.monotonic() - t0 < 0.5
+    finally:
+        h.ex._lock.release()
+
+
+@pytest.mark.asyncio
 async def test_stop_leaves_a_mode_we_did_not_write_direct(make_hass, goodwe_udp_sim, goodwe_bank, issues):
     goodwe_bank.poke(MODE, 10)                                   # tryb właściciela, bez własności
     h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(consent=False)
