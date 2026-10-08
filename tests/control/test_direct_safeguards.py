@@ -349,6 +349,101 @@ async def test_direct_direction_budget_exhausted_brakes_our_opposite_mode(make_h
         await h.close()
 
 
+# ── chwilowa blokada: hamulec dopiero przy drugiej z rzędu (bez migania trybu) ──
+
+
+def _no_temp(h) -> None:
+    """Świeży odczyt bez temperatury baterii (jedno odpytanie bez tej wartości)."""
+    r = h.conn.reading
+    h.conn.reading = SimpleNamespace(**{**r.__dict__, "values": {**r.values, "battery_temp_c": None}})
+
+
+async def _fresh_cycle(h, *, advance=61.0, tweak=None):
+    h.clock.advance(advance)
+    await h.conn.async_poll()
+    if tweak is not None:
+        tweak(h)
+    await h.ex.async_tick()
+
+
+@pytest.mark.asyncio
+async def test_direct_single_cycle_without_temperature_does_not_flap(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        n = len(goodwe_bank.writes)
+        await _fresh_cycle(h, tweak=_no_temp)
+        d = h.ex.last_decision
+        assert d.reason == "temperature_unknown" and "brake_deferred" in d.notes
+        await _fresh_cycle(h)                                  # temperatura wróciła
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 10
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_second_cycle_without_temperature_brakes(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _fresh_cycle(h, tweak=_no_temp)
+        assert gw_raw_word(goodwe_bank, MODE) == 10
+        await _fresh_cycle(h, tweak=_no_temp)
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "neutral_brake" in h.ex.last_decision.notes
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_single_soc_jump_does_not_flap(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _fresh_cycle(h)
+        n = len(goodwe_bank.writes)
+        goodwe_bank.poke(SOC, 40)                              # 83 → 40 w minutę: niewiarygodny skok
+        await _fresh_cycle(h)
+        d = h.ex.last_decision
+        assert d.reason == "guard:I-9" and "brake_deferred" in d.notes
+        await _fresh_cycle(h)
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 10
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_single_invalid_pv_sample_in_a_sell_slot_does_not_flap(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                            issues):
+    def no_pv(h):
+        r = h.conn.reading
+        h.conn.reading = SimpleNamespace(**{**r.__dict__, "values": {**r.values, "pv_power_w": None}})
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _fresh_cycle(h)
+        n = len(goodwe_bank.writes)
+        await _fresh_cycle(h, tweak=no_pv)
+        assert "sell_reading_held" in h.ex.last_decision.notes
+        await _fresh_cycle(h)
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 10
+        await _fresh_cycle(h, tweak=no_pv)
+        await _fresh_cycle(h, tweak=no_pv)                     # druga z rzędu: tryb neutralny
+        assert gw_raw_word(goodwe_bank, MODE) == 1
+    finally:
+        await h.close()
+
+
+def test_brake_reason_classes_are_explicit():
+    from custom_components.volcast.core.control.cycle import CycleDecision
+    from custom_components.volcast.core.guards import GuardResult
+    from custom_components.volcast.core.params import Params
+    jump = GuardResult("degraded", False, "I-9", "", Params(), code="soc_jump")
+    stale = GuardResult("degraded", False, "I-9", "", Params(), code="stale")
+    transient = [CycleDecision("blocked", "temperature_unknown"), CycleDecision("blocked", "guard:I-9", guard=jump)]
+    hard = [CycleDecision("blocked", "guard:I-9", guard=stale), CycleDecision("error", "exception:tick"),
+            CycleDecision("blocked", "bus_conflict"), CycleDecision("blocked", "identity"),
+            CycleDecision("idle", "no_plan"), CycleDecision("idle", "missing_entities"),
+            CycleDecision("blocked", "guard:I-3")]
+    assert all(ex_mod.transient_block(d) for d in transient)
+    assert not any(ex_mod.transient_block(d) for d in hard)
+
+
 # ── pauza (przejęcie przez właściciela) a rezerwa SoC ─────────────────────
 
 

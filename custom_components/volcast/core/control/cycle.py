@@ -273,9 +273,12 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     memory.live_export = memory.live_export.with_load(
         lx.valid_load(tele.load_power_w, tele.load_age_s, profile.max_state_age_s))
     if target.kind == "direct":
-        # Szczyt poboru netto z okna (strefa martwa sprzedaży w trybie bezpośrednim) — też co cykl.
+        # Szczyt poboru netto z okna (strefa martwa sprzedaży w trybie bezpośrednim) i ostatnia ważna
+        # para (PV, pobór) do przetrzymania jednej nieważnej próbki — też co cykl.
+        pv, load = _direct_readings(tele, profile, _rated_or_none(limits))
         memory.live_export = memory.live_export.with_net(
-            now_mono, _direct_net(tele, profile, limits), lx.DIRECT_PEAK_WINDOW_S)
+            now_mono, None if pv is None or load is None else load - pv,
+            lx.DIRECT_PEAK_WINDOW_S).with_pair(pv, load)
     if gates.control_mode != target.kind:
         return CycleDecision(IDLE, "no_mode_chosen")
     if profile.control_model != "mode_setpoint":
@@ -576,12 +579,6 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
     return replace(planned, power_w=live.xset_w), live, tuple(notes)
 
 
-def _direct_net(tele: Telemetry, profile, limits: Limits) -> float | None:
-    """Pobór netto (pobór − PV) z ważnego odczytu PV i poboru; None, gdy któregoś brak."""
-    pv, load = _direct_readings(tele, profile, _rated_or_none(limits))
-    return None if pv is None or load is None else load - pv
-
-
 def _rated_or_none(limits: Limits) -> float | None:
     rated = limits.rated_power_w
     return rated if isinstance(rated, (int, float)) and math.isfinite(rated) and rated > 0.0 else None
@@ -608,6 +605,13 @@ def _live_export_direct(planned: Params, guarded: Params, intent: str, slot, pro
     key = (slot.start, slot.end, intent)
     rated = _rated_or_none(limits)
     pv, load = _direct_readings(tele, profile, rated)
+    held = False
+    if rated is not None and (pv is None or load is None):
+        # Chwilowy błąd odczytu (jedna próbka): ostatnia ważna para przez JEDEN cykl — bez migania
+        # tryb neutralny ↔ sprzedaż; druga nieważna próbka z rzędu = tryb neutralny (niżej).
+        pair = mem.held_pair()
+        if pair is not None:
+            (pv, load), held = pair, True
     if rated is None or pv is None or load is None:
         no_reading = pv is None or load is None
         planned, _ = _degrade(planned, {"power_w"}, profile)
@@ -630,9 +634,18 @@ def _live_export_direct(planned: Params, guarded: Params, intent: str, slot, pro
     live, mem = lx.compute(
         key=key, battery_w=planned.power_w, pv_w=pv, load_w=effective_load,
         export_limit_w=lx.export_ceiling(enabled, limit), rated_power_w=rated, memory=mem)
+    notes = [live.note()] + ([lx.NOTE_SELL_READING_HELD] if held else [])
+    # Puste okno (restart albo > okno bez ważnych próbek): PV, które dopycha nastawę do mocy
+    # znamionowej, czeka na drugą próbkę (szczyt okna z dwóch próbek maskuje pojedynczy błąd PV).
+    # Do tego czasu nastawa bez PV (bateria − pobór) — bateria oddaje najwyżej plan.
+    no_pv = max(0.0, float(planned.power_w or 0.0) - load)
+    if mem.window_count(now_mono, lx.DIRECT_PEAK_WINDOW_S) < 2 and live.xset_w >= rated - 0.5 \
+            and no_pv < live.xset_w:
+        live = replace(live, xset_w=no_pv)
+        notes.append(lx.NOTE_SELL_PV_UNCONFIRMED)
     if not keep:
         memory.live_export = mem
-    return replace(planned, power_w=live.xset_w), live, (live.note(),)
+    return replace(planned, power_w=live.xset_w), live, tuple(notes)
 
 
 def _below_entity_min(power_w: float, profile, ents: EntityContext) -> bool:

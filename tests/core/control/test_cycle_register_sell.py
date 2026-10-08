@@ -77,7 +77,9 @@ def _power(d):
     (3000.0, 1500.0, 500.0, 8000, 4000.0),    # dom < PV: nadwyżka PV dochodzi do eksportu
     (3893.0, 0.0, 500.0, 8000, 3393.0),       # noc: wektor złoty parytetu
     (500.0, 0.0, 1200.0, 8000, 0.0),          # wynik ujemny → 0 W, tryb sprzedaży zostaje
-    (5000.0, 4000.0, 300.0, 8000, 8000.0),    # ponad moc znamionową → pułap 8000 W
+    # ponad moc znamionową z pustym oknem: PV dopychające do pułapu czeka na drugą próbkę — bateria − dom
+    # (pułap 8000 W od drugiej zgodnej próbki: test_cycle_register_sell_debounce)
+    (5000.0, 4000.0, 300.0, 8000, 4700.0),
     (5000.0, 0.0, 300.0, 3000, 3000.0),       # limit eksportu kontraktu niższy niż znamionowa
 ])
 def test_sell_setpoint_formula_and_clamp(goodwe_profile, battery, pv, load, limit, expected):

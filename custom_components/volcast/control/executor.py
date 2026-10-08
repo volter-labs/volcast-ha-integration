@@ -161,6 +161,30 @@ _BRAKE_EXEMPT = ("paused", "foreign_mode")
 # Tryb bezpośredni: także `owner_kept` — właściciel przejął moc z grupy tryb+moc (rozjazd), zapis grupy
 # stoi z jego wyboru, nie z braku danych.
 _DIRECT_BRAKE_EXEMPT = (*_BRAKE_EXEMPT, "owner_kept")
+# Klasy przyczyn hamulca (JEDNO miejsce). Chwilowe — hamulec dopiero przy DRUGIM kolejnym cyklu z taką
+# blokadą (tryb wymuszony trwa najwyżej jeden cykl dłużej; pojedyncza próbka nie przełącza trybu
+# neutralny ↔ wymuszony, a każde przełączenie to 2 ramki NVM):
+# * `temperature_unknown` — jedno odpytanie bez temperatury baterii;
+# * I-9 `soc_jump` — skok SoC ponad tempo fizyczne (następny cykl porównuje już z nową wartością).
+# Pojedyncza nieważna próbka PV/poboru w slocie sprzedaży jest przetrzymywana w rdzeniu
+# (`cycle._live_export_direct`, ostatnia ważna para przez jeden cykl). Wszystko inne jest TRWAŁE
+# i hamuje od razu: I-9 nieświeży/brak/niemożliwy SoC (ponad `max_state_age_s`), wyjątek, kolizja
+# na łączu, łącze/tożsamość, brak planu, brak rejestru trybu, I-3/I-10, wstrzymany kierunek; zgoda
+# i przełącznik idą powrotem do trybu bazowego, rezerwa w pauzie — `_reserve_neutral` (bez zwłoki).
+_TRANSIENT_REASONS = frozenset({"temperature_unknown"})
+_TRANSIENT_GUARD_CODES = frozenset({"soc_jump"})
+
+
+def transient_block(d: CycleDecision | None) -> bool:
+    """Blokada chwilowa (klasy w komentarzu wyżej) — hamulec czeka jeden cykl."""
+    if d is None:
+        return False
+    if d.reason in _TRANSIENT_REASONS:
+        return True
+    guard = d.guard
+    return d.reason == "guard:I-9" and guard is not None and getattr(guard, "code", "") in _TRANSIENT_GUARD_CODES
+
+
 # Zapis planu porzucony przy zatrzymaniu (nic nie wysłano) — dla wykonawcy grupowego porażka bez
 # niejednoznaczności, jak odmowa.
 _ABANDONED = "abandoned"
@@ -239,6 +263,7 @@ class VolcastExecutor:
         self._mode_issue_open = False                  # tryb bezpośredni: rejestr trybu niedostępny
         self._abandoned = False                        # zatrzymanie porzuciło resztę zapisów cyklu
         self._stop_deadline: float | None = None       # koniec budżetu zatrzymania (zegar monotoniczny)
+        self._transient_streak = 0                     # kolejne cykle z blokadą chwilową (tryb bezpośredni)
         # rozjazd policzony, ale jeszcze nieusunięty: ta sama wartość na urządzeniu nie liczy się drugi raz
         self._drift_values: dict[str, float | str] = {}
         # klucze przejęte przez właściciela → nasza wartość planu z chwili przejęcia; nie piszemy ich,
@@ -846,6 +871,8 @@ class VolcastExecutor:
         self._warn_sell_suspended(decision)
         if direct is not None:
             self._update_mode_issue(decision, self._control_on(gates))
+            # kolejne cykle z blokadą chwilową (hamulec dopiero przy drugim — `transient_block`)
+            self._transient_streak = self._transient_streak + 1 if transient_block(decision) else 0
         if tele.soc is not None:
             self._prev_soc = (tele.soc, now_mono)
         if entities:
@@ -1427,6 +1454,8 @@ class VolcastExecutor:
             words = self._our_mode_words()
         if not words:
             return None
+        if transient_block(d) and self._transient_streak < 2:
+            return replace(d, notes=(*d.notes, "brake_deferred"))    # pierwsza blokada chwilowa z rzędu
         written = await self._async_direct_neutral(rd, words, now_mono)
         if written is None:
             return None

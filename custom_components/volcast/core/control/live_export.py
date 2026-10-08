@@ -53,6 +53,10 @@ NOTE_SELL_NO_LOAD = "sell_no_load"
 NOTE_SELL_NO_RATED = "sell_no_rated"
 NOTE_SELL_BELOW_MIN = "sell_below_min"
 NOTE_SELL_NO_READING = "sell_no_reading"
+# tryb bezpośredni: jedna nieważna próbka — ostatnia ważna para (PV, pobór) przez jeden cykl
+NOTE_SELL_READING_HELD = "sell_reading_held"
+# tryb bezpośredni: puste okno, a PV dopycha nastawę do mocy znamionowej — PV nieprzyjęte w tym cyklu
+NOTE_SELL_PV_UNCONFIRMED = "sell_pv_unconfirmed"
 # Odczyt ponad tyle × moc znamionowa to błąd czujnika, nie moc.
 PV_MAX_RATED_FACTOR = 2.0
 # Pobór domu ponad tyle to błąd czujnika (przyłącze domu jest dużo mniejsze).
@@ -72,6 +76,23 @@ class LiveExportMemory:
     written_w: float | None = None
     # tryb bezpośredni: próbki (czas monotoniczny, pobór − PV [W]) z ważnych odczytów w oknie
     net_samples: tuple[tuple[float, float], ...] = ()
+    # tryb bezpośredni: ostatnia ważna para (PV, pobór) i liczba kolejnych cykli bez niej — jedna
+    # nieważna próbka korzysta z pary przez jeden cykl, druga z rzędu = slot w trybie neutralnym
+    last_pair: tuple[float, float] | None = None
+    invalid_streak: int = 0
+
+    def with_pair(self, pv_w: float | None, load_w: float | None) -> "LiveExportMemory":
+        """Obserwacja pary (PV, pobór) w KAŻDYM cyklu (już zwalidowanej; None = nieważna)."""
+        if pv_w is not None and load_w is not None:
+            return replace(self, last_pair=(pv_w, load_w), invalid_streak=0)
+        return replace(self, invalid_streak=self.invalid_streak + 1)
+
+    def held_pair(self) -> tuple[float, float] | None:
+        """Para z poprzedniego cyklu dla PIERWSZEJ nieważnej próbki z rzędu; potem None."""
+        return self.last_pair if self.invalid_streak == 1 else None
+
+    def window_count(self, now_mono: float, window_s: float) -> int:
+        return sum(1 for t, _ in self.net_samples if 0.0 <= now_mono - t < window_s)
 
     def with_load(self, load_w: float | None) -> "LiveExportMemory":
         return self if load_w is None else replace(self, last_load_w=load_w)

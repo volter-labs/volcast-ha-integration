@@ -51,6 +51,8 @@ class GuardResult:
     invariant: str | None
     note: str
     params: Params
+    # stały kod przyczyny odrzucenia (warstwa HA rozróżnia blokadę chwilową od trwałej; notatka to tekst)
+    code: str = ""
 
 
 def temperature_ok(temp_c: float | None, profile: Profile) -> bool:
@@ -60,8 +62,8 @@ def temperature_ok(temp_c: float | None, profile: Profile) -> bool:
     return profile.temp_min_c < temp_c < profile.temp_max_c
 
 
-def _reject(invariant: str, note: str) -> GuardResult:
-    return GuardResult(STATUS_DEGRADED, False, invariant, note, Params())
+def _reject(invariant: str, note: str, code: str = "") -> GuardResult:
+    return GuardResult(STATUS_DEGRADED, False, invariant, note, Params(), code)
 
 
 def _finite(v: object) -> bool:
@@ -126,16 +128,16 @@ def apply_guards(params: Params, ctx: GuardContext, profile: Profile) -> GuardRe
     # ── I-9: świeżość i wiarygodność odczytu ──
     max_age = max_state_age(ctx.max_state_age_s)
     if ctx.soc is None:
-        return _reject("I-9", "brak odczytu SoC — wstrzymuję zapisy")
+        return _reject("I-9", "brak odczytu SoC — wstrzymuję zapisy", "soc_missing")
     if not state_fresh(ctx.soc_age_s, max_age):
-        return _reject("I-9", f"odczyt nieświeży albo o nieznanym wieku (limit {max_age:.0f} s)")
+        return _reject("I-9", f"odczyt nieświeży albo o nieznanym wieku (limit {max_age:.0f} s)", "stale")
     if not (0.0 <= ctx.soc <= 100.0):
-        return _reject("I-9", f"SoC={ctx.soc} fizycznie niemożliwy")
+        return _reject("I-9", f"SoC={ctx.soc} fizycznie niemożliwy", "soc_invalid")
     if ctx.previous_soc is not None and ctx.previous_soc_gap_s is not None \
             and ctx.previous_soc_gap_s <= max_age:
         allowed = max(_SOC_JUMP_FLOOR_PP, _SOC_RATE_PP_PER_MIN * ctx.previous_soc_gap_s / 60.0)
         if abs(ctx.soc - ctx.previous_soc) > allowed:
-            return _reject("I-9", "skok SoC szybszy niż fizycznie możliwy")
+            return _reject("I-9", "skok SoC szybszy niż fizycznie możliwy", "soc_jump")
 
     # ── I-3: okno temperatur — bije nawet rezerwę ──
     if not ctx.temperature_ok:
