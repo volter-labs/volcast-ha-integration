@@ -35,6 +35,12 @@ def _thaw(v):
     return v
 
 
+def _draft_goodwe():
+    raw = _thaw(load_builtin("goodwe-et").raw)
+    raw["status"] = raw["modbus"]["status"] = "draft"
+    return profile_from_dict(raw)
+
+
 def _verified_goodwe():
     raw = _thaw(load_builtin("goodwe-et").raw)
     raw["status"] = raw["modbus"]["status"] = "verified"
@@ -188,6 +194,7 @@ async def test_real_ha_options_search_manual_then_trial(hass: HomeAssistant, net
     async def no_replies(*a, **k):
         return NetworkProbeResult(sent=True)
     monkeypatch.setattr(ds, "probe_udp_48899", no_replies)
+    monkeypatch.setattr(ds, "load_profiles", lambda: [_draft_goodwe()])     # the shipped profile is verified
     seed_salt(hass_storage)
     store_state(hass_storage, "paired01", {"consent": True, "local_switch": True})
     entry = make_entry(hass)

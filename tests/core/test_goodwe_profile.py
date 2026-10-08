@@ -61,10 +61,10 @@ def test_goodwe_policy_is_box_policy():
         "charge_battery": 11, "discharge_battery": 12}
 
 
-def test_goodwe_modbus_is_draft_with_fc6():
+def test_goodwe_modbus_is_verified_with_fc6():
     p = load_builtin("goodwe-et")
     m = p.modbus
-    assert (m.status, m.write_function, m.max_read_registers) == ("draft", 6, 125)
+    assert (m.status, m.write_function, m.max_read_registers) == ("verified", 6, 125)
     assert set(m.transport_options) == {"goodwe_udp", "modbus_tcp", "modbus_rtu"}
     # 300 ms jak Box: moduł Wi-Fi przy krótszym odstępie odpowiada poprzednią odpowiedzią
     assert m.transport_options["goodwe_udp"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 300}

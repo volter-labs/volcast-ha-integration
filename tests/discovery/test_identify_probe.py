@@ -185,7 +185,7 @@ async def _discover_goodwe(sim, profiles, **kw):
 async def test_probe_marks_unsupported_and_echo_only(goodwe_udp_sim, goodwe_bank, profiles):
     goodwe_bank.unsupported.add(47509)
     rep, f = await _discover_goodwe(goodwe_udp_sim, profiles)
-    assert rep.identity is not None and rep.modbus_status == "draft"
+    assert rep.identity is not None and rep.modbus_status == "verified"
     assert rep.echo_only == ("soc_max",)
     assert rep.capabilities["export_limit_enabled"] is False
     assert rep.capabilities["mode"] is True and rep.capabilities["power_w"] is True

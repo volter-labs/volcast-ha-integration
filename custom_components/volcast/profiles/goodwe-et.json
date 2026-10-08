@@ -105,8 +105,8 @@
     "set_soc_ceiling": true, "time_windows": 0
   },
   "modbus": {
-    "status": "draft",
-    "status_note": "Register path of this integration not yet tried on a live inverter; register map and write semantics are verified by the reference executor.",
+    "status": "verified",
+    "status_note": "Register map and write semantics measured on a live GW8KN-ET over the Wi-Fi module (UDP); the module must not be shared with other clients.",
     "write_function": 6,
     "max_read_registers": 125,
     "transport_options": {

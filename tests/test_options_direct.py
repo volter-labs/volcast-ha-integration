@@ -14,7 +14,7 @@ from custom_components.volcast.control import direct_search as ds_mod
 from custom_components.volcast.control import runtime as rt_mod
 from custom_components.volcast.core.discovery.identify import Candidate, Identity
 from custom_components.volcast.core.discovery.probe import ProbeReport
-from custom_components.volcast.core.profile import load_builtin, profile_from_dict
+from custom_components.volcast.core.profile import direct_verified, load_builtin, profile_from_dict
 
 _ce = sys.modules["homeassistant.config_entries"]
 for _name, _fn in {
@@ -44,8 +44,15 @@ def verified(pid):
     return profile_from_dict(raw)
 
 
+def drafted(pid):
+    raw = _thaw(load_builtin(pid).raw)
+    raw["status"] = "draft"
+    raw["modbus"]["status"] = "draft"
+    return profile_from_dict(raw)
+
+
 GW_V = verified("goodwe-et")
-GW = load_builtin("goodwe-et")
+GW = drafted("goodwe-et")        # stand-in for a not yet verified direct profile
 DEYE = load_builtin("deye-sg")
 
 
@@ -101,7 +108,7 @@ def test_control_menu_has_three_items_no_default():
 
 
 def test_control_direct_unverified_aborts(monkeypatch):
-    f = flow(runtime=rt(reports=[report()]), profiles=(GW, DEYE), monkeypatch=monkeypatch)   # shipped: draft
+    f = flow(runtime=rt(reports=[report()]), profiles=(GW, DEYE), monkeypatch=monkeypatch)   # both draft
     assert asyncio.run(f.async_step_control_direct()) == {"type": "abort", "reason": "direct_unverified"}
     f = flow(runtime=rt(reports=[report(available=False)]), monkeypatch=monkeypatch)
     assert asyncio.run(f.async_step_control_direct())["reason"] == "direct_unverified"
@@ -384,3 +391,9 @@ def test_unpaired_entry_options_unchanged():
     r = asyncio.run(f.async_step_init())
     assert (r["type"], r["step_id"]) == ("form", "init")
     assert "direct_search" not in {getattr(k, "schema", k) for k in f._forecast_schema().schema}
+
+
+def test_shipped_direct_profile_statuses():
+    gw, deye = load_builtin("goodwe-et"), load_builtin("deye-sg")
+    assert gw.modbus.status == "verified" and direct_verified(gw)
+    assert deye.modbus.status == "draft" and not direct_verified(deye)
