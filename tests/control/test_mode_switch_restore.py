@@ -40,7 +40,7 @@ def _flow(h, *, options=None):
 
 @pytest.mark.asyncio
 async def test_direct_to_off_refused_when_restore_fails(make_hass, goodwe_udp_sim, goodwe_bank, sim_faults, issues):
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, timeout_s=0.1)
     try:
         sim_faults.drop_next = 10**6                         # falownik poza zasięgiem przy zapisie opcji
         r = await _flow(h).async_step_control_off()
@@ -53,7 +53,7 @@ async def test_direct_to_off_refused_when_restore_fails(make_hass, goodwe_udp_si
 @pytest.mark.asyncio
 async def test_direct_to_entities_refused_when_restore_fails(make_hass, goodwe_udp_sim, goodwe_bank, sim_faults,
                                                              issues):
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, timeout_s=0.1)
     try:
         sim_faults.drop_next = 10**6
         r = await _flow(h)._finish({**h.options, **ENTITIES})
@@ -77,7 +77,7 @@ async def test_direct_to_off_saved_when_restore_succeeds(make_hass, goodwe_udp_s
 @pytest.mark.asyncio
 async def test_new_target_refused_with_form_error_when_restore_fails(make_hass, goodwe_udp_sim, goodwe_bank,
                                                                     sim_faults, issues):
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, timeout_s=0.1)
     try:
         f = _flow(h)
         f._reports = [od.report()]                            # inny adres niż obecny cel
@@ -147,7 +147,7 @@ async def test_setup_returns_direct_ownership_through_direct_first(make_hass, go
                                                                    sim_faults, issues, monkeypatch, new):
     from tests.setup_harness import drain
     store = ControlStore(make_hass(), "e1")
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, store=store)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, store=store, timeout_s=0.1)
     await h.close()
     sim_faults.drop_next = 10**6                             # powrót przed przeładowaniem się nie udał
     hass, entry, reloads = _setup(monkeypatch, store, {**h.options, **new})
