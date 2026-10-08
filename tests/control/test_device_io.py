@@ -89,3 +89,4 @@ def test_direct_io_resend_needs_budget_left():
     assert io._may_resend("mode") is True
     io._on_send("mode")
     assert io._may_resend("mode") is False and io._may_resend("power_w") is True
+    assert io.budget.hit is False                    # odmowa ponownej wysyłki nie włącza flagi budżetu

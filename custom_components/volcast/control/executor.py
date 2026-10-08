@@ -819,8 +819,10 @@ class VolcastExecutor:
             return replace(decision, status=BLOCKED, reason="restore_not_owned")
         if not self._gates_open():
             return replace(decision, status=BLOCKED, reason="paused" if self.paused else "gates_closed")
-        report = await async_run_group_writes(decision.writes, self._writer.async_write,
-                                              on_exception=self._log_write_exception)
+        # Pisarz rejestrów: poza budżetem NVM (ponowna wysyłka po ciszy nie jest odmawiana) — powrót
+        # do trybu bazowego to działanie bezpieczeństwa; inni pisarze — zwykły zapis.
+        write = getattr(self._writer, "async_write_outside_budget", None) or self._writer.async_write
+        report = await async_run_group_writes(decision.writes, write, on_exception=self._log_write_exception)
         self._end_direct_writes()
         commit(decision, report, self._memory, now_mono)
         self._log_report(decision, report)

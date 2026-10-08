@@ -440,6 +440,28 @@ async def test_budget_exhausted_forced_mode_restores_to_auto(make_hass, goodwe_u
 
 
 @pytest.mark.asyncio
+async def test_budget_restore_frame_resent_after_silence_even_with_budget_used_up(make_hass, goodwe_udp_sim,
+                                                                                  goodwe_bank, sim_faults, issues):
+    # Powrót do trybu bazowego idzie poza budżetem: po całkowitej ciszy ramka powrotu jest wysyłana
+    # drugi raz także przy wyczerpanym budżecie (liczona, nigdy odmówiona).
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        budget = h.ex._memory.budget
+        for key in ("power_w", "mode"):
+            for _ in range(budget.per_key):
+                budget.note(key, h.utc().timestamp())
+        start = len(goodwe_udp_sim.log)
+        sim_faults.mute_write_echo = 1
+        new = plan(power=3000, sid="p2")
+        await h.ex.async_on_plan(new, parse_schedule(new))
+        await h.cycle()
+        assert h.ex.last_decision.status == "restore" and gw_raw_word(goodwe_bank, MODE) == 1
+        assert [(fc, a) for fc, a, _ in goodwe_udp_sim.log[start:]].count((0x06, MODE)) == 2
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
 async def test_budget_persisted_across_restart(make_hass, goodwe_udp_sim, goodwe_bank, issues):
     h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
     try:

@@ -263,16 +263,24 @@ class WriteBudget:
                                   maxlen=self._entries.maxlen)
 
     def exhausted(self, keys: Iterable[str], now_wall: float) -> set[str]:
-        """Klucze, dla których kolejna ramka przekroczyłaby budżet."""
+        """Klucze, dla których kolejna ramka przekroczyłaby budżet (odmowa zapisu — flaga `hit`)."""
+        out = self._full(keys, now_wall)
+        if out:
+            self.hit = True
+        return out
+
+    def would_exceed(self, key: str, now_wall: float) -> bool:
+        """Czy kolejna ramka klucza przekroczyłaby budżet — bez flagi `hit` (np. pominięta ponowna
+        wysyłka zapisu po ciszy: żaden zapis nie został odmówiony)."""
+        return bool(self._full((key,), now_wall))
+
+    def _full(self, keys: Iterable[str], now_wall: float) -> set[str]:
         self._normalize(now_wall)
         per: dict[str, int] = {}
         for k, _ in self._entries:
             per[k] = per.get(k, 0) + 1
         full = len(self._entries) >= self.total
-        out = {k for k in keys if full or per.get(k, 0) >= self.per_key}
-        if out:
-            self.hit = True
-        return out
+        return {k for k in keys if full or per.get(k, 0) >= self.per_key}
 
     def note(self, key: str, now_wall: float) -> None:
         """Jedna wysłana ramka zapisu (także ponowiona i cofająca)."""

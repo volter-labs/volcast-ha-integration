@@ -300,10 +300,27 @@ async def test_resend_skipped_when_nvm_budget_exhausted(goodwe_client, goodwe_pr
     budget = WriteBudget(per_key=1, total=10)
     sim_faults.mute_write_echo = 1
     w = RegisterWriter(goodwe_client, goodwe_profile, on_send=lambda key: budget.note(key, 1000.0),
-                       may_resend=lambda key: not budget.exhausted({key}, 1000.0))
+                       may_resend=lambda key: not budget.would_exceed(key, 1000.0))
     assert await w.async_write(RegisterWrite("mode", 47511, 10)) == OK      # zapis doszedł, echo zgubione
     assert [e[0] for e in goodwe_udp_sim.log].count(0x06) == 1
     assert budget.counts(1000.0) == {"mode": 1} and goodwe_client.transport.stats.write_resends == 0
+    assert budget.hit is False                       # pominięta ponowna wysyłka to nie odmowa zapisu
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restore", ["async_write_restore", "async_write_outside_budget"])
+async def test_restore_resent_after_silence_even_with_budget_used_up(goodwe_client, goodwe_profile, sim_faults,
+                                                                     goodwe_udp_sim, restore):
+    # Powrót do trybu bazowego idzie poza budżetem — ponowna wysyłka po ciszy nigdy nie jest odmawiana.
+    from custom_components.volcast.core.guard_state import WriteBudget
+    budget = WriteBudget(per_key=1, total=10)
+    budget.note("mode", 999.0)                        # budżet klucza wyczerpany
+    sim_faults.mute_write_echo = 1
+    w = RegisterWriter(goodwe_client, goodwe_profile, on_send=lambda key: budget.note(key, 1000.0),
+                       may_resend=lambda key: not budget.would_exceed(key, 1000.0))
+    assert await getattr(w, restore)(RegisterWrite("mode", 47511, 1)) == OK          # 11 → 1
+    assert [e[0] for e in goodwe_udp_sim.log].count(0x06) == 2
+    assert budget.counts(1000.0) == {"mode": 3}
 
 
 @pytest.mark.asyncio

@@ -270,8 +270,10 @@ class DirectIO:
 
     def _may_resend(self, key: str) -> bool:
         """Ponowna wysyłka zapisu (UDP, po ciszy) to kolejna ramka NVM — tylko gdy budżet klucza jej
-        nie przekroczy (sprawdzane przed wysłaniem, nie tylko liczone po nim)."""
-        return self.budget is None or not self.budget.exhausted({key}, self._now_wall())
+        nie przekroczy (sprawdzane przed wysłaniem, nie tylko liczone po nim). Bez flagi `hit` budżetu:
+        pominięta ponowna wysyłka to nie odmowa zapisu. Powrót do trybu bazowego tego nie pyta
+        (`RegisterWriter` — poza budżetem)."""
+        return self.budget is None or not self.budget.would_exceed(key, self._now_wall())
 
     def end_writes(self, end_mono: float) -> tuple[str, ...]:
         """Koniec naszej wymiany zapisów: odczyt rozpoczęty wcześniej nie świadczy o rozjeździe."""

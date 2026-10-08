@@ -15,7 +15,8 @@ nie dostał odpowiedzi (cisza, zerwanie, wyjątek Modbus ≠ 2), jest ponawiany 
 swoje czekanie na ponowne połączenie (backoff_min_s, potem podwojone; domyślnie 1,1 s i 2,1 s);
 transport nieznany 1,1 s. Ramka ZAPISU nigdy nie jest ponawiana przez pisarza: jedna próba zapisu na
 klucz. Transport UDP wysyła ją w tej próbie drugi raz wyłącznie po całkowitej ciszy (jak Box; wartość
-bezwzględna) i tylko, gdy `may_resend` pisarza (budżet NVM klucza) pozwala PRZED wysłaniem — każda
+bezwzględna); zwykły zapis tylko, gdy `may_resend` pisarza (budżet NVM klucza) pozwala PRZED
+wysłaniem, powrót do trybu bazowego (`async_write_restore`, `async_write_outside_budget`) zawsze — każda
 wysyłka idzie przez `on_send`, więc budżet liczy obie, a `stats.write_resends` pokazuje ponowienie.
 Dodatkowy czas na jeden odczyt: suma przerw + READ_RETRIES × timeout_s (+ odstępy gap_s;
 na transporcie strumieniowym + connect_timeout_s na każde ponowne połączenie). GoodWe UDP
@@ -189,8 +190,10 @@ class RegisterWriter:
         self.client = client
         self.profile = profile
         self._on_send = on_send
-        # pytane przez transport PRZED ponowną wysyłką zapisu (budżet NVM); None = bez sprawdzenia
+        # pytane przez transport PRZED ponowną wysyłką zapisu (budżet NVM); None = bez sprawdzenia;
+        # tylko zwykłe zapisy — powrót do trybu bazowego idzie poza budżetem
         self._may_resend = may_resend
+        self._budgeted = True
         self._function = profile.modbus.write_function
         self._lock = asyncio.Lock()
         # potwierdzane samym echem — wyłącznie z jawnej listy profilu
@@ -202,16 +205,23 @@ class RegisterWriter:
         self._last_count: int | None = None          # długość ostatniego odczytu (transport bez licznika)
 
     async def async_write(self, w: RegisterWrite) -> str:
-        return await self._guarded(w, skip_equal=False)
+        return await self._guarded(w, skip_equal=False, budgeted=True)
 
     async def async_write_restore(self, w: RegisterWrite) -> str:
         """Zapis powrotu do trybu bazowego: o tym, czy ramka w ogóle idzie, rozstrzyga świeży odczyt
-        PRZED zapisem (rejestr już ma wartość bazową → OK bez ramki), nie odczyt z cyklu."""
-        return await self._guarded(w, skip_equal=True)
+        PRZED zapisem (rejestr już ma wartość bazową → OK bez ramki), nie odczyt z cyklu. Poza
+        budżetem NVM: ponowna wysyłka po ciszy nigdy nie jest odmawiana (liczona przez `on_send`)."""
+        return await self._guarded(w, skip_equal=True, budgeted=False)
 
-    async def _guarded(self, w: RegisterWrite, *, skip_equal: bool) -> str:
+    async def async_write_outside_budget(self, w: RegisterWrite) -> str:
+        """Zwykły zapis (bez pomijania równych) poza budżetem NVM — powrót do trybu bazowego po
+        wyczerpaniu budżetu: ponowna wysyłka po ciszy nie jest odmawiana (liczona przez `on_send`)."""
+        return await self._guarded(w, skip_equal=False, budgeted=False)
+
+    async def _guarded(self, w: RegisterWrite, *, skip_equal: bool, budgeted: bool) -> str:
         try:
             async with self._lock:
+                self._budgeted = budgeted              # pod zamkiem pisarza — jeden zapis naraz
                 return await self._write(w, skip_equal=skip_equal)
         except Exception as err:  # noqa: BLE001 — pisarz nie rzuca; zapis niepewny
             _LOGGER.warning("direct write of %s failed: %s", w.key, type(err).__name__)
@@ -285,7 +295,8 @@ class RegisterWriter:
         return self._judge(w, before, back)
 
     async def _send(self, w: RegisterWrite) -> str:
-        extra = {} if self._may_resend is None else {"may_resend": lambda: self._resend_ok(w.key)}
+        gate = self._may_resend is not None and self._budgeted     # powrót do bazy — bez bramki budżetu
+        extra = {"may_resend": lambda: self._resend_ok(w.key)} if gate else {}
         try:
             await self.client.transport.write(w.addr, [w.value], function=self._function,
                                               on_send=lambda: self._sent(w.key), **extra)
