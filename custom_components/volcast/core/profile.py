@@ -16,6 +16,8 @@ from .profile_schema import validate_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
 _BUILTIN_ID_RE = re.compile(r"[a-z0-9-]+")
+# Falownik (GW8KN-ET) pokazuje nową nastawę w odczycie dopiero po < 1 s od echa zapisu.
+DEFAULT_READBACK_SETTLE_S = 1.5
 
 
 class ProfileError(ValueError):
@@ -74,6 +76,8 @@ class Profile:
     tou_field_order: tuple[str, ...]
     modbus: ModbusSpec
     nvm_budget: NvmBudget | None
+    # odczekanie przed ponownym odczytem zwrotnym, gdy pierwszy pokazał wartość sprzed zapisu
+    readback_settle_s: float = DEFAULT_READBACK_SETTLE_S
 
     def intent(self, name: str) -> Mapping[str, Any] | None:
         return self.raw["intents"][name]
@@ -123,6 +127,7 @@ def profile_from_dict(raw: dict) -> Profile:
         tou_field_order=tuple(tou.get("field_order", ())),
         modbus=_modbus_spec(raw["modbus"]),
         nvm_budget=_nvm_budget(wp.get("nvm_budget")),
+        readback_settle_s=float(wp.get("readback_settle_s", DEFAULT_READBACK_SETTLE_S)),
     )
 
 

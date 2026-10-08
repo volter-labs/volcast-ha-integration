@@ -49,16 +49,4 @@ async def deye_client(rtu_tcp_sim, deye_profile):
 @pytest.fixture
 def deye_writer(deye_client, deye_profile):
     return RegisterWriter(deye_client, deye_profile)
-
-
-@pytest.fixture(autouse=True)
-def writer_sleeps(monkeypatch):
-    """Przerwy pisarza między ponowionymi odczytami — rejestrowane, bez realnego czekania."""
-    from custom_components.volcast.core.modbus import writer as writer_mod
-    delays: list[float] = []
-
-    async def _no_wait(delay: float) -> None:
-        delays.append(delay)
-
-    monkeypatch.setattr(writer_mod, "_sleep", _no_wait, raising=False)
-    return delays
+# `writer_sleeps` (przerwy pisarza bez realnego czekania) — autouse w `tests/conftest.py`.

@@ -419,3 +419,21 @@ def test_read_tou_enabled_needs_tou_enable_at_same_address():
     p = _tw_with_enable()
     p["read"]["tou_enabled"] = {"addr": 147, "type": "u16"}
     assert "$.read.tou_enabled" in _errs(p)
+
+
+# ── odczekanie przed ponownym odczytem zwrotnym (`write_policy.readback_settle_s`) ──
+
+
+@pytest.mark.parametrize("value", [0, 0.5, 1.5, 10])
+def test_readback_settle_optional_and_in_range(value):
+    p = ms_profile()
+    assert "readback_settle_s" not in p["write_policy"] and validate_profile(p) == []
+    p["write_policy"]["readback_settle_s"] = value
+    assert validate_profile(p) == []
+
+
+@pytest.mark.parametrize("value", [-0.1, 10.5, float("inf"), float("nan"), True, "1.5", None])
+def test_readback_settle_out_of_range_rejected(value):
+    p = ms_profile()
+    p["write_policy"]["readback_settle_s"] = value
+    assert "$.write_policy.readback_settle_s" in _errs(p)

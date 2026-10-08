@@ -76,6 +76,7 @@
     "nvm": true,
     "max_direction_changes_per_hour": 4,
     "max_state_age_s": 300,
+    "readback_settle_s": 1.5,
     "nvm_budget": {"window_h": 24, "per_key": 144, "total": 600}
   },
   "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},

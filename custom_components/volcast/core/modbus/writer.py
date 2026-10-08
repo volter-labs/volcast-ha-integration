@@ -27,10 +27,18 @@ na transporcie strumieniowym + connect_timeout_s na każde ponowne połączenie)
 | wyjątek 2                 | —                              | UNSUPPORTED |
 | dowolne                   | = zamówiona                    | OK |
 | dowolne                   | brak                           | ERROR |
-| zgodne / wyjątek ≠ 2, 5   | = sprzed zapisu                | DENIED |
+| zgodne                    | = sprzed zapisu                | odczekanie i ponowny odczyt (niżej) |
+| wyjątek ≠ 2, 5            | = sprzed zapisu                | DENIED |
 | zgodne / wyjątek ≠ 2, 5   | inna, w stronę bezpieczną      | OK_ADJUSTED z wartością rzeczywistą (tylko liczby) |
 | zgodne / wyjątek ≠ 2, 5   | inna, w stronę groźną / nie-liczba | ERROR |
 | brak / wyjątek 5          | ≠ zamówiona                    | ERROR (zapis mógł jeszcze dojść) |
+
+Echo zgodne, a odczyt zwrotny = sprzed zapisu: falownik stosuje nastawę z opóźnieniem (GW8KN-ET:
+pierwszy odczyt po echu jeszcze stary, nowa wartość < 1 s później). Zamiast DENIED — najwyżej
+`READBACK_SETTLE_READS` (2) ponowne odczyty, każdy po `write_policy.readback_settle_s` profilu
+(domyślnie 1,5 s). Pierwszy inny niż sprzed zapisu idzie do tabeli (= zamówiona → OK, inna → wiersze
+„inna”); DENIED dopiero, gdy ostatni nadal pokazuje wartość sprzed zapisu; ponowny odczyt bez
+odpowiedzi → ERROR. Ramka zapisu i tak idzie raz.
 
 Pola bitowe (bit ładowania z sieci programu, włącznik harmonogramu) są składane na słowie
 z odczytu PRZED zapisem, nie z obrazu ostatniego odpytania. Włącznik harmonogramu, który już
@@ -51,6 +59,7 @@ import asyncio
 import logging
 from typing import Callable, Iterable
 
+from ..profile import DEFAULT_READBACK_SETTLE_S
 from ..registers import RegisterWrite
 from ..transports.base import ModbusException, TransportError
 from ..transports.stream import StreamTransport
@@ -69,6 +78,8 @@ READ_RETRIES = 2
 READ_RETRY_BACKOFF_S = 0.75            # GoodWe UDP: bez czekania na ponowne połączenie
 READ_RETRY_FALLBACK_S = 1.1            # transport nieznany: ≥ domyślne backoff_min_s (1 s) + zapas
 _RECONNECT_MARGIN_S = 0.1              # zapas ponad czekanie transportu strumieniowego
+# Ponowne odczyty zwrotne po odczekaniu, zanim wartość sprzed zapisu stanie się odmową.
+READBACK_SETTLE_READS = 2
 _sleep = asyncio.sleep                 # podmieniane w testach
 
 
@@ -197,6 +208,12 @@ class RegisterWriter:
             return OK
         if echo == _ECHO_NONE:
             return ERROR
+        if back == before and echo == _ECHO_OK:
+            back = await self._settle(w.addr, before)
+            if back is None:
+                return ERROR
+            if back == w.value:
+                return OK
         if back == before:
             return DENIED
         actual = _numeric_actual(self.profile, w.key, back, w.value)
@@ -224,6 +241,20 @@ class RegisterWriter:
         if echo == UNSUPPORTED:
             return UNSUPPORTED
         return OK if echo == _ECHO_OK else ERROR
+
+    async def _settle(self, addr: int, before: int) -> int | None:
+        """Echo potwierdzone, a odczyt zwrotny pokazał wartość sprzed zapisu: falownik stosuje nastawę
+        z opóźnieniem (GW8KN-ET: nowa wartość < 1 s po echu). Najwyżej `READBACK_SETTLE_READS`
+        ponownych odczytów, każdy po `readback_settle_s` profilu; pierwsza wartość inna niż sprzed
+        zapisu rozstrzyga. None = ponowny odczyt bez odpowiedzi (zapis mógł dojść — ERROR)."""
+        settle = getattr(self.profile, "readback_settle_s", DEFAULT_READBACK_SETTLE_S)
+        back: int | None = before
+        for _ in range(READBACK_SETTLE_READS):
+            await _sleep(settle)
+            back = await self._read_back(addr)
+            if back != before:
+                break
+        return back
 
     async def _read_back(self, addr: int) -> int | None:
         try:

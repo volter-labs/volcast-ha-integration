@@ -35,6 +35,7 @@ ENCODE_FOR = {"mode": "mode", "power_w": "watts", "soc_min": "percent", "soc_max
               "export_limit_w": "watts", "export_limit_enabled": "bool"}
 TOU_ENCODE = {"start": "hhmm", "power_w": "watts", "soc": "percent"}
 TRANSPORTS = ("goodwe_udp", "solarman_v5", "modbus_tcp", "modbus_rtu")
+MAX_READBACK_SETTLE_S = 10
 _ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _HA_TOU_KEY = re.compile(r"^tou_[1-9]_(start|power_w|soc|grid_charge)$")
 # Odczyt włącznika harmonogramu TOU — tylko dostęp bezpośredni, nie encja HA.
@@ -555,10 +556,14 @@ def validate_profile(raw: object) -> list[str]:
 
     wp = v.obj(top.get("write_policy"), "$.write_policy",
                ("order", "min_interval_s", "nvm", "max_direction_changes_per_hour", "max_state_age_s"),
-               ("nvm_budget",))
+               ("nvm_budget", "readback_settle_s"))
     if wp is not None:
         if "nvm_budget" in wp:
             _nvm_budget(v, wp["nvm_budget"])
+        # Odczekanie przed ponownym odczytem zwrotnym, gdy pierwszy pokazał wartość sprzed zapisu.
+        if "readback_settle_s" in wp and v.num(wp["readback_settle_s"], "$.write_policy.readback_settle_s") \
+                and not 0 <= wp["readback_settle_s"] <= MAX_READBACK_SETTLE_S:
+            v.err("$.write_policy.readback_settle_s", f"oczekiwano liczby 0..{MAX_READBACK_SETTLE_S}")
         order = v.str_list(wp.get("order"), "$.write_policy.order")
         if order is not None:
             if sorted(order) != sorted(written) or len(set(order)) != len(order):

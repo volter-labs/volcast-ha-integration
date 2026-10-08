@@ -803,3 +803,17 @@ def _no_real_network(monkeypatch):
     yield guard
     if guard.violations:
         pytest.fail(f"{_NETWORK_FAIL}: {len(guard.violations)} blocked attempt(s)")
+
+
+@pytest.fixture(autouse=True)
+def writer_sleeps(monkeypatch):
+    """Przerwy pisarza rejestrów (ponowione odczyty, odczekanie przed ponownym odczytem zwrotnym) —
+    rejestrowane, bez realnego czekania."""
+    from custom_components.volcast.core.modbus import writer as writer_mod
+    delays: list[float] = []
+
+    async def _no_wait(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(writer_mod, "_sleep", _no_wait, raising=False)
+    return delays

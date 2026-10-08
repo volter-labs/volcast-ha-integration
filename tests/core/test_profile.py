@@ -103,3 +103,14 @@ def test_modbus_spec_and_nvm_budget_parsed():
     assert profile_from_dict(ms_profile()).nvm_budget is None
     with pytest.raises(TypeError):
         p.modbus.transport_options["goodwe_udp"]["port"] = 1       # tylko do odczytu
+
+
+def test_readback_settle_default_and_override():
+    from custom_components.volcast.core.profile import DEFAULT_READBACK_SETTLE_S
+    assert DEFAULT_READBACK_SETTLE_S == 1.5
+    assert profile_from_dict(ms_profile()).readback_settle_s == 1.5          # pole nieobecne
+    raw = ms_profile()
+    raw["write_policy"]["readback_settle_s"] = 0.4
+    assert profile_from_dict(raw).readback_settle_s == 0.4
+    gw = load_builtin("goodwe-et")
+    assert gw.raw["write_policy"]["readback_settle_s"] == 1.5 and gw.readback_settle_s == 1.5
