@@ -193,15 +193,18 @@ def _fresh_value(profile, key: str, value: int, before: int) -> int:
 class RegisterWriter:
     def __init__(self, client: RegisterClient, profile, *,
                  on_send: Callable[[str], None] | None = None, unreadable: Iterable[str] = (),
-                 may_resend: Callable[[str], bool] | None = None, confirm_write_illegal: bool = False) -> None:
+                 may_resend: Callable[[str], bool] | None = None, confirm_write_illegal: bool = False,
+                 illegal_once: set[str] | None = None) -> None:
         self.client = client
         self.profile = profile
         # Wyjątek 2 w odpowiedzi na ZAPIS (odczyt rejestru działa): bez potwierdzenia nie jest werdyktem.
         # Pierwszy raz rozstrzyga odczyt zwrotny (nietknięty → DENIED, zapisany → OK), dopiero powtórka
         # w późniejszym zapisie tego klucza → UNSUPPORTED (wykonawca trzyma to na całą sesję). Udany zapis
         # klucza kasuje pierwszy raz. Domyślnie wyłączone: aplikator wzorcowy (wektory złote) — od razu.
+        # `illegal_once` od wołającego: zbiór „pierwszych razy” przeżywa nowego pisarza (ponowne
+        # połączenie), inaczej prawdziwy wyjątek 2 na łączu, które się zrywa, nigdy by się nie potwierdził.
         self._confirm_illegal = confirm_write_illegal
-        self._illegal_once: set[str] = set()
+        self._illegal_once: set[str] = illegal_once if illegal_once is not None else set()
         self._on_send = on_send
         # pytane przez transport PRZED ponowną wysyłką zapisu (budżet NVM); None = bez sprawdzenia;
         # tylko zwykłe zapisy — powrót do trybu bazowego idzie poza budżetem
@@ -352,7 +355,7 @@ class RegisterWriter:
         return OK if echo == _ECHO_OK else ERROR
 
     def _first_illegal(self, key: str) -> bool:
-        """Wyjątek 2 na zapis klucza po raz pierwszy w tej sesji pisarza (gdy potwierdzanie jest włączone)."""
+        """Wyjątek 2 na zapis klucza po raz pierwszy (gdy potwierdzanie jest włączone; zakres — `illegal_once`)."""
         if not self._confirm_illegal or key in self._illegal_once:
             return False
         self._illegal_once.add(key)
