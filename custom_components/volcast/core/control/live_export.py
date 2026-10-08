@@ -63,6 +63,9 @@ PV_MAX_RATED_FACTOR = 2.0
 LOAD_MAX_W = 100_000.0
 # Tryb bezpośredni: okno szczytu poboru netto (strefa martwa NVM, opis w nagłówku modułu).
 DIRECT_PEAK_WINDOW_S = 600.0
+# Tryb bezpośredni: najstarsza para (PV, pobór), którą wolno przetrzymać na jedną nieważną próbkę —
+# para z poprzedniego cyklu (co 60 s) z zapasem na opóźnienie; starsza (cykle bez decyzji) = brak pary.
+HELD_PAIR_MAX_AGE_S = 150.0
 
 SlotKey = tuple[datetime, datetime, str]
 
@@ -77,19 +80,25 @@ class LiveExportMemory:
     # tryb bezpośredni: próbki (czas monotoniczny, pobór − PV [W]) z ważnych odczytów w oknie
     net_samples: tuple[tuple[float, float], ...] = ()
     # tryb bezpośredni: ostatnia ważna para (PV, pobór) i liczba kolejnych cykli bez niej — jedna
-    # nieważna próbka korzysta z pary przez jeden cykl, druga z rzędu = slot w trybie neutralnym
+    # nieważna próbka korzysta z pary przez jeden cykl, druga z rzędu = slot w trybie neutralnym;
+    # `last_pair_at` — czas monotoniczny obserwacji pary (wiek, `HELD_PAIR_MAX_AGE_S`)
     last_pair: tuple[float, float] | None = None
+    last_pair_at: float | None = None
     invalid_streak: int = 0
 
-    def with_pair(self, pv_w: float | None, load_w: float | None) -> "LiveExportMemory":
+    def with_pair(self, pv_w: float | None, load_w: float | None, now_mono: float) -> "LiveExportMemory":
         """Obserwacja pary (PV, pobór) w KAŻDYM cyklu (już zwalidowanej; None = nieważna)."""
         if pv_w is not None and load_w is not None:
-            return replace(self, last_pair=(pv_w, load_w), invalid_streak=0)
+            return replace(self, last_pair=(pv_w, load_w), last_pair_at=now_mono, invalid_streak=0)
         return replace(self, invalid_streak=self.invalid_streak + 1)
 
-    def held_pair(self) -> tuple[float, float] | None:
-        """Para z poprzedniego cyklu dla PIERWSZEJ nieważnej próbki z rzędu; potem None."""
-        return self.last_pair if self.invalid_streak == 1 else None
+    def held_pair(self, now_mono: float) -> tuple[float, float] | None:
+        """Para z poprzedniego cyklu dla PIERWSZEJ nieważnej próbki z rzędu, nie starsza niż
+        `HELD_PAIR_MAX_AGE_S`; inaczej None."""
+        at = self.last_pair_at
+        if self.invalid_streak != 1 or at is None or not 0.0 <= now_mono - at < HELD_PAIR_MAX_AGE_S:
+            return None
+        return self.last_pair
 
     def window_count(self, now_mono: float, window_s: float) -> int:
         return sum(1 for t, _ in self.net_samples if 0.0 <= now_mono - t < window_s)

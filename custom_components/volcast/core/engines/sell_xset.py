@@ -34,6 +34,15 @@ def _non_negative(x: float | None) -> float:
     return v if v is not None and v > 0.0 else 0.0
 
 
+def sell_ceiling(rated_power_w: float | None, export_limit_w: float | None) -> float:
+    """Pułap nastawy sprzedaży: min(moc znamionowa, limit eksportu); limit `None` = brak limitu,
+    limit NaN/inf/ujemny = 0 (eksport zablokowany), znamionowa nieznana/niedodatnia = 0."""
+    ceiling = _non_negative(rated_power_w)
+    if export_limit_w is not None:
+        ceiling = min(ceiling, _non_negative(export_limit_w))
+    return ceiling
+
+
 def sell_xset(
     *,
     battery_w: float | None,
@@ -60,9 +69,7 @@ def sell_xset(
     Obowiązki wołającego: przed wywołaniem odświeżyć `last_known_load_w` bieżącym ważnym
     odczytem domu; `prev_xset_w` to nastawa ostatnio ZAPISANA do falownika.
     """
-    ceiling = _non_negative(rated_power_w)
-    if export_limit_w is not None:
-        ceiling = min(ceiling, _non_negative(export_limit_w))
+    ceiling = sell_ceiling(rated_power_w, export_limit_w)
 
     battery = _non_negative(battery_w)
     pv = _finite(pv_w)

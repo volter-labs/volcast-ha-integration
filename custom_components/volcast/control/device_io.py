@@ -241,6 +241,8 @@ class DirectIO:
         self._nowrite = NoWriteWriter() if self.trial else None
         self._writer: RegisterWriter | None = None
         self._writer_client = None
+        # pierwszy wyjątek 2 na zapis klucza — wspólny dla pisarzy kolejnych połączeń
+        self._illegal_once: set[str] = set()
 
     # ── pisarz, budżet, bariera rozjazdu ──
 
@@ -253,7 +255,8 @@ class DirectIO:
             return _NoLinkWriter()
         if self._writer is None or self._writer_client is not client:
             self._writer = RegisterWriter(client, self._profile, on_send=self._on_send, unreadable=self.unreadable,
-                                          may_resend=self._may_resend, confirm_write_illegal=True)
+                                          may_resend=self._may_resend, confirm_write_illegal=True,
+                                          illegal_once=self._illegal_once)
             self._writer_client = client
         return self._writer
 

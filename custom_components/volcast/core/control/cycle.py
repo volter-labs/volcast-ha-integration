@@ -50,6 +50,7 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from ..engines.mode_setpoint import map_slot
+from ..engines.sell_xset import sell_ceiling
 from ..entity_map import EntityWrite, entity_value
 from ..guard_state import DirectionLimiter, WriteBudget, WriteThrottle
 from ..guards import GuardContext, GuardResult, apply_guards, temperature_ok
@@ -278,7 +279,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         pv, load = _direct_readings(tele, profile, _rated_or_none(limits))
         memory.live_export = memory.live_export.with_net(
             now_mono, None if pv is None or load is None else load - pv,
-            lx.DIRECT_PEAK_WINDOW_S).with_pair(pv, load)
+            lx.DIRECT_PEAK_WINDOW_S).with_pair(pv, load, now_mono)
     if gates.control_mode != target.kind:
         return CycleDecision(IDLE, "no_mode_chosen")
     if profile.control_model != "mode_setpoint":
@@ -609,7 +610,7 @@ def _live_export_direct(planned: Params, guarded: Params, intent: str, slot, pro
     if rated is not None and (pv is None or load is None):
         # Chwilowy błąd odczytu (jedna próbka): ostatnia ważna para przez JEDEN cykl — bez migania
         # tryb neutralny ↔ sprzedaż; druga nieważna próbka z rzędu = tryb neutralny (niżej).
-        pair = mem.held_pair()
+        pair = mem.held_pair(now_mono)
         if pair is not None:
             (pv, load), held = pair, True
     if rated is None or pv is None or load is None:
@@ -631,15 +632,18 @@ def _live_export_direct(planned: Params, guarded: Params, intent: str, slot, pro
     peak = mem.net_peak(now_mono, lx.DIRECT_PEAK_WINDOW_S)
     net = load - pv
     effective_load = pv + max(net, peak if peak is not None else net)
+    export_limit = lx.export_ceiling(enabled, limit)
     live, mem = lx.compute(
         key=key, battery_w=planned.power_w, pv_w=pv, load_w=effective_load,
-        export_limit_w=lx.export_ceiling(enabled, limit), rated_power_w=rated, memory=mem)
+        export_limit_w=export_limit, rated_power_w=rated, memory=mem)
     notes = [live.note()] + ([lx.NOTE_SELL_READING_HELD] if held else [])
-    # Puste okno (restart albo > okno bez ważnych próbek): PV, które dopycha nastawę do mocy
-    # znamionowej, czeka na drugą próbkę (szczyt okna z dwóch próbek maskuje pojedynczy błąd PV).
-    # Do tego czasu nastawa bez PV (bateria − pobór) — bateria oddaje najwyżej plan.
+    # Puste okno (restart albo > okno bez ważnych próbek): PV, które dopycha nastawę do pułapu
+    # (min(moc znamionowa, limit eksportu) — jak w `sell_xset`), czeka na drugą próbkę (szczyt okna
+    # z dwóch próbek maskuje pojedynczy błąd PV). Do tego czasu nastawa bez PV (bateria − pobór) —
+    # bateria oddaje najwyżej plan.
     no_pv = max(0.0, float(planned.power_w or 0.0) - load)
-    if mem.window_count(now_mono, lx.DIRECT_PEAK_WINDOW_S) < 2 and live.xset_w >= rated - 0.5 \
+    ceiling = sell_ceiling(rated, export_limit)
+    if mem.window_count(now_mono, lx.DIRECT_PEAK_WINDOW_S) < 2 and live.xset_w >= ceiling - 0.5 \
             and no_pv < live.xset_w:
         live = replace(live, xset_w=no_pv)
         notes.append(lx.NOTE_SELL_PV_UNCONFIRMED)

@@ -71,3 +71,29 @@ def test_window_after_ten_minutes_without_valid_samples_counts_as_empty(goodwe_p
     _run(goodwe_profile, memory, 0, power_w=5000.0, pv=4000.0, load=300.0)
     late = _run(goodwe_profile, memory, 11, power_w=5000.0, pv=4000.0, load=300.0)   # 11 min później
     assert NOTE_SELL_PV_UNCONFIRMED in late.notes and late.flat["power_w"] == pytest.approx(4700.0)
+
+
+def test_empty_window_pv_pushing_to_the_export_limit_needs_a_second_sample(goodwe_profile):
+    # Limit eksportu poniżej mocy znamionowej: pułap to min(znamionowa, limit), nie sama znamionowa.
+    memory = ControlMemory.for_profile(goodwe_profile)
+    first = _run(goodwe_profile, memory, 0, power_w=2500.0, pv=4000.0, load=300.0, export_limit_w=3000)
+    assert first.flat["mode"] == "sell_power" and NOTE_SELL_PV_UNCONFIRMED in first.notes
+    assert first.flat["power_w"] == pytest.approx(2200.0)        # bez nieprzyjętego PV: bateria − dom
+    second = _run(goodwe_profile, memory, 1, power_w=2500.0, pv=4000.0, load=300.0, export_limit_w=3000)
+    assert second.flat["power_w"] == pytest.approx(3000.0) and NOTE_SELL_PV_UNCONFIRMED not in second.notes
+
+
+def test_old_valid_pair_is_not_held(goodwe_profile):
+    # Ostatnia ważna para sprzed kilku cykli (cykle nie dochodziły do decyzji) — nie przetrzymujemy jej.
+    memory = ControlMemory.for_profile(goodwe_profile)
+    _run(goodwe_profile, memory, 0, pv=200.0, load=700.0)
+    late = _run(goodwe_profile, memory, 5, pv=None)              # 5 min później
+    assert late.flat["mode"] == goodwe_profile.neutral_mode and NOTE_SELL_NO_READING in late.notes
+    assert NOTE_SELL_READING_HELD not in late.notes
+
+
+def test_held_pair_expires_after_its_max_age():
+    from custom_components.volcast.core.control.live_export import HELD_PAIR_MAX_AGE_S, LiveExportMemory
+    mem = LiveExportMemory().with_pair(200.0, 700.0, 1000.0).with_pair(None, None, 1060.0)
+    assert mem.held_pair(1060.0) == (200.0, 700.0)
+    assert mem.held_pair(1000.0 + HELD_PAIR_MAX_AGE_S) is None
