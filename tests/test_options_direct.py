@@ -271,6 +271,18 @@ def test_manual_without_conflict_keeps_not_found(monkeypatch):
     assert shown[-1]["errors"] == {"base": "direct_not_found"} and not shown[-1]["placeholders"]
 
 
+@pytest.mark.parametrize("found", [True, False])
+def test_pick_input_without_candidate_shows_the_form_not_an_abort(monkeypatch, found):
+    # Wejście z innego kroku (np. `{"direct_search": True}` po `progress_done`) to nie wybór kandydata.
+    f = flow(runtime=rt(), monkeypatch=monkeypatch)
+    shown = _capture_forms(monkeypatch)
+    f._reports = [report()] if found else []
+    r = asyncio.run(f.async_step_direct_pick({"direct_search": True}))
+    assert r["type"] == "form" and r["step_id"] == "direct_pick"
+    assert shown[-1]["errors"] == ({} if found else {"base": "direct_not_found"})
+    assert "manual" in f._pick_labels()                       # wpis ręczny zawsze dostępny
+
+
 def test_pick_with_only_conflicting_candidate_names_the_integration(monkeypatch):
     f = flow(runtime=rt(), entries=[_goodwe_entry()], monkeypatch=monkeypatch)
     shown = _capture_forms(monkeypatch)

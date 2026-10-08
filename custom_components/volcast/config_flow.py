@@ -786,7 +786,9 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     async def async_step_direct_pick(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         labels = self._pick_labels()
-        if user_input is not None:
+        # Tylko wejście z TEGO formularza jest wyborem; inne (np. ponowione wejście kroku, który
+        # zakończył wyszukiwanie) pokazuje formularz — z wpisem ręcznym — zamiast przerywać flow.
+        if user_input is not None and "candidate" in user_input:
             pick = user_input.get("candidate")
             if pick == _MANUAL:
                 return await self.async_step_direct_manual()
