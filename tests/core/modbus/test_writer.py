@@ -197,7 +197,7 @@ async def test_link_down_is_error(goodwe_profile):
     boom = _Boom(LinkDown("down"))
     w = RegisterWriter(RegisterClient(boom, goodwe_profile), goodwe_profile)
     assert await w.async_write(RegisterWrite("mode", 47511, 10)) == ERROR
-    # odczyt zwrotny spróbowany i ponowiony (zapis mógł dojść); ramka zapisu tylko jedna
+    # odczyt zwrotny spróbowany i ponowiony (zapis mógł dojść); pisarz nie ponawia zapisu
     from custom_components.volcast.core.modbus.writer import READ_RETRIES
     assert boom.reads == 2 + READ_RETRIES and boom.writes == 1
 
@@ -274,6 +274,23 @@ async def test_on_send_counts_every_frame(goodwe_client, goodwe_profile, sim_fau
     w = RegisterWriter(goodwe_client, goodwe_profile, on_send=sent.append)
     await w.async_write(RegisterWrite("mode", 47511, 10))
     assert sent == ["mode", "mode"]
+
+
+@pytest.mark.asyncio
+async def test_resent_write_counted_twice_in_nvm_budget_and_visible(goodwe_client, goodwe_profile, sim_faults,
+                                                                    goodwe_udp_sim, caplog):
+    # Po całkowitej ciszy transport UDP wysyła zapis drugi raz (jak Box; wartość bezwzględna, idempotentna).
+    # Każda wysyłka to potencjalny zapis EEPROM — budżet NVM liczy obie, statystyka i log mówią o ponowieniu.
+    from custom_components.volcast.core.guard_state import WriteBudget
+    budget = WriteBudget.for_profile(goodwe_profile)
+    sim_faults.mute_write_echo = 1
+    w = RegisterWriter(goodwe_client, goodwe_profile, on_send=lambda key: budget.note(key, 1000.0))
+    with caplog.at_level("DEBUG"):
+        assert await w.async_write(RegisterWrite("mode", 47511, 10)) == OK
+    assert [e[0] for e in goodwe_udp_sim.log].count(0x06) == 2
+    assert budget.counts(1000.0) == {"mode": 2}
+    assert goodwe_client.transport.stats.write_resends == 1
+    assert "write resent" in caplog.text and "127.0.0.1" not in caplog.text
 
 
 @pytest.mark.asyncio

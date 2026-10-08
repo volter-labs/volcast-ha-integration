@@ -12,7 +12,8 @@ Zasady (wszystkie transporty):
   przed następnym żądaniem — spóźniona odpowiedź tej samej długości nie może zostać wzięta
   za odpowiedź na kolejne żądanie (FC 3 nie niesie adresu);
 * odczyt: do `read_tries` prób, każda na świeżym kanale; zapis: na UDP najwyżej dwie wysyłki
-  (druga tylko przy braku jakiejkolwiek odpowiedzi), na TCP jedna; wyjątek Modbus bez ponawiania.
+  (druga tylko przy braku jakiejkolwiek odpowiedzi; każda przez `on_send` — budżet NVM liczy obie,
+  `stats.write_resends`), na TCP jedna; wyjątek Modbus bez ponawiania.
 
 W komunikatach i logach wyłącznie rodzaj transportu i nazwy klas błędów — nigdy adres hosta.
 """
@@ -79,6 +80,7 @@ class TransportStats:
     unsolicited: int = 0            # ramki protokołu naszego loggera (nie sygnał innego klienta)
     consecutive_timeouts: int = 0
     channel_resets: int = 0         # nasze zamknięcie kanału (nowe gniazdo UDP / nowe połączenie TCP)
+    write_resends: int = 0          # druga wysyłka zapisu po całkowitej ciszy (UDP) — liczona też w budżecie NVM
     last_ok_mono: float | None = None
 
 
@@ -320,6 +322,11 @@ class BaseTransport:
         sends = 2 if self.resend_writes else 1
         async with self.exclusive(), self._lock:
             for i in range(sends):
+                if i:
+                    # Ta sama wartość bezwzględna drugi raz (jak Box). Każda wysyłka woła `on_send`,
+                    # więc budżet NVM liczy obie; tu licznik i log (bez adresu hosta).
+                    self.stats.write_resends += 1
+                    _LOGGER.debug("%s: write resent after silence", self.kind)
                 try:
                     await self._transact(req, on_send)
                     return

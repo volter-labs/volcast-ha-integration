@@ -14,6 +14,11 @@
   limitu (1–3 bloki; cisza i zerwanie i tak przerywają).
 * Gdy nie udał się ŻADEN blok, `read_state` rzuca ostatni błąd — wołający zatrzymuje poprzedni
   odczyt zamiast dostać „świeży” odczyt bez wartości.
+* Łącze bez korelacji odpowiedzi (GoodWe UDP, `views.py`): kolejność bloków `poll_order` (sąsiednie
+  różnej długości, pojedyncze rejestry zapisu bez znanego bloku na końcu), blok rozdzielający przed
+  odczytem tej samej długości co poprzedni, wyjątek 2 bloku dopiero po ponowieniu (za blokiem
+  rozdzielającym) dzieli blok, a wartość z podziału inna niż z ostatniego całego bloku wymaga drugiego,
+  zgodnego odczytu — inaczej klucze zakresu zostają bez wartości (nie przesunięta wartość).
 * `at_mono` odczytu to chwila STARTU cyklu (bloki nie są atomowe — zapis mógł wejść między nie).
 """
 from __future__ import annotations

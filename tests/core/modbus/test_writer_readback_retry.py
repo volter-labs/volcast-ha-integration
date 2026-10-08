@@ -1,4 +1,4 @@
-"""Pisarz: ponowiony ODCZYT (przed zapisem i zwrotny) przy chwilowej ciszy — ramka zapisu nigdy dwa razy."""
+"""Pisarz: ponowiony ODCZYT (przed zapisem i zwrotny) przy chwilowej ciszy — pisarz nigdy nie ponawia zapisu."""
 import asyncio
 
 import pytest

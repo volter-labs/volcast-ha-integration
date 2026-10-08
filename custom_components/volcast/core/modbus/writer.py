@@ -13,7 +13,10 @@ nie dostał odpowiedzi (cisza, zerwanie, wyjątek Modbus ≠ 2), jest ponawiany 
 `READ_RETRIES` (2) razy, po jednej próbie transportu i po przerwie przed każdym ponowieniem
 (`RegisterWriter.read_retry_delays`): GoodWe UDP 0,75 s; transport strumieniowy przeczekuje
 swoje czekanie na ponowne połączenie (backoff_min_s, potem podwojone; domyślnie 1,1 s i 2,1 s);
-transport nieznany 1,1 s. Ramka ZAPISU nigdy nie jest ponawiana przez pisarza.
+transport nieznany 1,1 s. Ramka ZAPISU nigdy nie jest ponawiana przez pisarza: jedna próba zapisu na
+klucz. Transport UDP wysyła ją w tej próbie drugi raz wyłącznie po całkowitej ciszy (jak Box; wartość
+bezwzględna) — każda wysyłka idzie przez `on_send`, więc budżet NVM liczy obie, a `stats.write_resends`
+transportu pokazuje ponowienie.
 Dodatkowy czas na jeden odczyt: suma przerw + READ_RETRIES × timeout_s (+ odstępy gap_s;
 na transporcie strumieniowym + connect_timeout_s na każde ponowne połączenie). GoodWe UDP
 (timeout 2 s, odstęp 0,3 s): ≤ 5,5 s + odstępy na odczyt; odczyt przed zapisem to tam dwa
@@ -46,7 +49,7 @@ pierwszy odczyt po echu jeszcze stary, nowa wartość < 1 s później). Zamiast 
 `READBACK_SETTLE_READS` (2) ponowne odczyty, każdy po `write_policy.readback_settle_s` profilu
 (domyślnie 1,5 s). Pierwszy inny niż sprzed zapisu idzie do tabeli (= zamówiona → OK, inna → wiersze
 „inna”); DENIED dopiero, gdy ostatni nadal pokazuje wartość sprzed zapisu; ponowny odczyt bez
-odpowiedzi → ERROR. Ramka zapisu i tak idzie raz.
+odpowiedzi → ERROR. Ponowne odczyty to tylko FC 3 — próba zapisu nadal jedna.
 
 Pola bitowe (bit ładowania z sieci programu, włącznik harmonogramu) są składane na słowie
 z odczytu PRZED zapisem, nie z obrazu ostatniego odpytania. Włącznik harmonogramu, który już
@@ -88,7 +91,7 @@ _EXC_ACKNOWLEDGE = 5                   # „przyjęte, w trakcie” — jak brak
 _NUMERIC_ENCODINGS = ("watts", "percent")
 # Ponowienie ODCZYTU (przed zapisem i zwrotnego) po porażce pierwszej próby: tyle dodatkowych
 # odczytów, każdy jedną próbą transportu, po przerwie (`RegisterWriter.read_retry_delays`).
-# Ramka zapisu nigdy nie jest ponawiana.
+# Pisarz nigdy nie ponawia ramki zapisu (ponowna wysyłka po ciszy — tylko transport UDP, w budżecie NVM).
 READ_RETRIES = 2
 READ_RETRY_BACKOFF_S = 0.75            # GoodWe UDP: bez czekania na ponowne połączenie
 READ_RETRY_FALLBACK_S = 1.1            # transport nieznany: ≥ domyślne backoff_min_s (1 s) + zapas

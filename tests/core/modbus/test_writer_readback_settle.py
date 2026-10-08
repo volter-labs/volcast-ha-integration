@@ -1,5 +1,5 @@
 """Pisarz: odczyt zwrotny równy wartości sprzed zapisu nie jest od razu odmową — odczekanie i ponowny
-odczyt (falownik stosuje nastawę z opóźnieniem); ramka zapisu wciąż tylko jedna."""
+odczyt (falownik stosuje nastawę z opóźnieniem); pisarz nie ponawia zapisu (jedna próba na klucz)."""
 from dataclasses import replace
 
 import pytest

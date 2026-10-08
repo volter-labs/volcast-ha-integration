@@ -2,7 +2,8 @@
 zamiast bieżącej, obce ramki innych klientów, odpowiedź po limicie czasu, nastawa widoczna z opóźnieniem.
 
 Wymagania: nieaktualna odpowiedź nigdy nie daje OK zapisu, który nie doszedł, nigdy UNSUPPORTED
-rejestru, który istnieje, nigdy DENIED zapisu stosowanego z opóźnieniem; ramka zapisu najwyżej raz.
+rejestru, który istnieje, nigdy DENIED zapisu stosowanego z opóźnieniem; jedna próba zapisu na klucz
+(ponowna wysyłka transportu UDP tylko po całkowitej ciszy, liczona w budżecie NVM).
 """
 import asyncio
 
