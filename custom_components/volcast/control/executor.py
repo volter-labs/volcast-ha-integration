@@ -1589,15 +1589,18 @@ class VolcastExecutor:
 
     def _reserve_neutral(self, d: CycleDecision, rd: _Reading, gates: Gates) -> CycleDecision | None:
         """W pauzie: sam zapis trybu neutralnego, gdy strażnik rezerwy (I-1) zdjął rozładowanie,
-        a falownik wciąż ma NASZ tryb rozładowania (właściciel go nie przejął)."""
+        a falownik wciąż ma NASZ tryb rozładowania (właściciel go nie przejął).
+
+        „Nasz" z odczytu (`_mode_ours`, jak hamulec), nie z samej pamięci zapisu: niepewny wynik
+        poprzedniej próby kasuje `last_written["mode"]`, a ochrona rezerwy musi ponowić w kolejnym cyklu."""
         if d.status != DRY_RUN or d.reason != "paused" or not gates.verified:
             return None
         if d.guard is None or d.guard.invariant != "I-1" or d.flat.get("mode") != self._profile.neutral_mode:
             return None
-        ours = self._memory.last_written.get("mode")
+        current = rd.readings.get("mode")               # opcja spoza profilu: brak klucza — nie nasza
         mode_write = next((w for w in d.writes if w.key == "mode"), None)
-        if mode_write is None or "mode" in self._state.taken_over or not isinstance(ours, str) \
-                or rd.readings.get("mode") != ours or self._profile.mode_direction(ours) != "discharge":
+        if mode_write is None or "mode" in self._state.taken_over or not isinstance(current, str) \
+                or not self._mode_ours(current) or self._profile.mode_direction(current) != "discharge":
             return None
         return replace(d, status=WRITE, reason="reserve_neutral", writes=[mode_write], restore={},
                        restore_flat={}, restore_ambiguous_safe=(), restore_direction=None)
@@ -1607,8 +1610,8 @@ class VolcastExecutor:
         """`_reserve_neutral` w trybie bezpośrednim: zapis trybu neutralnego tylko z NASZEGO trybu
         rozładowania według świeżego odczytu rejestru trybu (właściciel mógł go zmienić po odczycie
         cyklu). Nic nie poszło → decyzja cyklu (pauza) bez zmian."""
-        ours = self._memory.last_written.get("mode")
-        written = await self._async_direct_neutral(rd, {self._profile.mode_value(ours)}, now_mono)
+        current = rd.readings["mode"]                   # `_reserve_neutral` sprawdził: nasz tryb rozładowania
+        written = await self._async_direct_neutral(rd, {self._profile.mode_value(current)}, now_mono)
         if written is None:
             return d
         if not self._neutral_applied():

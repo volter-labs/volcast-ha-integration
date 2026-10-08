@@ -272,6 +272,30 @@ async def test_direct_failed_reserve_neutral_is_not_reported_as_done(make_hass, 
 
 
 @pytest.mark.asyncio
+async def test_direct_reserve_neutral_retries_after_a_failed_pre_read(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                     sim_faults, issues):
+    # Odczyt rejestru trybu przed zapisem neutralnym nie wraca (wynik niepewny): ochrona rezerwy
+    # w pauzie nie może zgasnąć — następny cykl ponawia zapis z odczytu, nie z pamięci zapisu.
+    goodwe_bank.poke(SOC, 12)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, timeout_s=0.1)   # ramki gubione celowo
+    try:
+        await _owner_took_power(h, goodwe_bank)
+        goodwe_bank.poke(SOC, 9)
+        h.clock.advance(120.0)
+        await h.conn.async_poll()
+        sim_faults.drop_next = 10 ** 6                         # łącze leży tylko na czas zapisu
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 10
+        assert "reserve_neutral_failed" in h.ex.last_decision.notes
+        sim_faults.drop_next = 0                               # łącze wraca
+        await h.cycle(120.0)
+        assert gw_raw_word(goodwe_bank, MODE) == 1
+        assert h.ex.paused and h.ex.last_decision.reason == "reserve_neutral"
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
 async def test_direct_bus_conflict_with_a_changed_plan_brakes_our_mode(make_hass, goodwe_udp_sim, goodwe_bank,
                                                                        issues):
     h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
