@@ -217,6 +217,7 @@ class VolcastExecutor:
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
         self._consistent: dict[str, float | str] = {}
         self._brake_warned = False                    # ostrzeżenie hamulca raz na epizod
+        self._brake_fail_warned = False               # ostrzeżenie o nieudanym hamulcu raz na epizod
         # powód wstrzymania sprzedaży → slot, dla którego już ostrzegliśmy (raz na slot)
         self._sell_warned_for: dict[str, tuple] = {}
         self._sell_no_reading = False          # trwa epizod sprzedaży bez odczytu (tryb bezpośredni)
@@ -1408,7 +1409,7 @@ class VolcastExecutor:
         if self._reading_fresh(rd):
             current = rd.readings.get("mode")           # opcja spoza profilu: brak klucza — nie nasza
             if current == neutral:
-                self._brake_warned = False              # epizod skończony
+                self._brake_warned = self._brake_fail_warned = False      # epizod skończony
             if not isinstance(current, str) or current == neutral or not self._mode_ours(current):
                 return None
             if d.reason == "nothing_to_write" and not self._held_against_plan(d, current):
@@ -1423,11 +1424,24 @@ class VolcastExecutor:
         written = await self._async_direct_neutral(rd, words, now_mono)
         if written is None:
             return None
+        if not self._neutral_applied():
+            # Odczyt przed zapisem bez odpowiedzi, odmowa albo wynik niepewny: hamulec NIE zadziałał —
+            # osobne ostrzeżenie raz na epizod, ponowienie w kolejnych cyklach (I-6 od próby).
+            if not self._brake_fail_warned:
+                self._brake_fail_warned = True
+                _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — setting the neutral mode "
+                                "failed, retrying; the inverter may keep its current mode", d.reason)
+            return replace(d, notes=(*d.notes, "neutral_brake_failed"))
+        self._brake_fail_warned = False
         if not self._brake_warned:
             self._brake_warned = True
             _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
                             "neutral mode", d.reason)
         return replace(d, writes=written, notes=(*d.notes, "neutral_brake"))
+
+    def _neutral_applied(self) -> bool:
+        """Zapis trybu neutralnego potwierdzony odczytem zwrotnym (pamięć ostatniego zapisu trybu)."""
+        return self._memory.last_written.get("mode") == self._profile.neutral_mode
 
     async def _async_direct_neutral(self, rd: Reading, words: set[int], now_mono: float, *,
                                     throttle: bool = True) -> list | None:
@@ -1562,6 +1576,10 @@ class VolcastExecutor:
         written = await self._async_direct_neutral(rd, {self._profile.mode_value(ours)}, now_mono)
         if written is None:
             return d
+        if not self._neutral_applied():
+            _LOGGER.warning("Volcast control: battery at the reserve — setting the neutral mode failed, retrying; "
+                            "the inverter may keep discharging")
+            return replace(d, notes=(*d.notes, "reserve_neutral_failed"))
         _LOGGER.warning("Volcast control: battery at the reserve — returning our discharge mode to "
                         "neutral despite the pause")
         return replace(reserve, writes=written)

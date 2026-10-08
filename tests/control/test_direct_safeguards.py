@@ -22,6 +22,8 @@ from tests.control.test_executor_direct import (EXPORT_EN, EXPORT_W, GW_DRAFT, G
 
 LOGGER = "custom_components.volcast"
 BRAKE_TEXT = "cannot be applied safely"
+BRAKE_DONE_TEXT = "inverter set to its neutral mode"
+BRAKE_FAILED_TEXT = "setting the neutral mode failed"
 
 
 def _stale(h, age: float = 400.0) -> None:
@@ -219,8 +221,52 @@ async def test_direct_repeated_failed_brake_warns_once(make_hass, goodwe_udp_sim
             h.clock.advance(120.0)
             _stale(h)
             await h.ex.async_tick()
+        d = h.ex.last_decision
         assert gw_raw_word(goodwe_bank, MODE) == 10
-        assert caplog.text.count(BRAKE_TEXT) == 1
+        assert caplog.text.count(BRAKE_FAILED_TEXT) == 1 and BRAKE_DONE_TEXT not in caplog.text
+        assert "neutral_brake_failed" in d.notes and "neutral_brake" not in d.notes
+        goodwe_bank.ignore_writes.discard(MODE)               # falownik znów przyjmuje: ponowienie się udaje
+        h.clock.advance(120.0)
+        _stale(h)
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "neutral_brake" in h.ex.last_decision.notes
+        assert caplog.text.count(BRAKE_DONE_TEXT) == 1
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_brake_without_a_pre_read_is_reported_as_failed(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                     sim_faults, issues, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        h.clock.advance(120.0)
+        _stale(h)
+        sim_faults.drop_next = 10 ** 6                        # odczyt rejestru trybu przed zapisem nie wraca
+        await h.ex.async_tick()
+        d = h.ex.last_decision
+        assert gw_raw_word(goodwe_bank, MODE) == 10
+        assert "neutral_brake_failed" in d.notes and "neutral_brake" not in d.notes
+        assert BRAKE_FAILED_TEXT in caplog.text and BRAKE_DONE_TEXT not in caplog.text
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_failed_reserve_neutral_is_not_reported_as_done(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                     issues, caplog, instant_settle):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    goodwe_bank.poke(SOC, 12)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _owner_took_power(h, goodwe_bank)
+        goodwe_bank.ignore_writes.add(MODE)
+        goodwe_bank.poke(SOC, 9)
+        await h.cycle(120.0)
+        assert gw_raw_word(goodwe_bank, MODE) == 10
+        assert "battery at the reserve — returning" not in caplog.text
+        assert "reserve_neutral_failed" in h.ex.last_decision.notes
     finally:
         await h.close()
 
