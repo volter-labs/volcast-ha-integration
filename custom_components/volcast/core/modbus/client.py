@@ -18,11 +18,15 @@
   różnej długości, pojedyncze rejestry zapisu bez znanego bloku na końcu), blok rozdzielający przed
   odczytem tej samej długości co poprzedni, wyjątek 2 bloku dopiero po ponowieniu (za blokiem
   rozdzielającym) dzieli blok, a wartość z podziału inna niż z ostatniego całego bloku wymaga drugiego,
-  zgodnego odczytu — inaczej klucze zakresu zostają bez wartości (nie przesunięta wartość).
+  zgodnego odczytu (także bez wartości odniesienia, w pierwszym cyklu) — inaczej klucze zakresu
+  zostają bez wartości (nie przesunięta wartość). Sprawdzenie długości, blok rozdzielający i odczyt
+  (oraz ponowienie bloku, odczyt z podziału z potwierdzeniem) idą pod jedną sesją na wyłączność
+  łącza — krótką, nie na cały cykl, żeby pisarz nie czekał sekund.
 * `at_mono` odczytu to chwila STARTU cyklu (bloki nie są atomowe — zapis mógł wejść między nie).
 """
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 from datetime import datetime, timezone
@@ -147,8 +151,12 @@ class RegisterClient:
             plan = poll_order(self.profile, plan)
         for i, block in enumerate(plan):
             try:
-                read = self._separated if self._disambiguate else self._timed_read
-                blocks[block[0]] = self._remember(block, await read(block, lost))
+                if self._disambiguate:
+                    async with self._session():
+                        words = await self._separated(block, lost)
+                else:
+                    words = await self._timed_read(block, lost)
+                blocks[block[0]] = self._remember(block, words)
                 frames.append(_frame(block, True))
                 continue
             except TransportError as err:
@@ -189,6 +197,15 @@ class RegisterClient:
 
     # ── łącze bez korelacji odpowiedzi (GoodWe UDP, `views.py`) ──
 
+    def _session(self):
+        """Wyłączność łącza (`BaseTransport.exclusive`) na sprawdzenie długości poprzedniego odczytu,
+        blok rozdzielający i odczyt (oraz na pary: ponowienie bloku, odczyt z podziału i jego
+        potwierdzenie) — sekwencja pisarza nie wejdzie między decyzję a żądanie. Sesja trwa jedną
+        taką grupę (≤ 3 wymiany), nie cały cykl: pisarz czeka najwyżej na nią, nie na cały cykl
+        odpytywania (kilka sekund). Transport bez tej funkcji (atrapy) — bez blokady."""
+        exclusive = getattr(self.transport, "exclusive", None)
+        return exclusive() if callable(exclusive) else contextlib.nullcontext()
+
     def _remember(self, block, words: list[int]) -> list[int]:
         """Słowa bloku przeczytanego w całości — punkt odniesienia dla wartości z podziału bloku."""
         if self._disambiguate:
@@ -214,16 +231,19 @@ class RegisterClient:
         werdykt (np. powtórzony wyjątek ostatniego odczytu poprzedniego cyklu). Blok rozdzielający
         z poprawną odpowiedzią i ponowny odczyt bloku; dopiero drugi wyjątek 2 dzieli blok na zakresy
         kluczy — każdy odczytany z długością inną niż poprzedni, a wartość inna niż z ostatniego
-        całego bloku wymaga drugiego, zgodnego odczytu (inaczej klucze zakresu bez wartości: lepiej
-        brak odczytu niż przesunięta wartość). Zwraca ostatni błąd albo None."""
+        całego bloku (albo bez takiej — pierwszy cykl) wymaga drugiego, zgodnego odczytu po bloku
+        innej długości (inaczej klucze zakresu bez wartości: lepiej brak odczytu niż przesunięta
+        wartość). Zwraca ostatni błąd albo None."""
         try:
-            for sep in separators_for(self.profile, block):
-                try:
-                    await self._timed_read(sep, lost)
-                    break
-                except ModbusException:
-                    continue
-            blocks[block[0]] = self._remember(block, await self._timed_read(block, lost))
+            async with self._session():
+                for sep in separators_for(self.profile, block):
+                    try:
+                        await self._timed_read(sep, lost)
+                        break
+                    except ModbusException:
+                        continue
+                words = await self._timed_read(block, lost)
+            blocks[block[0]] = self._remember(block, words)
             frames.append(_frame(block, True))
             return None
         except TransportError as err:
@@ -235,11 +255,13 @@ class RegisterClient:
             if sub == tuple(block):
                 continue
             try:
-                words = await self._separated(sub, lost)
                 span = range(sub[0], sub[0] + sub[1])
-                if any(self._known.get(a, w) != w for a, w in zip(span, words)) \
-                        and await self._separated(sub, lost) != words:
-                    raise TransportError("split read not confirmed")
+                async with self._session():
+                    words = await self._separated(sub, lost)
+                    # bez wartości odniesienia (pierwszy cykl) albo inna niż ostatnia — drugi odczyt
+                    if any(self._known.get(a) != w for a, w in zip(span, words)) \
+                            and await self._separated(sub, lost) != words:
+                        raise TransportError("split read not confirmed")
                 self._known.update(zip(span, words))
                 blocks[sub[0]] = words
                 frames.append(_frame(sub, True))

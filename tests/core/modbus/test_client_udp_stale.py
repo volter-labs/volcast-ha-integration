@@ -1,5 +1,7 @@
 """Odpytywanie (read_state) na GoodWe UDP wobec modułu Wi-Fi z poprzednią odpowiedzią zamiast bieżącej:
 kolejność bloków, wyjątek 2 bloku nie z jednej ramki, podział bloku bez przesuniętych wartości."""
+import asyncio
+
 import pytest
 import pytest_asyncio
 
@@ -65,6 +67,41 @@ async def test_read_state_uses_the_order_on_udp(link, goodwe_profile):
     assert all(a[1] != b[1] for a, b in zip(reads, reads[1:]))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("poll_block,writer_block", [((35140, 1), (47512, 1)), ((45356, 1), (47512, 1)),
+                                                     ((47509, 4), (45353, 4))])
+async def test_writer_read_between_poll_length_check_and_read_is_never_taken(link, goodwe_profile,
+                                                                             poll_block, writer_block):
+    # Sekwencja pisarza (sesja na wyłączność, odczyt tej samej długości) wchodzi między decyzję
+    # odpytywania o długości a jego odczyt; moduł raz powtarza poprzednią odpowiedź.
+    m, t = link
+    client = RegisterClient(t, goodwe_profile)
+    orig = t.read
+    holding = asyncio.Event()
+
+    async def writer():
+        async with t.exclusive():
+            holding.set()
+            await orig(*writer_block)
+            m.plan = ["replay"]                       # następny odczyt dostaje odpowiedź pisarza
+
+    async def read(addr, count, **kw):
+        if (addr, count) == poll_block and not holding.is_set():
+            asyncio.ensure_future(writer())
+            try:
+                await asyncio.wait_for(holding.wait(), 0.05)
+            except TimeoutError:
+                pass                                  # łącze trzyma odpytywanie — pisarz poczeka
+        return await orig(addr, count, **kw)
+    t.read = read
+    r = await client.read_state()
+    await asyncio.sleep(0.3)
+    assert holding.is_set()
+    assert r.values["active_power_w"] == -2270 and r.values["soc_min"] == 5
+    for key, v in EXPECTED.items():
+        assert r.device[key] == v
+
+
 # ── (a) klucze nieobsługiwane nie są odpytywane — test w test_direct_connection ──
 
 
@@ -98,12 +135,14 @@ async def test_exception_on_ems_block_once_keeps_ems_values(link, goodwe_profile
     assert (47511, 1) not in _reads(m)
 
 
-async def _split_cycle(goodwe_profile, foreign_at=None):
-    """Cykl 1 dobry; w cyklu 2 blok EMS dwa razy odpowiada wyjątkiem 2 (podział na rejestry)."""
+async def _split_cycle(goodwe_profile, foreign_at=None, *, warm=True):
+    """Cykl 1 dobry (`warm`); w cyklu 2 (albo pierwszym) blok EMS dwa razy odpowiada wyjątkiem 2
+    (podział na rejestry)."""
     m, t = await _setup()
     client = RegisterClient(t, goodwe_profile)
     try:
-        await client.read_state()
+        if warm:
+            await client.read_state()
         start = len(m.log)
         order = poll_order(goodwe_profile, read_plan(goodwe_profile))
         i = order.index((47509, 4))
@@ -128,10 +167,11 @@ async def test_split_reads_never_neighbour_with_equal_length(goodwe_profile):
 
 
 @pytest.mark.asyncio
-async def test_split_value_disagreeing_with_previous_needs_confirmation(goodwe_profile):
-    _, dry = await _split_cycle(goodwe_profile)
+@pytest.mark.parametrize("warm", [True, False])         # False: pierwszy cykl, bez wartości odniesienia
+async def test_split_value_disagreeing_with_previous_needs_confirmation(goodwe_profile, warm):
+    _, dry = await _split_cycle(goodwe_profile, warm=warm)
     first_split = next(i for i, (fc, a, n) in enumerate(dry) if fc == 0x03 and n == 1 and 47509 <= a <= 47512)
-    r, log = await _split_cycle(goodwe_profile, foreign_at=first_split)
+    r, log = await _split_cycle(goodwe_profile, foreign_at=first_split, warm=warm)
     key = {47509: "export_limit_enabled", 47510: "export_limit_w", 47511: "mode", 47512: "power_w"}[dry[first_split][1]]
     # obca wartość (1234) inna niż poprzednia — drugi odczyt jej nie potwierdza: brak wartości, nie 1234
     assert r.device.get(key) in (None, EXPECTED[key])
