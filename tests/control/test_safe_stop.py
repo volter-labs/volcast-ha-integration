@@ -90,12 +90,80 @@ async def test_stop_in_the_middle_of_a_write_sequence_waits_then_writes_neutral_
         await power_done.wait()
         stop = asyncio.create_task(h.ex.async_neutral_at_stop())
         await asyncio.sleep(0.05)
-        assert not stop.done()                                  # czeka na koniec sekwencji (blokada)
+        assert not stop.done()                                  # czeka na koniec wymiany w toku (blokada)
         release.set()
         await cycle
-        assert await stop is True
-        assert [a for a in regs(goodwe_bank)] == [POWER, MODE, MODE]
-        assert gw_raw_word(goodwe_bank, MODE) == 1 and h.ex.owned
+        # Tryb wymuszony z porzuconej reszty sekwencji nie idzie; falownik został w auto — nic do hamowania.
+        assert await stop is False
+        assert regs(goodwe_bank) == [POWER] and gw_raw_word(goodwe_bank, MODE) == 1 and h.ex.owned
+    finally:
+        await h.close()
+
+
+def _slow_writes(h, delay_s: float) -> asyncio.Event:
+    """Każda wymiana zapisu trwa `delay_s`; zdarzenie = pierwsza wymiana ruszyła."""
+    writer = h.io.writer
+    real = writer.async_write
+    started = asyncio.Event()
+
+    async def slow(w):
+        started.set()
+        await asyncio.sleep(delay_s)                          # łącze UDP: każda wymiana trwa
+        return await real(w)
+    writer.async_write = slow
+    return started
+
+
+SELL_FLOOR = {"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "discharge",
+              "discharge_purpose": "sell", "power_w": 2000, "soc_target": 40, "price_pln_kwh": 0.8}
+
+
+@pytest.mark.asyncio
+async def test_stop_during_a_sequence_longer_than_the_budget_abandons_the_rest(make_hass, goodwe_udp_sim,
+                                                                              goodwe_bank, issues):
+    # Sekwencja próg → moc → tryb dłuższa niż budżet zatrzymania: reszta sekwencji nie idzie, a nowy tryb
+    # wymuszony nie trafia na falownik po zatrzymaniu.
+    from tests.control.test_executor import plan
+    goodwe_bank.poke(MODE, 1)
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=plan(slots=[SELL_FLOOR]))
+    try:
+        h.ex._stop_timeout_s = 1.0
+        started = _slow_writes(h, 0.4)
+        cycle = asyncio.create_task(h.ex.async_tick())
+        await started.wait()                                   # pierwszy klucz w toku
+        await h.ex.async_neutral_at_stop()
+        await cycle
+        await asyncio.sleep(1.0)
+        assert (MODE, 10) not in goodwe_bank.writes and gw_raw_word(goodwe_bank, MODE) == 1
+        assert len(goodwe_bank.writes) == 1                    # tylko klucz, który był w toku
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_during_a_long_sequence_from_our_forced_mode_ends_with_neutral(make_hass, goodwe_udp_sim,
+                                                                                 goodwe_bank, issues):
+    from tests.control.test_executor import plan
+    from custom_components.volcast.core.slot import parse_schedule
+    goodwe_bank.poke(MODE, 1)
+    charge = plan(sid="gc", slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "charge",
+                                    "charge_source": "grid", "power_w": 3000, "price_pln_kwh": 0.3}])
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=charge)
+    try:
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 11 and h.ex.owned
+        sell = plan(sid="s2", slots=[SELL_FLOOR])
+        await h.ex.async_on_plan(sell, parse_schedule(sell))
+        h.clock.advance(120.0)
+        await h.conn.async_poll()
+        h.ex._stop_timeout_s = 1.0
+        started = _slow_writes(h, 0.4)
+        cycle = asyncio.create_task(h.ex.async_tick())
+        await started.wait()
+        assert await h.ex.async_neutral_at_stop() is True
+        await cycle
+        await asyncio.sleep(1.0)
+        assert goodwe_bank.writes[-1] == (MODE, 1) and (MODE, 10) not in goodwe_bank.writes
     finally:
         await h.close()
 

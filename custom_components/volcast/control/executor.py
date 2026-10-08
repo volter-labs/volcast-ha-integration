@@ -161,6 +161,9 @@ _BRAKE_EXEMPT = ("paused", "foreign_mode")
 # Tryb bezpośredni: także `owner_kept` — właściciel przejął moc z grupy tryb+moc (rozjazd), zapis grupy
 # stoi z jego wyboru, nie z braku danych.
 _DIRECT_BRAKE_EXEMPT = (*_BRAKE_EXEMPT, "owner_kept")
+# Zapis planu porzucony przy zatrzymaniu (nic nie wysłano) — dla wykonawcy grupowego porażka bez
+# niejednoznaczności, jak odmowa.
+_ABANDONED = "abandoned"
 _HOLD_NOTES = frozenset({"I-8", "group_backoff", "group_held", "mode_held"})
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
@@ -233,6 +236,7 @@ class VolcastExecutor:
         self._snapshot_issue_open = False
         self._safety_cap_issue_open = False
         self._mode_issue_open = False                  # tryb bezpośredni: rejestr trybu niedostępny
+        self._abandoned = False                        # zatrzymanie porzuciło resztę zapisów cyklu
         # rozjazd policzony, ale jeszcze nieusunięty: ta sama wartość na urządzeniu nie liczy się drugi raz
         self._drift_values: dict[str, float | str] = {}
         # klucze przejęte przez właściciela → nasza wartość planu z chwili przejęcia; nie piszemy ich,
@@ -419,6 +423,20 @@ class VolcastExecutor:
         except Exception as err:  # noqa: BLE001 — zatrzymanie HA ani rozładowanie nie mogą się wywrócić
             _LOGGER.error("Volcast control: neutral mode before stopping failed (%s)", type(err).__name__)
         return False
+
+    def _unless_stopping(self, write):
+        """Zapis planu, który kończy się przy zatrzymaniu: przed KAŻDYM kluczem sprawdzamy `freeze`/stop —
+        po nich reszta sekwencji cyklu w toku nie idzie (wynik `_ABANDONED`, bez ramki; tryb po
+        porzuconym warunku zostaje wstrzymany jak po każdej porażce grupy). Kończy się najwyżej wymiana
+        klucza już w toku, więc zapis trybu neutralnego przy zatrzymaniu jest ostatni."""
+        self._abandoned = False
+
+        async def guarded(w):
+            if self._frozen or self._stopped:
+                self._abandoned = True
+                return _ABANDONED
+            return await write(w)
+        return guarded
 
     async def _neutral_at_stop(self) -> bool:
         async with self._lock:
@@ -859,9 +877,11 @@ class VolcastExecutor:
                 decision = replace(decision, status=BLOCKED, reason="gates_changed")
         if decision.status == WRITE:
             report = await async_run_group_writes(
-                decision.writes, self._writer.async_write, restore=decision.restore,
+                decision.writes, self._unless_stopping(self._writer.async_write), restore=decision.restore,
                 ambiguous_safe=decision.restore_ambiguous_safe, on_exception=self._log_write_exception)
             self._end_direct_writes()
+            if self._abandoned:
+                _LOGGER.warning("Volcast control: stopping — the remaining writes of this cycle were abandoned")
             # Tryb encji: budżet liczy każde wywołanie usługi zapisu planu (tryb bezpośredni — pisarz ramek).
             commit(decision, report, self._memory, now_mono,
                    now_wall=now_utc.timestamp() if self._direct is None else None)
