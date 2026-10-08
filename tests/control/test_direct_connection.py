@@ -68,6 +68,11 @@ def issues(monkeypatch):
 # ── start, odpytywanie ────────────────────────────────────────────────────
 
 
+def test_goodwe_udp_transport_config_has_300_ms_gap(hass, goodwe_udp_sim):
+    cfg = _conn(hass(), _target(goodwe_udp_sim))._config()
+    assert (cfg.kind, cfg.gap_s, cfg.timeout_s) == ("goodwe_udp", 0.3, 2.0)
+
+
 @pytest.mark.asyncio
 async def test_start_polls_and_notifies_listeners(hass, goodwe_udp_sim, issues):
     conn = _conn(hass(), _target(goodwe_udp_sim))

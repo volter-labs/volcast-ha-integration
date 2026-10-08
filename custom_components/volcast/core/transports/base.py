@@ -4,8 +4,8 @@ i silnik wymiany żądanie–odpowiedź (jeden zamek, odstęp, dopasowanie, rese
 Zasady (wszystkie transporty):
 * jeden zamek — żądanie i jego odpowiedź są atomowe; `close()` zamka nie bierze;
 * odstęp `gap_s` od końca poprzedniej wymiany (zegar monotoniczny, wstrzykiwany);
-* przed wysłaniem opróżnienie bufora: każda wyrzucona ramka to `stray` (ramki protokołu
-  loggera V5 — `unsolicited`);
+* przed wysłaniem opróżnienie bufora (UDP: także datagramy czekające w gnieździe, jeszcze
+  nieodebrane przez pętlę): każda wyrzucona ramka to `stray` (ramki protokołu loggera V5 — `unsolicited`);
 * odpowiedź przyjmowana wyłącznie przy pełnej zgodności (nadawca, TID/sekwencja, jednostka,
   funkcja, długość, echo); inna ramka to `stray`, a czekanie trwa do końca czasu;
 * po KAŻDYM przekroczeniu czasu i po przerwanej (anulowanej) wymianie kanał jest resetowany
@@ -265,6 +265,10 @@ class BaseTransport:
         self._clock = clock
         self._sleep = sleep
         self.stats = TransportStats()
+        # Liczba rejestrów ostatniego żądania odczytu (= długość jego odpowiedzi). Odpowiedź RTU nie
+        # niesie adresu: wołający, który chce odróżnić świeżą odpowiedź od nieaktualnej, wybiera
+        # odczyt innej długości (`modbus/views.py`).
+        self.last_read_count: int | None = None
         self._lock = asyncio.Lock()
         self._last_end: float | None = None
         self._dirty = False          # przerwana wymiana — reset kanału przed następnym żądaniem
@@ -280,6 +284,7 @@ class BaseTransport:
         req = read_req(addr, count)
         n = self.cfg.read_tries if tries is None else max(1, min(int(tries), self.cfg.read_tries))
         async with self._lock:
+            self.last_read_count = count
             for attempt in range(n):
                 try:
                     return await self._transact(req)
@@ -322,6 +327,7 @@ class BaseTransport:
             await self._reset()
         await self._wait_gap()
         await self._open()
+        await self._collect_pending()
         if self._drain():
             # Strumień rozsynchronizowany jeszcze przed wysłaniem — świeże połączenie.
             self.stats.stray += 1
@@ -407,6 +413,9 @@ class BaseTransport:
     async def _close_channel(self) -> bool:
         """Zamyka kanał; True, gdy był otwarty."""
         raise NotImplementedError
+
+    async def _collect_pending(self) -> None:
+        """Hak przed `_drain`: odbiór ramek, które już czekają w gnieździe (UDP)."""
 
     def _drain(self) -> bool:
         """Wyrzuca zaległe ramki (liczniki); True = strumień rozsynchronizowany."""

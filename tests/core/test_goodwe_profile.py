@@ -66,7 +66,8 @@ def test_goodwe_modbus_is_draft_with_fc6():
     m = p.modbus
     assert (m.status, m.write_function, m.max_read_registers) == ("draft", 6, 125)
     assert set(m.transport_options) == {"goodwe_udp", "modbus_tcp", "modbus_rtu"}
-    assert m.transport_options["goodwe_udp"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 50}
+    # 300 ms jak Box: moduł Wi-Fi przy krótszym odstępie odpowiada poprzednią odpowiedzią
+    assert m.transport_options["goodwe_udp"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 300}
     assert m.transport_options["modbus_tcp"] == {"port": 502, "timeout_ms": 2000, "gap_ms": 50}
     assert m.transport_options["modbus_rtu"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 100}
     assert m.identify_reads == ((35000, 33),)

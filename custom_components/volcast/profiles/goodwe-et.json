@@ -110,7 +110,7 @@
     "write_function": 6,
     "max_read_registers": 125,
     "transport_options": {
-      "goodwe_udp": {"port": 8899, "timeout_ms": 2000, "gap_ms": 50},
+      "goodwe_udp": {"port": 8899, "timeout_ms": 2000, "gap_ms": 300},
       "modbus_tcp": {"port": 502, "timeout_ms": 2000, "gap_ms": 50},
       "modbus_rtu": {"port": 8899, "timeout_ms": 2000, "gap_ms": 100}
     },

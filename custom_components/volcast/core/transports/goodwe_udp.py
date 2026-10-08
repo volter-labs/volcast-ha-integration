@@ -16,6 +16,8 @@ from .modbus_frames import rtu
 _CLOSE_WAIT_S = 1.0
 # Niezamówione datagramy czekające na odbiór — z limitem (zalew obcymi ramkami nie rośnie bez końca).
 MAX_QUEUED_DATAGRAMS = 64
+# Odbiór datagramów czekających w gnieździe przed wysłaniem żądania — limit jak opróżnianie w Boxie.
+MAX_FLUSH_DATAGRAMS = 16
 
 
 class _Datagrams(asyncio.DatagramProtocol):
@@ -23,6 +25,7 @@ class _Datagrams(asyncio.DatagramProtocol):
         self.queue: deque[tuple[bytes, object]] = deque(maxlen=MAX_QUEUED_DATAGRAMS)
         self.event = asyncio.Event()
         self.lost = False
+        self.received = 0                  # licznik odebranych datagramów (opróżnianie przed wysłaniem)
         self.closed = asyncio.get_running_loop().create_future()
         self.transport: asyncio.DatagramTransport | None = None
 
@@ -30,6 +33,7 @@ class _Datagrams(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data: bytes, addr) -> None:
+        self.received += 1
         self.queue.append((data, addr))
         self.event.set()
 
@@ -81,7 +85,26 @@ class GoodweUdpTransport(BaseTransport):
         await _wait_closed(proto)
         return True
 
+    async def _collect_pending(self) -> None:
+        """Datagramy, które już leżą w gnieździe, ale pętla jeszcze ich nie odebrała (bez czekania na
+        odstęp nie było okazji), trafiają do kolejki — `_drain` je wyrzuca i liczy. Bez tego nieaktualna
+        odpowiedź tej samej długości czekająca w gnieździe zostałaby wzięta za odpowiedź na nowe żądanie
+        (FC 3 nie niesie adresu). Jak Box: najwyżej `MAX_FLUSH_DATAGRAMS` przed każdym żądaniem.
+
+        Pętla odbiera jeden datagram na obrót, a wywołanie odbioru wykonuje się w tym samym obrocie
+        PO wznowieniu tego zadania — stąd dwa ustąpienia na rundę; runda bez nowego datagramu kończy."""
+        proto = self._proto
+        for _ in range(MAX_FLUSH_DATAGRAMS):
+            if proto is None or proto.lost:
+                return
+            seen = proto.received
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            if proto.received == seen:
+                return
+
     def _drain(self) -> bool:
+        # Datagramy nie rozsynchronizowują strumienia — każdy zaległy to `stray`, kanał zostaje.
         proto = self._proto
         while proto is not None and proto.queue:
             proto.queue.popleft()
