@@ -421,6 +421,37 @@ def test_read_tou_enabled_needs_tou_enable_at_same_address():
     assert "$.read.tou_enabled" in _errs(p)
 
 
+# ── bloki odczytu znane jako dozwolone (`modbus.verify_blocks`) ──
+
+
+def test_verify_blocks_optional_and_parsed():
+    from custom_components.volcast.core.profile import profile_from_dict
+    p = ms_profile()
+    assert "verify_blocks" not in p["modbus"] and profile_from_dict(p).modbus.verify_blocks == ()
+    p["modbus"]["verify_blocks"] = [{"addr": 47509, "count": 4}, {"addr": 45353, "count": 4}]
+    assert validate_profile(p) == []
+    assert profile_from_dict(p).modbus.verify_blocks == ((47509, 4), (45353, 4))
+
+
+@pytest.mark.parametrize("bad", [
+    "x", [], [{"addr": 47509}], [{"addr": 47509, "count": 0}], [{"addr": 47509, "count": 126}],
+    [{"addr": 70000, "count": 1}], [{"addr": 65535, "count": 2}],
+    [{"addr": 47509, "count": 4}, {"addr": 47509, "count": 4}],
+    [{"addr": 1000, "count": 4}],                       # nie obejmuje żadnego rejestru zapisu
+])
+def test_verify_blocks_rejected(bad):
+    p = ms_profile()
+    p["modbus"]["verify_blocks"] = bad
+    assert "$.modbus.verify_blocks" in _errs(p)
+
+
+def test_verify_blocks_within_max_read_registers():
+    p = ms_profile()
+    p["modbus"]["max_read_registers"] = 2
+    p["modbus"]["verify_blocks"] = [{"addr": 47509, "count": 4}]
+    assert "$.modbus.verify_blocks" in _errs(p)
+
+
 # ── odczekanie przed ponownym odczytem zwrotnym (`write_policy.readback_settle_s`) ──
 
 

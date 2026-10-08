@@ -5,10 +5,12 @@
 * obce ramki innych klientów (FC 3 o długości 45/125/24 słów, także 4 słowa jak blok DOD Boxa)
   dorzucane przed odpowiedzią;
 * `late` — odpowiedź po `late_s` (ponad limit czasu transportu); `drop` — bez odpowiedzi;
+  `exc2` — jednorazowy wyjątek 2 zamiast odpowiedzi (staje się „poprzednią odpowiedzią”);
 * `apply_lag` — pierwsze N odczytów obejmujących zapisany rejestr pokazuje wartość sprzed zapisu.
 
-Plan działań jest per żądanie (`plan`, zużywany po kolei, potem „ok”); `foreign` — numer żądania
-(od 1) → liczby słów obcych ramek przed odpowiedzią. Ramki składane niezależnie od kodu transportu.
+Plan działań: `plan` dla kolejnych odczytów, `write_plan` dla kolejnych zapisów (zużywane po kolei,
+potem „ok”); `foreign` — numer żądania (od 1, wszystkie funkcje) → liczby słów obcych ramek przed
+odpowiedzią. Ramki składane niezależnie od kodu transportu.
 """
 from __future__ import annotations
 
@@ -32,7 +34,8 @@ def read_pdu(words) -> bytes:
 class FlakyModule(UdpServer):
     def __init__(self, bank: RegisterBank, unit: int = 0xF7, *, late_s: float = 0.5) -> None:
         super().__init__(bank, Faults(), unit)
-        self.plan: list[str] = []
+        self.plan: list[str] = []                  # działania dla kolejnych ODCZYTÓW (FC 3)
+        self.write_plan: list[str] = []            # działania dla kolejnych zapisów
         self.foreign: dict[int, tuple[int, ...]] = {}
         self.foreign_word = 0x1234
         self.late_s = late_s
@@ -80,11 +83,16 @@ class FlakyModule(UdpServer):
         pdu = data[1:-2]
         self.requests += 1
         self.log.append((pdu[0], struct.unpack(">H", pdu[1:3])[0], struct.unpack(">H", pdu[3:5])[0]))
-        action = self.plan.pop(0) if self.plan else "ok"
+        queue = self.plan if pdu[0] == 0x03 else self.write_plan
+        action = queue.pop(0) if queue else "ok"
         self.actions.append(action)
         frames = [aa55(self.unit, read_pdu([self.foreign_word] * n)) for n in self.foreign.pop(self.requests, ())]
         if action == "replay" and pdu[0] in self._last:
             frames.append(self._last[pdu[0]])
+        elif action == "exc2":                     # jednorazowy wyjątek 2 (bez wykonania żądania)
+            reply = aa55(self.unit, bytes([pdu[0] | 0x80, 2]))
+            self._last[pdu[0]] = reply
+            frames.append(reply)
         elif action != "drop":
             reply = aa55(self.unit, self._execute(pdu))
             self._last[pdu[0]] = reply

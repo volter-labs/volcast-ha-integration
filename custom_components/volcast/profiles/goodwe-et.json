@@ -115,6 +115,7 @@
       "modbus_rtu": {"port": 8899, "timeout_ms": 2000, "gap_ms": 100}
     },
     "identify_reads": [{"addr": 35000, "count": 33}],
+    "verify_blocks": [{"addr": 47509, "count": 4}, {"addr": 45353, "count": 4}],
     "probe_keys": ["mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled"]
   }
 }

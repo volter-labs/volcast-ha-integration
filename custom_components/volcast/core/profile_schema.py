@@ -259,10 +259,28 @@ def _tou_enable(v: _V, w: dict) -> None:
         v.err(f"{path}.day_mask", "maska dni nie może zawierać bitu włącznika")
 
 
-def _modbus(v: _V, raw: Any, transports: Any, written: set[str]) -> None:
+def _write_addresses(wr: Any) -> set[int]:
+    """Adresy rejestrów zapisu (z programami harmonogramu); pola złego typu pomijane (zgłasza je `_write`)."""
+    out: set[int] = set()
+    if not isinstance(wr, dict):
+        return out
+    for key, spec in wr.items():
+        if not isinstance(spec, dict):
+            continue
+        if key == "tou_program":
+            count = spec.get("count")
+            for field in spec.values():
+                if isinstance(field, dict) and isinstance(field.get("addr"), int) and isinstance(count, int):
+                    out.update(range(field["addr"], field["addr"] + count))
+        elif isinstance(spec.get("addr"), int):
+            out.add(spec["addr"])
+    return out
+
+
+def _modbus(v: _V, raw: Any, transports: Any, written: set[str], write_addrs: set[int]) -> None:
     """Parametry dostępu bezpośredniego: status ścieżki rejestrów, funkcja zapisu, łącza."""
     m = v.obj(raw, "$.modbus", ("status", "write_function", "max_read_registers", "transport_options",
-                                "identify_reads", "probe_keys"), ("status_note", "echo_only"))
+                                "identify_reads", "probe_keys"), ("status_note", "echo_only", "verify_blocks"))
     if m is None:
         return
     v.enum(m.get("status"), "$.modbus.status", ("draft", "verified"))
@@ -317,6 +335,36 @@ def _modbus(v: _V, raw: Any, transports: Any, written: set[str]) -> None:
             extra = sorted(set(eo) - written)
             if extra:
                 v.err("$.modbus.echo_only", f"klucze spoza zapisów profilu: {extra}")
+    if "verify_blocks" in m:
+        _verify_blocks(v, m["verify_blocks"], m.get("max_read_registers"), write_addrs)
+
+
+def _verify_blocks(v: _V, raw: Any, max_count: Any, write_addrs: set[int]) -> None:
+    """Bloki odczytu znane jako dozwolone na urządzeniu (czyta je urządzenie referencyjne) — pisarz
+    i sonda czytają przez nie rejestr zapisu, żeby kolejne żądania różniły się długością odpowiedzi.
+    Każdy blok obejmuje co najmniej jeden rejestr zapisu."""
+    path = "$.modbus.verify_blocks"
+    if not isinstance(raw, list) or not raw:
+        v.err(path, "oczekiwano niepustej listy")
+        return
+    limit = max_count if isinstance(max_count, int) and not isinstance(max_count, bool) else MAX_READ_REGISTERS
+    seen: set[tuple[int, int]] = set()
+    for i, b in enumerate(raw):
+        o = v.obj(b, f"{path}[{i}]", ("addr", "count"))
+        if o is None:
+            continue
+        a_ok = v.int_(o.get("addr"), f"{path}[{i}].addr", 0, 65535)
+        c_ok = v.int_(o.get("count"), f"{path}[{i}].count", 1, limit)
+        if not (a_ok and c_ok):
+            continue
+        block = (o["addr"], o["count"])
+        if block[0] + block[1] > 65536:
+            v.err(f"{path}[{i}]", "blok wychodzi poza przestrzeń adresów")
+        elif block in seen:
+            v.err(path, "bloki powtórzone")
+        elif not any(block[0] <= a < block[0] + block[1] for a in write_addrs):
+            v.err(f"{path}[{i}]", "blok nie obejmuje żadnego rejestru zapisu")
+        seen.add(block)
 
 
 def _nvm_budget(v: _V, raw: Any) -> None:
@@ -535,7 +583,7 @@ def validate_profile(raw: object) -> list[str]:
         elif not isinstance(spec, dict) or spec.get("addr") != enable.get("addr"):
             v.err(f"$.read.{TOU_ENABLED_READ}.addr", "musi równać się write.tou_enable.addr")
     if "modbus" in top:                      # brak sekcji zgłasza już `v.obj` na `$`
-        _modbus(v, top["modbus"], tr, written)
+        _modbus(v, top["modbus"], tr, written, _write_addresses(wr))
     _intents(v, top.get("intents"), model, modes)
 
     base = top.get("baseline")

@@ -2,7 +2,7 @@
 
 Żaden rejestr nie jest pisany bez możliwości odczytu zwrotnego, chyba że profil jawnie
 wymienia go w `modbus.echo_only` (potwierdzenie samym echem, jak urządzenie referencyjne).
-Odczyt przed zapisem (jedna ramka FC 3, bez kosztu NVM) pozwala odróżnić „nie ustawił”
+Odczyt przed zapisem (ramka FC 3 — na GoodWe UDP dwie — bez kosztu NVM) pozwala odróżnić „nie ustawił”
 od „ustawił inaczej”. Odmowa (DENIED) to WYŁĄCZNIE prawdziwa odmowa urządzenia: ramka zapisu
 poszła, urządzenie odpowiedziało, a rejestr został bez zmian. Wszystko, co nie wysłało zapisu
 (nieudany odczyt przed zapisem, adres spoza profilu), to ERROR — chwilowa awaria nie może
@@ -16,14 +16,22 @@ swoje czekanie na ponowne połączenie (backoff_min_s, potem podwojone; domyśln
 transport nieznany 1,1 s. Ramka ZAPISU nigdy nie jest ponawiana przez pisarza.
 Dodatkowy czas na jeden odczyt: suma przerw + READ_RETRIES × timeout_s (+ odstępy gap_s;
 na transporcie strumieniowym + connect_timeout_s na każde ponowne połączenie). GoodWe UDP
-(timeout 2 s, gap pomijalny): ≤ 5,5 s na odczyt, cały zapis ≤ 2 × (read_tries × timeout_s
-+ 5,5 s) + zapis. Wyjątek 2 przy odczycie to odpowiedź ostateczna — bez ponawiania.
-„Brak” = wszystkie próby bez odpowiedzi.
+(timeout 2 s, odstęp 0,3 s): ≤ 5,5 s + odstępy na odczyt; odczyt przed zapisem to tam dwa
+odczyty (niżej), plus ewentualne odczekanie przed ponownym odczytem zwrotnym. Wyjątek 2 przy
+odczycie nie jest ponawiany. „Brak” = wszystkie próby bez odpowiedzi.
+
+Łącze bez korelacji odpowiedzi (GoodWe UDP, `views.py`): moduł Wi-Fi bywa, że odpowiada poprzednią
+odpowiedzią, a odpowiedź FC 3 nie niesie adresu. Każdy odczyt rejestru ma długość odpowiedzi inną niż
+poprzedni odczyt na łączu (blok z `modbus.verify_blocks` albo sam rejestr; rejestr czytany tylko
+pojedynczo — najpierw blok rozdzielający). Odczyt przed zapisem to DWA takie odczyty, które muszą
+się zgodzić; wyjątek 2 jest ostateczny dopiero, gdy powtórzy się w odczycie samego rejestru po
+bloku rozdzielającym z poprawną odpowiedzią. Niezgoda (także wyjątek 2 tylko raz) → ERROR, nic
+nie wysłano. Wyjątek 2 na bloku to nie werdykt o rejestrze — odczyt wraca do samego rejestru.
 
 | echo                      | odczyt zwrotny                 | wynik |
 |---------------------------|--------------------------------|-------|
-| —  (odczyt przed: wyjątek 2) | —                           | UNSUPPORTED (nic nie wysłano, bez ponowień) |
-| —  (odczyt przed: brak)   | —                              | ERROR (nic nie wysłano) |
+| —  (odczyt przed: wyjątek 2, na UDP potwierdzony) | —    | UNSUPPORTED (nic nie wysłano, bez ponowień) |
+| —  (odczyt przed: brak / niezgodny) | —                    | ERROR (nic nie wysłano) |
 | wyjątek 2                 | —                              | UNSUPPORTED |
 | dowolne                   | = zamówiona                    | OK |
 | dowolne                   | brak                           | ERROR |
@@ -65,6 +73,7 @@ from ..transports.base import ModbusException, TransportError
 from ..transports.stream import StreamTransport
 from ..write_sequence import DENIED, ERROR, OK, UNSUPPORTED, AdjustedOutcome
 from .client import RegisterClient
+from .views import key_views, needs_disambiguation, pick_view, prev_read_count, separator_block
 
 _LOGGER = logging.getLogger(__name__)
 _ECHO_OK, _ECHO_EXCEPTION, _ECHO_NONE = "ok", "exception", "none"
@@ -81,6 +90,10 @@ _RECONNECT_MARGIN_S = 0.1              # zapas ponad czekanie transportu strumie
 # Ponowne odczyty zwrotne po odczekaniu, zanim wartość sprzed zapisu stanie się odmową.
 READBACK_SETTLE_READS = 2
 _sleep = asyncio.sleep                 # podmieniane w testach
+
+
+class _Unconfirmed(TransportError):
+    """Odczyty bez zgody (łącze bez korelacji odpowiedzi) — wynik niepewny, nic nie wysłano."""
 
 
 def _is_illegal_address(err: TransportError) -> bool:
@@ -162,6 +175,9 @@ class RegisterWriter:
         self.echo_only: frozenset[str] = frozenset(profile.modbus.echo_only)
         # bez odczytu zwrotnego (z sondy): nie pisane wcale, nawet bez próby odczytu
         self.unreadable: frozenset[str] = frozenset(unreadable)
+        # łącze bez korelacji odpowiedzi (GoodWe UDP): odczyty o zmiennej długości i potwierdzanie
+        self._disambiguate = needs_disambiguation(client.transport)
+        self._last_count: int | None = None          # długość ostatniego odczytu (transport bez licznika)
 
     async def async_write(self, w: RegisterWrite) -> str:
         return await self._guarded(w, skip_equal=False)
@@ -189,7 +205,7 @@ class RegisterWriter:
         if _matches(w.key, self.unreadable):
             return UNSUPPORTED             # bez odczytu zwrotnego nie piszemy (nie da się przywrócić)
         try:
-            before = await self._read(w.addr)
+            before = await self._read_before(w.addr)
         except TransportError as err:
             if _is_illegal_address(err):
                 return UNSUPPORTED
@@ -277,6 +293,34 @@ class RegisterWriter:
             return (READ_RETRY_BACKOFF_S,) * READ_RETRIES
         return (READ_RETRY_FALLBACK_S,) * READ_RETRIES
 
+    async def _read_before(self, addr: int) -> int:
+        """Wartość sprzed zapisu. Łącze z korelacją odpowiedzi: jeden odczyt (`_read`).
+
+        Łącze bez korelacji (`views.py`): dwa odczyty o RÓŻNEJ długości odpowiedzi muszą się zgodzić
+        (nieaktualna albo obca odpowiedź jednego z nich daje inne słowo) — inaczej `_Unconfirmed`
+        (ERROR, nic nie wysłano). Wyjątek 2 jest ostateczny (UNSUPPORTED) dopiero, gdy powtórzy się
+        w odczycie samego rejestru po bloku rozdzielającym z poprawną odpowiedzią; wartość w tym
+        odczycie albo wyjątek 2 tylko w drugim odczycie → `_Unconfirmed`."""
+        if not self._disambiguate:
+            return await self._read(addr)
+        try:
+            first = await self._read(addr)
+        except TransportError as err:
+            if not _is_illegal_address(err):
+                raise
+            await self._separate(addr, None)
+            await self._read_view(addr, (addr, 1), None)       # wyjątek 2 ponownie → wychodzi
+            raise _Unconfirmed("exception 2 not repeated") from None
+        try:
+            second = await self._read(addr)
+        except TransportError as err:
+            if _is_illegal_address(err):
+                raise _Unconfirmed("exception 2 after a value") from None
+            raise
+        if second != first:
+            raise _Unconfirmed("pre-write reads disagree")
+        return first
+
     async def _read(self, addr: int) -> int:
         """Odczyt jednego rejestru z ograniczonym ponowieniem (tylko odczyt, nigdy zapis).
 
@@ -286,7 +330,7 @@ class RegisterWriter:
         (inny klient odpytujący ten sam moduł Wi-Fi). Woła się pod zamkiem pisarza.
         Ostatni błąd wychodzi do wołającego."""
         try:
-            return await self.client.read_register(addr)
+            return await self._read_once(addr, None)
         except TransportError as err:
             if _is_illegal_address(err):
                 raise
@@ -294,12 +338,51 @@ class RegisterWriter:
         for delay in self.read_retry_delays():
             await _sleep(delay)
             try:
-                return await self.client.read_register(addr, tries=1)
+                return await self._read_once(addr, 1)
             except TransportError as err:
                 if _is_illegal_address(err):
                     raise
                 last = err
         raise last
+
+    async def _read_once(self, addr: int, tries: int | None) -> int:
+        """Jedna próba odczytu rejestru. Łącze bez korelacji: widok o długości innej niż poprzedni odczyt
+        (gdy rejestr czyta się tylko pojedynczo — najpierw blok rozdzielający); wyjątek 2 na bloku to
+        nie werdykt o rejestrze — próba wraca do samego rejestru."""
+        if not self._disambiguate:
+            if tries is None:
+                return await self.client.read_register(addr)
+            return await self.client.read_register(addr, tries=tries)
+        skip: set[tuple[int, int]] = set()
+        while True:
+            views = key_views(self.profile, addr, skip=skip)
+            view = pick_view(views, prev_read_count(self.client.transport, self._last_count))
+            if view is None:
+                await self._separate(addr, tries)
+                view = pick_view(views, prev_read_count(self.client.transport, self._last_count)) or views[0]
+            try:
+                return await self._read_view(addr, view, tries)
+            except ModbusException as err:
+                if err.code != 2 or view == (addr, 1):
+                    raise
+                skip.add(view)
+
+    async def _read_view(self, addr: int, view: tuple[int, int], tries: int | None) -> int:
+        self._last_count = view[1]
+        words = await self.client.read_block(view[0], view[1], tries=tries)
+        return words[addr - view[0]]
+
+    async def _separate(self, addr: int, tries: int | None) -> None:
+        """Blok rozdzielający (znany, innej długości niż każdy widok rejestru) z poprawną odpowiedzią —
+        po nim poprzednia odpowiedź modułu nie pasuje do odczytu rejestru. Porażka → `_Unconfirmed`."""
+        block = separator_block(self.profile, addr)
+        if block is None:
+            raise _Unconfirmed("no separator block")
+        self._last_count = block[1]
+        try:
+            await self.client.read_block(block[0], block[1], tries=tries)
+        except TransportError as err:
+            raise _Unconfirmed(f"separator read failed: {type(err).__name__}") from None
 
     def _sent(self, key: str) -> None:
         if self._on_send is None:

@@ -62,7 +62,8 @@ async def test_echo_ok_but_readback_missing_is_error(goodwe_writer, sim_faults):
 async def test_exception_2_is_unsupported(goodwe_writer, goodwe_bank, goodwe_udp_sim):
     goodwe_bank.readonly.add(47510)
     assert await goodwe_writer.async_write(RegisterWrite("export_limit_w", 47510, 100)) == UNSUPPORTED
-    assert goodwe_udp_sim.requests == 2           # odczyt przed zapisem + zapis, bez odczytu zwrotnego
+    # dwa odczyty przed zapisem (UDP: różna długość) + zapis, bez odczytu zwrotnego
+    assert goodwe_udp_sim.requests == 3
 
 
 @pytest.mark.asyncio
@@ -261,7 +262,9 @@ async def test_concurrent_writes_do_not_interleave(goodwe_writer, goodwe_udp_sim
                                 goodwe_writer.async_write(RegisterWrite("power_w", 47512, 3000)))
     assert (a, b) == (OK, OK)
     seq = [(fc, addr) for fc, addr, _ in goodwe_udp_sim.log]
-    assert seq == [(3, 47511), (6, 47511), (3, 47511), (3, 47512), (6, 47512), (3, 47512)]
+    # UDP: odczyty na przemian blokiem EMS (47509×4) i samym rejestrem
+    assert seq == [(3, 47509), (3, 47511), (6, 47511), (3, 47509),
+                   (3, 47512), (3, 47509), (6, 47512), (3, 47512)]
 
 
 @pytest.mark.asyncio

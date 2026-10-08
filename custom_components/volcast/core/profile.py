@@ -44,6 +44,8 @@ class ModbusSpec:
     identify_reads: tuple[tuple[int, int], ...]         # (adres, liczba)
     probe_keys: tuple[str, ...]
     echo_only: tuple[str, ...] = ()                     # klucze potwierdzane samym echem (bez odczytu)
+    # bloki znane jako dozwolone (czyta je urządzenie referencyjne): odczyt rejestru zapisu blokiem
+    verify_blocks: tuple[tuple[int, int], ...] = ()     # (adres, liczba)
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,7 @@ def _modbus_spec(m: Mapping[str, Any]) -> ModbusSpec:
         identify_reads=tuple((r["addr"], r["count"]) for r in m["identify_reads"]),
         probe_keys=tuple(m["probe_keys"]),
         echo_only=tuple(m.get("echo_only", ())),
+        verify_blocks=tuple((b["addr"], b["count"]) for b in m.get("verify_blocks", ())),
     )
 
 
