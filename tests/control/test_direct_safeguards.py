@@ -16,8 +16,9 @@ from custom_components.volcast.control.store import ControlState, ControlStore
 from custom_components.volcast.core.modbus import writer as writer_mod
 from custom_components.volcast.core.slot import parse_schedule
 from tests.control.test_executor import plan
-from tests.control.test_executor_direct import (GW_DRAFT, GW_V, MODE, POWER, SALT, Harness, _owned_sell, gw_raw_word,
-                                                gw_target, issues, regs)  # noqa: F401 — `issues` to fikstura
+from tests.control.test_executor_direct import (EXPORT_EN, EXPORT_W, GW_DRAFT, GW_V, MODE, POWER, SALT, SOC_MAX,
+                                                SOC_MIN, Harness, _owned_sell, gw_raw_word, gw_target, issues,
+                                                regs)  # noqa: F401 — `issues` to fikstura
 
 LOGGER = "custom_components.volcast"
 BRAKE_TEXT = "cannot be applied safely"
@@ -386,5 +387,128 @@ async def test_direct_reserve_in_pause_keeps_a_mode_changed_since_the_reading(ma
         await h.ex.async_tick()
         assert h.ex.last_decision.guard.invariant == "I-1"
         assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 2
+    finally:
+        await h.close()
+
+
+# ── degradacja akcji przy brakującej nastawie (sonda: brak rejestru albo niezweryfikowany) ──
+
+
+ACTIONS = {
+    "charge_grid": ({"mode": "charge", "charge_source": "grid", "power_w": 3000}, 11),
+    "discharge_forced": ({"mode": "discharge", "power_w": 2500, "soc_target": 40}, 12),
+    "sell": ({"mode": "discharge", "discharge_purpose": "sell", "power_w": 2500, "soc_target": 40}, 10),
+    "standby": ({"mode": "idle"}, 8),
+    "self_consume": ({"mode": "self_consume"}, 1),
+}
+# (akcja, brakująca nastawa) → tryb neutralny; reszta idzie bez tej nastawy (tabela z rozpoznania, sekcja d)
+DEGRADES = {("charge_grid", "power_w"), ("discharge_forced", "power_w"), ("discharge_forced", "soc_min"),
+            ("sell", "power_w"), ("sell", "soc_min"), ("standby", "power_w")}
+REG = {"power_w": (POWER,), "soc_min": (SOC_MIN,), "export_limit_w": (EXPORT_W, EXPORT_EN), "soc_max": (SOC_MAX,)}
+KEYS = {"export_limit_w": ("export_limit_w", "export_limit_enabled")}
+
+
+def _slot(**kw):
+    return {"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "price_pln_kwh": 0.8, **kw}
+
+
+def _caps(missing, how):
+    caps = {k: True for k in GW_V.modbus.probe_keys}
+    for k in missing:
+        if how == "unsupported":
+            caps[k] = False                                   # sonda: brak rejestru (wyjątek 2)
+        else:
+            caps.pop(k)                                       # sonda go nie potwierdziła
+    return caps
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["unsupported", "unverified"])
+@pytest.mark.parametrize("key", ["power_w", "soc_min", "export_limit_w", "soc_max"])
+@pytest.mark.parametrize("action", sorted(ACTIONS))
+async def test_direct_action_per_missing_setting(make_hass, goodwe_udp_sim, goodwe_bank, issues, action, key, how):
+    spec, mode_word = ACTIONS[action]
+    target = gw_target(goodwe_udp_sim, capabilities=_caps(KEYS.get(key, (key,)), how))
+    h = await Harness(make_hass, GW_V, target).start(raw=plan(slots=[_slot(**spec)]))
+    try:
+        await h.ex.async_tick()
+        d = h.ex.last_decision
+        assert d.status == "write", (d.status, d.reason)
+        assert not set(REG[key]) & set(regs(goodwe_bank))      # brakującej nastawy nie piszemy nigdy
+        if (action, key) in DEGRADES:
+            assert gw_raw_word(goodwe_bank, MODE) == 1 and "degraded" in d.notes
+            assert POWER not in regs(goodwe_bank)
+        else:
+            assert gw_raw_word(goodwe_bank, MODE) == mode_word and "degraded" not in d.notes
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_sell_with_export_ban_without_the_pair_goes_neutral(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                         issues):
+    spec, _ = ACTIONS["sell"]
+    target = gw_target(goodwe_udp_sim, capabilities=_caps(("export_limit_enabled",), "unsupported"))
+    h = await Harness(make_hass, GW_V, target).start(raw=plan(slots=[_slot(**spec, export_allowed=False)]))
+    try:
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "degraded" in h.ex.last_decision.notes
+        assert not {EXPORT_W, EXPORT_EN, POWER} & set(regs(goodwe_bank))
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_floor_lost_in_session_degrades_sell(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Rejestr progu odpowiedział wyjątkiem 2 w trakcie sesji (pamięć `unsupported`): sprzedaż bez
+    # gwarantowanej rezerwy nie idzie — tryb neutralny.
+    spec, _ = ACTIONS["sell"]
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=plan(slots=[_slot(**spec)]))
+    try:
+        h.ex._memory.unsupported.add("soc_min")
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "degraded" in h.ex.last_decision.notes
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_missing_mode_register_means_no_control_and_an_alert(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                          issues, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    target = gw_target(goodwe_udp_sim, capabilities=_caps(("mode",), "unsupported"))
+    h = await Harness(make_hass, GW_V, target).start()
+    try:
+        for _ in range(3):
+            await h.cycle()
+        d = h.ex.last_decision
+        assert (d.status, d.reason) == ("idle", "missing_entities") and goodwe_bank.writes == []
+        assert [(i, k) for i, k, _ in issues.created].count(("direct_mode_unsupported_e1", "control_error")) == 1
+        assert caplog.text.count("inverter mode register is not available") == 1
+        await h.ex.async_set_local_switch(False)
+        await h.cycle()
+        assert "direct_mode_unsupported_e1" in issues.deleted       # sterowanie wyłączone — bez alertu
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_unverified_mode_register_brakes_our_forced_mode(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                      issues):
+    target = gw_target(goodwe_udp_sim, capabilities=_caps(("mode",), "unverified"))
+    goodwe_bank.poke(MODE, 10)                                 # nasz tryb sprzedaży z poprzedniego przebiegu
+    store = ControlStore(make_hass(), "e1")
+    await store.async_save(ControlState(
+        consent=True, local_switch=True, owned=True, snapshot={"mode": "auto", "soc_min": 5.0},
+        owner={"profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(target, SALT),
+               "device": target["device_fp"]},
+        restore_keys=["mode", "power_w"]))
+    h = await Harness(make_hass, GW_V, target, store=store).start()
+    try:
+        await h.ex.async_tick()
+        d = h.ex.last_decision
+        assert d.reason == "missing_entities" and "neutral_brake" in d.notes
+        assert regs(goodwe_bank) == [MODE] and gw_raw_word(goodwe_bank, MODE) == 1
+        assert "direct_mode_unsupported_e1" in [i for i, _, _ in issues.created]
     finally:
         await h.close()

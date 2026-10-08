@@ -286,6 +286,16 @@ class DirectIO:
         """Klucze nieobsługiwane na całą sesję: bez odczytu zwrotnego (sonda) i bez rejestru (wyjątek 2)."""
         return set(self.unreadable) | {k for k, v in self.capabilities.items() if v is False}
 
+    def unavailable_keys(self) -> frozenset[str]:
+        """Klucze zapisu, których nie używamy wcale: nieobsługiwane (`unsupported_seed`) i niezweryfikowane
+        — klucz sondy profilu bez potwierdzenia (`capabilities` bez True; brak wyniku sondy = żaden).
+        Akcja, która ich wymaga, schodzi do trybu neutralnego (`RegisterTarget.missing_keys`)."""
+        if self._profile is None:
+            return frozenset()
+        write = self._profile.raw.get("write") or {}
+        unverified = {k for k in self._profile.modbus.probe_keys if k in write and self.capabilities.get(k) is not True}
+        return frozenset((self.unsupported_seed() & set(write)) | unverified)
+
     # ── tożsamość ──
 
     async def async_identity_ok(self) -> bool:
@@ -325,7 +335,8 @@ class DirectIO:
         return Reading(readings, raw_mode, {}, {}, self.conn.age_s(), r)
 
     def target(self, rd: Reading) -> RegisterTarget:
-        return RegisterTarget(rd.source if rd.source is not None else _EMPTY, unreadable=self.unreadable)
+        return RegisterTarget(rd.source if rd.source is not None else _EMPTY, unreadable=self.unreadable,
+                              unavailable=self.unavailable_keys())
 
     def cycle_input(self, rd: Reading) -> dict:
         return {"target": self.target(rd)}
@@ -343,7 +354,8 @@ class DirectIO:
 
     def snapshot_keys(self) -> tuple[str, ...]:
         write = self._profile.raw.get("write") or {} if self._profile else {}
-        skip = self.unsupported_seed() | set(self._profile.modbus.echo_only if self._profile else ())
+        # klucz, którego nie piszemy nigdy (nieobsługiwany, niezweryfikowany), nie potrzebuje migawki
+        skip = set(self.unavailable_keys()) | set(self._profile.modbus.echo_only if self._profile else ())
         return tuple(k for k in SNAPSHOT_KEYS if k in write and k not in skip)
 
     # ── powrót do trybu bazowego ──

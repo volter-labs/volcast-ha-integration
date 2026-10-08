@@ -62,6 +62,9 @@ Tryb bezpośredni (`DirectIO`, rejestry falownika):
   z wyłącznością łącza, poza budżetem NVM, tylko przy potwierdzonej tożsamości; przy nieświeżym odczycie
   cyklu ramka idzie wyłącznie, gdy świeży odczyt rejestru trybu tuż przed nią pokazał nasz tryb
   (`only_from`), bez odczytu — nic, ponowienie w następnym cyklu;
+* nastawa bez używalnego rejestru (sonda: brak albo niezweryfikowany; wyjątek 2 w sesji) jest brakującą
+  nastawą jak encja w trybie encji (`RegisterTarget.missing_keys` → `cycle._degrade`); bez rejestru trybu
+  sterowania nie ma (zgłoszenie w Naprawach, hamulec, jeśli się da);
 * rozjazd odczytu względem naszego ostatniego zapisu liczony raz na cykl sterowania, tylko z odczytu
   rozpoczętego po końcu naszego ostatniego zapisu; drugi rozjazd tego samego klucza w 30 min przy
   niezmienionej wartości planu = przejęcie (pauza jak w trybie encji); zmiana wartości planu kasuje
@@ -226,6 +229,7 @@ class VolcastExecutor:
         self._budget_issue_open = False
         self._snapshot_issue_open = False
         self._safety_cap_issue_open = False
+        self._mode_issue_open = False                  # tryb bezpośredni: rejestr trybu niedostępny
         # rozjazd policzony, ale jeszcze nieusunięty: ta sama wartość na urządzeniu nie liczy się drugi raz
         self._drift_values: dict[str, float | str] = {}
         # klucze przejęte przez właściciela → nasza wartość planu z chwili przejęcia; nie piszemy ich,
@@ -356,6 +360,8 @@ class VolcastExecutor:
         ir.async_delete_issue(self._hass, DOMAIN, f"control_error_{self._entry.entry_id}")
         if self._direct is not None:
             self._conflict_issue_open = self._budget_issue_open = self._safety_cap_issue_open = False
+            self._mode_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._mode_issue_id)
             ir.async_delete_issue(self._hass, DOMAIN, self._safety_cap_issue_id)
             ir.async_delete_issue(self._hass, DOMAIN, self._conflict_issue_id)
             ir.async_delete_issue(self._hass, DOMAIN, self._budget_issue_id)
@@ -736,12 +742,17 @@ class VolcastExecutor:
             cycle_in["ents"] = replace(cycle_in["ents"], mapped=live_map,
                                        owner_values=self._owner_export_values())
         elif "target" in cycle_in:
-            cycle_in["target"].owner_values = self._owner_export_values()
+            target = cycle_in["target"]
+            target.owner_values = self._owner_export_values()
+            # Rejestr z wyjątkiem 2 w tej sesji też jest brakującą nastawą (degradacja akcji, nie zgadywanie).
+            target.unavailable = target.unavailable | (self._memory.unsupported & set(self._write_keys()))
         decision = decide_cycle(
             profile=self._profile, schedule=self.schedule, now_utc=now_utc, now_mono=now_mono, tele=tele,
             limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
             gates=dgates, memory=self._memory, **cycle_in)
         self._warn_sell_suspended(decision)
+        if direct is not None:
+            self._update_mode_issue(decision, self._control_on(gates))
         if tele.soc is not None:
             self._prev_soc = (tele.soc, now_mono)
         if entities:
@@ -941,6 +952,23 @@ class VolcastExecutor:
                 self._pause_for_foreign(key, None)
                 taken = True
         return taken
+
+    @property
+    def _mode_issue_id(self) -> str:
+        return f"direct_mode_unsupported_{self._entry.entry_id}"
+
+    def _update_mode_issue(self, decision: CycleDecision, control_on: bool) -> None:
+        """Rejestr trybu niedostępny (sonda: brak albo niezweryfikowany; wyjątek 2): sterowania nie ma —
+        zgłoszenie w Naprawach i jedno ostrzeżenie, tylko przy włączonym sterowaniu (jak brak encji trybu)."""
+        missing = decision.reason == "missing_entities" and "mode" in decision.unmapped
+        if missing and control_on and not self._mode_issue_open:
+            self._mode_issue_open = True
+            _LOGGER.warning("Volcast direct control: the inverter mode register is not available — no control "
+                            "(only a return to the neutral mode, when possible)")
+            self._create_issue(self._mode_issue_id, "control_error")
+        elif self._mode_issue_open and not (missing and control_on):
+            self._mode_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._mode_issue_id)
 
     def _update_conflict_issue(self) -> None:
         conn = self._direct.conn

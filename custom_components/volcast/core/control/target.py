@@ -140,9 +140,13 @@ class RegisterTarget:
 
     kind = "direct"
 
-    def __init__(self, reading: "DirectReading", *, unreadable: frozenset[str] = frozenset()) -> None:
+    def __init__(self, reading: "DirectReading", *, unreadable: frozenset[str] = frozenset(),
+                 unavailable: frozenset[str] = frozenset()) -> None:
         self.reading = reading
         self.unreadable = frozenset(unreadable)
+        # klucze zapisu bez rejestru, którego możemy użyć (sonda: brak rejestru albo niezweryfikowany;
+        # wyjątek 2 w tej sesji) — ustawia wejście/wyjście urządzenia i wykonawca
+        self.unavailable = frozenset(unavailable)
         # wartości właściciela (migawka) kluczy, które zmieniliśmy — ustawia wykonawca
         self.owner_values: Mapping[str, float | str] = {}
 
@@ -151,7 +155,12 @@ class RegisterTarget:
                 or ("tou" in self.unreadable and (k.startswith("tou.") or k == "tou_enable"))}
 
     def missing_keys(self, profile) -> tuple[str, ...]:
-        return ()
+        """Klucze zapisu bez używalnego rejestru (nieczytelne, nieobsługiwane, niezweryfikowane) — jak
+        nastawa bez encji w trybie encji: cykl degraduje akcję, która ich wymaga (`cycle._degrade`), a bez
+        trybu nie ma sterowania. Kolejność profilu (`write_policy.order`)."""
+        gone = self.unreadable | self.unavailable
+        write = profile.raw.get("write") or {}
+        return tuple(k for k in profile.write_order if k in write and k in gone)
 
     def fit(self, params: Params, profile) -> tuple[Params, tuple[str, ...], tuple[str, ...]]:
         spec = profile.raw["write"]
