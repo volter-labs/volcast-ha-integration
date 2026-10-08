@@ -756,7 +756,14 @@ class VolcastExecutor:
         # Z własnego odczytu, nie tylko z decyzji — wcześniejsza blokada cyklu go nie zasłoni.
         if self._signal_foreign_mode(rd, self._gates_open() and gates.verified, decision.takeover):
             await self._async_save("control state")
-        reserve = self._reserve_neutral(decision, rd, gates) if entities and self.paused else None
+        reserve = self._reserve_neutral(decision, rd, gates) if self.paused else None
+        if reserve is not None and direct is not None:
+            # Sam rejestr trybu, warunkowo z naszego trybu (świeży odczyt tuż przed ramką), poza budżetem
+            # NVM; inne zapisy w pauzie dalej stoją (`_gate_write`).
+            decision = await self._direct_reserve_neutral(decision, reserve, rd, now_mono)
+            self._finish(decision)
+            await self._after_direct_cycle(decision)
+            return
         if reserve is not None:
             decision = reserve
             _LOGGER.warning("Volcast control: battery at the reserve — returning our discharge mode to "
@@ -1414,6 +1421,19 @@ class VolcastExecutor:
             return None
         return replace(d, status=WRITE, reason="reserve_neutral", writes=[mode_write], restore={},
                        restore_flat={}, restore_ambiguous_safe=(), restore_direction=None)
+
+    async def _direct_reserve_neutral(self, d: CycleDecision, reserve: CycleDecision, rd: Reading,
+                                      now_mono: float) -> CycleDecision:
+        """`_reserve_neutral` w trybie bezpośrednim: zapis trybu neutralnego tylko z NASZEGO trybu
+        rozładowania według świeżego odczytu rejestru trybu (właściciel mógł go zmienić po odczycie
+        cyklu). Nic nie poszło → decyzja cyklu (pauza) bez zmian."""
+        ours = self._memory.last_written.get("mode")
+        written = await self._async_direct_neutral(rd, {self._profile.mode_value(ours)}, now_mono)
+        if written is None:
+            return d
+        _LOGGER.warning("Volcast control: battery at the reserve — returning our discharge mode to "
+                        "neutral despite the pause")
+        return replace(reserve, writes=written)
 
     def _owner_export_values(self) -> dict[str, float | str]:
         """Ogranicznik eksportu właściciela z migawki — tylko gdy to my go zaostrzyliśmy.

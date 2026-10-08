@@ -16,7 +16,7 @@ from custom_components.volcast.control.store import ControlState, ControlStore
 from custom_components.volcast.core.modbus import writer as writer_mod
 from custom_components.volcast.core.slot import parse_schedule
 from tests.control.test_executor import plan
-from tests.control.test_executor_direct import (GW_DRAFT, GW_V, MODE, SALT, Harness, _owned_sell, gw_raw_word,
+from tests.control.test_executor_direct import (GW_DRAFT, GW_V, MODE, POWER, SALT, Harness, _owned_sell, gw_raw_word,
                                                 gw_target, issues, regs)  # noqa: F401 — `issues` to fikstura
 
 LOGGER = "custom_components.volcast"
@@ -298,5 +298,93 @@ async def test_direct_direction_budget_exhausted_brakes_our_opposite_mode(make_h
         await h.cycle(1.0)
         assert "I-8" in h.ex.last_decision.notes and "neutral_brake" in h.ex.last_decision.notes
         assert gw_raw_word(goodwe_bank, MODE) == 1
+    finally:
+        await h.close()
+
+
+# ── pauza (przejęcie przez właściciela) a rezerwa SoC ─────────────────────
+
+
+SOC = 37007
+
+
+async def _owner_took_power(h, bank):
+    """Właściciel dwa razy zmienia moc w 30 min — przejęcie, pauza (moc zostaje jego)."""
+    for _ in range(2):
+        bank.poke(POWER, 1500)
+        await h.cycle(120.0)
+    assert h.ex.paused and "power_w" in h.ex._state.taken_over
+
+
+@pytest.mark.asyncio
+async def test_direct_reserve_forces_neutral_mode_even_during_pause(make_hass, goodwe_udp_sim, goodwe_bank, issues,
+                                                                    caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    goodwe_bank.poke(SOC, 12)                                  # tuż nad rezerwą (skok SoC to I-9)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _owner_took_power(h, goodwe_bank)
+        assert gw_raw_word(goodwe_bank, MODE) == 10
+        n = len(goodwe_bank.writes)
+        goodwe_bank.poke(SOC, 9)                               # pod rezerwą planu (10 %)
+        await h.cycle(120.0)
+        assert regs(goodwe_bank)[n:] == [MODE] and gw_raw_word(goodwe_bank, MODE) == 1
+        assert gw_raw_word(goodwe_bank, POWER) == 1500         # nastawa właściciela zostaje
+        assert h.ex.paused and h.ex.last_decision.reason == "reserve_neutral"
+        assert "battery at the reserve" in caplog.text
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_pause_above_reserve_writes_nothing(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    goodwe_bank.poke(SOC, 14)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _owner_took_power(h, goodwe_bank)
+        n = len(goodwe_bank.writes)
+        goodwe_bank.poke(SOC, 12)
+        await h.cycle(120.0)
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 10
+        assert h.ex.last_decision.reason == "paused"
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_pause_keeps_owner_mode_below_reserve(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Tryb przejęty przez właściciela zostaje jego — także pod rezerwą.
+    goodwe_bank.poke(SOC, 12)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        for _ in range(2):
+            goodwe_bank.poke(MODE, 12)                         # discharge_battery właściciela
+            await h.cycle(120.0)
+        assert h.ex.paused and "mode" in h.ex._state.taken_over
+        n = len(goodwe_bank.writes)
+        goodwe_bank.poke(SOC, 9)
+        await h.cycle(120.0)
+        assert h.ex.last_decision.guard.invariant == "I-1"    # zejście do rezerwy, nie inna blokada
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 12
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_reserve_in_pause_keeps_a_mode_changed_since_the_reading(make_hass, goodwe_udp_sim,
+                                                                              goodwe_bank, issues):
+    # Odczyt cyklu pokazał nasz tryb, ale tuż przed zapisem rejestr trybu ma już wybór właściciela.
+    goodwe_bank.poke(SOC, 12)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _owner_took_power(h, goodwe_bank)
+        goodwe_bank.poke(SOC, 9)
+        h.clock.advance(120.0)
+        await h.conn.async_poll()
+        goodwe_bank.poke(MODE, 2)                              # charge_pv — po odczycie, przed zapisem
+        n = len(goodwe_bank.writes)
+        await h.ex.async_tick()
+        assert h.ex.last_decision.guard.invariant == "I-1"
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 2
     finally:
         await h.close()
