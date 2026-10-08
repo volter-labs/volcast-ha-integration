@@ -71,3 +71,13 @@ def test_window_after_ten_minutes_without_valid_samples_counts_as_empty(goodwe_p
     _run(goodwe_profile, memory, 0, power_w=5000.0, pv=4000.0, load=300.0)
     late = _run(goodwe_profile, memory, 11, power_w=5000.0, pv=4000.0, load=300.0)   # 11 min później
     assert NOTE_SELL_PV_UNCONFIRMED in late.notes and late.flat["power_w"] == pytest.approx(4700.0)
+
+
+def test_empty_window_pv_pushing_to_the_export_limit_needs_a_second_sample(goodwe_profile):
+    # Limit eksportu poniżej mocy znamionowej: pułap to min(znamionowa, limit), nie sama znamionowa.
+    memory = ControlMemory.for_profile(goodwe_profile)
+    first = _run(goodwe_profile, memory, 0, power_w=2500.0, pv=4000.0, load=300.0, export_limit_w=3000)
+    assert first.flat["mode"] == "sell_power" and NOTE_SELL_PV_UNCONFIRMED in first.notes
+    assert first.flat["power_w"] == pytest.approx(2200.0)        # bez nieprzyjętego PV: bateria − dom
+    second = _run(goodwe_profile, memory, 1, power_w=2500.0, pv=4000.0, load=300.0, export_limit_w=3000)
+    assert second.flat["power_w"] == pytest.approx(3000.0) and NOTE_SELL_PV_UNCONFIRMED not in second.notes
