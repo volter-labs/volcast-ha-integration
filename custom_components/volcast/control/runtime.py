@@ -335,11 +335,13 @@ def compose_direct(hass, entry, profiles, *, salt: bytes, found: tuple[dict, boo
         return None
     unreadable = _str_keys(target.get("unreadable"))
     caps = target.get("capabilities")
+    # bez rejestru według sondy — poza cyklem odpytywania (`DirectConnection.unsupported`)
+    unsupported = {k for k, v in (caps if isinstance(caps, Mapping) else {}).items() if v is False}
     poll = entry.options.get(OPT_DIRECT_POLL_S)
     poll_s = float(poll) if isinstance(poll, (int, float)) and not isinstance(poll, bool) else float(DIRECT_POLL_S)
     poll_s = min(max(poll_s, _POLL_RANGE_S[0]), _POLL_RANGE_S[1])
     conn = DirectConnection(hass, entry, profile, target, trial=trial, salt=salt, poll_s=poll_s,
-                            unreadable=unreadable, allow_loopback=ds.ALLOW_LOOPBACK)
+                            unreadable=unreadable, unsupported=unsupported, allow_loopback=ds.ALLOW_LOOPBACK)
     io = DirectIO(conn, profile, trial=trial, unreadable=unreadable,
                   capabilities=caps if isinstance(caps, Mapping) else None, salt=salt)
     return ProfileChoice(profile, None, None), io, conn

@@ -836,6 +836,7 @@ def test_compose_direct_trial_uses_no_write_writer(make_hass):
     assert choice.profile is GW_V and choice.integration_domain is None
     assert io.trial and isinstance(io.writer, NoWriteWriter) and conn.unreadable == {"soc_max"}
     assert io.unsupported_seed() == {"soc_max", "export_limit_enabled"}
+    assert conn.unsupported == {"export_limit_enabled"}          # rejestr bez rejestru (sonda) — bez odpytywania
     for options in ({"control_mode": "entities", "direct_target": target}, {"control_mode": "direct"},
                     {"control_mode": "direct", "direct_target": {**target, "profile_id": "nope"}}):
         entry.options = options

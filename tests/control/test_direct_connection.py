@@ -68,6 +68,21 @@ def issues(monkeypatch):
 # ── start, odpytywanie ────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
+async def test_unsupported_keys_are_not_polled(hass, goodwe_udp_sim, goodwe_bank):
+    # Sonda: 47760 odpowiada wyjątkiem 2 — nie jest odpytywany (wyjątek byłby „poprzednią odpowiedzią”).
+    goodwe_bank.unreadable.clear()
+    goodwe_bank.unsupported.add(47760)
+    conn = _conn(hass(), _target(goodwe_udp_sim), unreadable=set(), unsupported={"soc_max"})
+    try:
+        await conn.async_start()
+        assert await conn.async_poll() is not None
+        assert conn.reading.device["power_w"] == 8846.0
+        assert all(a != 47760 for fc, a, _ in goodwe_udp_sim.log)
+    finally:
+        await conn.async_stop()
+
+
 def test_goodwe_udp_transport_config_has_300_ms_gap(hass, goodwe_udp_sim):
     cfg = _conn(hass(), _target(goodwe_udp_sim))._config()
     assert (cfg.kind, cfg.gap_s, cfg.timeout_s) == ("goodwe_udp", 0.3, 2.0)

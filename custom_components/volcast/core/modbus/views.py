@@ -61,6 +61,48 @@ def separator_blocks(profile, addr: int) -> tuple[Block, ...]:
                                if b[1] not in counts and not _covers(b, addr)))
 
 
+def separators_for(profile, block: Block) -> tuple[Block, ...]:
+    """Znane bloki o długości innej niż `block` i z nim rozłączne — rozdzielenie dwóch odczytów
+    tej samej długości w cyklu odpytywania (kolejność prób jak `separator_blocks`)."""
+    b0, b1 = block[0], block[0] + block[1]
+    return tuple(dict.fromkeys(b for b in (*profile.modbus.verify_blocks, *profile.modbus.identify_reads)
+                               if b[1] != block[1] and (b[0] + b[1] <= b0 or b[0] >= b1)))
+
+
+def _unproven_single(profile, block: Block) -> bool:
+    """Pojedynczy rejestr zapisu, którego żaden znany blok nie obejmuje — może być niedozwolony na
+    tym modelu (GW8KN-ET: 47760 → wyjątek 2)."""
+    if block[1] != 1:
+        return False
+    write = profile.raw.get("write", {})
+    addrs = {s["addr"] for k, s in write.items() if isinstance(s, dict) and isinstance(s.get("addr"), int)}
+    return block[0] in addrs and not any(_covers(b, block[0]) for b in profile.modbus.verify_blocks)
+
+
+def poll_order(profile, plan: Iterable[Block]) -> list[Block]:
+    """Kolejność bloków cyklu odpytywania na łączu bez korelacji odpowiedzi: sąsiednie bloki o różnej
+    długości (powtórzona odpowiedź poprzedniego bloku nie pasuje do następnego), a pojedyncze rejestry
+    zapisu bez znanego bloku — na końcu (ich wyjątek 2 nie trafia w środek cyklu; wyjątek w następnym
+    bloku i tak nie jest werdyktem — `RegisterClient`). Pierwszy blok nie jest pojedynczy (poprzedni
+    cykl kończy się pojedynczym). Wybór: wśród bloków o długości innej niż poprzedni ten, którego
+    długość jest najczęstsza wśród pozostałych (inaczej zostają na końcu dwa równe); remis — kolejność planu."""
+    plan = list(plan)
+    tail = [b for b in plan if _unproven_single(profile, b)]
+    rest = [b for b in plan if b not in tail]
+    out: list[Block] = []
+    prev: int | None = 1
+    while rest:
+        freq: dict[int, int] = {}
+        for b in rest:
+            freq[b[1]] = freq.get(b[1], 0) + 1
+        allowed = [b for b in rest if b[1] != prev] or rest
+        pick = max(allowed, key=lambda b: (freq[b[1]], -rest.index(b)))
+        rest.remove(pick)
+        out.append(pick)
+        prev = pick[1]
+    return out + tail
+
+
 def prev_read_count(transport, fallback: int | None) -> int | None:
     """Długość ostatniego żądania odczytu na łączu (`last_read_count`); bez niej — `fallback`."""
     n = getattr(transport, "last_read_count", None)

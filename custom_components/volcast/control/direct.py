@@ -160,7 +160,7 @@ class DirectConnection:
     def __init__(self, hass, entry, profile, target: Mapping, *, trial: bool, salt: bytes,
                  poll_s: float = DIRECT_POLL_S, transport_factory=make_transport, clock=time.monotonic,
                  utcnow=dt_util.utcnow, allow_loopback: bool = False, unreadable: Iterable[str],
-                 resolve: Resolver | None = None) -> None:
+                 resolve: Resolver | None = None, unsupported: Iterable[str] = ()) -> None:
         self._hass = hass
         self._entry = entry
         self.profile = profile
@@ -173,6 +173,9 @@ class DirectConnection:
         self._utcnow = utcnow
         self._allow_loopback = allow_loopback
         self.unreadable = frozenset(unreadable)
+        # klucze bez rejestru według sondy (wyjątek 2) — poza cyklem odpytywania: na łączu bez korelacji
+        # odpowiedzi ich wyjątek byłby „poprzednią odpowiedzią” pasującą do następnego żądania
+        self.unsupported = frozenset(unsupported)
         self._resolve = resolve
         self.reading: DirectReading | None = None
         self.monitor = ContentionMonitor()
@@ -374,7 +377,7 @@ class DirectConnection:
             return
         # Połączenie próbne nagrywa surowe ramki odczytów (diagnostyka, złote wektory — zamaskowane).
         self.client = RegisterClient(transport, self.profile, clock=self._clock, utcnow=self._utcnow, salt=self._salt,
-                                     unreadable=self.unreadable, record=self.trial)
+                                     unreadable=self.unreadable | self.unsupported, record=self.trial)
         await self.async_confirm_identity()
         if self._stopped:                                # stop w trakcie potwierdzania: bez zegara
             await self._release()

@@ -28,6 +28,7 @@ from ..transports.base import LinkDown, ModbusException, RegisterTransport, Requ
 from .blocks import read_plan, split_block
 from .identity import device_fingerprint
 from .reading import DirectReading, build_reading
+from .views import needs_disambiguation, poll_order, prev_read_count, separators_for
 
 DEFAULT_CYCLE_BUDGET_S = 5.0
 _DEFAULT_TIMEOUT_S = 2.0
@@ -68,6 +69,9 @@ class RegisterClient:
         self._raw: dict[tuple[int, int], tuple[bytes, bytes | None]] = {}
         if self.record and hasattr(transport, "recorder"):
             transport.recorder = self._on_frame
+        # łącze bez korelacji odpowiedzi: kolejność bloków, wyjątek 2 bloku potwierdzany, podział ostrożny
+        self._disambiguate = needs_disambiguation(transport)
+        self._known: dict[int, int] = {}            # słowa z ostatnich odczytów całych bloków
 
     def _on_frame(self, req, request: bytes, response: bytes | None) -> None:
         if getattr(req, "fc", None) != 3:
@@ -134,16 +138,22 @@ class RegisterClient:
         blocks: dict[int, list[int]] = {}
         last_err: TransportError | None = None
         plan = read_plan(self.profile, exclude=self.unreadable)
+        if self._disambiguate:
+            plan = poll_order(self.profile, plan)
         for i, block in enumerate(plan):
             try:
-                blocks[block[0]] = await self._timed_read(block, lost)
+                read = self._separated if self._disambiguate else self._timed_read
+                blocks[block[0]] = self._remember(block, await read(block, lost))
                 frames.append(_frame(block, True))
                 continue
             except TransportError as err:
                 frames.append(_frame(block, False))
                 last_err = err
                 if isinstance(err, ModbusException) and err.code == 2:
-                    last_err = await self._read_split(block, blocks, frames, lost) or err
+                    if self._disambiguate:
+                        last_err = await self._recover_block(block, blocks, frames, lost)
+                    else:
+                        last_err = await self._read_split(block, blocks, frames, lost) or err
             if _aborts(last_err):
                 frames.extend(_frame(b, False) for b in plan[i + 1:])
                 break
@@ -164,6 +174,69 @@ class RegisterClient:
                 continue
             try:
                 blocks[sub[0]] = await self._timed_read(sub, lost)
+                frames.append(_frame(sub, True))
+            except TransportError as err:
+                frames.append(_frame(sub, False))
+                err_out = err
+                if _aborts(err):
+                    break
+        return err_out
+
+    # ── łącze bez korelacji odpowiedzi (GoodWe UDP, `views.py`) ──
+
+    def _remember(self, block, words: list[int]) -> list[int]:
+        """Słowa bloku przeczytanego w całości — punkt odniesienia dla wartości z podziału bloku."""
+        if self._disambiguate:
+            self._known.update(zip(range(block[0], block[0] + block[1]), words))
+        return words
+
+    async def _separated(self, block, lost: list[float]) -> list[int]:
+        """Odczyt bloku o długości innej niż poprzednie żądanie odczytu na łączu; gdy równa — najpierw
+        blok rozdzielający (znany, innej długości; wyjątek na nim → następny kandydat)."""
+        if prev_read_count(self.transport, None) == block[1]:
+            for sep in separators_for(self.profile, block):
+                try:
+                    await self._timed_read(sep, lost)
+                    break
+                except ModbusException:
+                    continue
+            else:
+                raise TransportError("no separator block answered")
+        return await self._timed_read(block, lost)
+
+    async def _recover_block(self, block, blocks, frames, lost) -> TransportError | None:
+        """Wyjątek 2 bloku na łączu bez korelacji: wyjątek nie ma długości, więc jedna ramka to nie
+        werdykt (np. powtórzony wyjątek ostatniego odczytu poprzedniego cyklu). Blok rozdzielający
+        z poprawną odpowiedzią i ponowny odczyt bloku; dopiero drugi wyjątek 2 dzieli blok na zakresy
+        kluczy — każdy odczytany z długością inną niż poprzedni, a wartość inna niż z ostatniego
+        całego bloku wymaga drugiego, zgodnego odczytu (inaczej klucze zakresu bez wartości: lepiej
+        brak odczytu niż przesunięta wartość). Zwraca ostatni błąd albo None."""
+        try:
+            for sep in separators_for(self.profile, block):
+                try:
+                    await self._timed_read(sep, lost)
+                    break
+                except ModbusException:
+                    continue
+            blocks[block[0]] = self._remember(block, await self._timed_read(block, lost))
+            frames.append(_frame(block, True))
+            return None
+        except TransportError as err:
+            frames.append(_frame(block, False))
+            if _aborts(err) or not (isinstance(err, ModbusException) and err.code == 2):
+                return err
+        err_out: TransportError | None = None
+        for sub in split_block(block, self.profile):
+            if sub == tuple(block):
+                continue
+            try:
+                words = await self._separated(sub, lost)
+                span = range(sub[0], sub[0] + sub[1])
+                if any(self._known.get(a, w) != w for a, w in zip(span, words)) \
+                        and await self._separated(sub, lost) != words:
+                    raise TransportError("split read not confirmed")
+                self._known.update(zip(span, words))
+                blocks[sub[0]] = words
                 frames.append(_frame(sub, True))
             except TransportError as err:
                 frames.append(_frame(sub, False))
