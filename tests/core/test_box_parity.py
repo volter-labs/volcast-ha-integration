@@ -150,7 +150,7 @@ def _direct(vec: dict, *, soc: float = 50.0, memory: ControlMemory | None = None
 
 
 def _params(names, diffs):
-    return [pytest.param(n, marks=pytest.mark.xfail(strict=False, reason=diffs[n])) if n in diffs
+    return [pytest.param(n, marks=pytest.mark.xfail(strict=False, raises=AssertionError, reason=diffs[n])) if n in diffs
             else pytest.param(n) for n in names]
 
 
@@ -205,7 +205,7 @@ def test_soc_unknown_writes_nothing():
     assert (d.status, d.reason) == (BLOCKED, "guard:I-9") and writes == []
 
 
-@pytest.mark.xfail(strict=False, reason="reserve latch keeps discharge off until reserve + 3 pp and 30 min; "
+@pytest.mark.xfail(strict=False, raises=AssertionError, reason="reserve latch keeps discharge off until reserve + 3 pp and 30 min; "
                                         "the reference resumes as soon as SoC > reserve")
 def test_discharge_resumes_once_soc_is_above_reserve():
     memory = ControlMemory.for_profile(GW)
@@ -215,14 +215,14 @@ def test_discharge_resumes_once_soc_is_above_reserve():
     assert writes == [(MODE, DISCHARGE)]
 
 
-@pytest.mark.xfail(strict=False, reason="a mapped temperature register without a value blocks the cycle; "
+@pytest.mark.xfail(strict=False, raises=AssertionError, reason="a mapped temperature register without a value blocks the cycle; "
                                         "the reference treats an unknown temperature as OK")
 def test_unknown_battery_temperature_does_not_block():
     _, writes = _direct(VECTORS["hold"], temp=None)
     assert writes == VECTORS["hold"]["box"]
 
 
-@pytest.mark.xfail(strict=False, reason="SoC plausibility (jump faster than 4 pp/min) blocks the cycle; "
+@pytest.mark.xfail(strict=False, raises=AssertionError, reason="SoC plausibility (jump faster than 4 pp/min) blocks the cycle; "
                                         "the reference has no such check")
 def test_soc_jump_does_not_block():
     _, writes = _direct(VECTORS["hold"], soc=80.0, previous_soc=40.0, gap=60.0)
@@ -239,7 +239,7 @@ def test_first_drift_is_reasserted():
     assert writes == [(MODE, STANDBY)]
 
 
-@pytest.mark.xfail(strict=False, reason="a second change of the same key within 30 min is an owner takeover "
+@pytest.mark.xfail(strict=False, raises=AssertionError, reason="a second change of the same key within 30 min is an owner takeover "
                                         "(control paused, owner value kept); the reference re-asserts forever")
 def test_repeated_drift_never_pauses():
     drift = DriftTracker()
@@ -261,3 +261,18 @@ def test_intentional_mode_waits_for_its_throttled_setpoint():
     d, writes = _direct(dict(VECTORS["hold"], regs={MODE: SELL, XSET: 3393}), memory=memory)
     assert (MODE, STANDBY) not in writes
     assert "mode_held" in d.notes or "group_held" in d.notes
+
+
+def test_every_parity_xfail_expects_an_assertion_failure():
+    """A vector that "fails" through a harness crash instead of the documented difference must not count
+    as XFAIL — every xfail marker here names `raises=AssertionError`."""
+    import sys
+    marks = []
+    for obj in vars(sys.modules[__name__]).values():
+        for mark in getattr(obj, "pytestmark", []):
+            if mark.name == "parametrize":
+                for p in mark.args[1]:
+                    marks += [m for m in getattr(p, "marks", ()) if m.name == "xfail"]
+            elif mark.name == "xfail":
+                marks.append(mark)
+    assert marks and all(m.kwargs.get("raises") is AssertionError for m in marks)
