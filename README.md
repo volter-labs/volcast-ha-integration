@@ -105,7 +105,7 @@ Volcast can connect to a supported inverter directly on your local network — *
 
 **Direct control is enabled per brand only after its register map has been verified on a live inverter.**
 
-- **GoodWe** (ET/EH/BT/BH) — verified since v2.0.0b6 on a live GW8KN-ET over the Wi-Fi module (UDP). Other ET/EH/BT/BH models share the register map but have not been tried yet; the search detects registers a model does not have, and Volcast does not use them. Choose **Options → Inverter control → Directly over the local network**.
+- **GoodWe** (ET/EH/BT/BH) — verified since v2.0.0b6 on a live GW8KN-ET over the Wi-Fi module (UDP). Writes are also enabled over Modbus TCP and over an RS485 ↔ TCP gateway (Modbus RTU framing); these use the same registers but have not been tried on hardware yet. Other ET/EH/BT/BH models share the register map but have not been tried yet; the search detects registers a model does not have, and Volcast does not use them. Choose **Options → Inverter control → Directly over the local network**.
 - **Deye** — still draft: only the read-only test connection is available, and nothing is written.
 
 Nothing is written unless direct control is selected, consent is given in the Volcast app, the control switch is on, the inverter's identity at the saved address is confirmed and no other client uses the inverter.
@@ -117,7 +117,7 @@ Safety rules for the direct connection ("neutral mode" = the inverter's normal s
 - Every write is read back; only values the inverter actually holds are recorded.
 - A daily limit on setting changes protects the inverter's memory; a forced charge or discharge returns to the inverter's normal mode when the limit is hit, and returning to baseline is never blocked by it.
 - Withdrawing consent, turning the switch off, or disabling/removing the entry returns the inverter to its settings from before Volcast (confirmed by reading back). Changing the control method in the options first returns the inverter through the current method — if the inverter cannot be reached, the change is refused.
-- Stopping Home Assistant, or unloading or reloading the entry, sets the neutral mode if the inverter is in a forced mode set by Volcast (in both direct and entity mode); control resumes afterwards.
+- Stopping Home Assistant, or unloading or reloading the entry, tries to set the neutral mode if the inverter is in a forced mode set by Volcast (in both direct and entity mode); control resumes afterwards. This is best effort within a 10-second budget, not a guarantee: if the inverter does not answer in time, it keeps its last mode and an error is logged.
 - A control cycle that cannot run the plan safely (no plan, a stale or missing reading, an error, another client on the connection) sets the neutral mode if the inverter is in a forced mode set by Volcast. An action that needs a setting the inverter does not have or that cannot be read runs in the neutral mode instead; without a usable mode register direct control does not run and a repair notification is raised.
 - In a sell slot the export setpoint is recalculated from the inverter's own PV and house-load reading; without a usable reading the slot runs in the neutral mode.
 - A setting you change twice within 30 minutes pauses control for 30 minutes and stays as you set it until the plan for it changes. During a pause, a discharge set by Volcast is switched to the neutral mode once the battery reaches the plan's reserve.
