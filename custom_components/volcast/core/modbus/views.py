@@ -16,6 +16,11 @@ Wyjątek Modbus nie ma długości: wyjątek 2 przyjmuje się jako ostateczny (�
 gdy powtórzy się w odczycie rejestru po bloku rozdzielającym z poprawną odpowiedzią (wtedy poprzednia
 odpowiedź modułu nie jest wyjątkiem). Wyjątek 2 na bloku to nie werdykt o rejestrze — tylko o bloku.
 
+Ryzyko resztkowe: obca ramka wyjątku innego klienta (np. drugiej integracji odpytującej 47760) pasuje
+do każdego żądania FC 3 — potwierdzenie wyjątku 2 wymaga jednak dwóch takich zbiegów (przed i po bloku
+rozdzielającym), a ramka obca tej samej długości co nasz odczyt (blok Boxa 4 słowa) daje niezgodę
+odczytów przed zapisem (ERROR, nic nie wysłano), nie fałszywy wynik.
+
 Łącza z korelacją odpowiedzi (Modbus TCP — identyfikator transakcji, V5 — numer sekwencji) i łącze
 strumieniowe RTU (kanał resetowany po każdym przekroczeniu czasu) czytają po staremu.
 """

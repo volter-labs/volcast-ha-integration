@@ -20,8 +20,11 @@ transportu pokazuje ponowienie.
 Dodatkowy czas na jeden odczyt: suma przerw + READ_RETRIES × timeout_s (+ odstępy gap_s;
 na transporcie strumieniowym + connect_timeout_s na każde ponowne połączenie). GoodWe UDP
 (timeout 2 s, odstęp 0,3 s): ≤ 5,5 s + odstępy na odczyt; odczyt przed zapisem to tam dwa
-odczyty (niżej), plus ewentualne odczekanie przed ponownym odczytem zwrotnym. Wyjątek 2 przy
-odczycie nie jest ponawiany. „Brak” = wszystkie próby bez odpowiedzi.
+odczyty (niżej), plus ewentualne odczekanie przed ponownym odczytem zwrotnym. Bez strat klucz to
+~4 wymiany po ~0,5 s (≈ 2 s), z odczekaniem ≈ 5 s; sesja 6 kluczy ≈ 12–20 s — dłużej niż
+STOP_WRITE_TIMEOUT_S (10 s), więc zatrzymanie częściej przestaje czekać na zapis w toku (runtime
+i tak czeka na starego pisarza przed nowym — to nie błąd poprawności). Wyjątek 2 przy odczycie nie
+jest ponawiany. „Brak” = wszystkie próby bez odpowiedzi.
 
 Łącze bez korelacji odpowiedzi (GoodWe UDP, `views.py`): moduł Wi-Fi bywa, że odpowiada poprzednią
 odpowiedzią, a odpowiedź FC 3 nie niesie adresu. Każdy odczyt rejestru ma długość odpowiedzi inną niż

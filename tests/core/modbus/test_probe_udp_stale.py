@@ -78,6 +78,8 @@ async def test_stale_replies_never_switch_a_legal_key_off(module, at, replays):
         # True albo bez werdyktu (próba przerwana) — nigdy wyłączony ani „nieczytelny”
         assert rep.capabilities.get(key) is not False and key not in rep.echo_only, key
     assert direct_capabilities(GW, rep.capabilities, rep.unreadable)["set_soc_ceiling"] is False
+    if replays == 1:                               # jedna nieaktualna ramka: pełny werdykt, bez przerwania
+        assert rep.capabilities == {**{k: True for k in LEGAL}, "soc_max": False} and rep.direct_available
 
 
 @pytest.mark.asyncio

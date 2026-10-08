@@ -16,7 +16,9 @@ from .profile_schema import validate_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
 _BUILTIN_ID_RE = re.compile(r"[a-z0-9-]+")
-# Falownik (GW8KN-ET) pokazuje nową nastawę w odczycie dopiero po < 1 s od echa zapisu.
+# Falownik (GW8KN-ET) pokazuje nową nastawę w odczycie dopiero po < 1 s od echa zapisu. Domyślna
+# dla KAŻDEGO profilu bez pola (celowo): prawdziwa odmowa z echem zgodnym kosztuje ~3 s i 2 odczyty
+# więcej, za to opóźnione zastosowanie nigdy nie jest odmową. Profil może ustawić 0.
 DEFAULT_READBACK_SETTLE_S = 1.5
 
 
