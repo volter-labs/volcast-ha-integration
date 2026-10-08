@@ -98,7 +98,11 @@ class TickClock(FakeClock):
 
 class Harness:
     def __init__(self, make_hass, profile, target, *, options=None, trial=False, store=None, clock=None,
-                 utc=None, rated=8000.0, entry_id="e1") -> None:
+                 utc=None, rated=8000.0, entry_id="e1", timeout_s: float = 1.0) -> None:
+        # Limit odpowiedzi transportu: ~1 s, żeby przestój pętli (GC, obciążony CPU) nie dawał ponownego
+        # odczytu ani ponownej wysyłki zapisu (dokładne liczby ramek w asercjach). Testy, które celowo gubią
+        # ramki, podają krótszy (`timeout_s=0.1`) — czekają na niego naprawdę.
+        self.timeout_s = timeout_s
         self.clock = clock or TickClock()
         self.options = options if options is not None else {"control_mode": "direct", "direct_target": target}
         self.entry = SimpleNamespace(domain=DOMAIN, entry_id=entry_id, options=self.options, data={},
@@ -113,7 +117,8 @@ class Harness:
     def _compose(self) -> None:
         t = self.target
         self.conn = DirectConnection(self.hass, self.entry, self.profile, t, trial=self.trial, salt=SALT,
-                                     transport_factory=_factory(), allow_loopback=True, clock=self.clock,
+                                     transport_factory=_factory(self.timeout_s), allow_loopback=True,
+                                     clock=self.clock,
                                      unreadable=t.get("unreadable", ()))
         self.io = DirectIO(self.conn, self.profile, trial=self.trial, unreadable=t.get("unreadable", ()),
                            capabilities=t.get("capabilities"), salt=SALT, clock=self.clock)
@@ -170,7 +175,8 @@ async def test_direct_writes_only_with_all_gates(make_hass, goodwe_udp_sim, good
         options = {"direct_trial": True, "direct_target": target}
     if case == "identity_unknown":
         target = {**target, "device_fp": None}
-    h = Harness(make_hass, GW_DRAFT if case == "draft" else GW_V, target, options=options, trial=case == "trial")
+    h = Harness(make_hass, GW_DRAFT if case == "draft" else GW_V, target, options=options, trial=case == "trial",
+                timeout_s=0.1 if case == "identity_pending" else 1.0)
     try:
         await h.start(consent=case != "no_consent", local=case != "local_off")
         if case == "paused":
@@ -470,7 +476,7 @@ async def test_budget_restore_frame_resent_after_silence_even_with_budget_used_u
                                                                                   goodwe_bank, sim_faults, issues):
     # Powrót do trybu bazowego idzie poza budżetem: po całkowitej ciszy ramka powrotu jest wysyłana
     # drugi raz także przy wyczerpanym budżecie (liczona, nigdy odmówiona).
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, timeout_s=0.1)   # ramki gubione celowo
     try:
         budget = h.ex._memory.budget
         for key in ("power_w", "mode"):
@@ -628,7 +634,7 @@ async def test_readback_denied_marks_failed_and_holds_mode(make_hass, goodwe_udp
 
 @pytest.mark.asyncio
 async def test_lost_echo_uncertain_resolved_next_poll(make_hass, modbus_tcp_sim, goodwe_bank, sim_faults, issues):
-    h = await Harness(make_hass, GW_V, gw_target(modbus_tcp_sim, kind="modbus_tcp")).start()
+    h = await Harness(make_hass, GW_V, gw_target(modbus_tcp_sim, kind="modbus_tcp"), timeout_s=0.1).start()
     try:
         sim_faults.mute_write_echo = 1                        # zapis doszedł, echo zgubione
         writer = h.io.writer

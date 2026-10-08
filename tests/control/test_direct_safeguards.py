@@ -239,7 +239,7 @@ async def test_direct_repeated_failed_brake_warns_once(make_hass, goodwe_udp_sim
 async def test_direct_brake_without_a_pre_read_is_reported_as_failed(make_hass, goodwe_udp_sim, goodwe_bank,
                                                                      sim_faults, issues, caplog):
     caplog.set_level(logging.WARNING, logger=LOGGER)
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, timeout_s=0.1)   # ramki gubione celowo
     try:
         h.clock.advance(120.0)
         _stale(h)
@@ -292,7 +292,7 @@ async def test_direct_bus_conflict_with_a_changed_plan_brakes_our_mode(make_hass
 @pytest.mark.asyncio
 async def test_direct_link_down_brakes_when_the_link_returns(make_hass, goodwe_udp_sim, goodwe_bank, sim_faults,
                                                              issues):
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, timeout_s=0.1)   # ramki gubione celowo
     try:
         n = len(goodwe_bank.writes)
         sim_faults.drop_next = 10 ** 6                       # łącze leży
@@ -311,7 +311,7 @@ async def test_direct_link_down_brakes_when_the_link_returns(make_hass, goodwe_u
 @pytest.mark.asyncio
 async def test_direct_brake_without_a_fresh_read_retries_on_a_later_cycle(make_hass, goodwe_udp_sim, goodwe_bank,
                                                                           sim_faults, issues):
-    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank, timeout_s=0.1)   # ramki gubione celowo
     try:
         n = len(goodwe_bank.writes)
         h.clock.advance(120.0)
