@@ -764,10 +764,14 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     async def async_step_direct_search(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         task = getattr(self, "_search_task", None)
-        if task is None:
+        started = task is None
+        if started:
             task = self._search_task = self.hass.async_create_task(
                 async_direct_search(self.hass, self.config_entry))
-        if not task.done():
+        # Pierwsze wejście (z formularza) zawsze pokazuje postęp, nawet gdy zadanie już się skończyło
+        # (start zachłanny bez zawieszenia): `progress_done` prosto z formularza HA przekazałby dane
+        # tego formularza do `direct_pick`. Gotowe zadanie i tak od razu wywoła ten krok ponownie.
+        if started or not task.done():
             return self.async_show_progress(step_id="direct_search", progress_action="direct_search",
                                             progress_task=task)
         try:

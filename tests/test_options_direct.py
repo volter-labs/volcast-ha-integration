@@ -14,7 +14,7 @@ from custom_components.volcast.control import direct_search as ds_mod
 from custom_components.volcast.control import runtime as rt_mod
 from custom_components.volcast.core.discovery.identify import Candidate, Identity
 from custom_components.volcast.core.discovery.probe import ProbeReport
-from custom_components.volcast.core.profile import direct_verified, load_builtin, profile_from_dict
+from custom_components.volcast.core.profile import builtin_ids, direct_verified, load_builtin, profile_from_dict
 
 _ce = sys.modules["homeassistant.config_entries"]
 for _name, _fn in {
@@ -45,8 +45,9 @@ def verified(pid):
 
 
 def drafted(pid):
+    """Profil zweryfikowany z niezweryfikowaną ścieżką rejestrów — sam `modbus.status` blokuje sterowanie."""
     raw = _thaw(load_builtin(pid).raw)
-    raw["status"] = "draft"
+    raw["status"] = "verified"
     raw["modbus"]["status"] = "draft"
     return profile_from_dict(raw)
 
@@ -331,6 +332,12 @@ def test_trial_toggle_only_for_draft_profiles(monkeypatch):
                                        monkeypatch=monkeypatch))
     assert "direct_trial" not in keys(flow(options={"direct_target": {**_draft_target(), "profile_id": "goodwe-et"}},
                                            profiles=(GW_V,), monkeypatch=monkeypatch))
+    # sam `modbus.status = draft` (profil poza tym zweryfikowany) wystarcza, by oferować próbę
+    assert "direct_trial" in keys(flow(options={"direct_target": {**_draft_target(), "profile_id": "goodwe-et"}},
+                                       profiles=(GW,), monkeypatch=monkeypatch))
+    # wpis z włączoną próbą sprzed weryfikacji profilu: przełącznik zostaje, żeby dało się ją wyłączyć
+    assert "direct_trial" in keys(flow(options={"direct_target": {**_draft_target(), "profile_id": "goodwe-et"},
+                                                "direct_trial": True}, profiles=(GW_V,), monkeypatch=monkeypatch))
     assert "direct_search" in keys(flow(monkeypatch=monkeypatch))
 
 
@@ -397,3 +404,6 @@ def test_shipped_direct_profile_statuses():
     gw, deye = load_builtin("goodwe-et"), load_builtin("deye-sg")
     assert gw.modbus.status == "verified" and direct_verified(gw)
     assert deye.modbus.status == "draft" and not direct_verified(deye)
+    # cały katalog: nowy profil z rejestrami `verified` nie przejdzie niezauważony
+    shipped = [load_builtin(pid) for pid in builtin_ids()]
+    assert {p.id for p in shipped if p.modbus is not None and p.modbus.status == "verified"} == {"goodwe-et"}

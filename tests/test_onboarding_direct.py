@@ -98,7 +98,7 @@ def test_onboarding_publishes_options_token():
     ob, client, _, _ = make([PollResult("consumed", choices={})], reports=[report()], mapped=WRITE_KEYS)
     asyncio.run(ob.async_run())
     assert last(client)["control_mode"]["detail"] == "options: entities,direct"
-    # profil wbudowany (draft): sonda znalazła falownik, ale „Bezpośrednio” nie jest oferowane
+    # profil z niezweryfikowaną ścieżką rejestrów (sam modbus.status = draft): sonda znalazła falownik, ale „Bezpośrednio” nie jest oferowane
     ob, client, _, _ = make([PollResult("consumed", choices={})], reports=[report()], profiles=(GW,),
                             mapped=WRITE_KEYS)
     asyncio.run(ob.async_run())

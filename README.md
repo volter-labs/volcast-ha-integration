@@ -93,7 +93,7 @@ Entity-mode control and account pairing are both beta features.
 
 The downloadable diagnostics file masks serial numbers, MAC addresses and e-mail addresses (IP addresses are kept, since they help with troubleshooting). Once an entry is paired, its readings and control summary also go to your Volcast account, as listed above — diagnostics is no longer the only place they're visible.
 
-## Beta: Direct Connection (v2.0.0b3)
+## Beta: Direct Connection
 
 ### Direct connection (beta)
 
@@ -103,16 +103,27 @@ Volcast can connect to a supported inverter directly on your local network — *
 - **Sensors**: state of charge, temperatures, voltages, power flows, lifetime energy counters (Energy dashboard), the inverter mode and diagnostic settings, refreshed every 10 s by default.
 - **Read-only test connection**: for inverters whose direct control is not verified yet, **Installation details → Read-only test connection** shows the sensors and what Volcast *would* write, and never writes.
 
-**Direct control ships disabled.** Writing is enabled per brand only after its register map has been verified on a live inverter, and both built-in direct profiles (GoodWe and Deye) are still draft (this applies to direct register control only; control through the GoodWe integration is verified) — so choosing **Options → Inverter control → Directly over the local network** reports that direct control is not available yet. Once a brand is verified, nothing is written unless direct control is selected, consent is given in the Volcast app, the control switch is on, the inverter's identity at the saved address is confirmed and no other client uses the inverter.
+**Direct control is enabled per brand only after its register map has been verified on a live inverter.**
 
-Safety rules for the direct connection:
+- **GoodWe** (ET/EH/BT/BH) — verified since v2.0.0b6 on a live GW8KN-ET over the Wi-Fi module (UDP). Other ET/EH/BT/BH models share the register map but have not been tried yet; the search detects registers a model does not have, and Volcast does not use them. Choose **Options → Inverter control → Directly over the local network**.
+- **Deye** — still draft: only the read-only test connection is available, and nothing is written.
+
+Nothing is written unless direct control is selected, consent is given in the Volcast app, the control switch is on, the inverter's identity at the saved address is confirmed and no other client uses the inverter.
+
+**The GoodWe Wi-Fi module must have Volcast as its only local client.** Other Home Assistant integrations, the manufacturer's app on the local network or other energy controllers talking to the same module cause timeouts and mismatched replies.
+
+Safety rules for the direct connection ("neutral mode" = the inverter's normal self-use mode, which is not the same as returning it to its settings from before Volcast):
 
 - Every write is read back; only values the inverter actually holds are recorded.
 - A daily limit on setting changes protects the inverter's memory; a forced charge or discharge returns to the inverter's normal mode when the limit is hit, and returning to baseline is never blocked by it.
-- Withdrawing consent, turning the switch off, or disabling/removing the entry returns the inverter to its settings from before Volcast (confirmed by reading back); a restart or reload does not. Changing the control method in the options first returns the inverter through the current method — if the inverter cannot be reached, the change is refused.
-- A setting you change twice within 30 minutes pauses control for 30 minutes and stays as you set it until the plan for it changes.
-- Another integration configured with the inverter's local address blocks the direct connection (Volcast checks again every few minutes; cloud-only integrations do not block it); signs of another client while connected stop plan writes (returning to baseline still works).
+- Withdrawing consent, turning the switch off, or disabling/removing the entry returns the inverter to its settings from before Volcast (confirmed by reading back). Changing the control method in the options first returns the inverter through the current method — if the inverter cannot be reached, the change is refused.
+- Stopping Home Assistant, or unloading or reloading the entry, sets the neutral mode if the inverter is in a forced mode set by Volcast (in both direct and entity mode); control resumes afterwards.
+- A control cycle that cannot run the plan safely (no plan, a stale or missing reading, an error, another client on the connection) sets the neutral mode if the inverter is in a forced mode set by Volcast. An action that needs a setting the inverter does not have or that cannot be read runs in the neutral mode instead; without a usable mode register direct control does not run and a repair notification is raised.
+- In a sell slot the export setpoint is recalculated from the inverter's own PV and house-load reading; without a usable reading the slot runs in the neutral mode.
+- A setting you change twice within 30 minutes pauses control for 30 minutes and stays as you set it until the plan for it changes. During a pause, a discharge set by Volcast is switched to the neutral mode once the battery reaches the plan's reserve.
+- Another integration configured with the inverter's local address blocks the direct connection (Volcast checks again every few minutes; cloud-only integrations do not block it).
 - If a different device answers at the saved address, reading and control stop until you search again.
+- **These safeguards only work while Home Assistant is running.** If Home Assistant crashes or hangs, or the host loses power or network, while the inverter is in a forced mode (charging from the grid or selling), the inverter stays in that mode until Home Assistant is back.
 
 Stored in Home Assistant only: the inverter's local address, port, unit ID, Solarman logger serial, a salted device fingerprint and the search results. Sent to Volcast: the readings, the profile id, the connection type and counters, which settings can be controlled and the rated power — **never** the address, serial numbers, the fingerprint or the salt. Raw frames appear in the diagnostics file only while the read-only test connection is on, with serial numbers and the logger serial zeroed.
 

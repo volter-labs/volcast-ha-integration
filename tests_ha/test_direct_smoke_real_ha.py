@@ -36,8 +36,9 @@ def _thaw(v):
 
 
 def _draft_goodwe():
+    """Profil zweryfikowany, ale z niezweryfikowaną ścieżką rejestrów (sam `modbus.status = draft`)."""
     raw = _thaw(load_builtin("goodwe-et").raw)
-    raw["status"] = raw["modbus"]["status"] = "draft"
+    raw["modbus"]["status"] = "draft"
     return profile_from_dict(raw)
 
 
@@ -187,6 +188,36 @@ async def test_real_ha_conflicting_goodwe_entry_refuses(hass: HomeAssistant, net
     await hass.async_block_till_done()
 
 
+async def test_real_ha_options_search_finished_at_once_still_offers_manual_entry(
+        hass: HomeAssistant, network_down, hass_storage, monkeypatch):
+    """Wyszukiwanie zakończone, zanim krok sprawdzi zadanie (bez zawieszenia — szybki wątek wykonawcy
+    na Pythonie 3.14 oddaje gotową przyszłość), też pokazuje postęp, a potem formularz wyboru z wpisem
+    ręcznym. Wcześniej krok `details` zwracał od razu `progress_done`, a pętla HA przekazywała jego
+    dane do `direct_pick` → przerwanie `direct_not_found` bez formularza."""
+    from custom_components.volcast import config_flow as cf
+
+    async def instant_search(*a, **k):
+        return []
+    monkeypatch.setattr(cf, "async_direct_search", instant_search)
+    seed_salt(hass_storage)
+    store_state(hass_storage, "paired01", {"consent": True, "local_switch": True})
+    entry = make_entry(hass)
+    await setup_entry(hass, entry)
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    flow = await hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "details"})
+    flow = await hass.config_entries.options.async_configure(flow["flow_id"], {"direct_search": True})
+    assert flow["type"] == "progress", flow
+    await hass.async_block_till_done()
+    flow = await hass.config_entries.options.async_configure(flow["flow_id"])
+    assert flow["type"] == "form" and flow["step_id"] == "direct_pick"
+    assert flow["errors"] == {"base": ds.NOT_FOUND}
+    flow = await hass.config_entries.options.async_configure(flow["flow_id"], {"candidate": "manual"})
+    assert flow["step_id"] == "direct_manual"
+    hass.config_entries.options.async_abort(flow["flow_id"])
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_real_ha_options_search_manual_then_trial(hass: HomeAssistant, network_down, hass_storage,
                                                         goodwe_sim, monkeypatch):
     from custom_components.volcast.core.discovery.network import NetworkProbeResult
@@ -194,7 +225,9 @@ async def test_real_ha_options_search_manual_then_trial(hass: HomeAssistant, net
     async def no_replies(*a, **k):
         return NetworkProbeResult(sent=True)
     monkeypatch.setattr(ds, "probe_udp_48899", no_replies)
-    monkeypatch.setattr(ds, "load_profiles", lambda: [_draft_goodwe()])     # the shipped profile is verified
+    # Połączenie próbne jest oferowane tylko dla ścieżki rejestrów `draft`; wbudowany GoodWe jest
+    # `verified`, więc bez tej podmiany formularz szczegółów nie ma pola `direct_trial`.
+    monkeypatch.setattr(ds, "load_profiles", lambda: [_draft_goodwe()])
     seed_salt(hass_storage)
     store_state(hass_storage, "paired01", {"consent": True, "local_switch": True})
     entry = make_entry(hass)
