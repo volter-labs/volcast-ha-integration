@@ -165,7 +165,8 @@ _DIRECT_BRAKE_EXEMPT = (*_BRAKE_EXEMPT, "owner_kept")
 # blokadą (tryb wymuszony trwa najwyżej jeden cykl dłużej; pojedyncza próbka nie przełącza trybu
 # neutralny ↔ wymuszony, a każde przełączenie to 2 ramki NVM):
 # * `temperature_unknown` — jedno odpytanie bez temperatury baterii;
-# * I-9 `soc_jump` — skok SoC ponad tempo fizyczne (następny cykl porównuje już z nową wartością).
+# * I-9 `soc_jump` — skok SoC ponad tempo fizyczne; odrzucona próbka czeka na potwierdzenie
+#   (`_remember_soc`): powrót do poprzedniej wartości albo powtórzenie nowej nie jest drugim skokiem.
 # Pojedyncza nieważna próbka PV/poboru w slocie sprzedaży jest przetrzymywana w rdzeniu
 # (`cycle._live_export_direct`, ostatnia ważna para przez jeden cykl). Wszystko inne jest TRWAŁE
 # i hamuje od razu: I-9 nieświeży/brak/niemożliwy SoC (ponad `max_state_age_s`), wyjątek, kolizja
@@ -224,6 +225,8 @@ class VolcastExecutor:
         self.tou_preview: dict | None = None
         self.foreign_changes: list[dict] = []
         self._prev_soc: tuple[float, float] | None = None
+        # Próbka odrzucona jako skok SoC — czeka na potwierdzenie następną (`_remember_soc`).
+        self._soc_candidate: tuple[float, float] | None = None
         self._errors = 0
         self._logged: tuple[str, str] | None = None
         self._lock = lock if lock is not None else asyncio.Lock()
@@ -873,8 +876,7 @@ class VolcastExecutor:
             self._update_mode_issue(decision, self._control_on(gates))
             # kolejne cykle z blokadą chwilową (hamulec dopiero przy drugim — `transient_block`)
             self._transient_streak = self._transient_streak + 1 if transient_block(decision) else 0
-        if tele.soc is not None:
-            self._prev_soc = (tele.soc, now_mono)
+        self._remember_soc(decision, tele.soc, now_mono)
         if entities:
             # Odniesienie przejęcia: odczyty kluczy, którymi plan steruje (przy włączonym sterowaniu).
             if decision.flat:
@@ -938,11 +940,33 @@ class VolcastExecutor:
         soc = readings.get("soc")
         soc = soc if isinstance(soc, float) else None
         temp = readings.get("battery_temp_c")
-        prev_soc, gap = (self._prev_soc[0], now_mono - self._prev_soc[1]) if self._prev_soc else (None, None)
+        ref = self._soc_reference(soc)
+        prev_soc, gap = (ref[0], now_mono - ref[1]) if ref else (None, None)
         (pv, pv_age), (load, load_age) = rd.live("pv_power_w"), rd.live("load_power_w")
         return Telemetry(soc=soc, soc_age_s=rd.soc_age_s, battery_temp_c=temp if isinstance(temp, float) else None,
                          previous_soc=prev_soc, previous_soc_gap_s=gap,
                          pv_power_w=pv, pv_age_s=pv_age, load_power_w=load, load_age_s=load_age)
+
+    def _soc_reference(self, soc: float | None) -> tuple[float, float] | None:
+        """Odniesienie skoku SoC: ostatnia przyjęta próbka albo — gdy czeka odrzucona — bliższa z nich.
+
+        Powrót po chwilowej próbce (83 → 40 → 83) porównuje się z przyjętą, a trwała zmiana
+        (83 → 40 → 40) z odrzuconą, która tym samym zostaje potwierdzona. Dwa różne skoki z rzędu
+        (83 → 40 → 10) dalej są skokiem — drugi cykl blokady chwilowej hamuje."""
+        cand, prev = self._soc_candidate, self._prev_soc
+        if cand is None or prev is None or soc is None:
+            return prev
+        return cand if abs(soc - cand[0]) < abs(soc - prev[0]) else prev
+
+    def _remember_soc(self, decision, soc: float | None, now_mono: float) -> None:
+        """Próbka odrzucona jako skok SoC nie staje się odniesieniem, dopóki następna jej nie potwierdzi."""
+        if soc is None:
+            return
+        guard = decision.guard
+        if decision.reason == "guard:I-9" and getattr(guard, "code", "") == "soc_jump":
+            self._soc_candidate = (soc, now_mono)
+            return
+        self._prev_soc, self._soc_candidate = (soc, now_mono), None
 
     def _rated_power(self) -> float | None:
         if self._rated:
@@ -1165,8 +1189,7 @@ class VolcastExecutor:
                              tz=self._tz(), tele=tele, limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
                              reading=rd.source, gates=gates, memory=self._memory,
                              owner_word=snap["tou_word"] if snap else None)
-        if tele.soc is not None:
-            self._prev_soc = (tele.soc, now_mono)
+        self._remember_soc(d, tele.soc, now_mono)
         self._forget_changed(d.flat)
         d = self._tou_without_owner_held(d, rd.source, gates, now_mono)
         d = self._gate_write(d)

@@ -433,6 +433,42 @@ async def test_direct_single_soc_jump_does_not_flap(make_hass, goodwe_udp_sim, g
 
 
 @pytest.mark.asyncio
+async def test_direct_soc_spike_and_return_does_not_flap(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    """83 → 40 → 83: chwilowa próbka nie staje się odniesieniem — powrót to nie drugi skok."""
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _fresh_cycle(h)
+        n = len(goodwe_bank.writes)
+        soc = gw_raw_word(goodwe_bank, SOC)
+        goodwe_bank.poke(SOC, 40)
+        await _fresh_cycle(h)
+        assert "brake_deferred" in h.ex.last_decision.notes
+        goodwe_bank.poke(SOC, soc)                             # odczyt wraca do poprzedniej wartości
+        await _fresh_cycle(h)
+        assert h.ex.last_decision.reason != "guard:I-9"
+        await _fresh_cycle(h)
+        assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 10
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_two_different_soc_jumps_in_a_row_brake(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    """83 → 40 → 10: żadna próbka nie potwierdza poprzedniej — drugi skok z rzędu hamuje."""
+    h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
+    try:
+        await _fresh_cycle(h)
+        goodwe_bank.poke(SOC, 40)
+        await _fresh_cycle(h)
+        assert gw_raw_word(goodwe_bank, MODE) == 10
+        goodwe_bank.poke(SOC, 10)
+        await _fresh_cycle(h)
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "neutral_brake" in h.ex.last_decision.notes
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
 async def test_direct_single_invalid_pv_sample_in_a_sell_slot_does_not_flap(make_hass, goodwe_udp_sim, goodwe_bank,
                                                                             issues):
     def no_pv(h):
