@@ -519,6 +519,24 @@ async def test_direct_floor_lost_in_session_degrades_sell(make_hass, goodwe_udp_
 
 
 @pytest.mark.asyncio
+async def test_direct_write_exception_2_becomes_unsupported_only_when_it_repeats(make_hass, goodwe_udp_sim,
+                                                                                 goodwe_bank, issues):
+    spec, _ = ACTIONS["sell"]
+    goodwe_bank.readonly.add(SOC_MIN)                          # zapis progu → wyjątek 2 (odczyt działa)
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=plan(slots=[_slot(**spec)]))
+    try:
+        await h.ex.async_tick()
+        assert "soc_min" not in h.ex._memory.unsupported      # jeden wyjątek to nie werdykt na sesję
+        assert gw_raw_word(goodwe_bank, MODE) != 10            # próg nie doszedł — sprzedaż wstrzymana
+        await h.cycle(400.0)                                   # po wstrzymaniu odmowy: ten sam wyjątek drugi raz
+        assert "soc_min" in h.ex._memory.unsupported
+        await h.cycle(120.0)
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "degraded" in h.ex.last_decision.notes
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
 async def test_direct_missing_mode_register_means_no_control_and_an_alert(make_hass, goodwe_udp_sim, goodwe_bank,
                                                                           issues, caplog):
     caplog.set_level(logging.WARNING, logger=LOGGER)

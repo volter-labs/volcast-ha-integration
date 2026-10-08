@@ -67,6 +67,30 @@ async def test_exception_2_is_unsupported(goodwe_writer, goodwe_bank, goodwe_udp
 
 
 @pytest.mark.asyncio
+async def test_unconfirmed_write_exception_2_is_denied_once_then_unsupported(goodwe_client, goodwe_profile,
+                                                                           goodwe_bank):
+    # Wyjątek 2 w odpowiedzi na zapis (rejestr czytelny) nie jest od razu werdyktem na całą sesję: pierwszy
+    # raz odczyt zwrotny rozstrzyga (rejestr nietknięty → odmowa), dopiero powtórka w późniejszym zapisie
+    # tego klucza = nieobsługiwany.
+    w = RegisterWriter(goodwe_client, goodwe_profile, confirm_write_illegal=True)
+    goodwe_bank.readonly.add(47510)
+    assert await w.async_write(RegisterWrite("export_limit_w", 47510, 100)) == DENIED
+    assert await w.async_write(RegisterWrite("export_limit_w", 47510, 100)) == UNSUPPORTED
+
+
+@pytest.mark.asyncio
+async def test_write_exception_2_with_the_value_applied_is_ok_and_forgotten(goodwe_client, goodwe_profile,
+                                                                           goodwe_bank, sim_faults):
+    w = RegisterWriter(goodwe_client, goodwe_profile, confirm_write_illegal=True)
+    sim_faults.exception_on_write[47510] = 2                # zapisane, ale odpowiedź to wyjątek 2 (np. stara)
+    assert await w.async_write(RegisterWrite("export_limit_w", 47510, 100)) == OK
+    assert goodwe_bank.read(47510, 1) == [100]
+    sim_faults.exception_on_write.clear()
+    goodwe_bank.readonly.add(47510)
+    assert await w.async_write(RegisterWrite("export_limit_w", 47510, 200)) == DENIED   # znowu pierwszy raz
+
+
+@pytest.mark.asyncio
 async def test_exception_4_readback_equal_is_ok_unknown_is_error(goodwe_writer, goodwe_bank, sim_faults):
     sim_faults.exception_on_write = {47511: 4}       # symulator: zapisz, ale odpowiedz wyjątkiem 4
     assert await goodwe_writer.async_write(RegisterWrite("mode", 47511, 10)) == OK

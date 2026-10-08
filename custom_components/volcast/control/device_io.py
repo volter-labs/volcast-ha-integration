@@ -253,7 +253,7 @@ class DirectIO:
             return _NoLinkWriter()
         if self._writer is None or self._writer_client is not client:
             self._writer = RegisterWriter(client, self._profile, on_send=self._on_send, unreadable=self.unreadable,
-                                          may_resend=self._may_resend)
+                                          may_resend=self._may_resend, confirm_write_illegal=True)
             self._writer_client = client
         return self._writer
 

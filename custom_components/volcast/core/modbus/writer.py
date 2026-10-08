@@ -87,7 +87,7 @@ from ..profile import DEFAULT_READBACK_SETTLE_S
 from ..registers import RegisterWrite
 from ..transports.base import ModbusException, TransportError
 from ..transports.stream import StreamTransport
-from ..write_sequence import DENIED, ERROR, OK, UNSUPPORTED, AdjustedOutcome
+from ..write_sequence import DENIED, ERROR, OK, OK_ADJUSTED, UNSUPPORTED, AdjustedOutcome
 from .client import RegisterClient
 from .views import key_views, needs_disambiguation, pick_view, prev_read_count, separator_blocks
 
@@ -193,9 +193,15 @@ def _fresh_value(profile, key: str, value: int, before: int) -> int:
 class RegisterWriter:
     def __init__(self, client: RegisterClient, profile, *,
                  on_send: Callable[[str], None] | None = None, unreadable: Iterable[str] = (),
-                 may_resend: Callable[[str], bool] | None = None) -> None:
+                 may_resend: Callable[[str], bool] | None = None, confirm_write_illegal: bool = False) -> None:
         self.client = client
         self.profile = profile
+        # Wyjątek 2 w odpowiedzi na ZAPIS (odczyt rejestru działa): bez potwierdzenia nie jest werdyktem.
+        # Pierwszy raz rozstrzyga odczyt zwrotny (nietknięty → DENIED, zapisany → OK), dopiero powtórka
+        # w późniejszym zapisie tego klucza → UNSUPPORTED (wykonawca trzyma to na całą sesję). Udany zapis
+        # klucza kasuje pierwszy raz. Domyślnie wyłączone: aplikator wzorcowy (wektory złote) — od razu.
+        self._confirm_illegal = confirm_write_illegal
+        self._illegal_once: set[str] = set()
         self._on_send = on_send
         # pytane przez transport PRZED ponowną wysyłką zapisu (budżet NVM); None = bez sprawdzenia;
         # tylko zwykłe zapisy — powrót do trybu bazowego idzie poza budżetem
@@ -234,7 +240,10 @@ class RegisterWriter:
         try:
             async with self._lock:
                 self._budgeted = budgeted              # pod zamkiem pisarza — jeden zapis naraz
-                return await self._write(w, skip_equal=skip_equal, only_from=only_from)
+                out = await self._write(w, skip_equal=skip_equal, only_from=only_from)
+                if out in (OK, OK_ADJUSTED):
+                    self._illegal_once.discard(w.key)
+                return out
         except Exception as err:  # noqa: BLE001 — pisarz nie rzuca; zapis niepewny
             _LOGGER.warning("direct write of %s failed: %s", w.key, type(err).__name__)
             return ERROR
@@ -299,7 +308,15 @@ class RegisterWriter:
             return KEPT                    # wartość spoza warunku (np. tryb właściciela) — bez ramki
         echo = await self._send(w)
         if echo == UNSUPPORTED:
-            return UNSUPPORTED
+            if not self._first_illegal(w.key):
+                return UNSUPPORTED
+            # Pierwszy wyjątek 2 na zapis: odczyt zwrotny rozstrzyga, czy rejestr jest nietknięty.
+            back = await self._read_back(w.addr)
+            if back is None:
+                return ERROR
+            if back == w.value:
+                return OK                  # zapis doszedł — wyjątek był cudzą/starą odpowiedzią
+            return DENIED if back == before else ERROR
         back = await self._read_back(w.addr)
         if back is None:
             return ERROR
@@ -330,8 +347,16 @@ class RegisterWriter:
     async def _write_echo_only(self, w: RegisterWrite) -> str:
         echo = await self._send(w)
         if echo == UNSUPPORTED:
-            return UNSUPPORTED
+            # bez odczytu zwrotnego: pierwszy raz odmowa na ten cykl, powtórka — nieobsługiwany
+            return DENIED if self._first_illegal(w.key) else UNSUPPORTED
         return OK if echo == _ECHO_OK else ERROR
+
+    def _first_illegal(self, key: str) -> bool:
+        """Wyjątek 2 na zapis klucza po raz pierwszy w tej sesji pisarza (gdy potwierdzanie jest włączone)."""
+        if not self._confirm_illegal or key in self._illegal_once:
+            return False
+        self._illegal_once.add(key)
+        return True
 
     async def _settle(self, addr: int, before: int) -> int | None:
         """Echo potwierdzone, a odczyt zwrotny pokazał wartość sprzed zapisu: falownik stosuje nastawę
