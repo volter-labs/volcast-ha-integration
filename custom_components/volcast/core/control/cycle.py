@@ -279,7 +279,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         pv, load = _direct_readings(tele, profile, _rated_or_none(limits))
         memory.live_export = memory.live_export.with_net(
             now_mono, None if pv is None or load is None else load - pv,
-            lx.DIRECT_PEAK_WINDOW_S).with_pair(pv, load)
+            lx.DIRECT_PEAK_WINDOW_S).with_pair(pv, load, now_mono)
     if gates.control_mode != target.kind:
         return CycleDecision(IDLE, "no_mode_chosen")
     if profile.control_model != "mode_setpoint":
@@ -610,7 +610,7 @@ def _live_export_direct(planned: Params, guarded: Params, intent: str, slot, pro
     if rated is not None and (pv is None or load is None):
         # Chwilowy błąd odczytu (jedna próbka): ostatnia ważna para przez JEDEN cykl — bez migania
         # tryb neutralny ↔ sprzedaż; druga nieważna próbka z rzędu = tryb neutralny (niżej).
-        pair = mem.held_pair()
+        pair = mem.held_pair(now_mono)
         if pair is not None:
             (pv, load), held = pair, True
     if rated is None or pv is None or load is None:
