@@ -184,7 +184,7 @@ class RegisterTransport(Protocol):
     async def read(self, addr: int, count: int, *, tries: int | None = None) -> list[int]: ...
 
     async def write(self, addr: int, values: Sequence[int], *, function: int,
-                    on_send: OnSend | None = None) -> None: ...
+                    on_send: OnSend | None = None, may_resend: Callable[[], bool] | None = None) -> None: ...
 
     async def reset_channel(self) -> None: ...
 
@@ -317,24 +317,25 @@ class BaseTransport:
         raise AssertionError("unreachable")
 
     async def write(self, addr: int, values: Sequence[int], *, function: int,
-                    on_send: OnSend | None = None) -> None:
+                    on_send: OnSend | None = None, may_resend: Callable[[], bool] | None = None) -> None:
+        """`may_resend` — pytane PRZED ponowną wysyłką (np. budżet NVM); False = bez niej, wychodzi
+        przekroczenie czasu pierwszej wysyłki (wynik rozstrzyga odczyt zwrotny wołającego)."""
         req = write_req(function, addr, values)
         sends = 2 if self.resend_writes else 1
         async with self.exclusive(), self._lock:
             for i in range(sends):
-                if i:
-                    # Ta sama wartość bezwzględna drugi raz (jak Box). Każda wysyłka woła `on_send`,
-                    # więc budżet NVM liczy obie; tu licznik i log (bez adresu hosta).
-                    self.stats.write_resends += 1
-                    _LOGGER.debug("%s: write resent after silence", self.kind)
                 try:
                     await self._transact(req, on_send)
                     return
                 except RequestTimeout as err:
                     # Ponowna wysyłka tylko przy całkowitej ciszy: obca/zła ramka mogła być
                     # odpowiedzią urządzenia, której nie rozumiemy — wtedy rozstrzyga odczyt zwrotny.
-                    if not err.silent or i == sends - 1:
+                    if not err.silent or i == sends - 1 or (may_resend is not None and not may_resend()):
                         raise
+                # Ta sama wartość bezwzględna drugi raz (jak Box). Każda wysyłka woła `on_send`,
+                # więc budżet NVM liczy obie; tu licznik i log (bez adresu hosta).
+                self.stats.write_resends += 1
+                _LOGGER.debug("%s: write resent after silence", self.kind)
 
     async def reset_channel(self) -> None:
         async with self._lock:

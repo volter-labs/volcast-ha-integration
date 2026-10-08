@@ -252,7 +252,8 @@ class DirectIO:
         if client is None:
             return _NoLinkWriter()
         if self._writer is None or self._writer_client is not client:
-            self._writer = RegisterWriter(client, self._profile, on_send=self._on_send, unreadable=self.unreadable)
+            self._writer = RegisterWriter(client, self._profile, on_send=self._on_send, unreadable=self.unreadable,
+                                          may_resend=self._may_resend)
             self._writer_client = client
         return self._writer
 
@@ -266,6 +267,11 @@ class DirectIO:
         self._sent.append(key)
         if self.budget is not None:
             self.budget.note(key, self._now_wall())
+
+    def _may_resend(self, key: str) -> bool:
+        """Ponowna wysyłka zapisu (UDP, po ciszy) to kolejna ramka NVM — tylko gdy budżet klucza jej
+        nie przekroczy (sprawdzane przed wysłaniem, nie tylko liczone po nim)."""
+        return self.budget is None or not self.budget.exhausted({key}, self._now_wall())
 
     def end_writes(self, end_mono: float) -> tuple[str, ...]:
         """Koniec naszej wymiany zapisów: odczyt rozpoczęty wcześniej nie świadczy o rozjeździe."""

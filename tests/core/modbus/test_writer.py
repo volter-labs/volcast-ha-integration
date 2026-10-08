@@ -294,6 +294,19 @@ async def test_resent_write_counted_twice_in_nvm_budget_and_visible(goodwe_clien
 
 
 @pytest.mark.asyncio
+async def test_resend_skipped_when_nvm_budget_exhausted(goodwe_client, goodwe_profile, sim_faults, goodwe_udp_sim):
+    # Budżet klucza wyczerpany pierwszą wysyłką: bez drugiej; wynik rozstrzyga odczyt zwrotny jak dziś.
+    from custom_components.volcast.core.guard_state import WriteBudget
+    budget = WriteBudget(per_key=1, total=10)
+    sim_faults.mute_write_echo = 1
+    w = RegisterWriter(goodwe_client, goodwe_profile, on_send=lambda key: budget.note(key, 1000.0),
+                       may_resend=lambda key: not budget.exhausted({key}, 1000.0))
+    assert await w.async_write(RegisterWrite("mode", 47511, 10)) == OK      # zapis doszedł, echo zgubione
+    assert [e[0] for e in goodwe_udp_sim.log].count(0x06) == 1
+    assert budget.counts(1000.0) == {"mode": 1} and goodwe_client.transport.stats.write_resends == 0
+
+
+@pytest.mark.asyncio
 async def test_on_send_not_called_when_nothing_sent(goodwe_client, goodwe_profile):
     sent = []
     w = RegisterWriter(goodwe_client, goodwe_profile, on_send=sent.append, unreadable={"soc_max"})

@@ -75,3 +75,17 @@ def test_gates_open_requires_matching_io_kind(monkeypatch):
     asyncio.run(go())
     assert h.states.get(E["mode"]).state != "sell_power" and not ex._gates_open()
     assert ex.last_decision.status != "write"
+
+
+def test_direct_io_resend_needs_budget_left():
+    # Ponowna wysyłka zapisu (UDP, po ciszy) tylko w budżecie NVM — sprawdzane PRZED wysłaniem.
+    from custom_components.volcast.control.device_io import DirectIO
+    from custom_components.volcast.core.guard_state import WriteBudget
+    from custom_components.volcast.core.profile import load_builtin
+    io = DirectIO(SimpleNamespace(client=None), load_builtin("goodwe-et"), trial=False, salt=bytes(16),
+                  now_wall=lambda: 1000.0)
+    assert io._may_resend("mode") is True                       # bez budżetu — jak dotąd
+    io.bind_budget(WriteBudget(per_key=1, total=10))
+    assert io._may_resend("mode") is True
+    io._on_send("mode")
+    assert io._may_resend("mode") is False and io._may_resend("power_w") is True

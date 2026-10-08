@@ -15,8 +15,8 @@ nie dostał odpowiedzi (cisza, zerwanie, wyjątek Modbus ≠ 2), jest ponawiany 
 swoje czekanie na ponowne połączenie (backoff_min_s, potem podwojone; domyślnie 1,1 s i 2,1 s);
 transport nieznany 1,1 s. Ramka ZAPISU nigdy nie jest ponawiana przez pisarza: jedna próba zapisu na
 klucz. Transport UDP wysyła ją w tej próbie drugi raz wyłącznie po całkowitej ciszy (jak Box; wartość
-bezwzględna) — każda wysyłka idzie przez `on_send`, więc budżet NVM liczy obie, a `stats.write_resends`
-transportu pokazuje ponowienie.
+bezwzględna) i tylko, gdy `may_resend` pisarza (budżet NVM klucza) pozwala PRZED wysłaniem — każda
+wysyłka idzie przez `on_send`, więc budżet liczy obie, a `stats.write_resends` pokazuje ponowienie.
 Dodatkowy czas na jeden odczyt: suma przerw + READ_RETRIES × timeout_s (+ odstępy gap_s;
 na transporcie strumieniowym + connect_timeout_s na każde ponowne połączenie). GoodWe UDP
 (timeout 2 s, odstęp 0,3 s): ≤ 5,5 s + odstępy na odczyt; odczyt przed zapisem to tam dwa
@@ -184,10 +184,13 @@ def _fresh_value(profile, key: str, value: int, before: int) -> int:
 
 class RegisterWriter:
     def __init__(self, client: RegisterClient, profile, *,
-                 on_send: Callable[[str], None] | None = None, unreadable: Iterable[str] = ()) -> None:
+                 on_send: Callable[[str], None] | None = None, unreadable: Iterable[str] = (),
+                 may_resend: Callable[[str], bool] | None = None) -> None:
         self.client = client
         self.profile = profile
         self._on_send = on_send
+        # pytane przez transport PRZED ponowną wysyłką zapisu (budżet NVM); None = bez sprawdzenia
+        self._may_resend = may_resend
         self._function = profile.modbus.write_function
         self._lock = asyncio.Lock()
         # potwierdzane samym echem — wyłącznie z jawnej listy profilu
@@ -282,9 +285,10 @@ class RegisterWriter:
         return self._judge(w, before, back)
 
     async def _send(self, w: RegisterWrite) -> str:
+        extra = {} if self._may_resend is None else {"may_resend": lambda: self._resend_ok(w.key)}
         try:
             await self.client.transport.write(w.addr, [w.value], function=self._function,
-                                              on_send=lambda: self._sent(w.key))
+                                              on_send=lambda: self._sent(w.key), **extra)
             return _ECHO_OK
         except ModbusException as err:
             if err.code == 2:
@@ -431,6 +435,15 @@ class RegisterWriter:
             except TransportError as err:
                 raise _Unconfirmed(f"separator read failed: {type(err).__name__}") from None
         raise _Unconfirmed("no separator block answered")
+
+    def _resend_ok(self, key: str) -> bool:
+        """Czy transport może wysłać zapis drugi raz (po ciszy) — np. budżet NVM klucza nie wyczerpany.
+        Błąd sprawdzenia = bez ponownej wysyłki (wynik rozstrzyga odczyt zwrotny)."""
+        try:
+            return bool(self._may_resend(key))
+        except Exception as err:  # noqa: BLE001 — sprawdzenie nie może zepsuć wymiany
+            _LOGGER.error("write resend check failed for %s: %s", key, type(err).__name__)
+            return False
 
     def _sent(self, key: str) -> None:
         if self._on_send is None:

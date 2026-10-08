@@ -123,6 +123,23 @@ async def test_exclusive_session_holds_other_tasks_until_it_ends(module):
         await t.close()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [True, False])
+async def test_write_resend_only_when_allowed_before_sending(module, allowed):
+    # Ponowna wysyłka zapisu (po całkowitej ciszy) pyta przed wysłaniem — np. budżet NVM wyczerpany.
+    module.write_plan = ["drop", "drop"]
+    t = _udp(module, read_tries=1)
+    asked = []
+    try:
+        with pytest.raises(RequestTimeout):
+            await t.write(45356, [20], function=6, may_resend=lambda: asked.append(1) or allowed)
+        assert asked == [1]
+        assert [fc for fc, _, _ in module.log].count(0x06) == (2 if allowed else 1)
+        assert t.stats.write_resends == (1 if allowed else 0)
+    finally:
+        await t.close()
+
+
 # ── odstęp między żądaniami: 300 ms jak Box ───────────────────────────────
 
 
