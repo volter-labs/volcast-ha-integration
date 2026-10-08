@@ -134,7 +134,7 @@ async def test_foreign_block_of_the_same_length_makes_pre_reads_disagree(module,
 # ── odpytywanie w trakcie zapisu: sekwencja klucza ma łącze na wyłączność ──
 
 
-async def _interleaved_write(goodwe_profile, other_addr, other_val, value, *, at="send"):
+async def _interleaved_write(goodwe_profile, other_addr, other_val, value, *, at="send", other_count=1):
     words = goodwe_words()
     words[other_addr] = other_val
     m = await flaky_module(RegisterBank(words, ignore_writes=(47512,)))
@@ -144,20 +144,22 @@ async def _interleaved_write(goodwe_profile, other_addr, other_val, value, *, at
     polls = []
 
     def poll():                                   # odczyt cyklu odpytywania wstawiony w trakcie zapisu
-        polls.append(asyncio.ensure_future(client.read_block(other_addr, 1)))
+        polls.append(asyncio.ensure_future(client.read_block(other_addr, other_count)))
 
     w = RegisterWriter(client, goodwe_profile, on_send=(lambda key: poll()) if at == "send" else None)
-    if at == "pre":
-        read_block = client.read_block
-
-        async def spy(addr, count, **kw):          # po pierwszym odczycie przed zapisem
-            out = await read_block(addr, count, **kw)
-            if not polls:
-                poll()
-            return out
-        client.read_block = spy
     await client.read_block(47509, 4)
     m.plan = ["ok", "ok", "ok", "replay"]
+    if at == "pre":
+        read_block, calls = client.read_block, []
+
+        async def spy(addr, count, **kw):          # drugi odczyt przed zapisem: długość już wybrana
+            calls.append((addr, count))
+            if len(calls) == 2:
+                poll()
+                m.plan = ["ok", "replay"]          # odpytywanie, potem powtórka jego odpowiedzi
+                await asyncio.sleep(0)             # bez sesji odpytywanie wchodzi przed ten odczyt
+            return await read_block(addr, count, **kw)
+        client.read_block = spy
     try:
         out = await w.async_write(RegisterWrite("power_w", 47512, value))
         await asyncio.gather(*polls)
@@ -168,15 +170,26 @@ async def _interleaved_write(goodwe_profile, other_addr, other_val, value, *, at
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("at", ["send", "pre"])
 @pytest.mark.parametrize("other_addr,other_val,value", [(47760, 2500, 2500), (35140, 1200, 3000)])
-async def test_poll_read_queued_during_write_never_answers_the_writer(goodwe_profile, at, other_addr,
+async def test_poll_read_queued_during_write_never_answers_the_writer(goodwe_profile, other_addr,
                                                                       other_val, value):
     # Urządzenie ignoruje zapis (47512 bez zmian); odczyt odpytywania tej samej długości kolejkuje się
     # w trakcie zapisu, a moduł raz powtarza poprzednią odpowiedź. Nigdy OK ani OK_ADJUSTED.
-    out, polls, m = await _interleaved_write(goodwe_profile, other_addr, other_val, value, at=at)
-    assert polls and out in (DENIED, ERROR)
+    # (Bez sesji na wyłączność: OK / OK_ADJUSTED.)
+    out, polls, m = await _interleaved_write(goodwe_profile, other_addr, other_val, value)
+    assert polls and out == DENIED
     assert m.bank.read(47512, 1) == [8846] and len(_writes(m)) == 1
+
+
+@pytest.mark.asyncio
+async def test_poll_read_between_pre_reads_never_answers_the_writer(goodwe_profile):
+    # Odpytywanie bloku DOD (45353×4, długość bloku EMS) wchodzi między wybór długości drugiego odczytu
+    # przed zapisem a jego wysłanie; moduł powtarza odpowiedź odpytywania. Z sesją na wyłączność
+    # odpytywanie czeka — zapis idzie i kończy się prawdziwą odmową (DENIED). Bez sesji: niezgodne
+    # odczyty przed zapisem (ERROR, nic nie wysłano) — druga straż, ale zapis przepada.
+    out, polls, m = await _interleaved_write(goodwe_profile, 45353, 0, 3000, at="pre", other_count=4)
+    assert polls and out == DENIED
+    assert len(_writes(m)) == 1 and m.bank.read(47512, 1) == [8846]
 
 
 # ── (2) wyjątek 2 tylko potwierdzony ──────────────────────────────────────
