@@ -36,6 +36,8 @@ from tests.sim.fixtures import deye_words, goodwe_words
 SALT = bytes(range(16))
 GW_NOW = __import__("tests.control.ha_fakes", fromlist=["NOW"]).NOW
 MODE, POWER, SOC_MIN, SOC_MAX, EXPORT_W, EXPORT_EN = 47511, 47512, 45356, 47760, 47510, 47509
+# Sprzedaż: nastawa eksportu = moc baterii z planu + PV − dom; nagranie: PV 828 W, dom 364 W.
+SELL_OFFSET = 828 - 364
 TOU_EN = 146
 
 
@@ -199,7 +201,7 @@ async def test_direct_sell_slot_end_to_end(make_hass, goodwe_udp_sim, goodwe_ban
     try:
         await h.ex.async_tick()
         assert h.ex.last_decision.status == "write"
-        assert gw_raw_word(goodwe_bank, MODE) == 10 and gw_raw_word(goodwe_bank, POWER) == 2000
+        assert gw_raw_word(goodwe_bank, MODE) == 10 and gw_raw_word(goodwe_bank, POWER) == 2000 + SELL_OFFSET
         assert h.ex.owned and h.ex._state.owner == {
             "profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(h.target, SALT),
             "device": h.target["device_fp"]}
@@ -212,23 +214,47 @@ async def test_direct_sell_slot_end_to_end(make_hass, goodwe_udp_sim, goodwe_ban
 
 
 @pytest.mark.asyncio
-async def test_direct_sell_warns_once_per_slot_about_missing_live_conversion(
-        make_hass, goodwe_udp_sim, goodwe_bank, issues, caplog):
-    caplog.set_level(logging.DEBUG, logger="custom_components.volcast")
-    text = "live sell conversion is not available in direct register mode"
-    count = lambda: len([r for r in caplog.records if text in r.getMessage()])  # noqa: E731
+async def test_direct_sell_writes_live_export_setpoint_from_register_readings(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Odczyt z nagrania: PV 828 W, bateria −2734 W, moc czynna −2270 W → dom 364 W.
+    # Nastawa eksportu = moc baterii z planu (2000 W) + PV − dom, nie moc baterii.
     h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
     try:
         await h.ex.async_tick()
         for _ in range(4):
             await h.cycle()
         d = h.ex.last_decision
-        assert "sell_live_unavailable" in d.notes
-        assert gw_raw_word(goodwe_bank, POWER) == 2000            # nastawa z planu, bez przeliczenia
+        assert any(n.startswith("sell_xset:") for n in d.notes) and "sell_no_reading" not in d.notes
+        assert d.live_export is not None and d.live_export.pv_w == 828.0 and d.live_export.load_w == 364.0
+        assert gw_raw_word(goodwe_bank, POWER) == 2000 + SELL_OFFSET
+        assert gw_raw_word(goodwe_bank, MODE) == 10                # sell_power
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_sell_without_reading_warns_once_per_episode(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues, caplog):
+    caplog.set_level(logging.DEBUG, logger="custom_components.volcast")
+    text = "PV or house load reading"
+    count = lambda: len([r for r in caplog.records if text in r.getMessage()])  # noqa: E731
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
+    try:
+        await h.ex.async_tick()
+        for _ in range(2):
+            await h.cycle()
+        ok = h.ex.last_decision
+        assert ok.live_export is not None and not ok.live_export.no_reading
+        bad = replace(ok, live_export=replace(ok.live_export, no_reading=True, degraded=True))
+        for _ in range(3):
+            h.ex._warn_sell_suspended(bad)
         assert count() == 1 and all(r.levelno == logging.WARNING for r in caplog.records if text in r.getMessage())
-        start, end, intent = d.sell_live_unavailable
-        h.ex._warn_sell_suspended(replace(d, sell_live_unavailable=(end, end + (end - start), intent)))
-        assert count() == 2                                        # nowy slot — nowe ostrzeżenie
+        moved = replace(bad.live_export, key=(bad.live_export.key[1], bad.live_export.key[1], "sell"))
+        h.ex._warn_sell_suspended(replace(bad, live_export=moved))
+        assert count() == 1                                        # ten sam epizod, choć nowy slot
+        h.ex._warn_sell_suspended(ok)                              # odczyt wrócił — koniec epizodu
+        h.ex._warn_sell_suspended(bad)
+        assert count() == 2
     finally:
         await h.close()
 
@@ -512,7 +538,7 @@ async def test_two_drifts_pause_single_drift_reconciles(make_hass, goodwe_udp_si
     try:
         goodwe_bank.poke(POWER, 4000)                         # właściciel zmienia moc raz
         await h.cycle()
-        assert not h.ex.paused and gw_raw_word(goodwe_bank, POWER) == 2000     # uzgodnienie
+        assert not h.ex.paused and gw_raw_word(goodwe_bank, POWER) == 2000 + SELL_OFFSET     # uzgodnienie
         goodwe_bank.poke(POWER, 4000)                         # i drugi raz w 30 min
         n = len(goodwe_bank.writes)
         await h.cycle()
@@ -549,7 +575,7 @@ async def test_plan_change_forgets_drift(make_hass, goodwe_udp_sim, goodwe_bank,
         new = plan(power=2500, sid="p2")
         await h.ex.async_on_plan(new, parse_schedule(new))
         await h.cycle()                                       # nowa wartość planu
-        assert gw_raw_word(goodwe_bank, POWER) == 2500
+        assert gw_raw_word(goodwe_bank, POWER) == 2500 + SELL_OFFSET
         goodwe_bank.poke(POWER, 4000)
         await h.cycle()                                       # pierwszy rozjazd NOWEJ wartości
         assert not h.ex.paused
@@ -616,7 +642,7 @@ async def test_lost_echo_uncertain_resolved_next_poll(make_hass, modbus_tcp_sim,
         await h.ex.async_tick()
         assert h.ex._memory.uncertain                          # wynik nieznany — nie „zapisane”
         await h.cycle()
-        assert gw_raw_word(goodwe_bank, POWER) == 2000 and gw_raw_word(goodwe_bank, MODE) == 10
+        assert gw_raw_word(goodwe_bank, POWER) == 2000 + SELL_OFFSET and gw_raw_word(goodwe_bank, MODE) == 10
         assert not h.ex._memory.uncertain
     finally:
         await h.close()
@@ -785,7 +811,7 @@ async def test_reload_does_not_restore_direct(make_hass, goodwe_udp_sim, goodwe_
                                direct=h.conn)
     await rt_mod.async_unload_control(h.hass, rt)
     assert regs(goodwe_bank)[n:] == [MODE] and gw_raw_word(goodwe_bank, MODE) == 1
-    assert gw_raw_word(goodwe_bank, POWER) == 2000 and gw_raw_word(goodwe_bank, EXPORT_EN) == 1
+    assert gw_raw_word(goodwe_bank, POWER) == 2000 + SELL_OFFSET and gw_raw_word(goodwe_bank, EXPORT_EN) == 1
     assert h.hass.data[DOMAIN]["direct_hosts"] == {} and h.ex.owned
 
 

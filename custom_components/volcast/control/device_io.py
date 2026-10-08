@@ -332,7 +332,16 @@ class DirectIO:
             v = r.values.get(key)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 readings[key] = float(v)
-        return Reading(readings, raw_mode, {}, {}, self.conn.age_s(), r)
+        # PV i pobór domu z mapy `read` profilu (pobór liczony: PV + bateria − moc czynna) — dla
+        # nastawy sprzedaży; jeden odczyt bloku, więc wiek = wiek odczytu (jak SoC).
+        age = self.conn.age_s()
+        live_ages: dict[str, float] = {}
+        for key in LIVE_KEYS:
+            v = r.values.get(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                readings[key] = float(v)
+                live_ages[key] = age
+        return Reading(readings, raw_mode, {}, {}, age, r, live_ages=live_ages)
 
     def target(self, rd: Reading) -> RegisterTarget:
         return RegisterTarget(rd.source if rd.source is not None else _EMPTY, unreadable=self.unreadable,

@@ -15,7 +15,7 @@ from custom_components.volcast.core.transports.base import TransportConfig
 from custom_components.volcast.core.transports.factory import make_transport
 from tests.core.golden import T0
 
-from .conftest import MODE_REG, POWER_REG, SOC_REG, goodwe_reading, one_slot
+from .conftest import LIVE_ZERO, MODE_REG, POWER_REG, SOC_REG, goodwe_reading, one_slot
 
 GATES = Gates(consent=True, local_switch=True, control_mode="direct", verified=True)
 SELF_CONSUME = one_slot(mode="self_consume")
@@ -26,7 +26,7 @@ def _decide(profile, schedule, reading, memory, now_mono, owner_values=None):
     if owner_values:
         target.owner_values = owner_values
     return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=now_mono,
-                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
+                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0, **LIVE_ZERO),
                         limits=Limits(rated_power_w=8000.0), gates=GATES, memory=memory,
                         target=target)
 

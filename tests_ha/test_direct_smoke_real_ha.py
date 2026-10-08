@@ -46,6 +46,8 @@ def _target(sim, profile) -> dict:
     fp = device_fingerprint(SALT, profile, RegisterImage(goodwe_words()))
     return {"profile_id": "goodwe-et", "transport": "goodwe_udp", "host": "127.0.0.1", "port": sim.port,
             "unit_id": 247, "device_fp": fp, "unreadable": ["soc_max"],
+            # moc znamionowa z identyfikacji (35001), jak zapisuje ją sonda — pułap nastawy sprzedaży
+            "rated_power_w": 8000.0,
             "capabilities": {k: True for k in profile.modbus.probe_keys}}
 
 
@@ -115,7 +117,8 @@ async def test_real_ha_direct_write_restore_reload_unload(hass: HomeAssistant, n
     await _settle(hass, rt)
     bank = goodwe_sim.bank
     assert rt.executor.last_decision.status == "write", rt.executor.last_decision.summary()
-    assert bank.read(MODE, 1) == [10] and bank.read(POWER, 1) == [2000] and rt.executor.owned
+    # sprzedaż: nastawa eksportu = moc baterii 2000 W + PV 828 W − dom 364 W (odczyt symulatora)
+    assert bank.read(MODE, 1) == [10] and bank.read(POWER, 1) == [2000 + 828 - 364] and rt.executor.owned
 
     # przeładowanie: bez powrotu do migawki, ale bez trybu wymuszonego na czas przerwy (sam tryb
     # neutralny); własność zostaje, nowy wykonawca przejmuje sterowanie; jedno połączenie na host

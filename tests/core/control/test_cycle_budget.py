@@ -9,7 +9,7 @@ from custom_components.volcast.core.registers import RegisterWrite
 from custom_components.volcast.core.write_sequence import WriteReport
 from tests.core.golden import T0
 
-from .conftest import MODE_REG, POWER_REG, goodwe_reading
+from .conftest import LIVE_ZERO, MODE_REG, POWER_REG, goodwe_reading
 
 NOW_WALL = T0.timestamp()
 GATES = Gates(consent=True, local_switch=True, control_mode="direct", verified=True)
@@ -31,7 +31,7 @@ def _exhaust(memory, key, n=None):
 
 def _run(profile, schedule, reading, memory, gates=GATES):
     return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=1000.0,
-                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
+                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0, **LIVE_ZERO),
                         limits=Limits(rated_power_w=8000.0), gates=gates, memory=memory,
                         target=RegisterTarget(reading))
 
@@ -168,7 +168,7 @@ def test_needs_restore_active_mode_direct():
 
 def _run_at(profile, schedule, reading, memory, now_mono):
     return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=now_mono,
-                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
+                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0, **LIVE_ZERO),
                         limits=Limits(rated_power_w=8000.0), gates=GATES, memory=memory,
                         target=RegisterTarget(reading))
 

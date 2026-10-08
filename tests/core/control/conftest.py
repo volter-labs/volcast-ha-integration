@@ -11,6 +11,9 @@ from tests.core.golden import T0
 from tests.sim.fixtures import goodwe_words
 
 SOC_REG, MODE_REG, POWER_REG = 37007, 47511, 47512
+# Odczyt PV i poboru domu w trybie bezpośrednim: sprzedaż liczy z nich nastawę eksportu
+# (bateria + PV − dom). PV 0 i dom 0 = nastawa równa mocy baterii z planu.
+LIVE_ZERO = dict(pv_power_w=0.0, pv_age_s=5.0, load_power_w=0.0, load_age_s=5.0)
 
 
 def goodwe_reading(profile, **over):

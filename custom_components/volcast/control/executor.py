@@ -216,6 +216,7 @@ class VolcastExecutor:
         self._brake_warned = False                    # ostrzeżenie hamulca raz na epizod
         # powód wstrzymania sprzedaży → slot, dla którego już ostrzegliśmy (raz na slot)
         self._sell_warned_for: dict[str, tuple] = {}
+        self._sell_no_reading = False          # trwa epizod sprzedaży bez odczytu (tryb bezpośredni)
         # klucze ostatniej decyzji z planem — zablokowany cykl (bez `flat`) nie gubi odniesienia
         self._plan_keys: frozenset[str] = frozenset()
         self._disabled = False
@@ -1446,19 +1447,24 @@ class VolcastExecutor:
 
     def _warn_sell_suspended(self, d: CycleDecision) -> None:
         """Sprzedaż wstrzymana: brak odczytu poboru domu, brak pułapu (nastawa 0 W) albo nastawa
-        pod minimum encji mocy (slot w trybie neutralnym).
+        pod minimum encji mocy (slot w trybie neutralnym); w trybie bezpośrednim także brak
+        ważnego odczytu PV/poboru z falownika (`sell_no_reading`, slot w trybie neutralnym).
 
         Raz na slot i powód, nie co cykl; decyzja niesie notatkę (`sell_no_load`,
         `sell_no_rated`, `sell_below_min`) w każdym cyklu.
         """
-        if d.sell_live_unavailable is not None and \
-                self._sell_warned_for.get("register") != d.sell_live_unavailable:
-            self._sell_warned_for["register"] = d.sell_live_unavailable
-            _LOGGER.warning("Volcast control: live sell conversion is not available in direct register "
-                            "mode: the plan's battery power is written as the setpoint")
         live = d.live_export
         if live is None:
             return
+        # Tryb bezpośredni bez ważnego odczytu PV/poboru: raz na epizod (do pierwszego udanego
+        # przeliczenia), nie raz na slot — brak odczytu zwykle trwa dłużej niż jeden slot.
+        if live.no_reading:
+            if not self._sell_no_reading:
+                self._sell_no_reading = True
+                _LOGGER.warning("Volcast control: selling suspended — the inverter's PV or house load reading "
+                                "is missing, stale or implausible (the slot runs in the neutral mode)")
+        elif not live.degraded:
+            self._sell_no_reading = False
         reasons = (("load", live.no_load, "no house load reading is available (map or restore the "
                                           "house consumption sensor)"),
                    ("rated", live.no_rated, "no inverter rated power and no power-entity range "

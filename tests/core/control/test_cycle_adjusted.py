@@ -14,7 +14,7 @@ from custom_components.volcast.core.transports.base import TransportConfig
 from custom_components.volcast.core.transports.factory import make_transport
 from tests.core.golden import T0
 
-from .conftest import POWER_REG, one_slot
+from .conftest import LIVE_ZERO, POWER_REG, one_slot
 
 GATES = Gates(consent=True, local_switch=True, control_mode="direct", verified=True)
 
@@ -22,7 +22,7 @@ GATES = Gates(consent=True, local_switch=True, control_mode="direct", verified=T
 async def _cycle(profile, schedule, client, writer, memory, now_mono):
     reading = await client.read_state()
     d = decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=now_mono,
-                     tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
+                     tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0, **LIVE_ZERO),
                      limits=Limits(rated_power_w=8000.0), gates=GATES, memory=memory,
                      target=RegisterTarget(reading))
     if d.status == "write":
@@ -68,7 +68,7 @@ def test_adjusted_value_settles_only_for_same_request(goodwe_profile, sell_sched
 
     def run(r):
         return decide_cycle(profile=goodwe_profile, schedule=sell_schedule, now_utc=T0, now_mono=1000.0,
-                            tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
+                            tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0, **LIVE_ZERO),
                             limits=Limits(rated_power_w=8000.0), gates=GATES, memory=memory,
                             target=RegisterTarget(r))
     assert run(reading).reason == "nothing_to_write"
@@ -79,7 +79,7 @@ def test_adjusted_value_settles_only_for_same_request(goodwe_profile, sell_sched
 
 def _decide(profile, schedule, reading, memory, now_mono=1000.0):
     return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=now_mono,
-                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
+                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0, **LIVE_ZERO),
                         limits=Limits(rated_power_w=8000.0), gates=GATES, memory=memory,
                         target=RegisterTarget(reading))
 

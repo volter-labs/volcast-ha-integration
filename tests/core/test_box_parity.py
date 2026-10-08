@@ -108,9 +108,6 @@ VECTORS = {
 
 # Vectors whose register SET differs from the reference (value or presence).
 _VALUE_DIFFS = {
-    "sell": "direct mode writes the battery power as the sell setpoint (no live export conversion)",
-    "sell_house_above_battery": "direct mode writes the battery power as the sell setpoint "
-                                "(no live export conversion)",
     "export_allowed_no_ceiling": "an uncapped export slot leaves the limiter untouched "
                                  "(the reference switches it off)",
 }

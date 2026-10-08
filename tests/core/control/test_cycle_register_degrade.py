@@ -7,7 +7,7 @@ from custom_components.volcast.core.control.cycle import (IDLE, WRITE, ControlMe
 from custom_components.volcast.core.control.target import RegisterTarget
 from tests.core.golden import T0
 
-from .conftest import MODE_REG, SOC_REG, goodwe_reading, one_slot
+from .conftest import LIVE_ZERO, MODE_REG, SOC_REG, goodwe_reading, one_slot
 
 SLOTS = {
     "charge_grid": dict(mode="charge", charge_source="grid", power_w=3000, soc_target=90),
@@ -38,7 +38,7 @@ def _run(profile, schedule, *, unavailable=frozenset(), unreadable=frozenset()):
     memory = ControlMemory.for_profile(profile)
     memory.unsupported = set(unreadable) | set(unavailable)
     return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=1000.0,
-                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0),
+                        tele=Telemetry(soc=80.0, soc_age_s=5.0, battery_temp_c=25.0, **LIVE_ZERO),
                         limits=Limits(rated_power_w=8000.0),
                         gates=Gates(consent=True, local_switch=True, control_mode="direct", verified=True),
                         memory=memory,

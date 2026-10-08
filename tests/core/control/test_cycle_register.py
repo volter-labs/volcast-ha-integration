@@ -14,10 +14,13 @@ def _gates(**kw):
     return Gates(**{**base, **kw})
 
 
-def _run(profile, schedule, reading, *, memory=None, gates=None, age=5.0, unreadable=frozenset()):
+def _run(profile, schedule, reading, *, memory=None, gates=None, age=5.0, unreadable=frozenset(),
+         pv=0.0, load=500.0):
+    # Odczyt PV i poboru z tego samego odczytu rejestrów (sprzedaż liczy z nich nastawę eksportu).
     memory = memory or ControlMemory.for_profile(profile)
     return decide_cycle(profile=profile, schedule=schedule, now_utc=T0, now_mono=1000.0,
-                        tele=Telemetry(soc=80.0, soc_age_s=age, battery_temp_c=25.0),
+                        tele=Telemetry(soc=80.0, soc_age_s=age, battery_temp_c=25.0,
+                                       pv_power_w=pv, pv_age_s=age, load_power_w=load, load_age_s=age),
                         limits=Limits(rated_power_w=8000.0), gates=gates or _gates(),
                         memory=memory, target=RegisterTarget(reading, unreadable=unreadable)), memory
 
@@ -110,14 +113,12 @@ def test_same_cycle_code_as_entities(goodwe_profile, sell_schedule, reading_auto
                      memory=ControlMemory.for_profile(goodwe_profile), ents=ents)
     r, _ = _run(goodwe_profile, sell_schedule, reading_auto)
     assert [w.key for w in e.writes] == [w.key for w in r.writes]
-    # Moc sprzedaży (`slot_live_export`) liczy się z odczytów PV/poboru tylko w trybie encji —
-    # tu bez tych odczytów encje dają 0 W; cel rejestrowy zachowuje moc baterii z planu.
+    # Moc sprzedaży (`slot_live_export`) to nastawa eksportu z odczytów PV/poboru w obu trybach —
+    # tu encje bez tych odczytów dają 0 W; cel rejestrowy ma odczyt (PV 0, dom 500 W).
     assert {k: v for k, v in e.flat.items() if k != "power_w"} == \
         {k: v for k, v in r.flat.items() if k != "power_w"}
-    assert e.flat["power_w"] == 0.0 and r.flat["power_w"] == 2500.0
+    assert e.flat["power_w"] == 0.0 and r.flat["power_w"] == 2000.0
     assert e.status == r.status == WRITE
-    # Tylko cel rejestrowy niesie notatkę o braku przeliczenia mocy sprzedaży.
-    assert "sell_live_unavailable" in r.notes and "sell_live_unavailable" not in e.notes
 
 
 def test_target_and_ents_exclusive(goodwe_profile, sell_schedule, reading_auto):
@@ -131,14 +132,12 @@ def test_target_and_ents_exclusive(goodwe_profile, sell_schedule, reading_auto):
     assert (both.status, both.reason) == (ERROR, "exception:TypeError")
 
 
-def test_register_sell_notes_live_unavailable_and_writes_plan_battery_power(
+def test_register_sell_converts_battery_power_to_export_setpoint(
         goodwe_profile, sell_schedule, reading_auto, charge_schedule):
-    d, _ = _run(goodwe_profile, sell_schedule, reading_auto)
-    assert "sell_live_unavailable" in d.notes
-    assert d.sell_live_unavailable is not None and d.sell_live_unavailable[2] == "sell"
-    # Przypięte: moc baterii z planu idzie bez przeliczenia. Prawdziwa konwersja musi świadomie
-    # zmienić tę asercję.
-    assert d.flat["power_w"] == 2500.0 and d.live_export is None
-    # Zamiary inne niż sprzedaż — bez notatki.
+    d, _ = _run(goodwe_profile, sell_schedule, reading_auto, pv=300.0, load=800.0)
+    # Moc baterii z planu (2500 W) + PV − dom = nastawa eksportu trybu sprzedaży.
+    assert d.flat["power_w"] == 2000.0 and d.live_export is not None
+    assert "sell_xset:battery=2500,pv=300,load=800,xset=2000" in d.notes
+    # Zamiary inne niż sprzedaż — bez przeliczenia.
     c, _ = _run(goodwe_profile, charge_schedule, reading_auto)
-    assert "sell_live_unavailable" not in c.notes and c.sell_live_unavailable is None
+    assert c.live_export is None and c.flat["power_w"] == 3000.0

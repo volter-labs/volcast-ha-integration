@@ -77,6 +77,36 @@ def test_gates_open_requires_matching_io_kind(monkeypatch):
     assert ex.last_decision.status != "write"
 
 
+def test_direct_io_read_carries_live_pv_and_house_load_with_reading_age():
+    # Sprzedaż w trybie bezpośrednim liczy nastawę z PV i poboru z mapy `read` profilu, z wiekiem odczytu.
+    from custom_components.volcast.control.device_io import DirectIO
+    from custom_components.volcast.core.modbus.reading import build_reading
+    from custom_components.volcast.core.profile import load_builtin
+    from custom_components.volcast.core.registers import RegisterImage
+    from tests.sim.fixtures import goodwe_words
+    gw = load_builtin("goodwe-et")
+    reading = build_reading(gw, RegisterImage(goodwe_words()), at_mono=0.0, at_utc=NOW)
+    conn = SimpleNamespace(client=None, reading=reading, age_s=lambda: 12.0)
+    rd = DirectIO(conn, gw, trial=False, salt=bytes(16)).read(NOW)
+    # nagranie: PV 828 W, bateria −2734 W (ładowanie), moc czynna −2270 W (pobór z sieci) → dom 364 W
+    assert rd.live("pv_power_w") == (828.0, 12.0)
+    assert rd.live("load_power_w") == (364.0, 12.0)
+    words = goodwe_words()
+    words[35182], words[35183] = 0, 4000                   # bateria +4000 W = rozładowanie
+    words[35140] = 3500                                    # moc czynna +3500 W = eksport
+    for addr in (35105, 35106, 35109, 35110, 35113, 35114, 35117, 35118):
+        words[addr] = 0                                    # noc: PV 0
+    night = build_reading(gw, RegisterImage(words), at_mono=0.0, at_utc=NOW)
+    rd = DirectIO(SimpleNamespace(client=None, reading=night, age_s=lambda: 3.0), gw, trial=False,
+                  salt=bytes(16)).read(NOW)
+    assert rd.live("pv_power_w") == (0.0, 3.0) and rd.live("load_power_w") == (500.0, 3.0)
+    words.pop(35182)                                       # brak rejestru baterii → brak poboru
+    partial = build_reading(gw, RegisterImage(words), at_mono=0.0, at_utc=NOW)
+    rd = DirectIO(SimpleNamespace(client=None, reading=partial, age_s=lambda: 3.0), gw, trial=False,
+                  salt=bytes(16)).read(NOW)
+    assert rd.live("load_power_w") == (None, None) and rd.live("pv_power_w") == (0.0, 3.0)
+
+
 def test_direct_io_resend_needs_budget_left():
     # Ponowna wysyłka zapisu (UDP, po ciszy) tylko w budżecie NVM — sprawdzane PRZED wysłaniem.
     from custom_components.volcast.control.device_io import DirectIO

@@ -20,6 +20,23 @@ Ostatni ważny pobór to OBSERWACJA: odświeża go każdy ważny odczyt w każdy
 trybie, także na sucho (jak w implementacji referencyjnej — ścieżka zapasowa ma najnowszy
 ważny odczyt). Nastawę pamiętamy dopiero po udanym zapisie i tylko dla tego samego slotu
 i intencji; pauza, powrót do stanu bazowego i każda porażka zapisu ją kasują.
+
+Tryb bezpośredni (rejestry) liczy tę samą nastawę z odczytu falownika (PV i pobór z mapy
+`read` profilu, wiek = wiek odczytu), z trzema różnicami:
+
+* bez zgadywania: brak, stary albo niewiarygodny odczyt PV lub poboru (albo nieznana moc
+  znamionowa) = slot w trybie neutralnym, nie ścieżka zapasowa `bateria − ostatni pobór`;
+* strefa martwa dla NVM: do wzoru idzie szczyt poboru NETTO (pobór − PV) z ostatnich
+  `DIRECT_PEAK_WINDOW_S` (próbki tylko z ważnych odczytów, w każdym cyklu i trybie).
+  Wzrost poboru obniża nastawę od razu, spadek podnosi ją dopiero po wyjściu szczytu z okna.
+  Bateria nie oddaje więc więcej niż plan + histereza 150 W (jak referencja), a wahania
+  domu ±300 W nie przepisują 47512 co minutę: sama histereza 150 W dawała przy nich średnio
+  34 zapisy/h (symulacja cyklu, 200 godzin) — budżet 144 zapisy/klucz/dobę wyczerpany po
+  ~4 h sprzedaży i powrót do trybu bazowego w środku slotu; z oknem 10 min średnio 2,6/h,
+  najwyżej 7 (udział godzinowy budżetu: 144/24 = 6). Ceną jest eksport niższy od planu
+  o rozrzut poboru w oknie (bezpieczny kierunek: bateria oddaje mniej), a duży spadek
+  poboru podnosi eksport z opóźnieniem do 10 min;
+* pamięć próbek żyje tylko w procesie: po restarcie okno i zapisana nastawa są puste.
 """
 from __future__ import annotations
 
@@ -35,11 +52,13 @@ NOTE_SELL_XSET = "sell_xset"
 NOTE_SELL_NO_LOAD = "sell_no_load"
 NOTE_SELL_NO_RATED = "sell_no_rated"
 NOTE_SELL_BELOW_MIN = "sell_below_min"
-NOTE_SELL_LIVE_UNAVAILABLE = "sell_live_unavailable"
+NOTE_SELL_NO_READING = "sell_no_reading"
 # Odczyt ponad tyle × moc znamionowa to błąd czujnika, nie moc.
 PV_MAX_RATED_FACTOR = 2.0
 # Pobór domu ponad tyle to błąd czujnika (przyłącze domu jest dużo mniejsze).
 LOAD_MAX_W = 100_000.0
+# Tryb bezpośredni: okno szczytu poboru netto (strefa martwa NVM, opis w nagłówku modułu).
+DIRECT_PEAK_WINDOW_S = 600.0
 
 SlotKey = tuple[datetime, datetime, str]
 
@@ -51,6 +70,8 @@ class LiveExportMemory:
     # nastawa ostatnio ZAPISANA do falownika i jej slot (początek, koniec, intencja)
     written_for: SlotKey | None = None
     written_w: float | None = None
+    # tryb bezpośredni: próbki (czas monotoniczny, pobór − PV [W]) z ważnych odczytów w oknie
+    net_samples: tuple[tuple[float, float], ...] = ()
 
     def with_load(self, load_w: float | None) -> "LiveExportMemory":
         return self if load_w is None else replace(self, last_load_w=load_w)
@@ -66,6 +87,20 @@ class LiveExportMemory:
             return self
         return replace(self, written_for=None, written_w=None)
 
+    def with_net(self, now_mono: float, net_w: float | None, window_s: float) -> "LiveExportMemory":
+        """Próbka poboru netto (None = brak ważnego odczytu) i okno przycięte do `window_s`.
+
+        Próbka z przyszłości (zegar cofnięty) wypada — okno nie może jej trzymać bez końca.
+        """
+        kept = tuple((t, v) for t, v in self.net_samples if 0.0 <= now_mono - t < window_s)
+        if net_w is not None:
+            kept += ((now_mono, net_w),)
+        return self if kept == self.net_samples else replace(self, net_samples=kept)
+
+    def net_peak(self, now_mono: float, window_s: float) -> float | None:
+        values = [v for t, v in self.net_samples if 0.0 <= now_mono - t < window_s]
+        return max(values) if values else None
+
 
 @dataclass(frozen=True)
 class LiveExport:
@@ -80,6 +115,10 @@ class LiveExport:
     no_rated: bool = False
     # nastawa pod minimum encji mocy — slot zszedł do trybu neutralnego, nic nie zapisujemy
     below_min: bool = False
+    # tryb bezpośredni: brak ważnego odczytu PV/poboru (stary, brakujący, niewiarygodny)
+    no_reading: bool = False
+    # tryb bezpośredni: slot zszedł do trybu neutralnego (brak odczytu albo mocy znamionowej)
+    degraded: bool = False
 
     def note(self) -> str:
         def w(v: float | None) -> str:

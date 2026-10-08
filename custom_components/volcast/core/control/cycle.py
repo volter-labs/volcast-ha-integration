@@ -27,7 +27,9 @@ trybie ładuje z sieci). Zasady, które trzymają grupę:
 * parametr niedopasowalny do zakresu encji blokuje cały cykl;
 * sprzedaż z mocą `slot_live_export`: moc baterii po strażnikach zamieniana na nastawę
   eksportu z odczytów PV i poboru tego cyklu (`live_export`), zanim zobaczy ją dopasowanie
-  i throttling; nastawa pod minimum encji mocy = slot w trybie neutralnym.
+  i throttling; nastawa pod minimum encji mocy = slot w trybie neutralnym. Cel rejestrowy
+  liczy ją z odczytu falownika, bez ścieżki zapasowej (brak ważnego odczytu = tryb
+  neutralny) i ze szczytem poboru z okna jako strefą martwą NVM (`live_export`).
 Awaria zapisu w trakcie cyklu to już sprawa wykonawcy grupowego (`group_writes`):
 cykl układa grupę w bezpiecznej kolejności i podaje zapisy cofające (`restore`).
 Po każdym cofnięciu grupa czeka (odwrót: max(min_interval_s, 300 s), podwajany do
@@ -217,9 +219,6 @@ class CycleDecision:
     device: dict[str, float | str] = field(default_factory=dict)
     # sprzedaż przeliczona na nastawę eksportu z odczytów (None = intencja bez przeliczenia)
     live_export: LiveExport | None = None
-    # sprzedaż z mocą na żywo na celu rejestrowym: brak przeliczenia, zapis mocy baterii z planu
-    # (klucz slotu: początek, koniec, intencja; dla ostrzeżenia raz na slot)
-    sell_live_unavailable: tuple | None = None
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -273,6 +272,10 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     # ścieżka zapasowa sprzedaży potrzebuje najnowszego ważnego odczytu, nie tego ze sprzedaży.
     memory.live_export = memory.live_export.with_load(
         lx.valid_load(tele.load_power_w, tele.load_age_s, profile.max_state_age_s))
+    if target.kind == "direct":
+        # Szczyt poboru netto z okna (strefa martwa sprzedaży w trybie bezpośrednim) — też co cykl.
+        memory.live_export = memory.live_export.with_net(
+            now_mono, _direct_net(tele, profile, limits), lx.DIRECT_PEAK_WINDOW_S)
     if gates.control_mode != target.kind:
         return CycleDecision(IDLE, "no_mode_chosen")
     if profile.control_model != "mode_setpoint":
@@ -318,10 +321,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     # dopasowaniem i throttlingiem — histereza i uzgadnianie widzą już nastawę eksportu).
     dry = _gate_reason(gates, memory, now_mono) is not None
     planned, live, live_notes = _live_export(planned, guard.params, mapped_slot.intent, slot, profile,
-                                             tele, limits, target, memory, keep=dry)
-    degraded = degraded or lx.NOTE_SELL_BELOW_MIN in live_notes
-    if lx.NOTE_SELL_LIVE_UNAVAILABLE in live_notes:
-        common["sell_live_unavailable"] = (slot.start, slot.end, mapped_slot.intent)
+                                             tele, limits, target, memory, now_mono, keep=dry)
+    degraded = degraded or lx.NOTE_SELL_BELOW_MIN in live_notes or (live is not None and live.degraded)
     params, adjusted, unfit = target.fit(planned, profile)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
@@ -521,7 +522,7 @@ def _budget_restore(device, profile, target: WriteTarget, memory: ControlMemory,
 
 
 def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, tele: Telemetry,
-                 limits: Limits, target: WriteTarget, memory: ControlMemory, *, keep: bool
+                 limits: Limits, target: WriteTarget, memory: ControlMemory, now_mono: float, *, keep: bool
                  ) -> tuple[Params, LiveExport | None, tuple[str, ...]]:
     """Nastawa eksportu dla KOŃCOWEJ intencji sprzedaży z mocą `slot_live_export`.
 
@@ -537,16 +538,14 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
     nietknięta (pobór obserwuje każdy cykl, na początku `_decide`).
     """
     mem = memory.live_export
-    # Nastawa eksportu z encji mocy i odczytów encji: tryb bezpośredni (rejestry) jej nie liczy.
-    live_kind = profile.power_kind(intent) == lx.LIVE_EXPORT_KIND and isinstance(target, EntityTarget)
+    live_kind = profile.power_kind(intent) == lx.LIVE_EXPORT_KIND
     if not live_kind or planned.mode != profile.intent(intent)["mode"] or planned.power_w is None:
         if not keep:
             memory.live_export = mem.forget_written()
-        # Cel rejestrowy: moc baterii z planu idzie bez przeliczenia — tylko widoczna notatka.
-        if (profile.power_kind(intent) == lx.LIVE_EXPORT_KIND and not isinstance(target, EntityTarget)
-                and planned.mode == profile.intent(intent)["mode"] and planned.power_w is not None):
-            return planned, None, (lx.NOTE_SELL_LIVE_UNAVAILABLE,)
         return planned, None, ()
+    if not isinstance(target, EntityTarget):
+        return _live_export_direct(planned, guarded, intent, slot, profile, tele, limits, target, memory,
+                                   now_mono, keep=keep)
     ents = target.ents
     max_age = profile.max_state_age_s
     rated = limits.rated_power_w
@@ -575,6 +574,65 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
     if not keep:
         memory.live_export = mem
     return replace(planned, power_w=live.xset_w), live, tuple(notes)
+
+
+def _direct_net(tele: Telemetry, profile, limits: Limits) -> float | None:
+    """Pobór netto (pobór − PV) z ważnego odczytu PV i poboru; None, gdy któregoś brak."""
+    pv, load = _direct_readings(tele, profile, _rated_or_none(limits))
+    return None if pv is None or load is None else load - pv
+
+
+def _rated_or_none(limits: Limits) -> float | None:
+    rated = limits.rated_power_w
+    return rated if isinstance(rated, (int, float)) and math.isfinite(rated) and rated > 0.0 else None
+
+
+def _direct_readings(tele: Telemetry, profile, rated: float | None) -> tuple[float | None, float | None]:
+    max_age = profile.max_state_age_s
+    return (lx.valid_reading(tele.pv_power_w, tele.pv_age_s, max_age, lx.pv_limit_w(rated)),
+            lx.valid_load(tele.load_power_w, tele.load_age_s, max_age))
+
+
+def _live_export_direct(planned: Params, guarded: Params, intent: str, slot, profile, tele: Telemetry,
+                        limits: Limits, target: WriteTarget, memory: ControlMemory, now_mono: float, *,
+                        keep: bool) -> tuple[Params, LiveExport, tuple[str, ...]]:
+    """Nastawa eksportu sprzedaży na celu rejestrowym (wzór i pułap jak w trybie encji).
+
+    PV i pobór z odczytu falownika tego cyklu (`tele`, wiek = wiek odczytu). Brak ważnego
+    odczytu któregoś z nich albo nieznana moc znamionowa = slot w trybie neutralnym (bez
+    ścieżki zapasowej z ostatnim poborem — nie zgadujemy). Pobór we wzorze = szczyt poboru
+    netto z okna `DIRECT_PEAK_WINDOW_S` (strefa martwa NVM; opis w `live_export`). Wynik
+    ujemny = 0 W przy zachowanym trybie sprzedaży (bateria kryje sam dom), jak referencja.
+    """
+    mem = memory.live_export
+    key = (slot.start, slot.end, intent)
+    rated = _rated_or_none(limits)
+    pv, load = _direct_readings(tele, profile, rated)
+    if rated is None or pv is None or load is None:
+        no_reading = pv is None or load is None
+        planned, _ = _degrade(planned, {"power_w"}, profile)
+        if not keep:
+            memory.live_export = mem.forget_written()
+        live = LiveExport(key=key, battery_w=float(guarded.power_w or 0.0), pv_w=pv, load_w=load, xset_w=0.0,
+                          no_load=False, no_rated=rated is None, no_reading=no_reading, degraded=True)
+        notes = ([lx.NOTE_SELL_NO_READING] if no_reading else []) + ([lx.NOTE_SELL_NO_RATED] if rated is None else [])
+        return planned, live, tuple(notes)
+    enabled, limit = guarded.export_limit_enabled, guarded.export_limit_w
+    if enabled is None and limit is None:
+        # Plan bez zdania o ograniczniku: włączony ogranicznik właściciela na falowniku też jest pułapem.
+        dev = target.device_view(dict.fromkeys(EXPORT_PAIR), profile)
+        on, value = dev.get("export_limit_enabled"), dev.get("export_limit_w")
+        if isinstance(on, float) and on >= 0.5 and isinstance(value, float):
+            enabled, limit = True, value
+    peak = mem.net_peak(now_mono, lx.DIRECT_PEAK_WINDOW_S)
+    net = load - pv
+    effective_load = pv + max(net, peak if peak is not None else net)
+    live, mem = lx.compute(
+        key=key, battery_w=planned.power_w, pv_w=pv, load_w=effective_load,
+        export_limit_w=lx.export_ceiling(enabled, limit), rated_power_w=rated, memory=mem)
+    if not keep:
+        memory.live_export = mem
+    return replace(planned, power_w=live.xset_w), live, (live.note(),)
 
 
 def _below_entity_min(power_w: float, profile, ents: EntityContext) -> bool:
@@ -843,7 +901,7 @@ def _commit_live_export(decision: CycleDecision, report: WriteReport, memory: Co
     """
     live = decision.live_export
     mem = memory.live_export
-    if live is None or live.below_min:
+    if live is None or live.below_min or live.degraded:
         memory.live_export = mem.forget_written()
         return
     if report.failed or report.unsupported or ambiguous or restored or restore_failed:
