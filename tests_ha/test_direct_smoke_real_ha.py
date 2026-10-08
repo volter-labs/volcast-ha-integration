@@ -117,13 +117,15 @@ async def test_real_ha_direct_write_restore_reload_unload(hass: HomeAssistant, n
     assert rt.executor.last_decision.status == "write", rt.executor.last_decision.summary()
     assert bank.read(MODE, 1) == [10] and bank.read(POWER, 1) == [2000] and rt.executor.owned
 
-    # przeładowanie: bez powrotu, własność zostaje, jedno połączenie na host
+    # przeładowanie: bez powrotu do migawki, ale bez trybu wymuszonego na czas przerwy (sam tryb
+    # neutralny); własność zostaje, nowy wykonawca przejmuje sterowanie; jedno połączenie na host
     n = len(bank.writes)
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     rt = control_of(hass, entry)
     await _settle(hass, rt)
-    assert bank.read(MODE, 1) == [10] and rt.executor.owned and len(bank.writes) == n
+    assert bank.writes[n:] == [(MODE, 1), (MODE, 10)]
+    assert bank.read(MODE, 1) == [10] and rt.executor.owned
     assert list(hass.data[DOMAIN]["direct_hosts"]) == ["127.0.0.1"]
 
     # cofnięcie zgody → powrót do trybu bazowego tym samym połączeniem
@@ -141,6 +143,26 @@ async def test_real_ha_direct_write_restore_reload_unload(hass: HomeAssistant, n
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=5))
     await hass.async_block_till_done()
     assert goodwe_sim.requests == before
+
+
+async def test_real_ha_stop_event_sets_neutral_mode_and_keeps_ownership(hass: HomeAssistant, network_down,
+                                                                        hass_storage, goodwe_sim, monkeypatch):
+    from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+    gw = _verified_goodwe()
+    options = {"control_mode": "direct", "direct_target": _target(goodwe_sim, gw)}
+    entry, rt = await _setup(hass, hass_storage, options, profiles=[gw], monkeypatch=monkeypatch)
+    await _settle(hass, rt)
+    bank = goodwe_sim.bank
+    assert bank.read(MODE, 1) == [10] and rt.executor.owned
+    # Etap 1 zatrzymania HA: nasłuch zapisuje tryb neutralny, a HA czeka na to zadanie.
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+    assert bank.read(MODE, 1) == [1] and rt.executor.owned
+    n = len(bank.writes)
+    await rt.executor.async_tick()                       # po zatrzymaniu żaden cykl nie wraca do planu
+    assert len(bank.writes) == n
+    assert await hass.config_entries.async_unload(entry.entry_id)   # zdjęcie nasłuchu po wystrzale: bez błędu
+    await hass.async_block_till_done()
 
 
 async def test_real_ha_conflicting_goodwe_entry_refuses(hass: HomeAssistant, network_down, hass_storage,

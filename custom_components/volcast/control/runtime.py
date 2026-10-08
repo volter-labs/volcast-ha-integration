@@ -34,7 +34,8 @@ from datetime import timedelta
 from typing import Callable, Mapping
 
 import homeassistant.util.dt as dt_util
-from homeassistant.const import CONF_API_KEY
+from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -67,6 +68,8 @@ from .store import ControlStore, async_installation_salt
 from .telemetry import TelemetrySender
 
 _LOGGER = logging.getLogger(__name__)
+# W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
+_ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 ONBOARDING_KEY = "volcast_onboarding"
 # Blokady zapisu per wpis — wspólne dla kolejnych wykonawców (przeładowania).
 _LOCKS_KEY = "volcast_control_locks"
@@ -506,6 +509,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                             channel=channel, live=live, hub=hub)
 
         rt.unsubs.append(async_track_time_interval(hass, _fetch, timedelta(seconds=SCHEDULE_FETCH_INTERVAL_S)))
+        track_ha_stop(hass, rt)
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").
         hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})["control"] = rt
         _maybe_start_onboarding(hass, entry, report, profiles)
@@ -637,8 +641,43 @@ def freeze_control(rt: ControlRuntime) -> None:
         freeze()
 
 
+async def async_neutral_at_shutdown(rt: ControlRuntime) -> None:
+    """Zatrzymanie HA: koniec cykli i pobierania planu, potem tryb neutralny zamiast NASZEGO trybu
+    wymuszonego (`VolcastExecutor.async_neutral_at_stop`, budżet `STOP_WRITE_TIMEOUT_S`). Własność
+    zostaje — po restarcie wykonawca przejmuje sterowanie. Nigdy nie rzuca."""
+    try:
+        freeze_control(rt)
+        await rt.executor.async_neutral_at_stop()
+    except Exception as err:  # noqa: BLE001 — zatrzymanie HA nie może się przez to wywrócić
+        _LOGGER.warning("Volcast control: neutral mode at Home Assistant stop failed (%s)", type(err).__name__)
+
+
+def track_ha_stop(hass, rt: ControlRuntime) -> None:
+    """Nasłuch zatrzymania HA (`EVENT_HOMEASSISTANT_STOP`, etap 1 — HA czeka na zadania z niego).
+
+    Zdjęcie przy rozładunku przez `rt.unsubs`; po wystrzeleniu zdjęcie jest puste (HA usuwa nasłuch
+    jednorazowy sam i loguje błąd przy drugim usunięciu). Zadanie zakładane od razu w callbacku."""
+    fired = False
+
+    @callback
+    def _on_stop(_event) -> None:
+        nonlocal fired
+        fired = True
+        hass.async_create_task(async_neutral_at_shutdown(rt), "volcast_stop_neutral")
+
+    remove = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
+
+    def _unsub() -> None:
+        if not fired:
+            remove()
+    rt.unsubs.append(_unsub)
+
+
 async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = False) -> None:
-    """Zwykłe przeładowanie/restart nie oddaje falownika (`restore=False`, domyślnie).
+    """Rozładowanie wpisu (przeładowanie, restart integracji): falownik nie zostaje w NASZYM trybie
+    wymuszonym na czas przerwy — sam tryb neutralny, własność zostaje (`restore=False`, domyślnie):
+    nowy wykonawca przejmuje sterowanie z zachowaną migawką, bez pełnego powrotu i ponownego zapisu
+    wszystkich nastaw (NVM).
 
     `restore=True` jest dla jawnej decyzji właściciela wyłączyć wpis (`entry.disabled_by`
     ustawione przy rozładunku) — wtedy oddajemy falownik w tryb bazowy, zanim wykonawca
@@ -655,11 +694,26 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
         except Exception as err:  # noqa: BLE001 — rozładunek wpisu nie może się przez to wywrócić
             _LOGGER.warning("Volcast control: restore before disabling the entry failed (%s)",
                             type(err).__name__)
+    else:
+        try:
+            await rt.executor.async_neutral_at_stop()
+        except Exception as err:  # noqa: BLE001 — rozładunek wpisu nie może się przez to wywrócić
+            _LOGGER.warning("Volcast control: neutral mode before unloading failed (%s)", type(err).__name__)
     await rt.telemetry.async_stop()
     await rt.executor.async_stop()
     if rt.direct is not None:
         # Po wykonawcy (powrót przy wyłączeniu wpisu szedł jeszcze tym połączeniem).
         await rt.direct.async_stop()
+
+
+def _removal_issue(hass, entry) -> None:
+    """Usunięcie wpisu bez powrotu do nastaw sprzed sterowania: zgłoszenie w Naprawach (tekst „nie można
+    oddać nastaw"); nigdy nie rzuca."""
+    try:
+        ir.async_create_issue(hass, DOMAIN, f"control_removal_failed_{entry.entry_id}", is_fixable=False,
+                              severity=_ISSUE_WARNING, translation_key="control_record_dropped")
+    except Exception as err:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić
+        _LOGGER.warning("Volcast control: repair issue on removal not created (%s)", type(err).__name__)
 
 
 async def async_remove_control(hass, entry) -> None:
@@ -673,7 +727,9 @@ async def async_remove_control(hass, entry) -> None:
     try:
         state = await store.async_load()
     except Exception as err:  # noqa: BLE001 — zły format magazynu: nie ma czego przywrócić
-        _LOGGER.warning("Volcast control: saved state unreadable on removal (%s)", type(err).__name__)
+        _LOGGER.warning("Volcast control: saved state unreadable on removal (%s) — the inverter may keep the "
+                        "last settings Volcast applied; check its mode", type(err).__name__)
+        _removal_issue(hass, entry)            # nie wiemy, czy falownik ma nasz tryb — właściciel musi wiedzieć
         state = None
     if state is not None and state.owned:
         profiles = await hass.async_add_executor_job(ds.load_profiles)
@@ -697,6 +753,8 @@ async def async_remove_control(hass, entry) -> None:
             # the store is wiped next regardless, so this is the last chance to say so.
             _LOGGER.warning("Volcast control: could not return the inverter to its settings from "
                             "before control — check its mode")
+            # Stan sterowania znika razem z wpisem — zgłoszenie w Naprawach zostaje (sam log to za mało).
+            _removal_issue(hass, entry)
         await executor.async_stop()
         if conn is not None:
             await conn.async_stop(forget=True)

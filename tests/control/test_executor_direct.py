@@ -776,13 +776,16 @@ async def test_disable_entry_restores_before_close(make_hass, goodwe_udp_sim, go
 
 @pytest.mark.asyncio
 async def test_reload_does_not_restore_direct(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Przeładowanie nie oddaje falownika (bez powrotu do migawki), ale nie zostawia trybu wymuszonego:
+    # sam tryb neutralny, własność zostaje (szczegóły: `test_safe_stop.py`).
     from custom_components.volcast.control import runtime as rt_mod
     h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
     n = len(goodwe_bank.writes)
     rt = rt_mod.ControlRuntime(h.ex, None, SimpleNamespace(async_stop=_noop), None, None, {}, 8000.0,
                                direct=h.conn)
     await rt_mod.async_unload_control(h.hass, rt)
-    assert len(goodwe_bank.writes) == n and gw_raw_word(goodwe_bank, MODE) == 10
+    assert regs(goodwe_bank)[n:] == [MODE] and gw_raw_word(goodwe_bank, MODE) == 1
+    assert gw_raw_word(goodwe_bank, POWER) == 2000 and gw_raw_word(goodwe_bank, EXPORT_EN) == 1
     assert h.hass.data[DOMAIN]["direct_hosts"] == {} and h.ex.owned
 
 

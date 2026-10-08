@@ -7,7 +7,9 @@ Cykl co 60 s (i po każdej zmianie planu/zgody/przełącznika): odczyt encji z j
 → `decide_cycle` (czysty rdzeń) → zapis usługami tylko przy statusie WRITE. Stan trwały
 (plan, zgoda, przełącznik, własność, migawka) w `ControlStore`. Restart/reload nie
 przywraca trybu bazowego — robi to wyłącznie utrata prawa (zgoda False, przełącznik OFF,
-tryb wyłączony w opcjach), i tylko gdy to my zmienialiśmy nastawy.
+tryb wyłączony w opcjach), i tylko gdy to my zmienialiśmy nastawy. Zatrzymanie HA i rozładowanie
+wpisu nie zostawiają jednak NASZEGO trybu wymuszonego: sam tryb neutralny, własność zostaje
+(`async_neutral_at_stop`, budżet `STOP_WRITE_TIMEOUT_S`).
 
 Zasady wykonania:
 * każdy zapis (cykl i powrót do trybu bazowego) idzie przez wykonawcę grupowego
@@ -385,6 +387,71 @@ class VolcastExecutor:
         for unsub in self._unsub:
             unsub()
         self._unsub.clear()
+
+    async def async_neutral_at_stop(self) -> bool:
+        """Zatrzymanie HA albo rozładowanie wpisu: falownik nie zostaje w NASZYM trybie wymuszonym na czas,
+        gdy nikt nim nie steruje. True = tryb neutralny zapisany.
+
+        Najpierw koniec cykli (`freeze` — żaden cykl nie zapisze potem planu), potem — po zapisie w toku
+        (blokada wpisu) — sam zapis trybu neutralnego, jeśli falownik ma nasz tryb: jak hamulec, bez
+        throttlingu I-6, własność i migawka zostają (wykonawca po restarcie albo przeładowaniu przejmuje
+        sterowanie od nowa). Nie na trybie przejętym przez właściciela ani obcym; profil w wersji próbnej
+        i próba trybu bezpośredniego — nic. Okna czasowe nie mają trybu (powrót robi utrata prawa).
+
+        Całość w `stop_timeout_s` (`STOP_WRITE_TIMEOUT_S` = 10 s), także czekanie na blokadę. Tryb
+        bezpośredni po UDP (odstęp 300 ms, limit odpowiedzi 2 s): bez pełnego odpytania i bez pętli
+        potwierdzeń — potwierdzenie tożsamości tylko, gdy wypada (odczyt bloku identyfikacji), odczyt
+        rejestru trybu pod wyłącznością łącza, ramka zapisu, odczyt zwrotny: ≈ 3–4 ramki ≈ 1–2 s;
+        falownik stosujący nastawę z opóźnieniem dokłada najwyżej 2 × 1,5 s i 2 odczyty. Martwe łącze:
+        odczyt przed zapisem poddaje się po ≈ 7 s bez ramki zapisu; po przekroczeniu budżetu zadanie jest
+        przerywane — przerwany zostaje najwyżej odczyt albo odczyt zwrotny po wysłanej ramce trybu
+        neutralnego (bezpieczny w każdym stanie).
+        """
+        if self._disabled or self._stopped or self._profile is None or self._memory is None:
+            return False
+        self.freeze()
+        try:
+            return await asyncio.wait_for(self._neutral_at_stop(), self._stop_timeout_s)
+        except asyncio.TimeoutError:
+            _LOGGER.error("Volcast control: the inverter could not be set to its neutral mode before stopping "
+                          "(no answer in time) — it may keep the last mode Volcast applied")
+        except Exception as err:  # noqa: BLE001 — zatrzymanie HA ani rozładowanie nie mogą się wywrócić
+            _LOGGER.error("Volcast control: neutral mode before stopping failed (%s)", type(err).__name__)
+        return False
+
+    async def _neutral_at_stop(self) -> bool:
+        async with self._lock:
+            profile = self._profile
+            if self._stopped or self._disabled or not self._state.owned or "mode" in self._state.taken_over \
+                    or profile.control_model != "mode_setpoint" or not self._io_ready() \
+                    or not self._gates().verified:
+                return False
+            neutral, now_mono = profile.neutral_mode, self._clock()
+            rd = self.io.read(self._utcnow())
+            if self._direct is not None:
+                if self._reading_fresh(rd):
+                    current = rd.readings.get("mode")
+                    if not isinstance(current, str) or current == neutral or not self._mode_ours(current):
+                        return False
+                    words = {profile.mode_value(current)}
+                else:
+                    words = self._our_mode_words()   # świeży odczyt rejestru trybu rozstrzyga przed ramką
+                written = await self._async_direct_neutral(rd, words, now_mono, throttle=False) if words else None
+            else:
+                current = rd.readings.get("mode")
+                if "mode" in self._absent_keys() or not isinstance(current, str) or current == neutral \
+                        or not self._mode_ours(current):
+                    return False
+                written = await self._async_entity_neutral(rd, now_mono)
+            if written is None:
+                return False
+            if self._memory.last_written.get("mode") == neutral:
+                _LOGGER.warning("Volcast control: stopping — inverter set to its neutral mode until control "
+                                "resumes")
+                return True
+            _LOGGER.warning("Volcast control: stopping — setting the inverter to its neutral mode failed; it may "
+                            "keep the last mode Volcast applied")
+            return False
 
     @property
     def _foreign_issue_id(self) -> str:
@@ -1255,6 +1322,18 @@ class VolcastExecutor:
             return None
         if not self._memory.throttle.filter({"mode": neutral}, now_mono):
             return None
+        writes = await self._async_entity_neutral(rd, now_mono)
+        if writes is None:
+            return None
+        if not self._brake_warned:
+            self._brake_warned = True
+            _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
+                            "neutral mode", d.reason)
+        return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
+
+    async def _async_entity_neutral(self, rd: Reading, now_mono: float) -> list | None:
+        """Tryb encji: sam zapis trybu neutralnego usługą (jak powrót, bez innej encji); własność zostaje."""
+        neutral = self._profile.neutral_mode
         writes = self.io.restore_writes(Params(mode=neutral), ["mode"], rd)
         if not writes:
             return None
@@ -1265,11 +1344,7 @@ class VolcastExecutor:
             self._memory.last_written["mode"] = neutral
         if self._note_written([*report.written, *report.ambiguous]):
             await self._async_save("control state")
-        if not self._brake_warned:
-            self._brake_warned = True
-            _LOGGER.warning("Volcast control: plan cannot be applied safely (%s) — inverter set to its "
-                            "neutral mode", d.reason)
-        return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
+        return writes
 
     def _mode_ours(self, current: str) -> bool:
         """Tryb na falowniku jest nasz: nasz ostatni zapis trybu, a bez niego (restart) — własność
@@ -1333,17 +1408,19 @@ class VolcastExecutor:
                             "neutral mode", d.reason)
         return replace(d, writes=written, notes=(*d.notes, "neutral_brake"))
 
-    async def _async_direct_neutral(self, rd: Reading, words: set[int], now_mono: float) -> list | None:
+    async def _async_direct_neutral(self, rd: Reading, words: set[int], now_mono: float, *,
+                                    throttle: bool = True) -> list | None:
         """Sam zapis trybu neutralnego (rejestr trybu), jeśli falownik ma jedno z naszych słów `words`.
 
         Jak powrót do trybu bazowego: przez pisarza z wyłącznością łącza, poza budżetem NVM (ponowna
         wysyłka po ciszy nigdy nie jest odmawiana), tylko przy potwierdzonej tożsamości urządzenia; I-6
-        obowiązuje. Własność zostaje. None = nic nie poszło (bramki, odczyt, tryb nie nasz)."""
+        obowiązuje (poza zatrzymaniem: `throttle=False`). Własność zostaje. None = nic nie poszło
+        (bramki, odczyt, tryb nie nasz)."""
         neutral = self._profile.neutral_mode
         if not self._state.owned or "mode" in self._state.taken_over or neutral is None \
                 or "mode" in self._memory.unsupported or f"mode:{neutral}" in self._memory.unsupported:
             return None
-        if not self._memory.throttle.filter({"mode": neutral}, now_mono):
+        if throttle and not self._memory.throttle.filter({"mode": neutral}, now_mono):
             return None
         # Tożsamość: bez potwierdzonego urządzenia pod adresem nie piszemy nic (cudzy falownik).
         if not await self._direct.async_identity_ok():

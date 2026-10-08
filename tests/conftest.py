@@ -79,6 +79,7 @@ _make_module("homeassistant.const", {
     "STATE_UNAVAILABLE": "unavailable",
     "STATE_UNKNOWN": "unknown",
     "EVENT_HOMEASSISTANT_STARTED": "homeassistant_started",
+    "EVENT_HOMEASSISTANT_STOP": "homeassistant_stop",
     "__version__": "2026.9.0",
 })
 
