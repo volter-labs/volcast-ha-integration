@@ -9,7 +9,7 @@ Dlatego pisarz i sonda czytają rejestr tak, żeby kolejne żądania różniły 
   czytane przez urządzenie referencyjne — dozwolone), a na końcu sam rejestr;
 * `pick_view` wybiera pierwszy widok o długości innej niż ostatnie żądanie odczytu na łączu
   (`last_read_count` transportu); gdy takiego nie ma (rejestr tylko pojedynczo), wołający wysyła
-  najpierw blok rozdzielający (`separator_block`): znany blok o długości różnej od KAŻDEGO widoku
+  najpierw blok rozdzielający (`separator_blocks`): znany blok o długości różnej od KAŻDEGO widoku
   rejestru i nieobejmujący go — po nim nieaktualna odpowiedź ma inną długość niż odczyt rejestru.
 
 Wyjątek Modbus nie ma długości: wyjątek 2 przyjmuje się jako ostateczny („rejestru nie ma”) dopiero,
@@ -52,14 +52,13 @@ def pick_view(views: Iterable[Block], prev_count: int | None) -> Block | None:
     return next((v for v in views if v[1] != prev_count), None)
 
 
-def separator_block(profile, addr: int) -> Block | None:
-    """Znany blok (bloki weryfikacyjne, potem identyfikacja) o długości różnej od każdego widoku
-    rejestru i nieobejmujący go; None = profil takiego nie ma."""
+def separator_blocks(profile, addr: int) -> tuple[Block, ...]:
+    """Znane bloki (weryfikacyjne, potem identyfikacja) o długości różnej od każdego widoku rejestru
+    i nieobejmujące go, w kolejności prób; pusto = profil takiego nie ma. Wołający bierze następny,
+    gdy blok nie dał poprawnej odpowiedzi (inny model może nie mieć rejestru bloku)."""
     counts = {n for _, n in key_views(profile, addr)}
-    for block in (*profile.modbus.verify_blocks, *profile.modbus.identify_reads):
-        if block[1] not in counts and not _covers(block, addr):
-            return block
-    return None
+    return tuple(dict.fromkeys(b for b in (*profile.modbus.verify_blocks, *profile.modbus.identify_reads)
+                               if b[1] not in counts and not _covers(b, addr)))
 
 
 def prev_read_count(transport, fallback: int | None) -> int | None:

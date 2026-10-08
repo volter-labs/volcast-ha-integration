@@ -142,6 +142,14 @@ async def test_pre_read_exception_2_confirmed_without_retry_delays(goodwe_profil
 
 
 @pytest.mark.asyncio
+async def test_separator_with_exception_falls_back_to_next_candidate(goodwe_profile, writer_sleeps):
+    # soc_max tylko pojedynczo: rozdziela blok EMS; gdy ten odpowie wyjątkiem — następny znany blok
+    t = _Scripted({}, [ModbusException(2), ModbusException(2), None, ModbusException(2)])
+    assert await _writer(t, goodwe_profile).async_write(RegisterWrite("soc_max", 47760, 95)) == UNSUPPORTED
+    assert [e[1:] for e in t.log] == [(47760, 1), (47509, 4), (45353, 4), (47760, 1)] and t.writes == 0
+
+
+@pytest.mark.asyncio
 async def test_pre_read_exception_2_not_repeated_is_error_nothing_sent(goodwe_profile, writer_sleeps):
     t = _Scripted({47510: 0}, [ModbusException(2), ModbusException(2), None, None])
     assert await _writer(t, goodwe_profile).async_write(RegisterWrite("export_limit_w", 47510, 100)) == ERROR

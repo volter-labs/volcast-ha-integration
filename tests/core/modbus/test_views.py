@@ -2,7 +2,7 @@
 from dataclasses import replace
 
 from custom_components.volcast.core.modbus.views import (
-    key_views, needs_disambiguation, pick_view, separator_block)
+    key_views, needs_disambiguation, pick_view, separator_blocks)
 
 
 class _T:
@@ -33,13 +33,13 @@ def test_pick_view_differs_from_previous_length():
 
 
 def test_separator_differs_from_every_view_and_avoids_the_register(goodwe_profile):
-    # EMS i DOD mają tę samą długość (4) — dla ich kluczy rozdziela blok identyfikacji (33).
-    assert separator_block(goodwe_profile, 47512) == (35000, 33)
-    assert separator_block(goodwe_profile, 45356) == (35000, 33)
-    # soc_max czyta się tylko pojedynczo — rozdziela pierwszy znany blok innej długości
-    assert separator_block(goodwe_profile, 47760) == (47509, 4)
+    # EMS i DOD mają tę samą długość (4) — dla ich kluczy rozdziela tylko blok identyfikacji (33).
+    assert separator_blocks(goodwe_profile, 47512) == ((35000, 33),)
+    assert separator_blocks(goodwe_profile, 45356) == ((35000, 33),)
+    # soc_max czyta się tylko pojedynczo — każdy znany blok innej długości, w kolejności prób
+    assert separator_blocks(goodwe_profile, 47760) == ((47509, 4), (45353, 4), (35000, 33))
     bare = replace(goodwe_profile, modbus=replace(goodwe_profile.modbus, verify_blocks=(), identify_reads=((47760, 1),)))
-    assert separator_block(bare, 47760) is None
+    assert separator_blocks(bare, 47760) == ()
 
 
 def test_only_uncorrelated_transports_need_disambiguation():

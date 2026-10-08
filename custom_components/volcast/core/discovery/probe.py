@@ -12,6 +12,13 @@ harmonogramu: programy i włącznik). Wynik klucza:
 * zerwanie łącza, uśpiony falownik, cisza albo wyczerpany limit ramek → klucz bez werdyktu
   (nie ma go ani w `capabilities`, ani w `echo_only`), dalsza próba przerwana.
 
+Łącze bez korelacji odpowiedzi (GoodWe UDP, `modbus/views.py`): klucz jednego rejestru jest czytany
+z długością odpowiedzi inną niż poprzedni odczyt (blok z `modbus.verify_blocks` albo sam rejestr;
+blok, który nie przeszedł, to nie werdykt — dalej sam rejestr). Werdykt trwały (wyjątek 2 albo
+„nieczytelny”) wymaga powtórzenia w odczycie samego rejestru po bloku rozdzielającym z poprawną
+odpowiedzią — jeden nieaktualny wyjątek (albo seria nieaktualnych ramek) nie wyłącza możliwości.
+Inny werdykt za drugim razem albo brak bloku rozdzielającego → klucz bez werdyktu, próba przerwana.
+
 `direct_available`: werdykt dla każdego klucza próby, a do tego dla profilu trybu i nastawy —
 `mode` i `power_w` czytelne i obsługiwane;
 dla profilu okien czasowych — blok harmonogramu czytelny, a kod `device_type` urządzenia na
@@ -28,6 +35,7 @@ from typing import Any, Callable, Iterable, Sequence
 from ..modbus.blocks import plan_blocks, spec_addresses
 from ..modbus.client import RegisterClient
 from ..modbus.identity import MIN_SALT_BYTES
+from ..modbus.views import key_views, needs_disambiguation, pick_view, prev_read_count, separator_blocks
 from ..transports.base import InverterAsleep, LinkDown, ModbusException, RequestTimeout, TransportError
 from .identify import (
     DEFAULT_BUDGET, MAX_CANDIDATES, Candidate, Identity, TransportFactory, close_quietly, identify_detailed,
@@ -103,13 +111,17 @@ def _tou_device_ok(profile, identity: Identity) -> bool:
 
 
 class _Prober:
-    def __init__(self, client: RegisterClient, budget: int) -> None:
+    def __init__(self, client: RegisterClient, budget: int, profile=None) -> None:
         self.client = client
         self.transport = client.transport
+        self.profile = profile if profile is not None else client.profile
         self.start = requests_of(self.transport)
         self.budget = budget
         self.errors: list[str] = []
         self.read_tries = max(1, int(getattr(getattr(self.transport, "cfg", None), "read_tries", 1)))
+        # łącze bez korelacji odpowiedzi (GoodWe UDP): odczyty o zmiennej długości, wyjątek 2 potwierdzany
+        self.disambiguate = needs_disambiguation(self.transport)
+        self._last: int | None = None
 
     def used(self) -> int:
         return max(0, requests_of(self.transport) - self.start)
@@ -127,6 +139,7 @@ class _Prober:
                 self.note("budget")
                 return _ABORT
             before = requests_of(self.transport)
+            self._last = count
             try:
                 await self.client.read_block(addr, count, tries=min(left, remaining))
                 return _OK
@@ -148,7 +161,56 @@ class _Prober:
                 await self.transport.reset_channel()
         return _UNREADABLE
 
+    async def single(self, addr: int) -> str:
+        """Klucz jednego rejestru na łączu bez korelacji odpowiedzi (`modbus/views.py`): odczyt o długości
+        innej niż poprzedni. Werdykt trwały (wyjątek 2 albo „nieczytelny”) dopiero, gdy powtórzy się
+        w odczycie samego rejestru po bloku rozdzielającym z poprawną odpowiedzią — wyjątek nie ma
+        długości, a seria nieaktualnych ramek (moduł powtarza poprzednią odpowiedź) wygląda jak rejestr
+        nieczytelny. Wartość w tym odczycie → rejestr jest; inny werdykt niż za pierwszym razem →
+        brak werdyktu (próba przerwana, „Bezpośrednio” wraca po ponownym wyszukaniu)."""
+        out = await self._view_read(addr)
+        if out in (_OK, _ABORT):
+            return out
+        if await self._separate(addr) != _OK:
+            return _ABORT
+        again = await self.block(addr, 1)
+        if again in (_OK, _ABORT, out):
+            return again
+        self.note("unconfirmed")
+        return _ABORT
+
+    def _prev(self) -> int | None:
+        return prev_read_count(self.transport, self._last)
+
+    async def _view_read(self, addr: int) -> str:
+        skip: set[tuple[int, int]] = set()
+        while True:
+            views = key_views(self.profile, addr, skip=skip)
+            view = pick_view(views, self._prev())
+            if view is None:
+                if await self._separate(addr) != _OK:
+                    return _ABORT
+                view = pick_view(views, self._prev()) or views[0]
+            out = await self.block(*view)
+            if out in (_OK, _ABORT) or view == (addr, 1):
+                return out
+            skip.add(view)                     # blok nie przeszedł — to nie werdykt o rejestrze
+
+    async def _separate(self, addr: int) -> str:
+        """Blok rozdzielający z poprawną odpowiedzią (kolejny kandydat, gdy poprzedni nie przeszedł);
+        żaden = brak werdyktu dla klucza."""
+        for block in separator_blocks(self.profile, addr):
+            out = await self.block(*block)
+            if out in (_OK, _ABORT):
+                if out != _OK:
+                    self.note("unconfirmed")
+                return out
+        self.note("unconfirmed")
+        return _ABORT
+
     async def key(self, blocks: Sequence[tuple[int, int]]) -> str:
+        if self.disambiguate and len(blocks) == 1 and blocks[0][1] == 1:
+            return await self.single(blocks[0][0])
         worst = _OK
         for addr, count in blocks:
             out = await self.block(addr, count)
@@ -164,7 +226,7 @@ class _Prober:
 async def probe(client: RegisterClient, profile, identity: Identity, *, budget: int) -> ProbeReport:
     """Próba możliwości: tylko FC 3, najwyżej `budget` ramek. Błąd transportu nie wychodzi na zewnątrz
     (przerywa próbę); inne wyjątki — tak (wołający zamyka transport)."""
-    p = _Prober(client, budget)
+    p = _Prober(client, budget, profile)
     caps: dict[str, bool] = {}
     echo_only: list[str] = []
     tou_readable: bool | None = None

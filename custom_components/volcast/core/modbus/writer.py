@@ -73,7 +73,7 @@ from ..transports.base import ModbusException, TransportError
 from ..transports.stream import StreamTransport
 from ..write_sequence import DENIED, ERROR, OK, UNSUPPORTED, AdjustedOutcome
 from .client import RegisterClient
-from .views import key_views, needs_disambiguation, pick_view, prev_read_count, separator_block
+from .views import key_views, needs_disambiguation, pick_view, prev_read_count, separator_blocks
 
 _LOGGER = logging.getLogger(__name__)
 _ECHO_OK, _ECHO_EXCEPTION, _ECHO_NONE = "ok", "exception", "none"
@@ -374,15 +374,19 @@ class RegisterWriter:
 
     async def _separate(self, addr: int, tries: int | None) -> None:
         """Blok rozdzielający (znany, innej długości niż każdy widok rejestru) z poprawną odpowiedzią —
-        po nim poprzednia odpowiedź modułu nie pasuje do odczytu rejestru. Porażka → `_Unconfirmed`."""
-        block = separator_block(self.profile, addr)
-        if block is None:
-            raise _Unconfirmed("no separator block")
-        self._last_count = block[1]
-        try:
-            await self.client.read_block(block[0], block[1], tries=tries)
-        except TransportError as err:
-            raise _Unconfirmed(f"separator read failed: {type(err).__name__}") from None
+        po nim poprzednia odpowiedź modułu nie pasuje do odczytu rejestru. Wyjątek Modbus na bloku →
+        następny kandydat (inny model może nie mieć rejestru bloku); inna porażka albo brak kandydata
+        → `_Unconfirmed`."""
+        for block in separator_blocks(self.profile, addr):
+            self._last_count = block[1]
+            try:
+                await self.client.read_block(block[0], block[1], tries=tries)
+                return
+            except ModbusException:
+                continue
+            except TransportError as err:
+                raise _Unconfirmed(f"separator read failed: {type(err).__name__}") from None
+        raise _Unconfirmed("no separator block answered")
 
     def _sent(self, key: str) -> None:
         if self._on_send is None:
