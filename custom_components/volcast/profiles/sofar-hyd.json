@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "id": "sofar-hyd",
+  "label": "SOFAR HYD 5-20KTL-3PH",
+  "status": "draft",
+  "status_note": "Public community sources and a publicly posted copy of the vendor G3 Modbus protocol only; nothing verified on hardware. Covers the three-phase SOFAR HYD 5-20KTL-3PH hybrids on the G3 register map, identified by the serial-number prefix at holding 0x0445 (SP1, SP2, SH1) and the ZCS Azzurro 3PH HYD ZSS rebrands (ZP1, ZP2). The single-phase HYD 3-6K-ES and HYD 3-6K-EP (serials SM1E on the older map, SM2E/ZM2E on a G3-style map the community plugin reads like the three-phase one but that this profile does not assume), the grid-tied KTL/KTLX lines and inverters reached through the ZCS Connext cloud are not covered. Addresses are wire (PDU) addresses; for Sofar they equal the hexadecimal register addresses of the vendor protocol (0x0608 = 1544), with no minus-one offset. Everything is a holding register (function 3). Control is limited to writing Energy Storage Mode 0x1110 = 0 (Self Use, the vendor default): forced charge/discharge needs Passive mode (0x1110 = 3) plus three 32-bit set-points 0x1187-0x118C written as one block, and Timing/Time-of-Use modes need start/end slots with 32-bit power and a commit register, none of which the engine can express (see docs/profiles/engine-gaps.md); grid charge, forced discharge, sell and standby therefore map to the neutral mode without power and their capabilities are false. Energy Storage Mode is a stored setting (RW, not one of the protocol's volatile 'V' registers) and the community docs warn of about 100000 EEPROM write cycles, hence nvm. Live-test checklist: (1) serial prefix at 0x0445-0x044C (16 ASCII characters, high byte first; characters 17-20 at 0x0470-0x0471 are not read) and rated power at 0x06ED (0.1 kW units, protocol V1.13 and later; older firmware may not have it); (2) 32-bit totals high word first (0x0686 PV, 0x068E bought, 0x0692 sold, 0.1 kWh) and the scales: powers at 0x0485/0x0488/0x04AF/0x0606 in 0.01 kW, PV total 0x05C4 in 0.1 kW (100 W resolution), battery voltage 0x0604 0.1 V, current 0x0605 0.01 A; (3) signs: battery power 0x0606 and current 0x0605 > 0 while charging, PCC power 0x0488 > 0 while exporting (all negated here), inverter output 0x0485 > 0 when delivering; PCC power and load 0x04AF need the meter/CT connected; only battery pack 1 (0x0604-0x0608) is read, further packs sit at a stride of 7 registers and are not summed; (4) unit id 1 through the LSW-3 Wi-Fi logger (Solarman V5, port 8899, needs the logger serial from discovery) or RS485 through a Modbus gateway; (5) write function 16 (the vendor's write format and what both reference integrations use; the protocol also lists 6); evcc reports a non-standard reply to its FC16 writes at 0x1110 and ignores it, which the engine would treat as a failed write; (6) the safe write is re-writing 0 to 0x1110 while it reads 0 (Self Use), then reading 0x1110 back; restore by writing back the value read before the test. Battery temperature limits are the generic defaults of the other profiles, not Sofar data. Not used for control until verified.",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {"what": "vendor G3 Modbus protocol V1.22 (three-phase), publicly attached and referenced by the ha-solarman Sofar G3 definition: read function 3, write function 16 (6 also listed), 32-bit values big-endian; serial number 0x0445-0x044C ASCII, production code 0x0444 reserved; 0x0485 ActivePower_Output_Total I16 0.01 kW (discharging positive), 0x0488 ActivePower_PCC_Total I16 0.01 kW (selling positive, buying negative), 0x04AF ActivePower_Load_Sys U16 0.01 kW, 0x05C4 Power_PV_Total U16 0.1 kW, battery pack 1 0x0604 voltage 0.1 V, 0x0605 current I16 0.01 A (charging positive), 0x0606 power I16 0.01 kW, 0x0607 temperature I16, 0x0608 SoC, packs 1-8 at a stride of 7; 0x0686/0x068E/0x0692 totals U32 0.1 kWh, low address = high word; 0x06ED rated power U16 0.1 kW; 0x1110 Energy_Storage_Mode_Control RW (0 self use, 1 time of use, 2 timing, 3 passive, 4 peak shaving, 5 off-grid, 6 generator; written alone at 0x1110 with length 1); timing block 0x1111-0x111F with commit 0x111F, time-of-use block 0x1120-0x112F with commit 0x112F; passive timeout 0x1184-0x1185 (written as a pair) and passive set-points 0x1187-0x118C (three I32, written as one block of 6, volatile); export control 0x1023-0x1024 (written as a pair, 0x1024 in 100 W); battery configuration 0x1044-0x105A with depth of discharge 0x104D and commit 0x1053", "ref": "https://github.com/user-attachments/files/18220633/SOFAR_Modbus_Protocol_English_G3_V1.22.only.3PH.xlsx"},
+    {"what": "Sofar G3/HYD-3PH definition: register blocks, battery power 0x0606 and PCC power 0x0488 inverted to the usual sign convention, PV power 0x05C4 x100 W, totals as high/low word pairs, Storage Control Mode select at 0x1110, Home Assistant entity names; unique ids '<entry id>_<slugified name>_<platform>'", "ref": "https://github.com/davidrapan/ha-solarman/blob/main/custom_components/solarman/inverter_definitions/sofar_g3hyd.yaml"},
+    {"what": "ha-solarman unique id and entity key scheme", "ref": "https://github.com/davidrapan/ha-solarman/blob/main/custom_components/solarman/entity.py"},
+    {"what": "Sofar G3 HYD 5-20KTL-3PH definition (also ZCS Azzurro 3PH HYD ZSS): read blocks 0x0404-0x069B with function 3, serial 0x0445-0x044C, battery pack 1 0x0604-0x060A, sensor names (sensors only, no select)", "ref": "https://github.com/StephanJoubert/home_assistant_solarman/blob/main/custom_components/solarman/inverter_definitions/sofar_g3hyd.yaml"},
+    {"what": "single-phase HYD 3-6K-ES map (older protocol, not covered)", "ref": "https://github.com/StephanJoubert/home_assistant_solarman/blob/main/custom_components/solarman/inverter_definitions/sofar_hyd3k-6k-es.yaml"},
+    {"what": "StephanJoubert solarman unique ids '<name>_<logger serial>_<field name>'", "ref": "https://github.com/StephanJoubert/home_assistant_solarman/blob/main/custom_components/solarman/sensor.py"},
+    {"what": "Sofar plugin: serial read at 0x0445, serial-prefix table (SP1/SP2/SH1 HYD-3PH, ZP1/ZP2 Azzurro 3PH, SM2E/ZM2E single-phase hybrids, SH3E/SS2E/ZS2E/SQ1/SA1/SB1/SC1/SD1/SF4/SL1/SJ2/SS1 grid-tied), Energy Storage Mode select at 0x1110 ('Self Use', 'Time of Use', 'Timing Mode', 'Passive Mode', 'Peak Cut Mode', ...) written as a single register with function 16, passive set-points as 32-bit numbers, sensor keys and units (kW)", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/plugin_sofar.py"},
+    {"what": "Home Assistant sensor unique ids '<hub name>_<key>'", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/sensor.py"},
+    {"what": "Sofar Energy Storage Modes: Self Use is the default; passive mode set-points take effect only after a commit button; EEPROM warning (about 100000 write cycles)", "ref": "https://homeassistant-solax-modbus.readthedocs.io/en/latest/sofar-energy-storage-modes/"},
+    {"what": "evcc Sofar G3 template (HYD 5-20K-3PH): battery power 0x0606 and grid power 0x0488 read with scale -10, PV 0x0586/0x0589 x10 W, totals 0x0686/0x068E; battery control by FC16 writes to 0x1110 and the passive block at 0x1187 with a non-standard reply ignored; unit id 1, port 8899", "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/sofarsolar-g3.yaml"}
+  ],
+  "unit_id": 1,
+  "transports": ["solarman_v5", "modbus_rtu"],
+  "identify": {
+    "model_register": {"addr": 1093, "type": "ascii", "len": 8},
+    "model_regex": ["^SP[12]", "^SH1", "^ZP[12]"],
+    "registers": {
+      "serial": {"addr": 1093, "type": "ascii", "len": 8},
+      "rated_power_w": {"addr": 1773, "type": "u16", "scale": 100}
+    }
+  },
+  "read": {
+    "soc": {"addr": 1544, "type": "u16"},
+    "battery_temp_c": {"addr": 1543, "type": "i16"},
+    "battery_voltage_v": {"addr": 1540, "type": "u16", "scale": 0.1},
+    "battery_current_a": {"addr": 1541, "type": "i16", "scale": 0.01, "sign": -1},
+    "battery_power_w": {"addr": 1542, "type": "i16", "scale": 10, "sign": -1},
+    "pv_power_w": {"addr": 1476, "type": "u16", "scale": 100},
+    "grid_power_w": {"addr": 1160, "type": "i16", "scale": 10, "sign": -1},
+    "load_power_w": {"addr": 1199, "type": "u16", "scale": 10},
+    "active_power_w": {"addr": 1157, "type": "i16", "scale": 10},
+    "pv_energy_total_kwh": {"addr": 1670, "type": "u32", "scale": 0.1},
+    "grid_import_total_kwh": {"addr": 1678, "type": "u32", "scale": 0.1},
+    "grid_export_total_kwh": {"addr": 1682, "type": "u32", "scale": 0.1},
+    "mode_value": {"addr": 4368, "type": "u16"}
+  },
+  "write": {
+    "mode": {"addr": 4368, "type": "u16", "encode": "mode"}
+  },
+  "modes": {
+    "self_use": {"value": 0, "direction": "neutral", "ha_option": "Self Use"}
+  },
+  "neutral_mode": "self_use",
+  "intents": {
+    "charge_grid": {"mode": "self_use", "power": "none"},
+    "charge_pv": {"mode": "self_use", "power": "none"},
+    "discharge_forced": {"mode": "self_use", "power": "none"},
+    "sell": {"mode": "self_use", "power": "none"},
+    "self_consume": {"mode": "self_use", "power": "none"},
+    "standby": {"mode": "self_use", "power": "none"}
+  },
+  "baseline": {"mode": "self_use"},
+  "write_policy": {
+    "order": ["mode"],
+    "min_interval_s": 300,
+    "nvm": true,
+    "max_direction_changes_per_hour": 2,
+    "max_state_age_s": 300,
+    "readback_settle_s": 2,
+    "nvm_budget": {"window_h": 24, "per_key": 24, "total": 24}
+  },
+  "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
+  "ha": {"integrations": [
+    {
+      "domain": "solarman",
+      "ems": false,
+      "status": "draft",
+      "entities": {
+        "soc": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_battery_sensor|.+_[0-9]+_Battery 1 SOC)$"},
+        "battery_power_w": {"domain": "sensor", "unique_id_regex": "^[0-9a-z]+_battery_power_sensor$"},
+        "battery_temp_c": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_battery_temperature_sensor|.+_[0-9]+_Battery 1 Temperature)$"},
+        "battery_voltage_v": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_battery_voltage_sensor|.+_[0-9]+_Battery 1 Voltage)$"},
+        "battery_current_a": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_battery_current_sensor|.+_[0-9]+_Battery 1 Current)$", "transform": "negate"},
+        "pv_power_w": {"domain": "sensor", "unique_id_regex": "^[0-9a-z]+_pv_power_sensor$"},
+        "grid_power_w": {"domain": "sensor", "unique_id_regex": "^[0-9a-z]+_activepower_pcc_total_sensor$"},
+        "load_power_w": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_activepower_load_sys_sensor|.+_[0-9]+_ActivePower_Load_Sys)$"},
+        "active_power_w": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_activepower_output_total_sensor|.+_[0-9]+_ActivePower_Output_Total)$"},
+        "pv_energy_total_kwh": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_total_production_sensor|.+_[0-9]+_Total PV Generation)$"},
+        "grid_import_total_kwh": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_total_energy_import_sensor|.+_[0-9]+_Total Energy Bought)$"},
+        "grid_export_total_kwh": {"domain": "sensor", "unique_id_regex": "^([0-9a-z]+_total_energy_export_sensor|.+_[0-9]+_Total Energy Sold)$"},
+        "mode": {"domain": "select", "unique_id_regex": "^[0-9a-z]+_storage_control_mode_select$"}
+      }
+    },
+    {
+      "domain": "solax_modbus",
+      "ems": false,
+      "status": "draft",
+      "entities": {
+        "soc": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_capacity_1$"},
+        "battery_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_power_1$", "transform": "negate"},
+        "battery_temp_c": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_temperature_1$"},
+        "battery_voltage_v": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_voltage_1$"},
+        "battery_current_a": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_current_1$", "transform": "negate"},
+        "pv_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_pv_power_total$"},
+        "grid_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_active_power_pcc_total$", "transform": "negate"},
+        "load_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_active_power_load_sys$"},
+        "active_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_active_power_output_total$"},
+        "pv_energy_total_kwh": {"domain": "sensor", "unique_id_regex": "^[^_]+_solar_generation_total$"},
+        "grid_import_total_kwh": {"domain": "sensor", "unique_id_regex": "^[^_]+_import_energy_total$"},
+        "grid_export_total_kwh": {"domain": "sensor", "unique_id_regex": "^[^_]+_export_energy_total$"},
+        "mode": {"domain": "select", "unique_id_regex": "^[^_]+_charger_use_mode$"}
+      }
+    }
+  ]},
+  "capabilities": {
+    "force_charge_from_grid": false, "sell_from_battery": false, "force_discharge": false,
+    "standby": false, "set_power_w": false, "limit_export": false, "set_soc_floor": false,
+    "set_soc_ceiling": false, "time_windows": 0
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Vendor protocol copy and community integration sources only. All registers are holding registers (function 3); the protocol writes with function 16 (function 6 is also listed) and both reference integrations write 0x1110 as a single register with function 16. The only write is Energy Storage Mode at 0x1110, which is readable at the same address, so the verify block reads it back. Re-writing 0 (Self Use) while 0x1110 reads 0 is the safe probe. evcc ignores a non-standard reply to its FC16 writes at 0x1110; if the logger or gateway returns such a reply the engine reports the write as failed even when the read-back shows the new value (first thing to check on a live unit; function 6 is the fallback to try). Solarman V5 through the LSW-3 Wi-Fi logger needs the logger serial from discovery; timeout 3 s and gap_ms 200 follow the other Solarman profile and are not vendor data. modbus_rtu is RS485 through a TCP gateway (port 8899 is a guess at a common gateway default; use the gateway's own port); the inverter's COM port runs 9600 8N1. Entity mode: two integrations share the solarman domain. davidrapan/ha-solarman (unique ids '<entry id>_<name>_<platform>') already inverts battery and grid power to the usual signs and offers the Storage Control Mode select; StephanJoubert/home_assistant_solarman (unique ids '<name>_<logger serial>_<field>') keeps the vendor signs and has sensors only, so its battery power, grid power and total PV power are not matched and need the manual pick. solax_modbus with the Sofar plugin names unique ids '<hub name>_<key>'; a hub name containing '_' does not match these regexes; its PV total sensor is disabled by default. Only the select option 'Self Use' (the same string in both integrations) is used.",
+    "write_function": 16,
+    "max_read_registers": 64,
+    "transport_options": {
+      "solarman_v5": {"port": 8899, "timeout_ms": 3000, "gap_ms": 200},
+      "modbus_rtu": {"port": 8899, "timeout_ms": 3000, "gap_ms": 200}
+    },
+    "identify_reads": [{"addr": 1093, "count": 8}, {"addr": 1773, "count": 1}],
+    "verify_blocks": [{"addr": 4368, "count": 1}],
+    "probe_keys": ["mode"]
+  }
+}

@@ -63,6 +63,23 @@ Settings have separate write and read-back addresses (see the core row above).
 | Rated power register only on G4 | rated output power at holding 0x00BA (W) is documented for G4; G3 has no documented register | A per-variant identify register, or no rated power for G3. |
 | Settings live in EEPROM | community docs warn of about 100000 write cycles for settings | Covered by `nvm` and `nvm_budget`; listed so the remote-control route above is preferred once supported. |
 
+## Sofar (`sofar-hyd`)
+
+Addresses are wire addresses and equal the vendor's hexadecimal register addresses (no offset).
+All registers are holding registers. Settings are stored (EEPROM) unless the protocol marks them
+volatile.
+
+| Gap | Registers | What the core would need |
+|---|---|---|
+| Forced charge/discharge needs a mode plus an atomic block of 32-bit set-points | Passive mode = 0x1110 = 3, then desired grid power, minimum and maximum battery power as three I32 values at 0x1187-0x118C, written as one FC16 block of 6 registers starting at 0x1187 (or 4 from 0x1189); these set-points are volatile | Signed 32-bit write encodings, a multi-register write block committed in one request, and a mode made of two writes in order (mode register, then the block). Writing 0x1110 = 3 alone is not a safe standby: it runs whatever the set-points hold. |
+| Passive-mode watchdog | timeout 0x1184 (seconds, 0 = off) and timeout action 0x1185 (0 force standby, 1 return to the previous mode), written as a pair from 0x1184 | A profile-declared keep-alive (re-send interval) and fallback, written before the first passive command; this is the better route for frequent control than stored settings. |
+| Time slots with power and a commit register | Timing mode: rule id 0x1111, enable bits 0x1112, start/end hh:mm (high byte hour, low byte minute) at 0x1113-0x1116, U32 power at 0x1117 and 0x1119, commit 0x111F = 1 (shadow registers). Time-of-use: rule id 0x1120 ... commit 0x112F, with target SoC 0x1124, U32 power 0x1125, date range and weekday mask | Start/end slot writes in the vendor's hour/minute byte format, unsigned 32-bit power writes, a rule selector written first and a commit register written last, with the status word read back from the commit register. |
+| Export limit is a pair with a scaled power | export control mode 0x1023 (0 off, 1-3 modes) and export power 0x1024 in 100 W units, written together as a block of 2 from 0x1023 | A scale on write encodings and two-register atomic writes. |
+| SoC floor is an inverted depth of discharge behind a commit register | depth of discharge 0x104D (stop discharging below 100 - DOD, 1-90 %) in the battery configuration block 0x1044-0x105A, selected per battery by 0x1044 and applied by writing 1 to 0x1053 | An inverted-percent write encoding plus the selector/commit sequence of shadow-register blocks. |
+| Non-standard reply to FC16 writes | evcc ignores a malformed reply ("response data size 18 does not match count 4") to its FC16 writes at 0x1110 and 0x1187 | Tolerating a malformed write confirmation when the read-back of the written register shows the new value, per profile and per transport. Until then such a write is reported as failed; the profile keeps function 16 as the vendor and the reference integrations do. |
+| Several battery packs | packs 1-8 at a stride of 7 registers from 0x0604 (power 0x0606, SoC 0x0608, ...); only pack 1 is read | A pack count read from the inverter and aggregates over the present packs (sum of power, capacity-weighted SoC); `sum` alone would add absent packs and cannot weight the SoC. |
+| One entity map per integration domain | two integrations register the domain `solarman` with opposite sign conventions: davidrapan/ha-solarman inverts battery power 0x0606 and grid power 0x0488 to the usual signs, StephanJoubert/home_assistant_solarman keeps the vendor signs | Entity specs (and transforms) per integration variant within a domain, e.g. chosen by the unique id pattern that matched; until then the signed keys match only the davidrapan entities and the other integration needs the manual pick. |
+
 ## Automatic verification ladder
 
 What profiles cannot yet say for the per-device verification (identify, read, dry-run, re-write
@@ -76,3 +93,5 @@ of the current value, short forced window):
 | A re-write probe confirmed by read-back | solax-x-hybrid (read-back of 0x001F lives at 0x008B) | The per-key read-back address; until then the ladder's single reversible write is echo-only and its result must be checked by hand. |
 | A safe forced test window | solax-x-hybrid (forced control needs 0x0020 then 0x001F, or remote-control FC16 writes) | A profile-declared low-power test command and duration with its exit (SolaX: 0x001F = 0 Self Use; remote control lapses when not repeated). |
 | Unlock before the write step | solax-x-hybrid | A way for the ladder to write the settings unlock value (0x0000 = 2014) and verify the lock state before the first write. |
+| A safe forced test window | sofar-hyd (forced control needs 0x1110 = 3 plus the I32 block at 0x1187) | A profile-declared low-power test command and duration with its exit (Sofar: 0x1110 = 0 Self Use) and the passive watchdog 0x1184/0x1185 set to "return to the previous mode" as a fallback. |
+| A probe that survives a malformed write reply | sofar-hyd (FC16 replies at 0x1110 reported as non-standard by evcc) | The ladder's single reversible write judged by the read-back of 0x1110, not only by the write confirmation. |
