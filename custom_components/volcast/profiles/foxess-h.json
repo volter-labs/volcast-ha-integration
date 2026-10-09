@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "id": "foxess-h",
+  "label": "FoxESS H1-G2 / AC1-G2 (RS485)",
+  "status": "draft",
+  "status_note": "Public sources only; nothing verified on hardware. Covers the H1-G2 family (H1-x.x-E-G2, H1-x.x-E1-G2, AC1-x.x-E-G2 and the P1-x.x-E OEM variant) on RS485 through a gateway, the map foxess_modbus uses for these models: every register is a holding register (function 3), and the registers used here are the same before and after manager 1.44. Variants not covered: the H1 G1 / AC1 / AIO-H1 over RS485 (input registers 11xxx, settings read from input 41xxx), the H1 G1 LAN port (holding 31xxx without work mode or SoC settings; FoxESS disabled it from Manager 1.70 and newer H1 units lack the port), the three-phase H3 / AC3 / AIO-H3 / Kuara (other 31xxx map, unit id 0 by default), H3-Pro, H3-Smart and P3 (46xxx/49xxx settings), KH and EVO. Addresses are wire (PDU) addresses: FoxESS numbers registers in decimal and foxess_modbus sends that number unchanged (31024 is sent as 31024, no -1 offset). Identification: the model text at 30000-30014 with two ASCII characters per register (high byte first), as foxess_modbus documents for the H1-G2; that AC1-G2 and P1 pack the same way is assumed from foxess_modbus treating them as H1-G2. H1 G1 and H3 store one character per register, which the core cannot decode (docs/profiles/engine-gaps.md). No cited source documents a rated-power register (foxess_modbus parses the rating from the model string, e.g. H1-5.0-E-G2 = 5 kW) and none documents a serial register for the H1-G2. The schema requires a rated-power register, so the profile names 31025 (BMS charge rate, signed, 0.1 A), which is not a rating and stays outside 1-30 kW for any plausible current (only an impossible 1000 A or more would land inside): the rating is always unknown and onboarding asks the user; without a serial or rating there is no device fingerprint. Signs: 31022 battery power > 0 = discharging (as the core), 31014 grid CT > 0 = feed-in (negated), 31008 inverter power < 0 = charging the battery from AC. PV power is 39280 + 39282, the low words of 32-bit registers whose upper word the G2 does not write. Energy totals are 0.1 kWh, high word at the lower address. Control: work mode 41000 (0 Self Use = neutral and baseline; 2 Back-up = standby, which foxess_modbus switches to so that the battery is not discharged); 1 Feed-in First and 4 Peak Shaving are not used. soc_min is 41011 Min SoC (On Grid), the floor while grid-connected, which the inverter respects in all modes; soc_max is 41010 Max SoC; 41009 Min SoC (the off-grid floor) is not written. Grid charging needs the charge-period registers 41001-41006 and forced charge/discharge needs remote control 44000-44002 with a keep-alive, neither expressible (docs/profiles/engine-gaps.md), so charge_grid, sell and discharge_forced fall back to Self Use with their capabilities false. A live trial must confirm: the model string and its packing on AC1-G2 and P1; the grid CT sign and the energy-total scale; that 41000-41999 answer when read as one block or that the core's split read works (modbus status_note); that Back-up neither discharges nor charges the battery from the grid; whether 41011 below 41009 is refused; that writes with function 6 are accepted. Settings are assumed to be stored in non-volatile memory (nvm true) because charge periods and settings survive on the inverter; no source gives a write-endurance figure.",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {
+      "what": "Register definitions per model and connection: H1-G2 / AC1-G2 / P1 over RS485 are holding registers; model text 30000+; battery SoC 31024 (unsigned %), battery temperature 31023 (0.1 C), inverter battery power 31022 (signed W, > 0 discharge: 'battery_discharge' = value when positive), grid CT 31014 (signed W, > 0 feed-in: 'feed_in' = value when positive, 'grid_consumption' = minus value when negative), load power 31016 (W), inverter power 31008 (W, negative = charging batteries), BMS charge rate 31025 (0.1 A), PV1/PV2 power 39280/39282 on H1-G2 (32-bit registers whose upper word the G2 does not write, read as the 16-bit low word), energy totals as two registers listed low word first with scale 0.1 kWh: solar 32000-32001, feed-in 32009-32010, grid consumption 32012-32013; work mode select 41000 (H1-G2: 0 Self Use, 1 Feed-in First, 2 Back-up, 4 Peak Shaving), numbers Min SoC 41009, Max SoC 41010, Min SoC (On Grid) 41011 (10-100 %); on the H1 G1 the same keys are input registers 11xxx over RS485 and holding 31xxx over LAN without work mode or SoC settings",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/entities/entity_descriptions.py"
+    },
+    {
+      "what": "Model patterns and connection types: H1-G2 '^H1-([\\d.]+)-E\\d?-G2', AC1-G2 '^AC1-([\\d.]+)-E-G2', P1 '^P1-([\\d.]+)-E' use RS485 holding registers with 41000-41999 read one register at a time; H1/AC1/AIO-H1 G1 use input registers over RS485 and holding over LAN; H3, KH, H3-Smart and H3-Pro use other maps; the rating is parsed from the model string (H1 '3.7' = 3680 W)",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/inverter_profiles.py"
+    },
+    {
+      "what": "Autodetection reads 15 holding registers from 30000; H1-G2 and H3-Pro pack two ASCII characters per register (high byte first), other models one character per register, H3 with a leading space",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/modbus_controller.py"
+    },
+    {
+      "what": "A single-register write uses function 6 (write_register), several registers function 16",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/client/modbus_client.py"
+    },
+    {
+      "what": "Entity unique ids are 'foxess_modbus_' + optional '<unique id prefix>_' + entity key",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/entities/modbus_entity_mixin.py"
+    },
+    {
+      "what": "The unique id prefix is the friendly name entered in the config flow (may contain spaces)",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/flow/flow_handler.py"
+    },
+    {
+      "what": "Work mode select class: 'Force Charge' / 'Force Discharge' options are added when remote control is available and are not register values",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/entities/modbus_work_mode_select.py"
+    },
+    {
+      "what": "Remote control addresses: enable 44000, timeout 44001, active power 44002, work mode 41000 (H1-G2)",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/entities/remote_control_description.py"
+    },
+    {
+      "what": "Remote control loop re-writes 44002 and the timeout 44001 (twice the poll rate); switches to Back-up to avoid discharging the battery when the SoC reaches Max SoC",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/remote_control_manager.py"
+    },
+    {
+      "what": "Charge periods (H1 over RS485): period 1 enable grid charge 41001, start 41002, end 41003; period 2 at 41004-41006",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/entities/charge_period_descriptions.py"
+    },
+    {
+      "what": "Period start/end register = hour << 8 | minute",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/entities/modbus_charge_period_sensors.py"
+    },
+    {
+      "what": "Both charge periods are written as one contiguous register block",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/blob/main/custom_components/foxess_modbus/services/update_charge_period_service.py"
+    },
+    {
+      "what": "Feature matrix: H1/AC1/AIO over LAN cannot read or write work mode, min/max SoC or charge periods; over RS485 it can",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/wiki/Supported-Features"
+    },
+    {
+      "what": "The H1 Ethernet (LAN) Modbus connection was disabled by FoxESS from Manager Version 1.70 and newer H1 units lack the port",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/wiki/Direct-Ethernet-Connection-to-Inverter"
+    },
+    {
+      "what": "Modbus slave id 247 on the inverter (H3 defaults to 0)",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/wiki/Modbus-Wiring-Guide"
+    },
+    {
+      "what": "Force charge/discharge need Home Assistant to keep controlling; Min SoC (On Grid) and Max SoC are respected; charge periods are stored on the inverter",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/wiki/Force-Charge-and-Discharge"
+    },
+    {
+      "what": "Gateway example in Modbus RTU over TCP mode on port 502 at 9600 baud",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/wiki/ESPHome"
+    },
+    {
+      "what": "Gateway examples in 'Modbus TCP<=>Modbus RTU' mode",
+      "ref": "https://github.com/nathanmarlor/foxess_modbus/wiki/USR-W610"
+    },
+    {
+      "what": "H1 read map (supporting): unit id 247; PV 31002/31005, battery 31022, SoC 31024 over Ethernet versus 11xxx input registers over RS485",
+      "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/fox-ess-h1.yaml"
+    }
+  ],
+  "unit_id": 247,
+  "transports": [
+    "modbus_tcp",
+    "modbus_rtu"
+  ],
+  "identify": {
+    "model_register": {
+      "addr": 30000,
+      "type": "ascii",
+      "len": 15
+    },
+    "model_regex": [
+      "^H1-[0-9.]+-E[0-9]?-G2",
+      "^AC1-[0-9.]+-E-G2",
+      "^P1-[0-9.]+-E"
+    ],
+    "registers": {
+      "rated_power_w": {
+        "addr": 31025,
+        "type": "i16",
+        "scale": 0.1
+      }
+    }
+  },
+  "read": {
+    "soc": {
+      "addr": 31024,
+      "type": "u16"
+    },
+    "battery_temp_c": {
+      "addr": 31023,
+      "type": "i16",
+      "scale": 0.1
+    },
+    "battery_power_w": {
+      "addr": 31022,
+      "type": "i16"
+    },
+    "pv_power_w": {
+      "sum": [
+        {
+          "addr": 39280,
+          "type": "i16"
+        },
+        {
+          "addr": 39282,
+          "type": "i16"
+        }
+      ]
+    },
+    "grid_power_w": {
+      "addr": 31014,
+      "type": "i16",
+      "sign": -1
+    },
+    "load_power_w": {
+      "addr": 31016,
+      "type": "i16"
+    },
+    "active_power_w": {
+      "addr": 31008,
+      "type": "i16"
+    },
+    "pv_energy_total_kwh": {
+      "addr": 32000,
+      "type": "u32",
+      "scale": 0.1
+    },
+    "grid_import_total_kwh": {
+      "addr": 32012,
+      "type": "u32",
+      "scale": 0.1
+    },
+    "grid_export_total_kwh": {
+      "addr": 32009,
+      "type": "u32",
+      "scale": 0.1
+    },
+    "mode_value": {
+      "addr": 41000,
+      "type": "u16"
+    },
+    "soc_min": {
+      "addr": 41011,
+      "type": "u16"
+    },
+    "soc_max": {
+      "addr": 41010,
+      "type": "u16"
+    }
+  },
+  "write": {
+    "soc_min": {
+      "addr": 41011,
+      "type": "u16",
+      "encode": "percent"
+    },
+    "soc_max": {
+      "addr": 41010,
+      "type": "u16",
+      "encode": "percent"
+    },
+    "mode": {
+      "addr": 41000,
+      "type": "u16",
+      "encode": "mode"
+    }
+  },
+  "modes": {
+    "self_use": {
+      "value": 0,
+      "direction": "neutral",
+      "ha_option": "Self Use"
+    },
+    "back_up": {
+      "value": 2,
+      "direction": "idle",
+      "ha_option": "Back-up"
+    }
+  },
+  "neutral_mode": "self_use",
+  "intents": {
+    "charge_grid": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "charge_pv": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "discharge_forced": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "sell": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "self_consume": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "standby": {
+      "mode": "back_up",
+      "power": "none"
+    }
+  },
+  "baseline": {
+    "mode": "self_use"
+  },
+  "write_policy": {
+    "order": [
+      "soc_min",
+      "soc_max",
+      "mode"
+    ],
+    "min_interval_s": 300,
+    "nvm": true,
+    "max_direction_changes_per_hour": 2,
+    "max_state_age_s": 300,
+    "readback_settle_s": 2,
+    "nvm_budget": {
+      "window_h": 24,
+      "per_key": 24,
+      "total": 72
+    }
+  },
+  "limits": {
+    "battery_temp_c": {
+      "min": -10,
+      "max": 55
+    },
+    "rated_power_register": "rated_power_w"
+  },
+  "ha": {
+    "integrations": [
+      {
+        "domain": "foxess_modbus",
+        "ems": false,
+        "status": "draft",
+        "entities": {
+          "soc": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?battery_soc$"
+          },
+          "battery_temp_c": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?battery_temp$"
+          },
+          "battery_voltage_v": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?batvolt$"
+          },
+          "battery_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?invbatpower$"
+          },
+          "pv_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?pv_power_now$"
+          },
+          "grid_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?grid_ct$",
+            "transform": "negate"
+          },
+          "load_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?load_power$"
+          },
+          "active_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?(?<!eps_)rpower$"
+          },
+          "pv_energy_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?solar_energy_total$"
+          },
+          "grid_import_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?grid_consumption_energy_total$"
+          },
+          "grid_export_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?feed_in_energy_total$"
+          },
+          "mode": {
+            "domain": "select",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?work_mode$"
+          },
+          "soc_min": {
+            "domain": "number",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?min_soc_on_grid$"
+          },
+          "soc_max": {
+            "domain": "number",
+            "unique_id_regex": "^foxess_modbus_(?:.+_)?(?<!force_charge_)max_soc$"
+          }
+        }
+      }
+    ]
+  },
+  "capabilities": {
+    "force_charge_from_grid": false,
+    "sell_from_battery": false,
+    "force_discharge": false,
+    "standby": true,
+    "set_power_w": false,
+    "limit_export": false,
+    "set_soc_floor": true,
+    "set_soc_ceiling": true,
+    "time_windows": 0
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Holding registers only (function 3); writes are single registers with function 6, as foxess_modbus does for one value. foxess_modbus reads 41000-41999 one register at a time on the H1-G2. The core merges nearby registers into one block (41000-41011 here) and reads the keys separately only when the device answers that block with exception 2 (illegal data address); a gateway timeout or another exception fails the read instead. This is the first thing to check on a live unit; the verify blocks are single registers for the same reason. The writes are read back at the same addresses (41000, 41010, 41011), so nothing is echo-only. The safe probe is re-writing 41000 with the value just read (0 when the unit runs Self Use) and reading it back; re-writing 41011 with its current value is the second probe. To restore, write back the values read before the test. Unit id 247 is the inverter's Modbus slave id per the foxess_modbus wiki (set on the front panel; check it). modbus_tcp is an RS485 gateway in 'Modbus TCP<=>Modbus RTU' mode on port 502; modbus_rtu is a transparent RTU-over-TCP gateway, port 502 as in the wiki examples (use the gateway's own port), 9600 baud on the RS485 side. Timeout 3 s and gap_ms 200 are conservative stand-ins, not FoxESS data. Entity mode: foxess_modbus unique ids are 'foxess_modbus_' + optional '<friendly name>_' + key; the regexes accept any prefix and exclude eps_rpower and force_charge_max_soc. Its work mode select also offers 'Force Charge' / 'Force Discharge', which drive the integration's own remote-control loop; selecting 'Self Use' or 'Back-up' turns that loop off, so it is not an independent EMS (ems false). Battery voltage (batvolt, from manager 1.44) is mapped for display; battery current is not mapped because its sign is not documented.",
+    "write_function": 6,
+    "max_read_registers": 20,
+    "transport_options": {
+      "modbus_tcp": {
+        "port": 502,
+        "timeout_ms": 3000,
+        "gap_ms": 200
+      },
+      "modbus_rtu": {
+        "port": 502,
+        "timeout_ms": 3000,
+        "gap_ms": 200
+      }
+    },
+    "identify_reads": [
+      {
+        "addr": 30000,
+        "count": 15
+      },
+      {
+        "addr": 31025,
+        "count": 1
+      }
+    ],
+    "verify_blocks": [
+      {
+        "addr": 41000,
+        "count": 1
+      },
+      {
+        "addr": 41010,
+        "count": 1
+      },
+      {
+        "addr": 41011,
+        "count": 1
+      }
+    ],
+    "probe_keys": [
+      "mode",
+      "soc_min",
+      "soc_max"
+    ]
+  }
+}
