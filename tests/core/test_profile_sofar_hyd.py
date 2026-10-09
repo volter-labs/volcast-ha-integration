@@ -45,6 +45,20 @@ def _serial_words(text: str) -> dict[str, int]:
     return {str(SERIAL + i): (raw[2 * i] << 8) | raw[2 * i + 1] for i in range(8)}
 
 
+# Odnośniki, których profil w publicznym repo nie może cytować: załączniki wrzucane na GitHub
+# (user-attachments) bywają kopiami dokumentów producenta oznaczonych jako poufne.
+NON_PUBLIC_REF_MARKERS = ("user-attachments",)
+
+
+def assert_sources_public(raw: dict) -> None:
+    """Każde `sources[].ref` i oba `status_note` bez odnośników do niepublicznych kopii dokumentów."""
+    texts = [s["ref"] for s in raw["sources"]] + [s["what"] for s in raw["sources"]]
+    texts += [raw.get("status_note", ""), raw.get("modbus", {}).get("status_note", "")]
+    for text in texts:
+        for marker in NON_PUBLIC_REF_MARKERS:
+            assert marker not in text, f"niepubliczny odnośnik ({marker}): {text[:80]}"
+
+
 @pytest.fixture(scope="module")
 def profile():
     return load_builtin(PID)
@@ -67,6 +81,13 @@ def test_profile_validates_and_is_draft(profile):
     assert "0x0608 = 1544" in note
     # Wariant objęty i nieobjęty (jednofazowe HYD-ES/EP mają inną mapę albo nie są sprawdzone).
     assert "HYD 5-20KTL-3PH" in note and "not covered" in note and "HYD 3-6K-ES" in note
+
+
+def test_sources_are_public_and_carry_rated_power(profile):
+    raw = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
+    assert_sources_public(raw)
+    # Rejestr mocy znamionowej musi mieć własne publiczne źródło.
+    assert any("0x06ED" in s["what"] and s["ref"].endswith("/rating.py") for s in raw["sources"])
 
 
 def test_identify_matches_golden_and_rejects_other_brands(profile, image):

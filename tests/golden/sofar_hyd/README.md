@@ -1,14 +1,14 @@
 # SOFAR HYD 5-20KTL-3PH test registers
 
 **Synthetic until recorded from a live unit.** `registers.json` is a hand-made register image
-consistent with the `sofar-hyd` profile and the sources cited in the profile's `sources` (the
-vendor G3 Modbus protocol, three-phase edition; davidrapan ha-solarman and StephanJoubert
-home_assistant_solarman `sofar_g3hyd.yaml`; wills106 homeassistant-solax-modbus
-`plugin_sofar.py`; evcc `sofarsolar-g3.yaml`). Nothing here was read from a real inverter. The
+consistent with the `sofar-hyd` profile and the community sources cited in the profile's
+`sources` (davidrapan ha-solarman and StephanJoubert home_assistant_solarman `sofar_g3hyd.yaml`;
+wills106 homeassistant-solax-modbus `plugin_sofar.py`; darkrain-nl sofar-modbus; evcc
+`sofarsolar-g3.yaml`). Nothing here was read from a real inverter. The
 serial at holding 0x0445-0x044C is the fake placeholder `SP1ES110FAKE0000`: the real prefix
 `SP1` (HYD xxKTL-3PH in the community prefix table) followed by a fake tail.
 
-Addresses are wire addresses, equal to the vendor's hexadecimal register addresses (0x0608 is
+Addresses are wire addresses, equal to the hexadecimal register addresses of the community maps (0x0608 is
 key `1544`). All registers are holding registers (function 3), so the image has no
 `input_registers`. 32-bit values are stored high word first (lower address = high word).
 
