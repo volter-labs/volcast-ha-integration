@@ -1,0 +1,460 @@
+{
+  "schema_version": 1,
+  "id": "solis-hybrid",
+  "label": "Solis S5/S6 and RHI hybrid",
+  "status": "draft",
+  "status_note": "Public sources only; nothing verified on hardware. Covers the Solis/Ginlong energy-storage hybrids on the 33xxx/43xxx register map: the single-phase S5-EH1P and RHI-1P (RHI-xK-48ES-5G) 48 V and HV models, S6-EH1P, S6-EO1P and the three-phase S6-EH3P / RHI-3P HV and LV models, recognised by the serial prefixes the solax_modbus plugin lists for hybrids (0602, 010F, 110F, 114F, 134F, 140C, 143, 160F3-5, 2051, 6031, 6041, 1031; three-phase 103305/103306/103314/103316/103330, 110C, 114C, 1053). Hybrids with other prefixes, the grid-tied S6-GR1P and Gen5 3P string inverters (prefixes 1801, 1802, 1805), prefix 0102, the AC-coupled RAI and the off-grid models are not covered. Addresses are wire (PDU) addresses: Solis numbers registers in decimal and the protocol states that no offset is applied (33139 is sent as 33139, not 33138). Identification and measurements are input registers (function 4); the storage control switch 43110 is a holding register (function 3). Control is limited to writing 43110 = 1 (bit 0 Self-Use alone: no time-of-use, no grid charging, no reserve), the one bit every protocol revision documents. 43110 is a bitfield (bit 1 time-of-use, bit 4 reserve/backup, bit 5 allow grid charging, bit 6 feed-in priority, bit 11 peak shaving in later revisions); units commonly run 33 or 35, which this profile does not know, so the core sees them as a foreign mode and writing 1 clears the user's modifier bits. Grid charging needs time slots in hour/minute registers plus a current in 0.1 A, forced charge/discharge needs the remote-control register 43135 with a power register in 10 W units and a keep-alive, and the SoC floor/ceiling registers are reserved in the older protocol revision; none of this is expressible (see docs/profiles/engine-gaps.md), so grid charge, forced discharge, sell and standby map to the neutral mode without power and their capabilities are false. Live-test checklist: (1) serial at input 33004-33011 (16 ASCII characters, high byte first, as solax_modbus reads it; the protocol reserves 33004-33019 and says only 15 characters are significant) and its prefix; (2) 33100-33101 'limited active power adjustment rated power output value' (W) is used as the rated power, but the public sources do not say whether it is the nameplate or the current limit; outside 1-30 kW the core treats the rated power as unknown and the onboarding asks for it; (3) 32-bit values high word first (33057 PV, 33079 active power, 33130 meter, 33149 battery, totals 33029/33169/33173 in whole kWh); (4) signs: the protocol gives meter power 33130 > 0 when exporting and battery current 33134 > 0 when charging (both negated here); battery power 33149 is read as signed with > 0 = charging as evcc's RHI template does, but evcc's S-series template and solax_modbus take its absolute value and the direction from 33135 (0 charging, 1 discharging), so check 33149 while discharging: if it stays positive, the battery reads as charging (engine gap); the meter values need the CT/meter connected; (5) no battery temperature register is documented, so battery_temp_c is not read and the battery temperature limits are the generic defaults of the other profiles; (6) unit id 1 through the Solis Wi-Fi/LAN stick (Solarman V5, port 8899, needs the logger serial from discovery) or RS485 (9600 baud) through a Modbus gateway; fboundy's package reaches S2-WL-ST sticks with plain Modbus TCP on port 502, a path this draft does not enable; (7) write function 6, as ha-solarman, fboundy and evcc write 43110; (8) the safe write is re-writing the value 43110 currently holds and reading 43110 back. Not used for control until verified.",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {
+      "what": "RS485_MODBUS RTU energy storage grid-connected inverter communication protocol (English translation published with Solis' permission): addresses are decimal with no offset; input (function 4) 33000 product model, 33004-33019 serial as ASCII, 33029 total generation (U32, kWh), 33057 total DC output power (U32, W), 33079 active power (S32, W), 33100-33101 limited active power adjustment rated power output value (S32, W), 33130 meter active power (S32, > 0 export, < 0 import), 33132 storage control switch mirror, 33133 battery voltage (0.1 V), 33134 battery current (S16, 0.1 A, > 0 charging), 33135 battery current direction (0 charging, 1 discharging), 33139 SoC, 33147 house load (W), 33149 battery power (S32, W), 33169/33173 total import/export (U32, kWh), 33263 meter total active power; holding 43110 energy storage control switch (bit 0 self-use, bit 1 timed charge/discharge, bit 2 off-grid, bit 3 battery wake-up), 43010/43011 reserved, 43114-43116 battery charge/discharge enable, direction and current (0.1 A), 43141/43142 timed charge/discharge current (0.1 A), 43143-43150 timed charge/discharge start/end hours and minutes; no battery temperature or nameplate rated power register",
+      "ref": "https://www.scss.tcd.ie/Brian.Coghlan/Elios4you/RS485_MODBUS-Hybrid-BACoghlan-201811228-1854.pdf"
+    },
+    {
+      "what": "Solis plugin: serial read as 8 input registers of ASCII from 33004, hybrid serial-prefix table (0602, 010F, 110F, 114F, 134F, 140C, 143, 160F3-5, 2051, 6031, 6041, 1031 single-phase; 103305/103306/103314/103316/103330, 110C, 114C, 1053 three-phase; 1801/1802/1805 PV only), Energy Storage Control Switch select at 43110 written as a whole value (1 'Self-Use - No Grid Charging', 33, 35 'Self-Use', 17/49/51 backup, 64/96/98 feed-in priority, ...), battery control override select 43135 (0 off, 1 force charge, 2 force discharge) re-sent by autorepeat with powers 43136 (charge) and 43129 (discharge) in 10 W units for three-phase models, battery minimum SoC 43011 (10-100 %), force charge SoC 43018, backup SoC 43024, timed charge/discharge currents 43141/43142 and slot registers from 43143 written as one block; sensors battery_power 33149 (S32), battery_current 33134 (S16), meter_active_power 33130 (S32), meter_active_power_total 33263 (kW), house_load 33147, pv_total_power 33057, active_power 33079, power_generation_total 33029, grid_import_total 33169, grid_export_total 33173",
+      "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/plugin_solis.py"
+    },
+    {
+      "what": "Home Assistant sensor unique ids '<hub name>_<key>'",
+      "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/sensor.py"
+    },
+    {
+      "what": "Solis battery output/input power derived from battery_power with the direction 33135: absolute value while discharging",
+      "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/const.py"
+    },
+    {
+      "what": "Energy Storage Control Switch value table and bit meanings (0 Self-Use, 1 Time Of Use, 2 Off-Grid, 3 Battery Wakeup, 4 Reserve Battery, 5 Allow Grid To Charge, 6 Feed In Priority); timed charge/discharge times must be written as one 8-register block",
+      "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/docs/solis-operation-modes.md"
+    },
+    {
+      "what": "ha-solarman Solis hybrid definition: input reads (code 0x04), Battery Power 33149-33150 signed, Battery Current 33134 signed, Battery State 33135 (0 charging, 1 discharging), Battery 33139, Inverter DC Power 33057, Inverter Active Power 33079, Meter Active Power 33257 (phase A), House Load Power 33147, totals 33029/33169/33173; Storage Control Mode select at 43110 read with 0x03 and written with 0x06 (0x21 Self Use, 0x23 Time of Use, 0x60 Feed-In Priority, ...); Overdischarge SOC 43011 read only; timed charge/discharge currents 43141/43142 and slots 43143-43170",
+      "ref": "https://github.com/davidrapan/ha-solarman/blob/main/custom_components/solarman/inverter_definitions/solis_hybrid.yaml"
+    },
+    {
+      "what": "ha-solarman unique id scheme '<entry id>_<slugified name>_<platform>'",
+      "ref": "https://github.com/davidrapan/ha-solarman/blob/main/custom_components/solarman/entity.py"
+    },
+    {
+      "what": "StephanJoubert Solis hybrid (RHI-(3-6)K-48ES-5G) definition: sensor names Battery SOC, Battery Power, Battery Current, Battery Voltage, Inverter DC Power, Meter Active Power, House Load Power, Inverter Active Power, Total Generation, Total Energy Imported/Exported (sensors only, no select)",
+      "ref": "https://github.com/StephanJoubert/home_assistant_solarman/blob/main/custom_components/solarman/inverter_definitions/solis_hybrid.yaml"
+    },
+    {
+      "what": "StephanJoubert solarman unique ids '<name>_<logger serial>_<field name>'",
+      "ref": "https://github.com/StephanJoubert/home_assistant_solarman/blob/main/custom_components/solarman/sensor.py"
+    },
+    {
+      "what": "solis_modbus hybrid sensors: serial 33004-33019, model 33000, type definition 35000, battery power 33149 (pair, signed), battery current 33134 (S16), direction 33135, SoC 33139, household load 33147, total DC output 33057, meter active power 33130, grid power net 33263, max charge SoC 43010 (70-100 %), overdischarge SoC 43011 (5-40 %, upper bound a guess); unique keys 'solis_modbus_inverter_<name>'",
+      "ref": "https://github.com/Pho3niX90/solis_modbus/blob/master/custom_components/solis_modbus/sensor_data/hybrid_sensors.py"
+    },
+    {
+      "what": "solis_modbus 'Storage Mode' select on 43110: mode bits 0, 1, 2, 4, 6, 11 are cleared and set by read-modify-write, bits 3 and 5 kept; RC Force Charge/Discharge 43135 enabled before powers 43136/43129 and timeout 43282",
+      "ref": "https://github.com/Pho3niX90/solis_modbus/blob/master/custom_components/solis_modbus/sensor_data/select_sensors.py"
+    },
+    {
+      "what": "solis_modbus unique ids 'solis_modbus_<serial>_<key>'",
+      "ref": "https://github.com/Pho3niX90/solis_modbus/blob/master/custom_components/solis_modbus/helpers.py"
+    },
+    {
+      "what": "solis_modbus sensor and register list; 43110 bit table (bit 5 allow grid charging, bit 6 feed-in priority, bit 11 peak shaving); no rated power register for hybrids",
+      "ref": "https://solis-modbus.readthedocs.io/en/latest/sensors.html"
+    },
+    {
+      "what": "fboundy Solis package: Modbus TCP on port 502 for S2-WL-ST sticks (8899 for DLS-L), input registers 33029, 33057, 33079, 33133, 33134 (int16), 33135, 33139, 33147, 33149 (int32), 33169, 33173, 33257, storage control switch mirror 33132; holding 43110, 43141/43142, slots 43143-43170",
+      "ref": "https://github.com/fboundy/ha_solis_modbus/blob/main/solis.yaml"
+    },
+    {
+      "what": "fboundy scripts: 43110 written as the sum of bits (1 self-use, 2 timed, 4 off-grid, 8 wake-up, 16 backup, 32 grid charge) with modbus.write_register; timed charge current 43141 in 0.1 A",
+      "ref": "https://github.com/fboundy/ha_solis_modbus/blob/main/scripts.yaml"
+    },
+    {
+      "what": "evcc Solis RHI template: battery power 33149 int32 with scale -1, SoC 33139, PV 33057, grid 33263 int32 with scale -1, unit id 1, 9600 baud",
+      "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/solis-hybrid.yaml"
+    },
+    {
+      "what": "evcc Solis S-series template: battery power = abs(33149) x (2 x 33135 - 1); battery control writes 43110 = 17 (self-use + reserve) for normal/hold and 49 (+ grid charging) for charge, with the reserve SoC 43024 as min SoC, current SoC or max SoC",
+      "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/solis-hybrid-s.yaml"
+    }
+  ],
+  "unit_id": 1,
+  "transports": [
+    "solarman_v5",
+    "modbus_rtu"
+  ],
+  "identify": {
+    "model_register": {
+      "addr": 33004,
+      "type": "ascii",
+      "len": 8,
+      "fc": 4
+    },
+    "model_regex": [
+      "^(0602|010F|110F|114F|134F|140C|143|160F[345]|2051|6031|6041|1031)",
+      "^(10330[56]|10331[46]|103330|110C|114C|1053)"
+    ],
+    "registers": {
+      "serial": {
+        "addr": 33004,
+        "type": "ascii",
+        "len": 8,
+        "fc": 4
+      },
+      "rated_power_w": {
+        "addr": 33100,
+        "type": "i32",
+        "fc": 4
+      }
+    }
+  },
+  "read": {
+    "soc": {
+      "addr": 33139,
+      "type": "u16",
+      "fc": 4
+    },
+    "battery_voltage_v": {
+      "addr": 33133,
+      "type": "u16",
+      "scale": 0.1,
+      "fc": 4
+    },
+    "battery_current_a": {
+      "addr": 33134,
+      "type": "i16",
+      "scale": 0.1,
+      "sign": -1,
+      "fc": 4
+    },
+    "battery_power_w": {
+      "addr": 33149,
+      "type": "i32",
+      "sign": -1,
+      "fc": 4
+    },
+    "pv_power_w": {
+      "addr": 33057,
+      "type": "u32",
+      "fc": 4
+    },
+    "grid_power_w": {
+      "addr": 33130,
+      "type": "i32",
+      "sign": -1,
+      "fc": 4
+    },
+    "load_power_w": {
+      "addr": 33147,
+      "type": "u16",
+      "fc": 4
+    },
+    "active_power_w": {
+      "addr": 33079,
+      "type": "i32",
+      "fc": 4
+    },
+    "pv_energy_total_kwh": {
+      "addr": 33029,
+      "type": "u32",
+      "fc": 4
+    },
+    "grid_import_total_kwh": {
+      "addr": 33169,
+      "type": "u32",
+      "fc": 4
+    },
+    "grid_export_total_kwh": {
+      "addr": 33173,
+      "type": "u32",
+      "fc": 4
+    },
+    "mode_value": {
+      "addr": 43110,
+      "type": "u16"
+    }
+  },
+  "write": {
+    "mode": {
+      "addr": 43110,
+      "type": "u16",
+      "encode": "mode"
+    }
+  },
+  "modes": {
+    "self_use": {
+      "value": 1,
+      "direction": "neutral",
+      "ha_option": "Self-Use - No Grid Charging"
+    }
+  },
+  "neutral_mode": "self_use",
+  "intents": {
+    "charge_grid": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "charge_pv": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "discharge_forced": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "sell": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "self_consume": {
+      "mode": "self_use",
+      "power": "none"
+    },
+    "standby": {
+      "mode": "self_use",
+      "power": "none"
+    }
+  },
+  "baseline": {
+    "mode": "self_use"
+  },
+  "write_policy": {
+    "order": [
+      "mode"
+    ],
+    "min_interval_s": 300,
+    "nvm": true,
+    "max_direction_changes_per_hour": 2,
+    "max_state_age_s": 300,
+    "readback_settle_s": 2,
+    "nvm_budget": {
+      "window_h": 24,
+      "per_key": 24,
+      "total": 24
+    }
+  },
+  "limits": {
+    "battery_temp_c": {
+      "min": -10,
+      "max": 55
+    },
+    "rated_power_register": "rated_power_w"
+  },
+  "ha": {
+    "integrations": [
+      {
+        "domain": "solarman",
+        "ems": false,
+        "status": "draft",
+        "entities": {
+          "soc": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_battery_sensor|.+_[0-9]+_Battery SOC)$"
+          },
+          "battery_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_battery_power_sensor|.+_[0-9]+_Battery Power)$",
+            "transform": "negate"
+          },
+          "battery_voltage_v": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_battery_voltage_sensor|.+_[0-9]+_Battery Voltage)$"
+          },
+          "battery_current_a": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_battery_current_sensor|.+_[0-9]+_Battery Current)$",
+            "transform": "negate"
+          },
+          "pv_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_inverter_dc_power_sensor|.+_[0-9]+_Inverter DC Power)$"
+          },
+          "grid_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_meter_active_power_sensor|.+_[0-9]+_Meter Active Power)$",
+            "transform": "negate"
+          },
+          "load_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_house_load_power_sensor|.+_[0-9]+_House Load Power)$"
+          },
+          "active_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_inverter_active_power_sensor|.+_[0-9]+_Inverter Active Power)$"
+          },
+          "pv_energy_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_total_production_sensor|.+_[0-9]+_Total Generation)$"
+          },
+          "grid_import_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_total_energy_import_sensor|.+_[0-9]+_Total Energy Imported)$"
+          },
+          "grid_export_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^([0-9a-z]+_total_energy_export_sensor|.+_[0-9]+_Total Energy Exported)$"
+          }
+        }
+      },
+      {
+        "domain": "solax_modbus",
+        "ems": false,
+        "status": "draft",
+        "entities": {
+          "soc": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_battery_soc$"
+          },
+          "battery_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_battery_power$",
+            "transform": "negate"
+          },
+          "battery_voltage_v": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_battery_voltage$"
+          },
+          "battery_current_a": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_battery_current$",
+            "transform": "negate"
+          },
+          "pv_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_pv_total_power$"
+          },
+          "grid_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_meter_active_power$",
+            "transform": "negate"
+          },
+          "load_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_house_load$"
+          },
+          "active_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_active_power$"
+          },
+          "pv_energy_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_power_generation_total$"
+          },
+          "grid_import_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_grid_import_total$"
+          },
+          "grid_export_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^[^_]+_grid_export_total$"
+          },
+          "mode": {
+            "domain": "select",
+            "unique_id_regex": "^[^_]+_energy_storage_control_switch$"
+          }
+        }
+      },
+      {
+        "domain": "solis_modbus",
+        "ems": false,
+        "status": "draft",
+        "entities": {
+          "soc": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_battery_soc$"
+          },
+          "battery_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_battery_power$",
+            "transform": "negate"
+          },
+          "battery_voltage_v": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_battery_voltage$"
+          },
+          "battery_current_a": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_battery_current$",
+            "transform": "negate"
+          },
+          "pv_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_total_dc_output$"
+          },
+          "grid_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_meter_active_power$",
+            "transform": "negate"
+          },
+          "load_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_household_load_power$"
+          },
+          "active_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_active_power$"
+          },
+          "pv_energy_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_pv_total_generation$"
+          },
+          "grid_import_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_total_energy_imported_from_grid$"
+          },
+          "grid_export_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^solis_modbus_[0-9A-Za-z.:-]+_solis_modbus_inverter_total_energy_fed_into_grid$"
+          }
+        }
+      }
+    ]
+  },
+  "capabilities": {
+    "force_charge_from_grid": false,
+    "sell_from_battery": false,
+    "force_discharge": false,
+    "standby": false,
+    "set_power_w": false,
+    "limit_export": false,
+    "set_soc_floor": false,
+    "set_soc_ceiling": false,
+    "time_windows": 0
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Public sources only. Measurements and identification are input registers (function 4, separate address space); the only write is the holding register 43110, written with function 6 as ha-solarman (write code 0x06), fboundy and evcc do, and read back at the same address with function 3 (ha-solarman's select reads it there), so the verify block reads 43110 and nothing is echo-only. The probe is re-writing the value read from 43110 (1 when the unit already runs plain Self-Use) and reading 43110 back; the input register 33132 mirrors the same bits and can be compared by hand. Writing 1 over 33/35 is not a probe: it clears grid charging and time-of-use. Solarman V5 through the Solis data logger needs the logger serial from discovery; timeout 3 s and gap_ms 200 follow the other Solarman profiles and are not taken from a Solis source. modbus_rtu is RS485 (9600 baud per evcc) through a TCP gateway; port 8899 is a guess at a common gateway default. Entity mode: davidrapan/ha-solarman (unique ids '<entry id>_<name>_<platform>') and StephanJoubert/home_assistant_solarman ('<name>_<logger serial>_<field>') share the solarman domain and both keep the vendor signs, so battery power, battery current and the meter power are negated for both; their meter sensor is phase A (33257), which is the grid power only on single-phase units. solax_modbus with the Solis plugin names unique ids '<hub name>_<key>' (a hub name containing '_' does not match) and is the only integration whose 43110 select has an option for the value 1 ('Self-Use - No Grid Charging'), so only it maps `mode`. Pho3niX90/solis_modbus ('solis_modbus_<serial>_<key>') offers a 'Storage Mode' select that rewrites only the mode bits of 43110 and has no option for that string, and davidrapan's select has no option for 1 (its 'Self Use' is 0x21): both are mapped for sensors only.",
+    "write_function": 6,
+    "max_read_registers": 64,
+    "transport_options": {
+      "solarman_v5": {
+        "port": 8899,
+        "timeout_ms": 3000,
+        "gap_ms": 200
+      },
+      "modbus_rtu": {
+        "port": 8899,
+        "timeout_ms": 3000,
+        "gap_ms": 200
+      }
+    },
+    "identify_reads": [
+      {
+        "addr": 33004,
+        "count": 8,
+        "fc": 4
+      },
+      {
+        "addr": 33100,
+        "count": 2,
+        "fc": 4
+      }
+    ],
+    "verify_blocks": [
+      {
+        "addr": 43110,
+        "count": 1
+      }
+    ],
+    "probe_keys": [
+      "mode"
+    ]
+  }
+}
