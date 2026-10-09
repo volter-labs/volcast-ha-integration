@@ -7,6 +7,7 @@ import pytest
 from custom_components.volcast.core.profile import load_builtin
 from custom_components.volcast.core.profile_schema import validate_profile
 from tests.core import profile_golden as pg
+from tests.core.test_profile_sofar_hyd import assert_sources_public
 from tests.core.modbus.helpers import golden_image, goodwe_image
 
 PID = "huawei-sun2000"
@@ -149,3 +150,7 @@ def _with(pid: str, over: dict):
     doc = _golden_doc(pid)
     doc = {**doc, "registers": {**doc["registers"], **over}}
     return _image_from_doc(doc)
+
+
+def test_sources_are_public():
+    assert_sources_public(json.loads(PROFILE_FILE.read_text(encoding="utf-8")))

@@ -10,6 +10,7 @@ from custom_components.volcast.core.profile import load_builtin
 from custom_components.volcast.core.profile_schema import validate_profile
 from custom_components.volcast.core.registers import RegisterImage
 from tests.core import profile_golden as pg
+from tests.core.test_profile_sofar_hyd import assert_sources_public
 from tests.core.modbus.helpers import _golden_doc, golden_image, goodwe_image
 
 PID = "sungrow-sh"
@@ -208,3 +209,7 @@ def _with_input(over: dict) -> RegisterImage:
     words = {int(a): w for a, w in doc["registers"].items()}
     inputs = {int(a): w for a, w in {**doc["input_registers"], **over}.items()}
     return RegisterImage(words, inputs)
+
+
+def test_sources_are_public():
+    assert_sources_public(json.loads(PROFILE_FILE.read_text(encoding="utf-8")))

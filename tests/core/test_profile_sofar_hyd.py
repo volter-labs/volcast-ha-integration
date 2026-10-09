@@ -46,8 +46,14 @@ def _serial_words(text: str) -> dict[str, int]:
 
 
 # Odnośniki, których profil w publicznym repo nie może cytować: załączniki wrzucane na GitHub
-# (user-attachments) bywają kopiami dokumentów producenta oznaczonych jako poufne.
-NON_PUBLIC_REF_MARKERS = ("user-attachments",)
+# (user-attachments) i pliki wgrane na fora (iobroker, loxforum) bywają kopiami dokumentów producenta
+# z zakazem redystrybucji; linki do dyskusji są dozwolone.
+NON_PUBLIC_REF_MARKERS = (
+    "user-attachments",
+    "forum.iobroker.net/assets",
+    "loxforum.com/filedata",
+    "/assets/uploads/files",
+)
 
 
 def assert_sources_public(raw: dict) -> None:

@@ -7,8 +7,8 @@ Residential Hybrid Inverter" (V1.1.11) and the community register maps cited in 
 a real inverter. The device type code is SH10RT (`0x0E03`) and the serial at 4989-4998 is the fake
 placeholder `SGFAKESERIAL0000`.
 
-Addresses are wire addresses: the vendor register number minus 1 (vendor register 5000 is key
-`4999`). `input_registers` holds the input space (function 4), `registers` the holding space
+Addresses are wire addresses: the register number minus 1 as in the community register maps (device type code 5000 is key
+`4999`; numbering convention community-reported). `input_registers` holds the input space (function 4), `registers` the holding space
 (function 3). 32-bit values are stored low word first.
 
 Reference state, in register units:
