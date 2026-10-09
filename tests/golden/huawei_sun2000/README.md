@@ -19,5 +19,4 @@ Reference state, in register units (32-bit values big-endian, high word first):
 | SoC | 37760 u16 ×0.1 | 550 | 55 % |
 | Battery temperature | 37022 i16 ×0.1 | 240 | 24 °C |
 | Battery bus voltage | 37763 u16 ×0.1 | 4500 | 450 V |
-| Grid export / import totals | 37119 / 37121 i32 ×0.01 | 123456 / 234567 | 1234.56 / 2345.67 kWh |
 | Storage working mode | 47086 u16 | 2 | maximise self consumption |

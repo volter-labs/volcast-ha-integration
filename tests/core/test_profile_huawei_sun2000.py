@@ -22,8 +22,6 @@ REFERENCE = {
     "load_power_w": 2100,
     "battery_temp_c": 24,
     "battery_voltage_v": 450,
-    "grid_export_total_kwh": 1234.56,
-    "grid_import_total_kwh": 2345.67,
     "mode_value": 2,
 }
 
