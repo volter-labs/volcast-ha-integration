@@ -29,8 +29,8 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol, Sequence
 
 from .modbus_frames import (
-    FC_READ, FC_WRITE_MULTIPLE, FC_WRITE_SINGLE, FrameError, parse_rtu_read, parse_rtu_write,
-    pdu_read, pdu_write_multiple, pdu_write_single)
+    FC_READ, FC_WRITE_MULTIPLE, FC_WRITE_SINGLE, READ_FUNCTIONS, FrameError, parse_rtu_read,
+    parse_rtu_write, pdu_read, pdu_write_multiple, pdu_write_single)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -181,7 +181,8 @@ class RegisterTransport(Protocol):
     kind: str
     stats: TransportStats
 
-    async def read(self, addr: int, count: int, *, tries: int | None = None) -> list[int]: ...
+    async def read(self, addr: int, count: int, *, tries: int | None = None,
+                   fc: int = FC_READ) -> list[int]: ...
 
     async def write(self, addr: int, values: Sequence[int], *, function: int,
                     on_send: OnSend | None = None, may_resend: Callable[[], bool] | None = None) -> None: ...
@@ -203,8 +204,9 @@ class Request:
     echo: int = 0                   # FC 6: wartość, FC 16: liczba rejestrów
 
 
-def read_req(addr: int, count: int) -> Request:
-    return Request(FC_READ, addr, count, pdu_read(addr, count))
+def read_req(addr: int, count: int, fc: int = FC_READ) -> Request:
+    """Żądanie odczytu: FC 3 (holding, domyślnie) albo FC 4 (input)."""
+    return Request(fc, addr, count, pdu_read(addr, count, fc))
 
 
 def write_req(function: int, addr: int, values: Sequence[int]) -> Request:
@@ -239,8 +241,8 @@ def match_rtu(frame: bytes, unit: int, req: Request) -> list[int] | None:
     if len(frame) >= 2 and frame[0] == unit and frame[1] & 0x80 and frame[1] != req.fc | 0x80:
         raise Stray("exception for another function")
     try:
-        if req.fc == FC_READ:
-            return parse_rtu_read(frame, unit, req.count)
+        if req.fc in READ_FUNCTIONS:
+            return parse_rtu_read(frame, unit, req.count, req.fc)
         parse_rtu_write(frame, unit, req.fc, req.addr, req.echo)
         return None
     except FrameError as err:
@@ -302,9 +304,11 @@ class BaseTransport:
             finally:
                 self._session_owner = None
 
-    async def read(self, addr: int, count: int, *, tries: int | None = None) -> list[int]:
-        """`tries` — mniej prób niż `read_tries` (limit czasu cyklu u wołającego); nigdy więcej."""
-        req = read_req(addr, count)
+    async def read(self, addr: int, count: int, *, tries: int | None = None,
+                   fc: int = FC_READ) -> list[int]:
+        """`tries` — mniej prób niż `read_tries` (limit czasu cyklu u wołającego); nigdy więcej.
+        `fc` — 3 (holding) albo 4 (input); odpowiedź musi nieść tę samą funkcję."""
+        req = read_req(addr, count, fc)
         n = self.cfg.read_tries if tries is None else max(1, min(int(tries), self.cfg.read_tries))
         async with self.exclusive(), self._lock:
             self.last_read_count = count

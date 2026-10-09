@@ -174,7 +174,7 @@ def test_mbap_bounds():
 
 def test_rtu_frame_length_unknown_function_raises():
     with pytest.raises(mf.FrameError) as e:
-        mf.rtu_frame_length(bytes.fromhex("f70400"))
+        mf.rtu_frame_length(bytes.fromhex("f70500"))
     assert e.value.kind == "function"
     assert mf.rtu_frame_length(bytes.fromhex("f790")) is None
     assert mf.rtu_frame_length(bytes.fromhex("f79004")) == 5
