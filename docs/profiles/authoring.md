@@ -25,6 +25,9 @@ file in `profiles/` automatically.
 * `status: "verified"` — writes are allowed. A profile becomes verified only after a live trial on
   a real unit, and the top-level `status` and `modbus.status` are switched together.
 * Every integration entry under `ha.integrations` carries its own `status` with the same meaning.
+  Entity mode is offered only when both the profile and the integration entry are `verified`; a
+  `draft` entry is only a hint for mapping readings, and the cloud is told that no setting can be
+  controlled.
 
 New profiles are always `draft` with a `status_note` (section 8).
 
@@ -132,7 +135,16 @@ A profile must make both paths work without a human in the loop.
 **Entity mode (`ha.integrations`).** The user already runs a Home Assistant integration for the
 brand. List one entry per integration: `domain`, `ems` (true when that integration runs its own
 energy management, so the user must choose one controller), `status`, and `entities`:
-`{key: {"domain", "unique_id_regex", "transform"?}}`.
+`{key: {"domain", "unique_id_regex", "transform"?}}`. The `ha` entries are telemetry-mapping
+hints until an integration entry is verified: entity mode is offered only for a `verified` entry of
+a `verified` profile.
+
+* When another profile lists the same integration `domain` (for example `solarman` or
+  `solax_modbus`), add `model_regex`: a non-empty list of regexes searched in the Home Assistant
+  device's "manufacturer model" text. Selection narrows the candidates by the brand in the
+  manufacturer (the profile id up to the first `-`), then by this `model_regex`, then by
+  `identify.model_regex` on the model; if more than one profile is still left, none is selected
+  and the discovery sensor lists them in `profile_candidates`.
 
 * Map **every** sensor key the integration exposes and every write key it offers as an entity
   (`mode`, set-points, `tou_1..tou_9` fields). The onboarding screen shows the user which entity
