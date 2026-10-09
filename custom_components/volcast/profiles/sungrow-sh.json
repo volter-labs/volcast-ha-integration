@@ -79,7 +79,9 @@
       "pv_energy_total_kwh": {"domain": "sensor", "unique_id_regex": "^sg_total_pv_generation$"},
       "grid_import_total_kwh": {"domain": "sensor", "unique_id_regex": "^sg_total_imported_energy$"},
       "grid_export_total_kwh": {"domain": "sensor", "unique_id_regex": "^sg_total_exported_energy$"},
-      "mode_value": {"domain": "sensor", "unique_id_regex": "^sg_ems_mode_selection_raw$"}
+      "mode_value": {"domain": "sensor", "unique_id_regex": "^sg_ems_mode_selection_raw$"},
+      "battery_current_a": {"domain": "sensor", "unique_id_regex": "^sg_battery_current$"},
+      "active_power_w": {"domain": "sensor", "unique_id_regex": "^sg_total_active_power$"}
     }
   }]},
   "capabilities": {
@@ -89,7 +91,7 @@
   },
   "modbus": {
     "status": "draft",
-    "status_note": "Vendor document and community register maps only. Addresses are wire addresses (vendor register number minus 1). Identification and measurements use input registers (function 4); the EMS mode 13049 is a holding register, written with FC6 as the reference integrations do (the vendor document lists 0x03/0x06/0x10). The inverter's LAN port is preferred; through the WiNet-S dongle keep requests spaced (gap_ms 50, a 5 s timeout) and expect some registers to be missing on older dongle firmware. The only write is the EMS mode 13049; re-writing its current value is the safe probe. Entity mode: the community Modbus YAML package exposes the sensors as `modbus` entities with fixed unique ids, but its EMS mode select is a `template` entity, so entity mode is read-only with this profile.",
+    "status_note": "Vendor document and community register maps only. Addresses are wire addresses (vendor register number minus 1). Identification and measurements use input registers (function 4); the EMS mode 13049 is a holding register, written with FC6 as the reference integrations do (the vendor document lists 0x03/0x06/0x10). The inverter's LAN port is preferred; through the WiNet-S dongle keep requests spaced (gap_ms 50, a 5 s timeout) and expect some registers to be missing on older dongle firmware. The only write is the EMS mode 13049; re-writing its current value is the safe probe. Entity mode: the community Modbus YAML package exposes the sensors as `modbus` entities with fixed unique ids, but it has no config entry or device and its EMS mode select is a `template` entity. The core does not select YAML `modbus` packages today (entity mode is matched by a known integration domain), so entity mode is not offered for Sungrow until the core supports matching such packages by a manual pick; the `ha` entry only carries the mapping hints for that, and even then it would be read-only (no `mode`). The sign of the battery current entity (vendor register 5631) is not documented; check it against the battery power sign.",
     "write_function": 6,
     "max_read_registers": 100,
     "transport_options": {

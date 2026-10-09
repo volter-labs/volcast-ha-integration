@@ -168,6 +168,8 @@ def test_ha_entity_map_matches_yaml_package_unique_ids(profile):
         "grid_import_total_kwh": "sg_total_imported_energy",
         "grid_export_total_kwh": "sg_total_exported_energy",
         "mode_value": "sg_ems_mode_selection_raw",
+        "battery_current_a": "sg_battery_current",
+        "active_power_w": "sg_total_active_power",
     }
     assert set(ents) == set(samples)
     for key, uid in samples.items():
@@ -181,6 +183,10 @@ def test_ha_entity_map_matches_yaml_package_unique_ids(profile):
     assert "transform" not in ents["battery_power_w"]
     # Select trybu EMS to encja platformy `template`, nie `modbus` — nie ma jej w tym wpisie.
     assert "mode" not in ents
+    assert not re.search(ents["active_power_w"]["unique_id_regex"], "sg_meter_active_power")
+    # Rdzeń nie wybiera dziś pakietów YAML `modbus` — notatka nie może sugerować działającego trybu encji.
+    note = profile.raw["modbus"]["status_note"]
+    assert "does not select" in note and "not offered" in note
 
 
 def test_engine_gaps_document_sungrow():
@@ -189,6 +195,12 @@ def test_engine_gaps_document_sungrow():
     section = text.split("## Sungrow (`sungrow-sh`)", 1)[1].split("\n## ", 1)[0]
     for needle in ("13049", "13050", "13051", "13057", "13058", "13073", "13086"):
         assert needle in section, needle
+
+
+def test_engine_gaps_core_row_on_yaml_packages():
+    core = GAPS_FILE.read_text(encoding="utf-8").split("## Core", 1)[1].split("\n## ", 1)[0]
+    row = next(line for line in core.splitlines() if "INVERTER_DOMAINS" in line)
+    assert "sungrow-sh" in row and "template" in row
 
 
 def _with_input(over: dict) -> RegisterImage:
