@@ -19,8 +19,9 @@ PROFILE_FILE = ROOT / "custom_components" / "volcast" / "profiles" / f"{PID}.jso
 GAPS_FILE = ROOT / "docs" / "profiles" / "engine-gaps.md"
 SECTION = "## Solis (`solis-hybrid`)"
 # Stan wzorcowy obrazu (README katalogu golden): konwencja rdzenia — bateria dodatnia = rozładowanie,
-# sieć dodatnia = pobór. Solis odwrotnie w obu: 33149 i 33134 dodatnie przy ładowaniu, 33130
-# dodatnie przy oddawaniu do sieci (stąd sign -1). Liczniki u32 w kWh, starsze słowo pierwsze.
+# sieć dodatnia = pobór. Solis odwrotnie w obu: 33149 i 33134 dodatnie przy ładowaniu, licznik
+# (33263, wg evcc) dodatnie przy oddawaniu do sieci (stąd sign -1). Liczniki u32 w kWh, starsze słowo
+# pierwsze. Znak prądu 33134 nie jest potwierdzony źródłem — założony zgodny z mocą baterii.
 REFERENCE = {
     "soc": 55,
     "pv_power_w": 3200,
@@ -28,6 +29,7 @@ REFERENCE = {
     "grid_power_w": 400,
     "load_power_w": 2100,
     "active_power_w": 1700,
+    "battery_temp_c": 24,
     "battery_voltage_v": 51.2,
     "battery_current_a": -29.3,
     "pv_energy_total_kwh": 12345,
@@ -85,8 +87,12 @@ def test_profile_validates_and_is_draft(profile):
 def test_sources_are_public_and_cover_key_registers(profile):
     raw = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
     assert_sources_public(raw)
+    # Kopia protokołu producenta z serwera uczelni nie jest dopuszczonym źródłem (producent prosił o zdjęcie).
+    texts = [s["ref"] + s["what"] for s in raw["sources"]] + [raw["status_note"], raw["modbus"]["status_note"]]
+    for text in texts:
+        assert "RS485_MODBUS-Hybrid" not in text and "permission" not in text.lower()
     whats = " ".join(s["what"] for s in raw["sources"])
-    for reg in ("33004", "33100", "33130", "33134", "33135", "33139", "33149", "43110"):
+    for reg in ("33004", "33043", "33100", "33134", "33135", "33139", "33149", "33263", "43110"):
         assert reg in whats, reg
     # Zapis 43110 = 1 ma źródło, które pisze tę wartość (wtyczka solax_modbus, opcja 1).
     assert any(s["ref"].endswith("/plugin_solis.py") and "43110" in s["what"] for s in raw["sources"])
@@ -146,7 +152,7 @@ def test_identify_rejects_grid_tied_and_unknown_serials(profile, serial):
 def test_reads_decode_reference_state(profile, image):
     values = pg.decode_reads(profile, image)
     assert set(values) == set(profile.raw["read"])
-    assert set(values) == set(REFERENCE)  # brak rejestru temperatury baterii w źródłach
+    assert set(values) == set(REFERENCE)
     for key, want in REFERENCE.items():
         assert values[key] == pytest.approx(want), key
 
@@ -172,7 +178,8 @@ def test_register_map_input_measurements_and_holding_mode(profile):
     assert read["soc"] == {"addr": 33139, "type": "u16", "fc": 4}
     assert read["battery_power_w"] == {"addr": 33149, "type": "i32", "sign": -1, "fc": 4}
     assert read["battery_current_a"] == {"addr": 33134, "type": "i16", "scale": 0.1, "sign": -1, "fc": 4}
-    assert read["grid_power_w"] == {"addr": 33130, "type": "i32", "sign": -1, "fc": 4}
+    assert read["grid_power_w"] == {"addr": 33263, "type": "i32", "sign": -1, "fc": 4}
+    assert read["battery_temp_c"] == {"addr": 33043, "type": "i16", "scale": 0.1, "fc": 4}
     assert read["pv_power_w"] == {"addr": 33057, "type": "u32", "fc": 4}
     assert read["load_power_w"] == {"addr": 33147, "type": "u16", "fc": 4}
     assert read["mode_value"] == {"addr": STORAGE_SWITCH, "type": "u16"}
@@ -298,7 +305,7 @@ def test_ha_entity_map_matches_solax_modbus_solis_unique_ids(profile):
         "battery_voltage_v": "Solis_battery_voltage",
         "battery_current_a": "Solis_battery_current",
         "pv_power_w": "Solis_pv_total_power",
-        "grid_power_w": "Solis_meter_active_power",
+        "grid_power_w": "Solis_meter_active_power_total",
         "load_power_w": "Solis_house_load",
         "active_power_w": "Solis_active_power",
         "pv_energy_total_kwh": "Solis_power_generation_total",
@@ -309,7 +316,7 @@ def test_ha_entity_map_matches_solax_modbus_solis_unique_ids(profile):
     near = {
         "soc": ("Solis_battery_soh",),
         "battery_power_w": ("Solis_battery_power_charge",),
-        "grid_power_w": ("Solis_meter_active_power_total", "Solis_meter_active_power_l1"),
+        "grid_power_w": ("Solis_meter_active_power", "Solis_meter_active_power_l1"),
         "pv_power_w": ("Solis_pv_power_1",),
         "active_power_w": ("Solis_meter_active_power",),
     }
@@ -326,10 +333,11 @@ def test_ha_entity_map_matches_solis_modbus_unique_ids(profile):
     samples = {
         "soc": f"{p}_battery_soc",
         "battery_power_w": f"{p}_battery_power",
+        "battery_temp_c": f"{p}_battery_temperature_bms",
         "battery_voltage_v": f"{p}_battery_voltage",
         "battery_current_a": f"{p}_battery_current",
         "pv_power_w": f"{p}_total_dc_output",
-        "grid_power_w": f"{p}_meter_active_power",
+        "grid_power_w": f"{p}_meter_total_active_power",
         "load_power_w": f"{p}_household_load_power",
         "active_power_w": f"{p}_active_power",
         "pv_energy_total_kwh": f"{p}_pv_total_generation",
@@ -339,7 +347,8 @@ def test_ha_entity_map_matches_solis_modbus_unique_ids(profile):
     near = {
         "soc": (f"{p}_battery_soh",),
         "battery_power_w": (f"{p}_battery_power_combined", f"{p}_battery_charge_power"),
-        "grid_power_w": (f"{p}_meter_active_power_a", f"{p}_meter_total_active_power"),
+        "grid_power_w": (f"{p}_meter_active_power_a", f"{p}_meter_active_power", f"{p}_grid_power_net"),
+        "battery_temp_c": (f"{p}_lead_acid_temp", f"{p}_temperature"),
         "active_power_w": (f"{p}_meter_active_power",),
     }
     _check(ents, samples, near)
@@ -353,7 +362,7 @@ def test_engine_gaps_document_solis():
     text = GAPS_FILE.read_text(encoding="utf-8")
     assert SECTION in text
     section = text.split(SECTION, 1)[1].split("\n## ", 1)[0]
-    for needle in ("43110", "43141", "43143", "43135", "43136", "43129", "43114", "43024", "43011",
+    for needle in ("43110", "43141", "43143", "43135", "43136", "43129", "43116", "43024", "43011",
                    "43010", "33135", "33149", "33100", "solarman", "solis_modbus"):
         assert needle in section, needle
     assert text.index(SECTION) < text.index("## Automatic verification ladder")
