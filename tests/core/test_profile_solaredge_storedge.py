@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from custom_components.volcast.core.control.conflict import CONFLICT_DOMAINS
+from custom_components.volcast.core.discovery.known import INVERTER_DOMAINS
 from custom_components.volcast.core.modbus.identity import MIN_SALT_BYTES, device_fingerprint, identity_info
 from custom_components.volcast.core.profile import load_builtin
 from custom_components.volcast.core.profile_schema import validate_profile
@@ -110,6 +112,10 @@ def test_sources_are_public_and_cover_key_registers(profile):
     assert any("evcc-io/evcc" in r and r.endswith("/solaredge-hybrid.yaml") for r in refs)
     assert any("sunspec/models" in r for r in refs)
     assert any("binsentsu/home-assistant-solaredge-modbus" in r for r in refs)
+    # binsentsu (bez licencji) tylko dla własnego interfejsu encji — żadnych adresów rejestrów ani portu.
+    for s in raw["sources"]:
+        if "binsentsu" in s["ref"]:
+            assert not re.search(r"0x[0-9A-Fa-f]{4}|\b4\d{4}\b|\b1502\b", s["what"]), s["what"]
     # Dokumenty producenta nie zostały odczytane (strony zwracają 403) — profil ich nie cytuje.
     assert not any("solaredge.com" in r for r in refs)
 
@@ -352,4 +358,17 @@ def test_engine_gaps_document_solaredge():
     assert any("solaredge-storedge" in line for line in rated_rows)
     ladder = text.split("## Automatic verification ladder", 1)[1]
     assert any("solaredge-storedge" in line and "forced test window" in line for line in ladder.splitlines())
-    assert any("solaredge-storedge" in line and "client" in line for line in ladder.splitlines())
+    assert not any("solaredge-storedge" in line and "exclusive" in line.lower() for line in ladder.splitlines())
+    # Domeny integracji: brak solaredge_modbus w INVERTER_DOMAINS / CONFLICT_DOMAINS jako wiersze rdzenia.
+    rows = [line for line in core.splitlines() if "solaredge_modbus`" in line]
+    assert any("INVERTER_DOMAINS" in line for line in rows)
+    assert any("CONFLICT_DOMAINS" in line and "one Modbus TCP client" in line for line in rows)
+    assert "`undef` applies to integer sums only" not in text
+
+
+def test_entity_mode_domains_match_the_documented_gap(profile):
+    # Strażnik: gdy rdzeń dopisze solaredge_modbus do INVERTER_DOMAINS, wiersz luki i status_note do poprawy.
+    assert "solaredge_modbus_multi" in INVERTER_DOMAINS and "solaredge_modbus_multi" in CONFLICT_DOMAINS
+    assert "solaredge_modbus" not in INVERTER_DOMAINS and "solaredge_modbus" not in CONFLICT_DOMAINS
+    note = profile.raw["status_note"]
+    assert "INVERTER_DOMAINS" in note and "conflict" in note and "manual pick" in note
