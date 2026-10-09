@@ -1,0 +1,295 @@
+{
+  "schema_version": 1,
+  "id": "fronius-gen24",
+  "label": "Fronius Primo / Symo GEN24 Plus with battery (Modbus TCP, SunSpec int + SF)",
+  "status": "draft",
+  "status_note": "Public sources only (the Fronius GEN24 Modbus TCP & RTU manual on manuals.fronius.com, SunSpec model definitions, evcc, libe.net and community configurations); nothing verified on hardware. Covers a Primo or Symo GEN24 (Plus) inverter with a battery, reached over Modbus TCP on port 502 (the inverter also offers 1502), unit id 1, with the SunSpec model type set to 'int + SF'. Before the direct path can connect, Modbus TCP must be enabled in the inverter's web interface (Communication > Modbus) with 'int + SF' selected; before any write, 'Inverter control via Modbus' must be enabled there too (and 'Restrict Control', when used, must allow the Home Assistant address); evcc also asks for the Energy Cost Assistant in Solar.web to be off for battery control. Variants not covered: the 'float' model type (inverter model 111-113 instead of 101-103, every address from the inverter model on is 10 higher, e.g. StorCtl_Mod at 40358), Symo Hybrid and other Datamanager-based inverters (their map was not checked), Verto Plus (five MPPT modules, so the storage model starts elsewhere), Tauro and PV-only Symo/Primo, GEN24 units without a battery (model 160 then has two modules and no storage model follows, so these addresses read the end block), and Modbus RTU. The model text cannot tell a GEN24 with a battery from one without: the regex accepts any Primo/Symo GEN24. Addresses are wire (PDU) addresses: the vendor numbers registers from 1 and the address on the wire is one less, so 'SunS' is at 40000 (register 40001), C_Model at 40020, C_SerialNumber at 40052, and StorCtl_Mod is sent as 40348 (register 40349 in the vendor's tables). The model chain is fixed by the vendor manual's start addresses for 'int + SF': nameplate 120 at 40121, 121 at 40149, 122 at 40181, 123 at 40227, multiple MPPT 160 at 40253 (four modules: PV 1, PV 2, storage charging, storage discharging), basic storage controls 124 at 40343. Every value is a 16-bit integer with a separate scale factor register, and the vendor states the scale factors change with firmware and at runtime (auto-scale); the core has no dynamic scale factor, so the profile fixes them: AC power 40083 (SF 40084) at SF 0, module DC powers 40274/40294/40314/40334 (shared DCW_SF 40257) at SF 0, the state of charge ChaState 40351 (SF 40365) at SF -2 (as the reserve 40350 uses in published scripts), and the nameplate WRtg 40124 (SF 40125) at SF 0; any other SF gives a value off by a factor of 10 or more (docs/profiles/engine-gaps.md). PV power is the DC power of modules 1 and 2; battery power is module 4 (discharging) minus module 3 (charging), positive = discharging as the core expects. The grid meter answers on unit id 200 (model 203, or 213 for 'float'), which the core cannot reach from a profile with one unit id, so grid power and house load are not read on the direct path (docs/profiles/engine-gaps.md); no SunSpec model on unit 1 carries a battery temperature, so it is not read either. The rating comes from WRtg 40124 and the identity from the serial (C_SerialNumber 40052), so the direct path has a fingerprint. Control: only StorCtl_Mod 40348 is written, 0 = no charge or discharge limit active = neutral and baseline. The charge and discharge limits OutWRte 40355 / InWRte 40356 (signed percent of WChaMax 40345 with InOutWRte_SF 40368; a negative discharge limit charges from the grid), their revert timer 40358, the reserve MinRsvPct 40350 (SF 40364) and the grid-charging permission ChaGriSet 40360 need scaled, signed or paired writes the core does not have (docs/profiles/engine-gaps.md), so every intent falls back to 'no limits' with power none and every capability is false. Entity mode: the Home Assistant core 'fronius' integration is a known inverter domain (INVERTER_DOMAINS and CONFLICT_DOMAINS), but it has no mode select. A live trial must confirm: the C_Model text of GEN24 units; the scale factor registers 40084, 40125, 40257 and 40365 at low and high power; that model 124 starts at 40343 on the unit (ID 124 at 40343, length 24 at 40344); that module 3 is storage charging and module 4 storage discharging; that 40348 reads back after a function 6 write; and whether the inverter keeps 40348 across a restart (the manual lists only nameplate and basic-settings values as saved; assumed: nvm true, which only makes the write budget stricter).",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {
+      "what": "Fronius GEN24 Modbus TCP & RTU manual (vendor, published): register numbers start at 1 and the register address sent is always one less (register 40005 is read at address 40004); TCP port 502 or 1502; the inverter's TCP unit id is always 1; meters on Modbus ids 200-204 (default meter address 200); SunSpec model type 'float' (inverter models 111-113, meters 211-213) or 'int + SF' (101-103, 201-203), with different register numbers; 'int + SF' start addresses: nameplate 120 at 40121, basic settings 121 at 40149, extended measurements 122 at 40181, immediate controls 123 at 40227, multiple MPPT 160 at 40253, basic storage controls 124 at 40343; devices with storage have two additional MPPT blocks (charging MPP3, discharging MPP4); StorCtl_Mod bit pattern 1 = charge limit (InWRte), 2 = discharge limit (OutWRte), 3 = both; InWRte/OutWRte in percent of WChaMax, negative values move the window; WChaMax = max(MaxChaRte, MaxDisChaRte), 0 without storage; ChaGriSet AND-linked with the 'battery charging from DNO grid' setting; scale factors change with firmware and at runtime (auto-scale); after the revert time without a new Modbus message the mode ends (0 = until deactivated); 'Inverter control via Modbus' must be enabled for writes and writes to models 123/124 raise an exception otherwise; 'Restrict Control' limits control to listed addresses; send requests sequentially with a timeout of at least 1 s; only nameplate (120) and basic settings (121) values are listed as saved on the card",
+      "ref": "https://manuals.fronius.com/html/4204102649/en-US.html"
+    },
+    {
+      "what": "SunSpec model 1 (common): Mn at offset 2, Md at offset 18 and SN at offset 50 (16 registers each), so 40004, 40020 and 40052 with the model starting at 40002 after the 'SunS' marker at 40000",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_1.json"
+    },
+    {
+      "what": "SunSpec model 103 (three-phase inverter, same layout as 101/102): W at offset 14 with W_SF at 15, so 40083/40084 with the model starting at 40069; length 50, so the next model starts at 40121",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_103.json"
+    },
+    {
+      "what": "SunSpec model 120 (nameplate): DERTyp at offset 2, WRtg at offset 3, WRtg_SF at offset 4, so 40124/40125 with the model at 40121",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_120.json"
+    },
+    {
+      "what": "SunSpec model 160 (multiple MPPT): fixed block DCA_SF 2, DCV_SF 3, DCW_SF 4, DCWH_SF 5, Evt 6-7, N 8, TmsPer 9; then 20 registers per module: ID 0, IDStr 1-8, DCA 9, DCV 10, DCW 11 (uint16, DCW_SF), DCWH 12-13, Tms 14-15, Tmp 16, DCSt 17, DCEvt 18-19; with the model at 40253: DCW_SF 40257, module 1 at 40263 (DCW 40274), module 2 at 40283 (DCW 40294), module 3 at 40303 (DCW 40314), module 4 at 40323 (DCW 40334); four modules give length 88, so the next model starts at 40343",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_160.json"
+    },
+    {
+      "what": "SunSpec model 124 (basic storage controls), length 24: WChaMax 2 (uint16 W), WChaGra 3, WDisChaGra 4, StorCtl_Mod 5 (bitfield16, bit 0 CHARGE, bit 1 DISCHARGE, RW), VAChaMax 6, MinRsvPct 7 (uint16 %, RW), ChaState 8 (uint16 %), StorAval 9, InBatV 10, ChaSt 11 (1 OFF ... 4 CHARGING ... 7 TESTING), OutWRte 12 (int16 %), InWRte 13 (int16 %), InOutWRte_WinTms 14, InOutWRte_RvrtTms 15, InOutWRte_RmpTms 16, ChaGriSet 17 (0 PV, 1 GRID), WChaMax_SF 18, WChaDisChaGra_SF 19, VAChaMax_SF 20, MinRsvPct_SF 21, ChaState_SF 22, StorAval_SF 23, InBatV_SF 24, InOutWRte_SF 25; with the model at 40343: WChaMax 40345, StorCtl_Mod 40348, MinRsvPct 40350, ChaState 40351, ChaSt 40354, OutWRte 40355, InWRte 40356, InOutWRte_RvrtTms 40358, ChaGriSet 40360, MinRsvPct_SF 40364, ChaState_SF 40365, InOutWRte_SF 40368",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_124.json"
+    },
+    {
+      "what": "SunSpec model 203 (meter): W at offset 18 with W_SF at 22",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_203.json"
+    },
+    {
+      "what": "evcc fronius-gen24 template (MIT): grid from SunSpec meter models 201/211/203/213 on unit id 200 (the inverter is unit 1; further meters on ascending ids); PV = 160:1:DCW + 160:2:DCW; battery power = 160:3:DCW (charging, negated) + 160:4:DCW (discharging); SoC = 124:ChaState; battery modes written to model 124: normal StorCtl_Mod 0 with OutWRte 100, hold StorCtl_Mod 2 with OutWRte 0, charge StorCtl_Mod 2 with a negative OutWRte (minus the charge rate) and ChaGriSet, holdcharge StorCtl_Mod 1 with InWRte 0; no read-back of the battery mode is defined; the Energy Cost Assistant must be off for active charge control",
+      "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/fronius-gen24.yaml"
+    },
+    {
+      "what": "GEN24 battery control over Modbus (public article): Home Assistant modbus hub on port 502, slave 1, SunSpec model type 'int + SF' (add 10 to every address for 'float'); read block from 40345 (WChaMax) over the storage settings and their scale factors; StorCtl_Mod 40348 (0 no limitation, 1 charge limit, 2 discharge limit, 3 both); MinRsvPct 40350 written as percent x 100 (500 = 5.0 %); OutWRte 40355 and InWRte 40356 in percent of WChaMax x 100 (10000 = 100 %), negative values written as 65536 minus the value; single values written with modbus.write_register",
+      "ref": "https://libe.net/en/byd-modbus"
+    },
+    {
+      "what": "openHAB configuration for a GEN24 (community, public): AC power read at 40083 in the block from 40069; DC voltage of string 1 at 40273 in the block from 40253; StorCtl_Mod read and written at 40348; ChaSt, OutWRte and InWRte read from the block at 40354 (OutWRte and InWRte written at 40355 / 40356); port 502, id 1",
+      "ref": "https://community.openhab.org/t/modbus-config-for-fronius-gen24-inverter/143133"
+    },
+    {
+      "what": "Home Assistant modbus configuration for a Fronius Symo (community, public, 'int + SF' with addresses one below the vendor's numbering): AC power 40083 scaled by 40084; DC power of string 1 at 40274 and string 2 at 40294, both scaled by the shared scale factor 40257",
+      "ref": "https://community.home-assistant.io/t/fronius-solar-component/95246/32"
+    },
+    {
+      "what": "Home Assistant core fronius integration (Apache-2.0), sensor unique ids: inverter '<inverter unique id>-<key>' (power_ac, energy_total), Modbus inverter '<inverter unique id>-modbus-<key>' (mppt_<n>_power_dc, energy_total_pv), power flow '<solar_net device id>-power_flow-<key>' with solar_net device id 'solar_net_<entry unique id>' (power_photovoltaics; power_battery, positive = discharging, disabled by default; power_grid, positive = import, disabled by default; power_load_consumed = consumption as a positive value), storage '<storage serial>-<key>' (state_of_charge, temperature_cell, voltage_dc), meter '<meter serial>-<key>' (power_real, energy_real_consumed, energy_real_produced in Wh)",
+      "ref": "https://github.com/home-assistant/core/blob/dev/homeassistant/components/fronius/sensor.py"
+    },
+    {
+      "what": "Home Assistant core fronius integration (Apache-2.0), Modbus setpoints since 2026.10: number entities '<inverter unique id>-modbus-ac_power_limit', '-modbus-battery_charge_power_limit', '-modbus-battery_discharge_power_limit' (percent, each with an enable switch) and '-modbus-battery_minimum_reserve' (percent 0-100); no select entity",
+      "ref": "https://github.com/home-assistant/core/blob/dev/homeassistant/components/fronius/number.py"
+    },
+    {
+      "what": "Home Assistant core fronius integration (Apache-2.0): Modbus TCP on the entry's host, default port 502, a fixed unit id for a GEN24 entry (a Datamanager entry maps its own unit ids); write access is probed by writing a register's own value back, because no register reports 'Inverter control via Modbus'",
+      "ref": "https://github.com/home-assistant/core/blob/dev/homeassistant/components/fronius/__init__.py"
+    }
+  ],
+  "unit_id": 1,
+  "transports": [
+    "modbus_tcp"
+  ],
+  "identify": {
+    "model_register": {
+      "addr": 40020,
+      "type": "ascii",
+      "len": 16
+    },
+    "model_regex": [
+      "^(Fronius )?(Primo|Symo) GEN24\\b"
+    ],
+    "registers": {
+      "serial": {
+        "addr": 40052,
+        "type": "ascii",
+        "len": 16
+      },
+      "rated_power_w": {
+        "addr": 40124,
+        "type": "u16"
+      }
+    }
+  },
+  "read": {
+    "soc": {
+      "addr": 40351,
+      "type": "u16",
+      "scale": 0.01
+    },
+    "battery_power_w": {
+      "sum": [
+        {
+          "addr": 40334,
+          "type": "u16"
+        },
+        {
+          "addr": 40314,
+          "type": "u16",
+          "sign": -1
+        }
+      ]
+    },
+    "pv_power_w": {
+      "sum": [
+        {
+          "addr": 40274,
+          "type": "u16"
+        },
+        {
+          "addr": 40294,
+          "type": "u16"
+        }
+      ]
+    },
+    "active_power_w": {
+      "addr": 40083,
+      "type": "i16"
+    },
+    "mode_value": {
+      "addr": 40348,
+      "type": "u16"
+    }
+  },
+  "write": {
+    "mode": {
+      "addr": 40348,
+      "type": "u16",
+      "encode": "mode"
+    }
+  },
+  "modes": {
+    "no_limits": {
+      "value": 0,
+      "direction": "neutral",
+      "ha_option": "No limits"
+    }
+  },
+  "neutral_mode": "no_limits",
+  "intents": {
+    "charge_grid": {
+      "mode": "no_limits",
+      "power": "none"
+    },
+    "charge_pv": {
+      "mode": "no_limits",
+      "power": "none"
+    },
+    "discharge_forced": {
+      "mode": "no_limits",
+      "power": "none"
+    },
+    "sell": {
+      "mode": "no_limits",
+      "power": "none"
+    },
+    "self_consume": {
+      "mode": "no_limits",
+      "power": "none"
+    },
+    "standby": {
+      "mode": "no_limits",
+      "power": "none"
+    }
+  },
+  "baseline": {
+    "mode": "no_limits"
+  },
+  "write_policy": {
+    "order": [
+      "mode"
+    ],
+    "min_interval_s": 300,
+    "nvm": true,
+    "max_direction_changes_per_hour": 2,
+    "max_state_age_s": 300,
+    "readback_settle_s": 2,
+    "nvm_budget": {
+      "window_h": 24,
+      "per_key": 24,
+      "total": 24
+    }
+  },
+  "limits": {
+    "battery_temp_c": {
+      "min": -10,
+      "max": 55
+    },
+    "rated_power_register": "rated_power_w"
+  },
+  "ha": {
+    "integrations": [
+      {
+        "domain": "fronius",
+        "ems": false,
+        "status": "draft",
+        "entities": {
+          "pv_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solar_net_.+-power_flow-power_photovoltaics$"
+          },
+          "battery_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solar_net_.+-power_flow-power_battery$"
+          },
+          "grid_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solar_net_.+-power_flow-power_grid$"
+          },
+          "load_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^solar_net_.+-power_flow-power_load_consumed$"
+          },
+          "active_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+-power_ac$"
+          },
+          "pv_energy_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+-modbus-energy_total_pv$"
+          },
+          "soc": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+-state_of_charge$"
+          },
+          "battery_temp_c": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+-temperature_cell$"
+          },
+          "grid_import_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+-energy_real_consumed$"
+          },
+          "grid_export_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+-energy_real_produced$"
+          },
+          "soc_min": {
+            "domain": "number",
+            "unique_id_regex": "^.+-modbus-battery_minimum_reserve$"
+          }
+        }
+      }
+    ]
+  },
+  "capabilities": {
+    "force_charge_from_grid": false,
+    "sell_from_battery": false,
+    "force_discharge": false,
+    "standby": false,
+    "set_power_w": false,
+    "limit_export": false,
+    "set_soc_floor": false,
+    "set_soc_ceiling": false,
+    "time_windows": 0
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Holding registers only (function 3), unit id 1. The single write is StorCtl_Mod at 40348 with function 6 (a single-register write, as the published Home Assistant scripts send it); community configurations read it back at the same address, so nothing is echo-only. The safe probe is re-writing 40348 with the value just read (0 when no limit is active) and reading it back; to restore, write back the value read before the test. Do not probe while 40348 is 1, 2 or 3 and another controller (evcc, the fronius integration's limit switches, a script) holds the limits: re-writing the same value is harmless, but writing 0 there lifts that controller's limits. The write step needs 'Inverter control via Modbus' enabled in the web interface; no register reports it (the fronius integration probes it by writing a value back), and with it off the inverter answers the write with an exception, which the ladder must report as that setting, not as a broken device. Higher-priority controls (I/O control, dynamic power reduction) may override Modbus commands. Timeout 3 s follows the manual's minimum of 1 s with margin; gap_ms 50 is a stand-in (the manual asks for sequential requests). The identification reads are 40000-40069 (common model and inverter model header) and 40121-40125 (nameplate header, WRtg and WRtg_SF); max_read_registers 100 is a stand-in below the Modbus limit of 125. Entity mode: the core fronius integration has no mode select, so entity mode is not available for this profile (correct: nothing in it selects a storage mode); its battery charge/discharge limits are percent numbers with enable switches, which the core cannot map to a power set-point, and its minimum reserve number is mapped as soc_min. Since Home Assistant 2026.10 the fronius integration also opens Modbus TCP to the inverter and writes model 123/124 controls when its numbers and switches are used, so an enabled fronius entry on the same host is a static conflict for the direct path: with the core integration running, neither path controls the unit until the user disables that entry. Its power_flow power_battery and power_grid sensors are disabled by default and must be enabled; Fronius signs match the core (battery positive = discharging, grid positive = import) and load comes from power_load_consumed (positive), so no transform is applied. The meter energy totals assume the first meter sits at the grid connection (consumed = import); a second meter at the load matches the same unique id pattern. The integration runs no energy management of its own (ems false).",
+    "write_function": 6,
+    "max_read_registers": 100,
+    "transport_options": {
+      "modbus_tcp": {
+        "port": 502,
+        "timeout_ms": 3000,
+        "gap_ms": 50
+      }
+    },
+    "identify_reads": [
+      {
+        "addr": 40000,
+        "count": 70
+      },
+      {
+        "addr": 40121,
+        "count": 5
+      }
+    ],
+    "verify_blocks": [
+      {
+        "addr": 40348,
+        "count": 1
+      }
+    ],
+    "probe_keys": [
+      "mode"
+    ]
+  }
+}
