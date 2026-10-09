@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from custom_components.volcast.core.modbus.identity import identity_info
+from custom_components.volcast.core.modbus.identity import MIN_SALT_BYTES, device_fingerprint, identity_info
 from custom_components.volcast.core.profile import load_builtin
 from custom_components.volcast.core.profile_schema import validate_profile
 from tests.core import profile_golden as pg
@@ -78,8 +78,9 @@ def test_profile_validates_and_is_draft(profile):
     assert "H1-G2" in note and "not covered" in note
     for variant in ("LAN", "H1 G1", "H3", "KH"):
         assert variant in note, variant
-    # Brak rejestru mocy znamionowej powiedziany wprost (R5).
-    assert "31025" in note and "onboarding asks" in note
+    # Brak rejestru mocy i seriala: tryb bezpośredni nie zidentyfikuje urządzenia (R5).
+    assert "31025" in note and "identity_unknown" in note and "only entity mode" in note
+    assert "onboarding asks" not in note
 
 
 def test_sources_are_public_and_cover_key_registers(profile):
@@ -97,6 +98,10 @@ def test_sources_are_public_and_cover_key_registers(profile):
     assert any(r.endswith("/entities/entity_descriptions.py") for r in refs)
     assert any(r.endswith("/wiki/Supported-Features") for r in refs)
     assert any(r.endswith("/wiki/Direct-Ethernet-Connection-to-Inverter") for r in refs)
+    assert any(r.endswith("/discussions/553") and "Back-up" in s["what"] for r, s in zip(refs, raw["sources"]))
+    note = raw["status_note"]
+    # Lista kontrolna próby dla Back-up: wersja firmware, Back-up w menu, moc baterii pod obciążeniem.
+    assert "firmware" in note and "front-panel menu" in note and "31022" in note
 
 
 def test_identify_matches_golden_and_rejects_other_brands(profile, image):
@@ -122,6 +127,13 @@ def test_identify_reads_packed_model_and_rating_is_unknown(profile, image):
     for spec in (ident["model_register"], *ident["registers"].values()):
         width = spec.get("len", 2 if spec["type"] in ("u32", "i32") else 1)
         assert set(range(spec["addr"], spec["addr"] + width)) <= covered
+
+
+def test_direct_path_has_no_fingerprint(profile, image):
+    # Bez seriala i bez mocy znamionowej rdzeń nie liczy odcisku — wykrywanie zgłasza
+    # identity_unknown, więc ścieżka bezpośrednia nie zidentyfikuje FoxESS (tylko tryb encji).
+    assert identity_info(profile, image)["matched"]
+    assert device_fingerprint(b"s" * MIN_SALT_BYTES, profile, image) is None
 
 
 def test_bms_charge_rate_never_reads_as_a_rating(profile):
@@ -208,20 +220,18 @@ def test_control_work_mode_and_soc_limits(profile):
         "soc_max": {"addr": MAX_SOC, "type": "u16", "encode": "percent"},
         "mode": {"addr": WORK_MODE, "type": "u16", "encode": "mode"},
     }
-    # 41000: 0 Self Use, 1 Feed-in First, 2 Back-up, 4 Peak Shaving (H1-G2). Back-up nie rozładowuje
-    # baterii (foxess_modbus używa go właśnie po to) — postój. Feed-in First to nie sprzedaż z baterii.
-    assert raw["modes"] == {
-        "self_use": {"value": 0, "direction": "neutral", "ha_option": "Self Use"},
-        "back_up": {"value": 2, "direction": "idle", "ha_option": "Back-up"},
-    }
+    # 41000: 0 Self Use, 1 Feed-in First, 2 Back-up, 4 Peak Shaving (H1-G2). Back-up (2) na H1-G2
+    # z firmware 1.18 nic nie robi (foxess_modbus #553), a odczyt zwrotny i tak by przeszedł —
+    # bez źródła z firmware, na którym działa, postój jest nieobsługiwany. Feed-in First to nie sprzedaż.
+    assert raw["modes"] == {"self_use": {"value": 0, "direction": "neutral", "ha_option": "Self Use"}}
     assert raw["neutral_mode"] == raw["baseline"]["mode"] == "self_use"
     neutral = {"mode": "self_use", "power": "none"}
-    for intent in ("charge_grid", "discharge_forced", "sell", "self_consume", "charge_pv"):
+    for intent in ("charge_grid", "discharge_forced", "sell", "self_consume", "charge_pv", "standby"):
         assert raw["intents"][intent] == neutral, intent
-    assert raw["intents"]["standby"] == {"mode": "back_up", "power": "none"}
     caps = raw["capabilities"]
-    assert caps["standby"] is True and caps["set_soc_floor"] is True and caps["set_soc_ceiling"] is True
-    for cap in ("force_charge_from_grid", "sell_from_battery", "force_discharge", "set_power_w", "limit_export"):
+    assert caps["set_soc_floor"] is True and caps["set_soc_ceiling"] is True
+    for cap in ("force_charge_from_grid", "sell_from_battery", "force_discharge", "standby", "set_power_w",
+                "limit_export"):
         assert caps[cap] is False, cap
     assert caps["time_windows"] == 0
     assert raw["write_policy"]["order"][-1] == "mode"
@@ -315,8 +325,10 @@ def test_engine_gaps_document_foxess():
                    "41000-41999", "31025", "Manager 1.70", "49203"):
         assert needle in section, needle
     assert text.index(SECTION) < text.index("## Automatic verification ladder")
+    assert "identity_unknown" in section
     ladder = text.split("## Automatic verification ladder", 1)[1]
     assert "foxess-h" in ladder
+    assert any("foxess-h" in line and "fingerprint" in line for line in ladder.splitlines())
     core = text.split("## Core", 1)[1].split("\n## ", 1)[0]
     rated_rows = [line for line in core.splitlines() if "rated" in line.lower()]
-    assert any("foxess-h" in line for line in rated_rows)
+    assert any("foxess-h" in line and "identity_unknown" in line for line in rated_rows)
