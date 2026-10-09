@@ -1,9 +1,8 @@
 # Huawei SUN2000 test registers
 
 **Synthetic until recorded from a live unit.** `registers.json` is a hand-made holding-register
-image (address → 16-bit word) consistent with the `huawei-sun2000` profile and the public Huawei
-"Solar Inverter Modbus Interface Definitions" (issue 05) plus the huawei-solar library register
-table (sources in the profile). Nothing here was read from a real inverter. The model string is
+image (address → 16-bit word) consistent with the `huawei-sun2000` profile and the huawei-solar library
+(`registers.py`) and its wlcrs wiki (sources in the profile). Nothing here was read from a real inverter. The model string is
 `SUN2000-5KTL-L1` and the serial at 30015–30024 is the fake placeholder `HWFAKESERIAL0000`.
 
 Reference state, in register units (32-bit values big-endian, high word first):

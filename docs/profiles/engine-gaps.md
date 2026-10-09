@@ -47,10 +47,10 @@ Addresses are wire addresses (vendor register number minus 1).
 | Export limit needs an enable register with vendor codes | 13086 feed-in limitation (0xAA enable / 0x55 disable) before 13073 feed-in limitation value (W) applies | An enable encoding with configurable on/off values (the `bool` encoding writes 1/0). |
 | Charge/discharge power caps in 0.01 kW | 33046 max charge power, 33047 max discharge power (used by community integrations to hold the battery) | A scale on write encodings. |
 | External EMS mode needs a heartbeat | 13049 = 3 (external EMS) or 4 (VPP) falls back to self-consumption unless 13079 heartbeat is re-written within its timeout | A periodic keep-alive write declared by the profile. |
-| Forced-charging periods are split hour/minute registers | 33207 enable (0xAA/0x55), 33208 weekday/everyday, then per period start hour, start minute, end hour, end minute, target SoC (33209-33218) | A time-window table with start/end slots in separate hour and minute registers (the `time_window` model has one `hhmm` start per program). |
+| Forced-charging periods are split hour/minute registers | community-reported, unverified: an enable register plus per-period start hour, start minute, end hour, end minute and target SoC | A time-window table with start/end slots in separate hour and minute registers (the `time_window` model has one `hhmm` start per program). |
 | Battery power sign from a state register on older firmware | 13021 battery power is unsigned; the direction is bit 1 (charging) / bit 2 (discharging) of the power flow status 13000. The profile reads the signed 5213-5214 instead, which older firmware may lack | A read spec whose sign comes from a bit of another register. |
 | "Not available" markers decode as numbers | 0xFFFF (U16) and 0x7FFFFFFF (S32) mean "no data" (e.g. load and export power without a meter); `undef` maps to 0 | An `unavailable` marker on read specs that yields no value instead of 0. |
-| Settings registers polled every cycle | the vendor asks not to read or write RW registers frequently through WiNet-S; `mode_value` re-reads 13049 each cycle | A per-key read interval (settings read-back slower than measurements). |
+| Settings registers polled every cycle | community reports say RW registers should not be read or written frequently through WiNet-S (unverified); `mode_value` re-reads 13049 each cycle | A per-key read interval (settings read-back slower than measurements). |
 
 ## SolaX (`solax-x-hybrid`)
 

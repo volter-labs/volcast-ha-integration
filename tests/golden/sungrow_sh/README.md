@@ -1,8 +1,7 @@
 # Sungrow SH test registers
 
 **Synthetic until recorded from a live unit.** `registers.json` is a hand-made register image
-consistent with the `sungrow-sh` profile, the public Sungrow "Communication Protocol of
-Residential Hybrid Inverter" (V1.1.11) and the community register maps cited in the profile's
+consistent with the `sungrow-sh` profile and the community register maps cited in its
 `sources` (mkaiser Sungrow-SHx Home Assistant package, SunGather, evcc). Nothing here was read from
 a real inverter. The device type code is SH10RT (`0x0E03`) and the serial at 4989-4998 is the fake
 placeholder `SGFAKESERIAL0000`.
