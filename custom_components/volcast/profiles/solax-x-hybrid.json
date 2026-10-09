@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "id": "solax-x-hybrid",
+  "label": "SolaX X1/X3-Hybrid G3/G4",
+  "status": "draft",
+  "status_note": "Public community sources only; nothing verified on hardware. Covers the X1-Hybrid and X3-Hybrid generation 3 and generation 4 inverters, identified by the serial-number prefix at holding 0x0000 (X1 G3: H1E, H1I, HCC, HUE, XRE; X3 G3: H3DE, H3E, H3LE, H3PE, H3UE; X1 G4: H43, H44, H450, H460, H475; X3 G4: H34); X1/X3-IES, X3-Ultra, X3-Hybrid G4 Pro, X1-VAST, the OEM TIGO TSI models, RetroFit/FIT/AC-coupled units, G2 and the micro/string lines are not covered. Addresses are wire (PDU) addresses; for SolaX they equal the hexadecimal register addresses of the vendor protocol (0x001C = 28), with no minus-one offset. Measurements are input registers (function 4), identification and settings read-back are holding registers (function 3). SolaX keeps separate read and write tables: a setting is written (FC6) at one address and read back at another, e.g. Charger Use Mode is written at 0x001F and read at 0x008B, so the write is declared echo-only and the mode is read from 0x008B. Control is limited to writing Charger Use Mode = 0 (Self Use, the vendor default and the same value on G3 and G4): forced charge/discharge needs Manual Mode (0x001F = 3 on G4) together with 0x0020, the non-persistent remote-control commands are multi-register FC16 writes with a lifetime, and the SoC and export settings live at generation-specific addresses with read-back elsewhere, none of which the engine can express (see docs/profiles/engine-gaps.md); grid charge, forced discharge, sell and standby therefore map to the neutral mode without power and their capabilities are false. Settings are stored in EEPROM (community docs: about 100000 write cycles), hence nvm. Live-test checklist: (1) serial prefix at 0x0000-0x0006 and rated output power at 0x00BA (W; documented for G4 only, on G3 the register is unconfirmed and may hold something else); (2) 32-bit values low word first and the scales: battery voltage 0x0014 x0.1 V, battery current 0x0015 x0.1 A (sign assumed positive while charging, like the power), energy totals 0x0048/0x004A x0.01 kWh, 0x0094 x0.1 kWh; (3) signs: battery power 0x0016 > 0 while charging and feed-in power 0x0046 > 0 while exporting (both negated here); load = inverter power 0x0002 + grid import, as the community integration computes it (without a second meter); a third PV string (0x0124 on some models) is not summed; (4) unit id 1 on port 502 through the Pocket WiFi/LAN 3.0 dongle (dongle firmware V3.004.03 or later) or RS485 through a Modbus gateway; (5) settings writes may need the 'unlock' value 2014 written to 0x0000 first, again after a power cycle (lock state readable at input 0x0054); (6) the safe write is re-writing 0 to 0x001F while 0x008B reads 0 (Self Use), then confirming 0x008B still reads 0; restore by writing back the value read from 0x008B before the test; the engine cannot do that read-back itself (echo only); (7) G3 and G4 number the other Charger Use Mode values differently (G3: 1 Force Time Use, 3 Feedin Priority; G4: 1 Feedin Priority, 3 Manual), so any value other than 0 is shown as unknown. Battery temperature limits are the generic defaults of the other profiles, not SolaX data. Not used for control until verified.",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {"what": "register map: serial number at holding 0x0000 (7 registers, ASCII) and the serial-prefix table of models and generations; input registers 0x0002 inverter power (S16), 0x000A/0x000B PV1/PV2 power, 0x0014 battery voltage (0.1 V), 0x0015 battery current (0.1 A), 0x0016 battery power (S16), 0x0018 battery temperature (S16), 0x001C battery SoC, 0x0046 measured grid power (S32), 0x0048/0x004A grid export/import totals (U32, 0.01 kWh), 0x0094 total solar energy (U32, 0.1 kWh), 0x0054 lock state; 32-bit values low word first; holding read-back 0x008B charger use mode, 0x008C manual mode (G4), 0x0093 self-use minimum SoC (G4), 0x00B6 export limit, 0x00BA rated output power (G4); write registers 0x0000 lock (2014 unlock), 0x001F charger use mode (G3: 0 Self Use, 1 Force Time Use, 2 Back Up, 3 Feedin Priority; G4: 0 Self Use, 1 Feedin Priority, 2 Back Up, 3 Manual, 4 PeakShaving, 5 Smart Schedule), 0x0020 manual mode (G4: 0 stop, 1 force charge, 2 force discharge) or battery minimum capacity (G3), 0x0042 export limit, 0x0061 self-use minimum SoC (G4), 0x00E0 charge upper SoC (G4); remote-control FC16 blocks 0x007C-0x008A (modes 1-7) and 0x00A0-0x00A7 (modes 8/9); read blocks of up to 100 registers; house load = inverter power - measured power", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/plugin_solax.py"},
+    {"what": "Home Assistant sensor unique ids '<hub name>_<key>'", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/sensor.py"},
+    {"what": "Home Assistant select unique ids '<hub name>_<key>' and the select write path", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/select.py"},
+    {"what": "connection defaults: hub name SolaX, port 502, unit id 1; FC6 single-register writes by default", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/custom_components/solax_modbus/const.py"},
+    {"what": "G4 operating modes (Self Use, Feedin Priority, Back Up, Manual with stop/force charge/force discharge) and the EEPROM write-cycle warning (about 100000 cycles)", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/docs/solax-G4-operation-modes.md"},
+    {"what": "G2/G3 operating modes", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/docs/solax-G23-operation-modes.md"},
+    {"what": "remote-control power control (mode 1): not stored in EEPROM, limited lifetime that must be repeated, G4 and later", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/docs/solax-mode1-modbus-power-control.md"},
+    {"what": "remote-control power control (mode 8): PV and battery limits, duration and timeout behaviour", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/docs/solax-mode8-modbus-power-control.md"},
+    {"what": "lock state must be set to unlocked before settings can be changed, again after a power cycle; Pocket WiFi 3.0 firmware V3.004.03 or later", "ref": "https://github.com/wills106/homeassistant-solax-modbus/blob/main/docs/solax-faq.md"},
+    {"what": "wire addresses equal the vendor hex addresses (0x001C read at 28), battery power 0x0016 negated (positive = charging), feed-in power 0x0046 int32 word-swapped and negated (positive = exporting), single-register writes of 0x0020 then 0x001F for hold/charge, battery wake-up 0x0056", "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/solax.yaml"}
+  ],
+  "unit_id": 1,
+  "transports": ["modbus_tcp", "modbus_rtu"],
+  "identify": {
+    "model_register": {"addr": 0, "type": "ascii", "len": 7},
+    "model_regex": ["^(H1E|H1I|HCC|HUE|XRE)", "^H3(DE|E|LE|PE|UE)", "^H4(3|4|50|60|75)", "^H34"],
+    "registers": {
+      "serial": {"addr": 0, "type": "ascii", "len": 7},
+      "rated_power_w": {"addr": 186, "type": "u16"}
+    }
+  },
+  "read": {
+    "soc": {"addr": 28, "type": "u16", "fc": 4},
+    "battery_temp_c": {"addr": 24, "type": "i16", "fc": 4},
+    "battery_voltage_v": {"addr": 20, "type": "i16", "scale": 0.1, "fc": 4},
+    "battery_current_a": {"addr": 21, "type": "i16", "scale": 0.1, "sign": -1, "fc": 4},
+    "battery_power_w": {"addr": 22, "type": "i16", "sign": -1, "fc": 4},
+    "pv_power_w": {"sum": [{"addr": 10, "type": "u16", "fc": 4}, {"addr": 11, "type": "u16", "fc": 4}]},
+    "active_power_w": {"addr": 2, "type": "i16", "fc": 4},
+    "grid_power_w": {"addr": 70, "type": "i32", "word_order": "lo_hi", "sign": -1, "fc": 4},
+    "load_power_w": {"sum": [{"ref": "active_power_w"}, {"ref": "grid_power_w"}]},
+    "pv_energy_total_kwh": {"addr": 148, "type": "u32", "word_order": "lo_hi", "scale": 0.1, "fc": 4},
+    "grid_import_total_kwh": {"addr": 74, "type": "u32", "word_order": "lo_hi", "scale": 0.01, "fc": 4},
+    "grid_export_total_kwh": {"addr": 72, "type": "u32", "word_order": "lo_hi", "scale": 0.01, "fc": 4},
+    "mode_value": {"addr": 139, "type": "u16"}
+  },
+  "write": {
+    "mode": {"addr": 31, "type": "u16", "encode": "mode"}
+  },
+  "modes": {
+    "self_use": {"value": 0, "direction": "neutral", "ha_option": "Self Use Mode"}
+  },
+  "neutral_mode": "self_use",
+  "intents": {
+    "charge_grid": {"mode": "self_use", "power": "none"},
+    "charge_pv": {"mode": "self_use", "power": "none"},
+    "discharge_forced": {"mode": "self_use", "power": "none"},
+    "sell": {"mode": "self_use", "power": "none"},
+    "self_consume": {"mode": "self_use", "power": "none"},
+    "standby": {"mode": "self_use", "power": "none"}
+  },
+  "baseline": {"mode": "self_use"},
+  "write_policy": {
+    "order": ["mode"],
+    "min_interval_s": 300,
+    "nvm": true,
+    "max_direction_changes_per_hour": 2,
+    "max_state_age_s": 300,
+    "readback_settle_s": 2,
+    "nvm_budget": {"window_h": 24, "per_key": 24, "total": 24}
+  },
+  "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
+  "ha": {"integrations": [{
+    "domain": "solax_modbus",
+    "ems": false,
+    "status": "draft",
+    "entities": {
+      "soc": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_capacity$"},
+      "battery_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_power_charge$", "transform": "negate"},
+      "battery_temp_c": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_temperature$"},
+      "battery_voltage_v": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_voltage_charge$"},
+      "battery_current_a": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_current_charge$", "transform": "negate"},
+      "pv_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_pv_power_total$"},
+      "grid_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_measured_power$", "transform": "negate"},
+      "load_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_house_load$"},
+      "active_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_inverter_power$"},
+      "pv_energy_total_kwh": {"domain": "sensor", "unique_id_regex": "^[^_]+_total_solar_energy$"},
+      "grid_import_total_kwh": {"domain": "sensor", "unique_id_regex": "^[^_]+_grid_import_total$"},
+      "grid_export_total_kwh": {"domain": "sensor", "unique_id_regex": "^[^_]+_grid_export_total$"},
+      "mode": {"domain": "select", "unique_id_regex": "^[^_]+_charger_use_mode$"},
+      "soc_min": {"domain": "number", "unique_id_regex": "^[^_]+_(selfuse_discharge_min_soc|battery_minimum_capacity)$"},
+      "soc_max": {"domain": "number", "unique_id_regex": "^[^_]+_battery_charge_upper_soc$"},
+      "export_limit_w": {"domain": "number", "unique_id_regex": "^[^_]+_export_control_user_limit$"}
+    }
+  }]},
+  "capabilities": {
+    "force_charge_from_grid": false, "sell_from_battery": false, "force_discharge": false,
+    "standby": false, "set_power_w": false, "limit_export": false, "set_soc_floor": false,
+    "set_soc_ceiling": false, "time_windows": 0
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Community integration sources only. Identification (serial 0x0000-0x0006, rated output power 0x00BA) and settings read-back (Charger Use Mode 0x008B) are holding registers (function 3); measurements are input registers (function 4). Writes are single-register FC6, as the reference integrations do. SolaX writes and reads settings at different addresses: the only write is Charger Use Mode at 0x001F, which reads back at 0x008B; 0x001F in the function-3 read table is not the mode (the community map documents no read register there; it may return an unrelated word or an exception), so `mode` is echo-only and the verify block at 0x001F exists only because the schema requires a block over every write address, not as a read-back. Re-writing 0 (Self Use) while 0x008B reads 0 is the safe probe; check 0x008B by hand afterwards. Writes may be refused until 2014 is written to 0x0000 (lock state), which the profile does not do. Through the Pocket WiFi/LAN 3.0 dongle a 5 s timeout and gap_ms 100 are conservative stand-ins, not vendor data. modbus_rtu is RS485 through a TCP gateway (port 8899 is a guess at a common gateway default; use the gateway's own port). Entity mode: the solax_modbus integration names unique ids '<hub name>_<key>' (default hub name SolaX); a hub name containing '_' does not match these regexes and needs the manual entity pick. Its Charger Use Mode select carries generation-specific options; only 'Self Use Mode' (the same on G3 and G4) is used. The SoC and export-limit numbers are mapped for display only (capabilities false). The sign of battery current is assumed, not documented.",
+    "write_function": 6,
+    "max_read_registers": 100,
+    "transport_options": {
+      "modbus_tcp": {"port": 502, "timeout_ms": 5000, "gap_ms": 100},
+      "modbus_rtu": {"port": 8899, "timeout_ms": 3000, "gap_ms": 200}
+    },
+    "identify_reads": [{"addr": 0, "count": 7}, {"addr": 186, "count": 1}],
+    "verify_blocks": [{"addr": 31, "count": 1}],
+    "probe_keys": ["mode"],
+    "echo_only": ["mode"]
+  }
+}
