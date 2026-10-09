@@ -31,6 +31,7 @@ from .core.discovery.known import HOST_KEYS
 from .core.discovery.network import NetworkProbeResult, probe_udp_48899
 from .registry_compat import all_devices
 from .core.discovery.report import ERROR_TIMEOUT, REPORT_SCHEMA, build_report
+from .control.direct_search import load_profiles
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -186,11 +187,20 @@ class DiscoveryRunner:
         except Exception as err:  # noqa: BLE001 — sonda z założenia nie rzuca, ale na wszelki wypadek
             errors.append(_err("network", err))
             network = None
+        profiles = await self._profiles(errors)
         return build_report(
             classification=classification, states=states, history_days=history_days,
             network=network, errors=errors,
             integration_version=self.integration_version, ha_version=HA_VERSION,
-            generated_at=dt_util.utcnow().isoformat(), devices=devices)
+            generated_at=dt_util.utcnow().isoformat(), devices=devices, profiles=profiles)
+
+    async def _profiles(self, errors: list[str]) -> list:
+        """Profile marek — tylko do zgłoszenia niejednoznacznego wyboru profilu w raporcie."""
+        try:
+            return await self.hass.async_add_executor_job(load_profiles)
+        except Exception as err:  # noqa: BLE001 — błąd kroku → errors
+            errors.append(_err("profiles", err))
+            return []
 
     def _snap_devices(self) -> tuple[list[DeviceSnap], frozenset[str]]:
         """Migawki aktywnych urządzeń i identyfikatory pominiętych (wyłączonych).

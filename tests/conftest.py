@@ -626,6 +626,10 @@ def make_hass():
             components=set(components), time_zone=time_zone)
         hass.states = _FakeStates(states or {})
         hass.config_entries = _FakeConfigEntries(list(entries))
+
+        async def _executor(fn, *args):
+            return fn(*args)
+        hass.async_add_executor_job = _executor
         return hass
 
     return _factory

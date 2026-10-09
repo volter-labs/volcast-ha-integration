@@ -460,3 +460,22 @@ def test_summary_reports_runner_failure():
 def test_summary_step_errors_do_not_hide_findings():
     r = _report(errors=["history: recorder not loaded"])
     assert summarize(r).startswith("solarman (SUN-10K-SG04LP3-EU)")
+
+
+def _solarman_cls(manufacturer, model):
+    dev = DeviceSnap("d1", manufacturer, model, "Inverter", "1.0", None, None, (), ("e1",))
+    return Classification([InverterFinding("solarman", "e1", "Inverter", None, [dev], [], "domain")], [], [])
+
+
+def test_ambiguous_profile_surfaces_in_report_and_sensor_attributes():
+    from custom_components.volcast.core.profile import builtin_ids, load_builtin
+    profiles = [load_builtin(i) for i in builtin_ids()]
+    r = _report(classification=_solarman_cls("Solarman", None), profiles=profiles)
+    assert r["inverters"][0]["profile_candidates"] == ["sofar-hyd", "solis-hybrid"]
+    assert compact_attributes(r)["inverters"][0]["profile_candidates"] == ["sofar-hyd", "solis-hybrid"]
+    # Tekst urządzenia rozstrzyga — wtedy nie ma czego zgłaszać.
+    clear = _report(classification=_solarman_cls("Ginlong", "S6-EH1P"), profiles=profiles)
+    assert "profile_candidates" not in clear["inverters"][0]
+    assert "profile_candidates" not in compact_attributes(clear)["inverters"][0]
+    # Bez profili (np. pusty raport awaryjny) raport wygląda jak dotąd.
+    assert "profile_candidates" not in _report(classification=_solarman_cls("Solarman", None))["inverters"][0]

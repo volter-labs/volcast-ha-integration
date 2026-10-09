@@ -410,3 +410,15 @@ async def test_runner_keeps_last_classification_outside_the_report(make_hass):
         rep = await runner.async_run()
     assert runner.classification is not None and runner.classification.chargers == []
     assert "classification" not in rep and "chargers" not in rep
+
+
+async def test_ambiguous_profile_reported_for_unbranded_solarman(make_hass):
+    entry = SimpleNamespace(entry_id="s1", domain="solarman", title="Inverter", data={"host": "192.168.1.30"})
+    dev = _device(manufacturer="Solarman", model=None, serial_number=None, identifiers=set(), config_entries={"s1"})
+    ent = _entity(entity_id="sensor.inverter_soc", platform="solarman", unique_id="solarman_soc",
+                  config_entry_id="s1")
+    hass = make_hass(devices=[dev], entities=[ent], entries=[entry], states={}, components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert rep["inverters"][0]["profile_candidates"] == ["sofar-hyd", "solis-hybrid"]
+    assert rep["errors"] == []

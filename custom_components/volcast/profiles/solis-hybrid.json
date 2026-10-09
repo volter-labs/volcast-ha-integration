@@ -245,6 +245,7 @@
         "domain": "solarman",
         "ems": false,
         "status": "draft",
+        "model_regex": ["(?i)\\b(solis|ginlong)\\b"],
         "entities": {
           "soc": {
             "domain": "sensor",
@@ -299,6 +300,7 @@
         "domain": "solax_modbus",
         "ems": false,
         "status": "draft",
+        "model_regex": ["(?i)\\b(solis|ginlong)\\b"],
         "entities": {
           "soc": {
             "domain": "sensor",

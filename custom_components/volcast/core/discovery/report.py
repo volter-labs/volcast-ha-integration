@@ -5,6 +5,7 @@ import json
 import re
 from collections.abc import Iterable
 
+from ..control.select import InverterHint, ambiguous_profiles
 from .known import INVERTER_DOMAINS
 from .models import Classification, DeviceSnap, EntitySnap, StateSnap
 from .network import NetworkProbeResult
@@ -50,7 +51,7 @@ _MAX_TEXT = 2048
 # "deye-<mac>.local"), a jednostka bywa dowolnym tekstem ze stanu encji — oba muszą
 # przechodzić przez maskowanie.
 _STRUCTURAL_KEYS = frozenset({
-    "domain", "entity_domain", "platform", "brand_hint", "matched_by",
+    "domain", "entity_domain", "platform", "brand_hint", "matched_by", "profile_candidates",
     "schema", "generated_at", "integration_version", "ha_version", "translation_key",
 })
 
@@ -260,13 +261,17 @@ def _entity(e: EntitySnap, states: dict[str, StateSnap]) -> dict:
 
 def build_report(*, classification, states, history_days, network, errors,
                  integration_version, ha_version, generated_at,
-                 devices: Iterable[DeviceSnap] = ()) -> dict:
+                 devices: Iterable[DeviceSnap] = (), profiles: Iterable = ()) -> dict:
     """`devices` — migawki wszystkich aktywnych urządzeń; seriale bierzemy tylko z tych,
-    których encje trafiają do raportu."""
+    których encje trafiają do raportu. `profiles` — profile marek: falownik, którego tekst
+    urządzenia pasuje do kilku z nich, dostaje `profile_candidates` (wybór profilu nie wybrał żadnego)."""
     sn = _serials(classification, network, devices)
+    profiles = list(profiles)
     inverters = []
     for inv in classification.inverters:
-        inverters.append({
+        amb = ambiguous_profiles([InverterHint(inv.domain, d.manufacturer, d.model) for d in inv.devices],
+                                 profiles).get(inv.domain) if profiles else None
+        inverters.append({**({"profile_candidates": list(amb)} if amb else {}),
             "domain": inv.domain, "brand_hint": INVERTER_DOMAINS.get(inv.domain),
             "matched_by": inv.matched_by,
             "config_entry_title": inv.config_entry_title, "host": inv.host,
@@ -370,6 +375,8 @@ def compact_attributes(report: dict) -> dict:
             "models": sorted({_cut(str(d["model"])) for d in i.get("devices") or []
                               if d.get("model")})[:_ATTR_MODELS],
             "entity_count": len(i.get("entities") or []),
+            **({"profile_candidates": [_cut(str(c)) for c in i["profile_candidates"]][:_ATTR_MODELS]}
+               if i.get("profile_candidates") else {}),
         } for i in (report.get("inverters") or [])[:_ATTR_INVERTERS]],
         "price_platforms": sorted({_cut(str(p.get("platform")))
                                    for p in report.get("price_entities") or []})[:_ATTR_PLATFORMS],

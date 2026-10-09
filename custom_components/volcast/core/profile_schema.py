@@ -450,10 +450,17 @@ def _ha(v: _V, raw: Any) -> None:
         return
     for i, integ in enumerate(h["integrations"]):
         p = f"$.ha.integrations[{i}]"
-        it = v.obj(integ, p, ("domain", "ems", "status", "entities"))
+        it = v.obj(integ, p, ("domain", "ems", "status", "entities"), ("model_regex",))
         if it is None:
             continue
         v.str_(it.get("domain"), f"{p}.domain")
+        if "model_regex" in it:
+            # Rozstrzyga między profilami tej samej domeny po tekście „producent model” urządzenia HA.
+            mr = v.str_list(it["model_regex"], f"{p}.model_regex")
+            if mr is not None and not mr:
+                v.err(f"{p}.model_regex", "oczekiwano niepustej listy")
+            for j, r in enumerate(mr or ()):
+                v.regex(r, f"{p}.model_regex[{j}]")
         v.bool_(it.get("ems"), f"{p}.ems")
         v.enum(it.get("status"), f"{p}.status", ("draft", "verified"))
         ents = it.get("entities")

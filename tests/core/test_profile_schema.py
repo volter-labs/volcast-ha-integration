@@ -501,3 +501,13 @@ def test_write_registers_take_no_read_function():
     p = ms_profile()
     p["write"]["mode"]["fc"] = 4
     assert "$.write.mode.fc: nieznane pole" in _errs(p)
+
+
+def test_ha_integration_model_regex_is_optional_and_validated():
+    p = ms_profile()
+    p["ha"]["integrations"][0]["model_regex"] = ["(?i)goodwe", "^GW"]
+    assert validate_profile(p) == []
+    for bad, where in (("(?i)goodwe", "model_regex"), ([], "model_regex"), (["(["], "model_regex[0]"),
+                       ([3], "model_regex")):
+        p["ha"]["integrations"][0]["model_regex"] = bad
+        assert f"$.ha.integrations[0].{where}" in _errs(p), bad

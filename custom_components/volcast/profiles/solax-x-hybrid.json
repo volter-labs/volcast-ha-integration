@@ -72,6 +72,7 @@
     "domain": "solax_modbus",
     "ems": false,
     "status": "draft",
+    "model_regex": ["(?i)\\bsolax\\b", "(?i)\\bX[13]-Hybrid"],
     "entities": {
       "soc": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_capacity$"},
       "battery_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_battery_power_charge$", "transform": "negate"},
