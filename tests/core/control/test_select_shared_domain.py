@@ -48,3 +48,35 @@ def test_goodwe_selection_unchanged_with_all_profiles():
     assert (c.profile.id, c.integration_domain, c.model) == ("goodwe-et", "goodwe", "GW8KN-ET")
     c = select_profile([InverterHint("goodwe", "GoodWe", "GW5048D-ES")], ALL)
     assert (c.profile.id, c.integration_domain) == ("goodwe-et", None)
+
+
+def test_sofar_reached_by_its_integration_model_regex_alone():
+    # Producent bez marki z id profilu i model spoza identify.model_regex: rozstrzyga tylko `ha` model_regex.
+    hint = InverterHint("solax_modbus", None, "HYD 10KTL-3PH")
+    assert select_profile([hint], ALL).profile.id == "sofar-hyd"
+
+
+@pytest.mark.parametrize("hints", [
+    [InverterHint("huawei_solar", "Huawei", "SUN2000-10KTL-M1"), InverterHint("goodwe", "GoodWe", "GW8KN-ET")],
+    [InverterHint("goodwe", "GoodWe", "GW8KN-ET"), InverterHint("huawei_solar", "Huawei", "SUN2000-10KTL-M1")],
+])
+def test_verified_match_wins_over_draft_in_any_hint_order(hints):
+    c = select_profile(hints, ALL)
+    assert (c.profile.id, c.integration_domain) == ("goodwe-et", "goodwe")
+
+
+def test_verified_read_only_match_wins_over_draft_entity_match():
+    hints = [InverterHint("huawei_solar", "Huawei", "SUN2000-10KTL-M1"), InverterHint("goodwe", "GoodWe", "GW5048D-ES")]
+    c = select_profile(hints, ALL)
+    assert (c.profile.id, c.integration_domain) == ("goodwe-et", None)
+
+
+@pytest.mark.parametrize("hints,pid", [
+    ([InverterHint("huawei_solar", "Huawei", "SUN2000-10KTL-M1"), InverterHint("solax_modbus", "SolaX Power", "X3-Hybrid")],
+     "huawei-sun2000"),
+    ([InverterHint("solax_modbus", "SolaX Power", "X3-Hybrid"), InverterHint("huawei_solar", "Huawei", "SUN2000-10KTL-M1")],
+     "huawei-sun2000"),
+])
+def test_drafts_only_household_keeps_entity_match_then_hint_order(hints, pid):
+    # Same drafty: dopasowanie z integracją przed dopasowaniem tylko do odczytu, potem kolejność wskazówek.
+    assert select_profile(hints, ALL).profile.id == pid

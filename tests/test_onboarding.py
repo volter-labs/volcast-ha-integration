@@ -578,3 +578,17 @@ def test_rejected_progress_posts_back_off():
     asyncio.run(ob.async_run())
     # 30 min okna co 5 s = 360 obiegów; z wycofaniem 5→60 s ponowień jest kilkadziesiąt
     assert calls["n"] < 60
+
+
+def test_draft_integration_entry_not_offered_in_onboarding():
+    # Wpis `ha` w stanie draft to tylko podpowiedź mapowania odczytów: bez wyboru „entities”.
+    draft = ProfileChoice(load_builtin("huawei-sun2000"), "huawei_solar", "SUN2000-10KTL-M1")
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN, choice=draft)
+    asyncio.run(ob.async_run())
+    st = last(client)
+    assert st["capabilities"]["detail"] == "read only"
+    assert st["control_mode"]["state"] == "choice" and "entities" not in (st["control_mode"].get("detail") or "")
+    ob, client, entry = make([PollResult("consumed", choices={"control_mode": "entities"})], plan=OK_PLAN,
+                             choice=draft)
+    asyncio.run(ob.async_run())
+    assert "control_mode" not in entry.options and last(client)["control_mode"]["state"] == "error"

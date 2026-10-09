@@ -82,16 +82,29 @@ def _read_only_cands(hint: InverterHint, ordered: Sequence[Profile]) -> list[Pro
 
 
 def select_profile(hints: Sequence[InverterHint], profiles: Sequence[Profile]) -> ProfileChoice | None:
+    """Najlepsze dopasowanie spośród WSZYSTKICH wskazówek (kilka falowników w domu).
+
+    Kolejność: profil i wpis integracji zweryfikowane (sterowanie encjami) → profil zweryfikowany
+    (także tylko do odczytu) → drafty. W obrębie jednego poziomu dopasowanie z integracją przed
+    dopasowaniem tylko do odczytu, a potem kolejność wskazówek — dom z samymi draftami dostaje
+    to samo co dotąd. Draft innej marki nie może przesłonić zweryfikowanego falownika.
+    """
     ordered = sorted(profiles, key=lambda p: p.id)
-    for h in hints:
+    found: list[tuple[tuple[int, int, int], ProfileChoice]] = []
+    for idx, h in enumerate(hints):
         cands = _entity_cands(h, ordered)
         if len(cands) == 1:
-            return ProfileChoice(cands[0], h.domain, h.model)
-    for h in hints:
+            found.append(((_rank(cands[0], h.domain), 0, idx), ProfileChoice(cands[0], h.domain, h.model)))
         cands = _read_only_cands(h, ordered)
         if len(cands) == 1:
-            return ProfileChoice(cands[0], None, h.model)
-    return None
+            found.append(((_rank(cands[0], None), 1, idx), ProfileChoice(cands[0], None, h.model)))
+    return min(found, key=lambda f: f[0])[1] if found else None
+
+
+def _rank(profile: Profile, integration_domain: str | None) -> int:
+    if control_verified(profile, integration_domain):
+        return 0
+    return 1 if profile.status == "verified" else 2
 
 
 def ambiguous_profiles(hints: Sequence[InverterHint], profiles: Sequence[Profile]) -> dict[str, tuple[str, ...]]:
