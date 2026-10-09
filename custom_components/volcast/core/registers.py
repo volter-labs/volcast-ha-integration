@@ -10,6 +10,8 @@ from typing import Any, Iterable, Mapping, Sequence
 from .params import Params
 
 _WORDS = {"u16": 1, "i16": 1, "u32": 2, "i32": 2, "f32": 2}
+FC_HOLDING = 3          # domyślna funkcja odczytu (`fc` w specyfikacji rejestru)
+FC_INPUT = 4
 
 
 class RegisterError(ValueError):
@@ -17,32 +19,45 @@ class RegisterError(ValueError):
 
 
 class RegisterImage:
-    """Migawka rejestrów: adres → słowo 16-bit (z jednego lub wielu bloków odczytu)."""
+    """Migawka rejestrów: adres → słowo 16-bit (z jednego lub wielu bloków odczytu).
 
-    def __init__(self, words: Mapping[int, int]) -> None:
-        self._w = dict(words)
+    Rejestry holding (FC 3) i input (FC 4) to OSOBNE przestrzenie adresów — ten sam adres
+    w obu to dwa różne rejestry. `words` bez przestrzeni = holding.
+    """
+
+    def __init__(self, words: Mapping[int, int], input_words: Mapping[int, int] | None = None) -> None:
+        self._spaces: dict[int, dict[int, int]] = {FC_HOLDING: dict(words), FC_INPUT: dict(input_words or {})}
 
     @classmethod
-    def from_blocks(cls, blocks: Mapping[int, Sequence[int]]) -> "RegisterImage":
-        out: dict[int, int] = {}
-        for base, words in blocks.items():
+    def from_blocks(cls, blocks: Mapping[int | tuple[int, int], Sequence[int]]) -> "RegisterImage":
+        """Klucz bloku: adres początkowy (holding) albo `(funkcja, adres)`."""
+        spaces: dict[int, dict[int, int]] = {FC_HOLDING: {}, FC_INPUT: {}}
+        for key, words in blocks.items():
+            fc, base = key if isinstance(key, tuple) else (FC_HOLDING, key)
+            if fc not in spaces:
+                raise ValueError(f"nieznana funkcja odczytu {fc!r}")
+            out = spaces[fc]
             for i, w in enumerate(words):
                 out[base + i] = w & 0xFFFF
-        return cls(out)
+        return cls(spaces[FC_HOLDING], spaces[FC_INPUT])
 
-    def words(self, addr: int, n: int) -> list[int]:
+    def words(self, addr: int, n: int, fc: int = FC_HOLDING) -> list[int]:
+        space = self._spaces.get(fc)
+        if space is None:
+            raise RegisterError(f"nieznana funkcja odczytu {fc!r}")
         try:
-            return [self._w[addr + i] for i in range(n)]
+            return [space[addr + i] for i in range(n)]
         except KeyError as err:
             raise RegisterError(f"brak rejestru {err.args[0]}") from err
 
 
 def decode(spec: Mapping[str, Any], image: RegisterImage) -> float | str:
     typ = spec["type"]
+    fc = spec.get("fc", FC_HOLDING)
     if typ == "ascii":
-        raw = b"".join(w.to_bytes(2, "big") for w in image.words(spec["addr"], spec["len"]))
+        raw = b"".join(w.to_bytes(2, "big") for w in image.words(spec["addr"], spec["len"], fc))
         return raw.decode("latin-1").strip(" \x00")
-    words = image.words(spec["addr"], _WORDS[typ])
+    words = image.words(spec["addr"], _WORDS[typ], fc)
     if spec.get("word_order") == "lo_hi":
         words = list(reversed(words))
     if typ == "f32":

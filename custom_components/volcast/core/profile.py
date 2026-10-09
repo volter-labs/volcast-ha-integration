@@ -43,7 +43,8 @@ class ModbusSpec:
     write_function: int                                 # 6 | 16
     max_read_registers: int                             # 1..125
     transport_options: Mapping[str, Mapping[str, int]]  # nazwa → {port, timeout_ms, gap_ms}
-    identify_reads: tuple[tuple[int, int], ...]         # (adres, liczba)
+    # (adres, liczba) — holding; (adres, liczba, 4) — input (FC 4), jak bloki `modbus/blocks.py`
+    identify_reads: tuple[tuple[int, ...], ...]
     probe_keys: tuple[str, ...]
     echo_only: tuple[str, ...] = ()                     # klucze potwierdzane samym echem (bez odczytu)
     # bloki znane jako dozwolone (czyta je urządzenie referencyjne): odczyt rejestru zapisu blokiem
@@ -141,7 +142,8 @@ def _modbus_spec(m: Mapping[str, Any]) -> ModbusSpec:
         max_read_registers=m["max_read_registers"],
         transport_options=MappingProxyType({name: MappingProxyType(dict(o))
                                             for name, o in m["transport_options"].items()}),
-        identify_reads=tuple((r["addr"], r["count"]) for r in m["identify_reads"]),
+        identify_reads=tuple((r["addr"], r["count"]) if r.get("fc", 3) == 3 else (r["addr"], r["count"], r["fc"])
+                             for r in m["identify_reads"]),
         probe_keys=tuple(m["probe_keys"]),
         echo_only=tuple(m.get("echo_only", ())),
         verify_blocks=tuple((b["addr"], b["count"]) for b in m.get("verify_blocks", ())),

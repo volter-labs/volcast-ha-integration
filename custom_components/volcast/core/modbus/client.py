@@ -34,7 +34,7 @@ from typing import Callable, Iterable
 
 from ..registers import RegisterImage
 from ..transports.base import LinkDown, ModbusException, RegisterTransport, RequestTimeout, TransportError
-from .blocks import read_plan, split_block
+from .blocks import block_key, make_block, read_kwargs, read_plan, split_block
 from .identity import device_fingerprint
 from .reading import DirectReading, build_reading
 from .views import needs_disambiguation, poll_order, prev_read_count, separators_for
@@ -96,8 +96,9 @@ class RegisterClient:
         return [{"offset": a, "count": c, "request": req, "response": resp}
                 for (a, c), (req, resp) in sorted(self._raw.items())]
 
-    async def read_block(self, addr: int, count: int, *, tries: int | None = None) -> list[int]:
-        return await self.transport.read(addr, count, tries=tries)
+    async def read_block(self, addr: int, count: int, fc: int = 3, *, tries: int | None = None) -> list[int]:
+        """Blok `(adres, liczba[, funkcja])` — `read_block(*blok)`; funkcja 3 (holding) albo 4 (input)."""
+        return await self.transport.read(addr, count, tries=tries, **read_kwargs(make_block(addr, count, fc)))
 
     async def read_register(self, addr: int, *, tries: int | None = None) -> int:
         """`tries` — mniej prób transportu niż `read_tries` (None = pełna liczba prób)."""
@@ -144,7 +145,7 @@ class RegisterClient:
         started_utc = self._utcnow()
         lost = [0.0]
         frames: list[dict] = []
-        blocks: dict[int, list[int]] = {}
+        blocks: dict[int | tuple[int, int], list[int]] = {}
         last_err: TransportError | None = None
         plan = read_plan(self.profile, exclude=self.unreadable)
         if self._disambiguate:
@@ -156,7 +157,7 @@ class RegisterClient:
                         words = await self._separated(block, lost)
                 else:
                     words = await self._timed_read(block, lost)
-                blocks[block[0]] = self._remember(block, words)
+                blocks[block_key(block)] = self._remember(block, words)
                 frames.append(_frame(block, True))
                 continue
             except TransportError as err:
@@ -186,7 +187,7 @@ class RegisterClient:
             if sub == tuple(block):
                 continue
             try:
-                blocks[sub[0]] = await self._timed_read(sub, lost)
+                blocks[block_key(sub)] = await self._timed_read(sub, lost)
                 frames.append(_frame(sub, True))
             except TransportError as err:
                 frames.append(_frame(sub, False))
@@ -243,7 +244,7 @@ class RegisterClient:
                     except ModbusException:
                         continue
                 words = await self._timed_read(block, lost)
-            blocks[block[0]] = self._remember(block, words)
+            blocks[block_key(block)] = self._remember(block, words)
             frames.append(_frame(block, True))
             return None
         except TransportError as err:
@@ -263,7 +264,7 @@ class RegisterClient:
                             and await self._separated(sub, lost) != words:
                         raise TransportError("split read not confirmed")
                 self._known.update(zip(span, words))
-                blocks[sub[0]] = words
+                blocks[block_key(sub)] = words
                 frames.append(_frame(sub, True))
             except TransportError as err:
                 frames.append(_frame(sub, False))
@@ -278,14 +279,15 @@ class RegisterClient:
         """Odcisk urządzenia z rejestrów identyfikacyjnych; None = nieczytelne albo nierozpoznane."""
         if not self._salt:
             raise ValueError("identity needs the installation salt")
-        blocks: dict[int, list[int]] = {}
-        for addr, count in self.profile.modbus.identify_reads:
+        blocks: dict[int | tuple[int, int], list[int]] = {}
+        for block in self.profile.modbus.identify_reads:
             try:
-                blocks[addr] = await self.read_block(addr, count)
+                blocks[block_key(block)] = await self.read_block(*block)
             except TransportError:
                 return None
         return device_fingerprint(self._salt, self.profile, RegisterImage.from_blocks(blocks))
 
 
 def _frame(block, ok: bool) -> dict:
-    return {"addr": block[0], "count": block[1], "ok": ok}
+    # funkcja tylko dla input — wpisy holding bez zmian (diagnostyka sprzed FC 4)
+    return {"addr": block[0], "count": block[1], **read_kwargs(block), "ok": ok}
