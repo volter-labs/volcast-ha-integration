@@ -518,3 +518,12 @@ def test_build_live_reading_direct_values():
     r = s.build_live_reading()
     assert r["live"] is True and r["battery_soc"] == 83 and r["ems_mode"] == "charge_battery"
     assert not set(r) & {"prices", "driver", "extra", "loads"}
+
+
+@pytest.mark.parametrize("pid,domain", [("foxess-h", "foxess_modbus"), ("huawei-sun2000", "huawei_solar"),
+                                        ("solax-x-hybrid", "solax_modbus")])
+def test_draft_integration_entry_declares_no_capabilities(pid, domain):
+    # Profil/wpis HA niezweryfikowany: chmura nie może planować z możliwościami, których HA nie wykona.
+    choice = ProfileChoice(load_builtin(pid), domain, None)
+    b = driver_block(choice=choice, control_mode="entities", mapped_keys=ALL, local_switch=True, limits=None)
+    assert b["id"] == pid and b["capabilities"] and not any(b["capabilities"].values())

@@ -36,7 +36,7 @@ from ..const import (CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT
                      OPT_PRICE_SELL)
 from ..core.control.caps import capabilities_for
 from ..core.control.readings import RawState, manual_reading, normalize_readings
-from ..core.control.select import ProfileChoice
+from ..core.control.select import ProfileChoice, control_verified
 from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
 from .loads_reader import LoadsReader
 from .direct_sensors import STALE_FACTOR as _STALE_FACTOR   # jedna reguła świeżości z sensorami
@@ -69,7 +69,10 @@ def driver_block(*, choice: ProfileChoice | None, control_mode: str | None, mapp
                    "local_switch_enabled": bool(local_switch)}
     if (choice.integration_domain and control_mode == CONTROL_MODE_ENTITIES
             and choice.profile.control_model == "mode_setpoint"):
-        block["capabilities"] = capabilities_for(choice.profile, mapped_keys)
+        caps = capabilities_for(choice.profile, mapped_keys)
+        if not control_verified(choice.profile, choice.integration_domain):
+            caps = dict.fromkeys(caps, False)     # draft: HA nie wykona żadnej z nich
+        block["capabilities"] = caps
     if limits is not None:
         block["limits"] = limits
     return block

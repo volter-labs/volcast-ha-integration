@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Iterable, Mapping
 
 from ..profile_schema import SLOT_POWER_KINDS
+from .select import control_verified
 
 _INTENT_CAPS = {"force_charge_from_grid": "charge_grid", "sell_from_battery": "sell",
                 "force_discharge": "discharge_forced", "standby": "standby"}
@@ -29,11 +30,14 @@ def missing_write_keys(profile, mapped_keys: Iterable[str]) -> tuple[str, ...]:
 
 
 def entity_mode_ready(choice, mapped_keys: Iterable[str]) -> bool:
-    """Czy tryb encji jest dostępny: profil z integracją HA i encja trybu.
+    """Czy tryb encji jest dostępny: zweryfikowany profil i wpis integracji HA oraz encja trybu.
 
-    Jedna reguła dla opcji integracji i dla wyboru zdalnego w onboardingu.
+    Jedna reguła dla opcji integracji i dla wyboru zdalnego w onboardingu. Wpis `draft`
+    (albo profil `draft`) daje tylko podpowiedzi mapowania odczytów — sterowania nie oferujemy.
     """
     if choice is None or not getattr(choice, "integration_domain", None):
+        return False
+    if not control_verified(choice.profile, choice.integration_domain):
         return False
     return not required_missing(choice.profile, mapped_keys or ())
 
