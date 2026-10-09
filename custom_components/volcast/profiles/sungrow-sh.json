@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "id": "sungrow-sh",
+  "label": "Sungrow SH RS/RT hybrid",
+  "status": "draft",
+  "status_note": "Public register documentation only; nothing verified on hardware. Covers the SH3.0-10RS single-phase and SH5.0-10RT three-phase hybrids (plain, -20, -V112, -V122), identified by the device type code; the SH*T series (SH5T-SH25T), MG*RL, the older SH*K models and SG string inverters are not covered. Addresses in this profile are wire (PDU) addresses: the vendor register number minus 1, as the vendor document instructs (its register 5000 is read at 4999); community sources mix both conventions, so an off-by-one is the first thing to check. Measurements are input registers (function 4), settings holding registers (function 3). Control is limited to the EMS mode register 13049 (0 = self-consumption, the default): forced charge/discharge needs EMS mode 2 together with the command register 13050 and the power register 13051, the SoC limits are scaled x10 and the export limit needs an enable register with 0xAA/0x55 codes, none of which the engine can write (see docs/profiles/engine-gaps.md); grid charge, forced discharge, sell and standby therefore map to the neutral mode without power and their capabilities are false. Live-test checklist: (1) device type code at 4999 and rated power at 5000 (0.1 kW units, x100 here); (2) 32-bit values low word first and the scales: SoC 13022 x0.1 %, battery temperature 13024 x0.1 C, battery voltage 13019 x0.1 V, energy totals x0.1 kWh; (3) signs: battery power 5213-5214 negative while charging (vendor recommends it over the unsigned 13021 whose direction sits in the power-flow bits of 13000; older firmware may not implement 5213), export power 13009 positive while exporting (negated here); load and grid values are valid only with the vendor smart meter wired directly to the inverter; (4) the single-phase RS models reportedly implement only a subset of registers, check every read on one; (5) unit id 1 on port 502, through the inverter's own LAN port preferably: the WiNet-S dongle is a frequent source of errors and the vendor says RW registers must not be polled or set frequently through it, yet mode_value re-reads 13049 every cycle; (6) the safe write is re-writing the current value of 13049 with FC6 and reading it back; restore by writing back the value read before the test; leaving self-consumption for another value is not part of the probe; (7) community reports of written settings falling back after some seconds on older firmware are unconfirmed; the documented fallback is External EMS / VPP mode (3/4) returning to self-consumption when the heartbeat 13080 is not refreshed, which this profile never writes. Battery temperature limits are the generic defaults of the other profiles, not Sungrow data. Not used for control until verified.",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {"what": "register map (vendor register numbers; visit each register at its number minus 1; low word first per the read example): serial 4990-4999, device type code 5000, nominal output power 5001 (0.1 kW), total DC power 5017-5018, battery power 5214-5215 (S32, recommended over 13022), meter active power 5601, power flow status 13001 with its bits, load power 13008-13009, export power 13010-13011, battery voltage 13020, battery power 13022 (U16), SoC 13023, battery temperature 13025, total PV generation 13003-13004, total import energy 13037-13038, total export energy 13046-13047; EMS mode 13050 (0 self-consumption, 2 compulsory, 3 external EMS, 4 VPP), charge/discharge command 13051 (0xAA/0xBB/0xCC), charge/discharge power 13052 (W), max/min SoC 13058/13059 (0.1 %), feed-in limitation value 13074 (W) and enable 13087 (0xAA/0x55), external EMS heartbeat 13080, forced charging periods 33208-33219, max charge/discharge power 33047/33048 (0.01 kW); unavailable markers 0xFFFF/0x7FFFFFFF; RW registers not for frequent polling through WiNet-S; device type codes (appendix 1)", "ref": "https://forum.iobroker.net/assets/uploads/files/1771841809177-ti_20251119_communication-protocol-of-residential-hybrid-inverter_v1.1.11_en.pdf"},
+    {"what": "wire addresses (vendor number minus 1), input/holding split, word swap for 32-bit values, battery power 5213 sign (negative = charging), export power raw 13009 sign (positive = exporting), EMS mode select options, Home Assistant unique ids of the modbus sensors and template select, device type codes", "ref": "https://github.com/mkaiser/Sungrow-SHx-Inverter-Modbus-Home-Assistant/blob/main/modbus_sungrow.yaml"},
+    {"what": "connection defaults: port 502, unit id 1, delay between messages (about 30 ms or more through WiNet-S)", "ref": "https://github.com/mkaiser/Sungrow-SHx-Inverter-Modbus-Home-Assistant/blob/main/doc/installation.md"},
+    {"what": "inverter LAN port recommended over the WiNet-S dongle; single-phase RS models implement a subset of registers", "ref": "https://github.com/mkaiser/Sungrow-SHx-Inverter-Modbus-Home-Assistant/blob/main/doc/help.md"},
+    {"what": "device type codes of the SH RS/RT models (including SH4.6RS 0xD0E) and read block sizes of up to 100 registers", "ref": "https://github.com/bohdan-s/SunGather/blob/main/SunGather/registers-sungrow.yaml"},
+    {"what": "single-register writes to 13049/13050 (wire addresses), return to normal = command 0xCC then EMS mode 0, forced charge = EMS mode 2 then 0xAA; older firmware battery power direction from the power flow bits", "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/sungrow-hybrid.yaml"}
+  ],
+  "unit_id": 1,
+  "transports": ["modbus_tcp"],
+  "identify": {
+    "registers": {
+      "device_type": {"addr": 4999, "type": "u16", "fc": 4,
+                      "expect": [3341, 3342, 3343, 3344, 3351, 3352, 3354, 3355,
+                                 3584, 3585, 3586, 3587, 3592, 3593, 3594, 3595, 3596, 3597, 3598, 3599,
+                                 3600, 3601, 3602, 3603]},
+      "serial": {"addr": 4989, "type": "ascii", "len": 10, "fc": 4},
+      "rated_power_w": {"addr": 5000, "type": "u16", "scale": 100, "fc": 4}
+    }
+  },
+  "read": {
+    "soc": {"addr": 13022, "type": "u16", "scale": 0.1, "fc": 4},
+    "battery_temp_c": {"addr": 13024, "type": "i16", "scale": 0.1, "fc": 4},
+    "battery_voltage_v": {"addr": 13019, "type": "u16", "scale": 0.1, "fc": 4},
+    "battery_power_w": {"addr": 5213, "type": "i32", "word_order": "lo_hi", "fc": 4},
+    "pv_power_w": {"addr": 5016, "type": "u32", "word_order": "lo_hi", "fc": 4},
+    "grid_power_w": {"addr": 13009, "type": "i32", "word_order": "lo_hi", "sign": -1, "fc": 4},
+    "load_power_w": {"addr": 13007, "type": "i32", "word_order": "lo_hi", "fc": 4},
+    "pv_energy_total_kwh": {"addr": 13002, "type": "u32", "word_order": "lo_hi", "scale": 0.1, "fc": 4},
+    "grid_import_total_kwh": {"addr": 13036, "type": "u32", "word_order": "lo_hi", "scale": 0.1, "fc": 4},
+    "grid_export_total_kwh": {"addr": 13045, "type": "u32", "word_order": "lo_hi", "scale": 0.1, "fc": 4},
+    "mode_value": {"addr": 13049, "type": "u16"}
+  },
+  "write": {
+    "mode": {"addr": 13049, "type": "u16", "encode": "mode"}
+  },
+  "modes": {
+    "self_consumption": {"value": 0, "direction": "neutral", "ha_option": "Self-consumption mode (default)"}
+  },
+  "neutral_mode": "self_consumption",
+  "intents": {
+    "charge_grid": {"mode": "self_consumption", "power": "none"},
+    "charge_pv": {"mode": "self_consumption", "power": "none"},
+    "discharge_forced": {"mode": "self_consumption", "power": "none"},
+    "sell": {"mode": "self_consumption", "power": "none"},
+    "self_consume": {"mode": "self_consumption", "power": "none"},
+    "standby": {"mode": "self_consumption", "power": "none"}
+  },
+  "baseline": {"mode": "self_consumption"},
+  "write_policy": {
+    "order": ["mode"],
+    "min_interval_s": 300,
+    "nvm": true,
+    "max_direction_changes_per_hour": 2,
+    "max_state_age_s": 300,
+    "readback_settle_s": 2,
+    "nvm_budget": {"window_h": 24, "per_key": 24, "total": 24}
+  },
+  "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
+  "ha": {"integrations": [{
+    "domain": "modbus",
+    "ems": false,
+    "status": "draft",
+    "entities": {
+      "soc": {"domain": "sensor", "unique_id_regex": "^sg_battery_level$"},
+      "battery_power_w": {"domain": "sensor", "unique_id_regex": "^sg_battery_power$"},
+      "battery_temp_c": {"domain": "sensor", "unique_id_regex": "^sg_battery_temperature$"},
+      "battery_voltage_v": {"domain": "sensor", "unique_id_regex": "^sg_battery_voltage$"},
+      "pv_power_w": {"domain": "sensor", "unique_id_regex": "^sg_total_dc_power$"},
+      "load_power_w": {"domain": "sensor", "unique_id_regex": "^sg_load_power$"},
+      "grid_power_w": {"domain": "sensor", "unique_id_regex": "^sg_(battery_)?export_power_raw$", "transform": "negate"},
+      "pv_energy_total_kwh": {"domain": "sensor", "unique_id_regex": "^sg_total_pv_generation$"},
+      "grid_import_total_kwh": {"domain": "sensor", "unique_id_regex": "^sg_total_imported_energy$"},
+      "grid_export_total_kwh": {"domain": "sensor", "unique_id_regex": "^sg_total_exported_energy$"},
+      "mode_value": {"domain": "sensor", "unique_id_regex": "^sg_ems_mode_selection_raw$"}
+    }
+  }]},
+  "capabilities": {
+    "force_charge_from_grid": false, "sell_from_battery": false, "force_discharge": false,
+    "standby": false, "set_power_w": false, "limit_export": false, "set_soc_floor": false,
+    "set_soc_ceiling": false, "time_windows": 0
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Vendor document and community register maps only. Addresses are wire addresses (vendor register number minus 1). Identification and measurements use input registers (function 4); the EMS mode 13049 is a holding register, written with FC6 as the reference integrations do (the vendor document lists 0x03/0x06/0x10). The inverter's LAN port is preferred; through the WiNet-S dongle keep requests spaced (gap_ms 50, a 5 s timeout) and expect some registers to be missing on older dongle firmware. The only write is the EMS mode 13049; re-writing its current value is the safe probe. Entity mode: the community Modbus YAML package exposes the sensors as `modbus` entities with fixed unique ids, but its EMS mode select is a `template` entity, so entity mode is read-only with this profile.",
+    "write_function": 6,
+    "max_read_registers": 100,
+    "transport_options": {
+      "modbus_tcp": {"port": 502, "timeout_ms": 5000, "gap_ms": 50}
+    },
+    "identify_reads": [{"addr": 4989, "count": 12, "fc": 4}],
+    "verify_blocks": [{"addr": 13049, "count": 1}],
+    "probe_keys": ["mode"]
+  }
+}

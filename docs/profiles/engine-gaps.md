@@ -27,6 +27,24 @@ Profiles do not work around them: the intent is marked unsupported and the capab
 | Post-connect quiet period on the SDongle | about 1 s after connect | See the core row above. |
 | Unit id differs per path | SDongle and RS485: 1; inverter access point / Local O&M (port 6607 on newer firmware): 0 | See the core row above. |
 
+## Sungrow (`sungrow-sh`)
+
+Addresses are wire addresses (vendor register number minus 1).
+
+| Gap | Registers | What the core would need |
+|---|---|---|
+| Prerequisite (conditional) register before the command write | 13049 EMS mode must be 2 (compulsory) before 13050 charge/discharge command (0xAA charge / 0xBB discharge / 0xCC stop) takes effect; leaving forced control needs 0xCC then EMS mode 0 | A mode made of two registers written in order, each with its own read-back. Writing 13049 = 2 alone is not a safe standby: it starts whatever command 13050 holds. |
+| Power set-point valid only in the forced mode, unit varies by model | 13051 charge/discharge power (W, up to the battery converter rating at 5627; per the community map an older vendor sheet gave % for some models) | The prerequisite-register support above, plus a per-model unit check before a power write. |
+| Scaled SoC writes | 13057 max SoC (50.0-100.0 %), 13058 min SoC (0.0-50.0 %), both 0.1 % | A scale on write encodings (`percent` x 10). |
+| Export limit needs an enable register with vendor codes | 13086 feed-in limitation (0xAA enable / 0x55 disable) before 13073 feed-in limitation value (W) applies | An enable encoding with configurable on/off values (the `bool` encoding writes 1/0). |
+| Charge/discharge power caps in 0.01 kW | 33046 max charge power, 33047 max discharge power (used by community integrations to hold the battery) | A scale on write encodings. |
+| External EMS mode needs a heartbeat | 13049 = 3 (external EMS) or 4 (VPP) falls back to self-consumption unless 13079 heartbeat is re-written within its timeout | A periodic keep-alive write declared by the profile. |
+| Forced-charging periods are split hour/minute registers | 33207 enable (0xAA/0x55), 33208 weekday/everyday, then per period start hour, start minute, end hour, end minute, target SoC (33209-33218) | A time-window table with start/end slots in separate hour and minute registers (the `time_window` model has one `hhmm` start per program). |
+| Battery power sign from a state register on older firmware | 13021 battery power is unsigned; the direction is bit 1 (charging) / bit 2 (discharging) of the power flow status 13000. The profile reads the signed 5213-5214 instead, which older firmware may lack | A read spec whose sign comes from a bit of another register. |
+| "Not available" markers decode as numbers | 0xFFFF (U16) and 0x7FFFFFFF (S32) mean "no data" (e.g. load and export power without a meter); `undef` maps to 0 | An `unavailable` marker on read specs that yields no value instead of 0. |
+| Settings registers polled every cycle | the vendor asks not to read or write RW registers frequently through WiNet-S; `mode_value` re-reads 13049 each cycle | A per-key read interval (settings read-back slower than measurements). |
+| No post-connect quiet period | the community package waits several seconds after connecting through WiNet-S | See the core row above. |
+
 ## Automatic verification ladder
 
 What profiles cannot yet say for the per-device verification (identify, read, dry-run, re-write
@@ -36,3 +54,4 @@ of the current value, short forced window):
 |---|---|---|
 | A safe forced test window | huawei-sun2000 (no forced intent fits the schema) | A profile-declared low-power test command and duration, with how to end it (Huawei: 47100 = 0 stops a forcible charge/discharge). |
 | Credentials for the write step | huawei-sun2000 | A way for the ladder to ask for and keep the installer login before the first write. |
+| A safe forced test window | sungrow-sh (forced control needs two registers) | A profile-declared low-power test command and duration with its exit sequence (Sungrow: 13050 = 0xCC, then 13049 = 0). |
