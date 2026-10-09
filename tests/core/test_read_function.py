@@ -267,3 +267,60 @@ async def test_discovery_identify_reads_with_function_4():
     image, state = await _read_identify(dev, p, lambda: 10, [])
     assert state == "ok" and dev.log == [(4, 35000, 33, True)]
     assert identity_info(p, image)["matched"] is True
+
+
+# ── blok rozdzielający (łącze bez korelacji, GoodWe UDP): wyłącznie bloki holding ──
+
+
+def _goodwe_with_input_identify():
+    from dataclasses import replace
+
+    from custom_components.volcast.core.profile import load_builtin
+    gw = load_builtin("goodwe-et")
+    return replace(gw, modbus=replace(gw.modbus, verify_blocks=(),
+                                      identify_reads=((35000, 33, 4), (36000, 7))))
+
+
+def test_separator_candidates_are_holding_blocks_only():
+    from custom_components.volcast.core.modbus.views import separator_blocks, separators_for
+    p = _goodwe_with_input_identify()
+    # blok input spełnia warunki długości i rozłączności, ale odczyt FC 3 pod jego adresem to inny rejestr
+    assert separator_blocks(p, 47760) == ((36000, 7),)
+    assert separators_for(p, (47509, 4)) == ((36000, 7),)
+
+
+class _UdpDevice:
+    kind = "goodwe_udp"
+
+    def __init__(self):
+        self.log: list[tuple] = []
+
+        class _Stats:
+            requests = 0
+            timeouts = 0
+        self.stats = _Stats()
+
+    async def read(self, addr, count, *, tries=None, **kw):
+        self.stats.requests += 1
+        self.log.append((kw.get("fc", 3), addr, count))
+        return [0] * count
+
+    async def reset_channel(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_probe_separator_never_reads_an_input_block():
+    from dataclasses import replace
+
+    from custom_components.volcast.core.discovery.probe import _OK, _Prober
+    p = _goodwe_with_input_identify()
+    dev = _UdpDevice()
+    prober = _Prober(RegisterClient(dev, p), 50, p)
+    assert await prober._separate(47760) == _OK
+    assert dev.log == [(3, 36000, 7)]
+    only_input = replace(p, modbus=replace(p.modbus, identify_reads=((35000, 33, 4),)))
+    dev = _UdpDevice()
+    prober = _Prober(RegisterClient(dev, only_input), 50, only_input)
+    assert await prober._separate(47760) != _OK               # brak kandydata — bez TypeError
+    assert dev.log == [] and "unconfirmed" in prober.errors
