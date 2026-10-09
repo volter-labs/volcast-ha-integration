@@ -92,9 +92,11 @@ Pick one with `control_model`.
 * requires `write.mode`, `modes` (`{name: {"value", "direction", "ha_option"}}`, values unique,
   direction one of `charge`, `discharge`, `idle`, `neutral`), `neutral_mode` (a mode whose direction
   is `neutral` or `idle`) and `baseline: {"mode": <mode>, "export_limit_enabled"?: bool}`.
-* each present intent is `{"mode": <name in modes>, "power": ...}` with `power` one of `slot`,
-  `slot_live_export`, `zero`, `none`; `slot*` only for `charge_grid`, `sell`, `discharge_forced`.
-  An intent that is not supported is left out, never `null`.
+* all six intents are required, each `{"mode": <name in modes>, "power": ...}` with `power` one of
+  `slot`, `slot_live_export`, `zero`, `none`; `slot*` only for `charge_grid`, `sell`, `discharge_forced`.
+  `null` and missing intents are rejected. An unsupported intent is written as
+  `{"mode": <neutral_mode>, "power": "none"}` with its capability set to `false` (the same thing
+  the engine would fall back to).
 * no `tou` block.
 
 **`time_window`** (the inverter has a programmable time-of-use table)
@@ -104,7 +106,8 @@ Pick one with `control_model`.
   a `tou` block: `programs` (1-12, equal to `tou_program.count`), `time_step_min` (divides 60),
   `soc_tolerance_pp`, `power_tolerance_w`, `field_order` (a permutation of the four program fields).
 * `baseline: {"intent": "self_consume"}`; the `self_consume` intent is mandatory, the others are
-  `{"grid_charge": bool, "soc": target_or_max|reserve|hold, "power": slot|max}` or left out.
+  `{"grid_charge": bool, "soc": target_or_max|reserve|hold, "power": slot|max}` or `null` when
+  unsupported. All six intent keys must be present.
 * `capabilities.time_windows` equals `tou.programs`.
 
 Intents are chosen from `charge_grid`, `charge_pv`, `discharge_forced`, `sell`, `self_consume`,
@@ -204,7 +207,7 @@ assertions are in `tests/core/profile_golden.py`:
 
 If the vendor's control does not fit the schema (for example two mode registers, 32-bit or float
 writes, scaled writes, dynamic scale factors, start/end slots with a current), do **not** work
-around it in the profile. Leave the intent out, set the capability to `false`, and describe the gap
+around it in the profile. Mark the intent unsupported (section 3), set the capability to `false`, and describe the gap
 (brand, what is needed, which registers) in `docs/profiles/engine-gaps.md`. A workaround that
 writes the wrong thing to hardware is worse than a missing feature.
 
