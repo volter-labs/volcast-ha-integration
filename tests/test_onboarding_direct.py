@@ -98,8 +98,14 @@ def test_onboarding_publishes_options_token():
     ob, client, _, _ = make([PollResult("consumed", choices={})], reports=[report()], mapped=WRITE_KEYS)
     asyncio.run(ob.async_run())
     assert last(client)["control_mode"]["detail"] == "options: entities,direct"
-    # profil z niezweryfikowaną ścieżką rejestrów (sam modbus.status = draft): sonda znalazła falownik, ale „Bezpośrednio” nie jest oferowane
+    # profil roboczy (sam modbus.status = draft) z rozpoznanym falownikiem: „Bezpośrednio” oferowane — drabina
+    # weryfikacji rusza od próby bez zapisu
     ob, client, _, _ = make([PollResult("consumed", choices={})], reports=[report()], profiles=(GW,),
+                            mapped=WRITE_KEYS)
+    asyncio.run(ob.async_run())
+    assert last(client)["control_mode"]["detail"] == "options: entities,direct"
+    # nieudana próba ścieżki rejestrów: „Bezpośrednio” nie jest oferowane
+    ob, client, _, _ = make([PollResult("consumed", choices={})], reports=[report(available=False)],
                             mapped=WRITE_KEYS)
     asyncio.run(ob.async_run())
     assert last(client)["control_mode"]["detail"] == "options: entities"
@@ -135,7 +141,7 @@ def test_remote_direct_applied_when_available():
 def test_remote_direct_rejected_with_reason_text(case, text):
     kw = {}
     if case == "unverified":
-        kw = {"reports": [report()], "profiles": (GW,)}
+        kw = {"reports": [report(available=False)]}
     elif case == "conflict":
         goodwe = SimpleNamespace(domain="goodwe", entry_id="g", data={"host": HOST}, options={}, disabled_by=None)
         kw = {"reports": [report()], "entries": [goodwe]}

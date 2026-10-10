@@ -20,10 +20,13 @@ file in `profiles/` automatically.
 ## 2. Draft and verified
 
 * `status: "draft"` — the profile is used for identification, reading, the Home Assistant entity
-  mapping and a **read-only test connection** that shows what would be written. It never writes
-  to the inverter.
-* `status: "verified"` — writes are allowed. A profile becomes verified only after a live trial on
-  a real unit, and the top-level `status` and `modbus.status` are switched together.
+  mapping and a **read-only test connection** that shows what would be written. On the direct path a
+  draft profile is offered once the inverter is identified and the register probe succeeds: the
+  per-device verification ladder then starts with a read-only trial, and nothing is written until the
+  owner allows control (the control write and the test window, below). The plan follows a draft
+  profile only on a device the ladder has verified.
+* `status: "verified"` — the ladder starts at the control write. A profile becomes verified only after
+  a live trial on a real unit, and the top-level `status` and `modbus.status` are switched together.
 * Every integration entry under `ha.integrations` carries its own `status` with the same meaning.
   Entity mode is offered only when both the profile and the integration entry are `verified`; a
   `draft` entry is only a hint for mapping readings, and the cloud is told that no setting can be
@@ -36,7 +39,8 @@ New profiles are always `draft` with a `status_note` (section 8).
 The status only sets the rung where the per-device verification ladder starts:
 
 * `draft` — the ladder starts at identification and reading and runs through the read-only trial
-  (it counts the writes it would have made; nothing reaches the inverter).
+  (it counts the writes it would have made; nothing reaches the inverter during the trial). Entity mode
+  stays closed to a `draft` profile or integration entry.
 * `verified` — the ladder starts at the control write (the current value is re-written and confirmed
   by read-back).
 

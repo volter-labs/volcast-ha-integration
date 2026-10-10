@@ -170,13 +170,17 @@ def _profile(profiles: Sequence, pid: str | None):
 
 
 def offer_reason(report: ProbeReport | None, profiles: Sequence, clash: Sequence[str] = ()) -> str | None:
-    """None = „Bezpośrednio” dostępne; inaczej powód (kolejność: kolizja, brak, niezweryfikowane)."""
+    """None = „Bezpośrednio” dostępne; inaczej powód (kolejność: kolizja, brak, bez ścieżki rejestrów).
+
+    Profil roboczy (draft) nie blokuje oferty: przy rozpoznanym falowniku i udanej próbie drabina
+    weryfikacji rusza od identyfikacji (próba bez zapisu), a zapisy idą dopiero po zgodzie na szczeblach
+    4–5. `UNVERIFIED` = brak profilu albo nieudana próba ścieżki rejestrów."""
     if clash or (report is not None and "conflict" in report.errors):
         return IN_USE if SELF_DOMAIN in clash else CONFLICT
     if report is None or report.identity is None:
         return NOT_FOUND
     profile = _profile(profiles, report.identity.profile_id)
-    if profile is None or not direct_verified(profile) or not report.direct_available:
+    if profile is None or not report.direct_available:
         return UNVERIFIED
     return None
 
