@@ -1088,6 +1088,11 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
     # Sygnały przed powrotem: cykl z pingu po powrocie do trybu bazowego zapisałby plan z powrotem.
     await _async_stop_signals((rt.hub, rt.live, rt.channel))
     if restore:
+        # Wyłączony wpis nie wraca przeładowaniem — reporter onboardingu nie ma po co żyć dalej.
+        # Zwykłe przeładowanie (np. po wyborze zdalnym) zostawia go: ta sama sesja trwa.
+        entry = getattr(rt, "entry", None)
+        if entry is not None:
+            _cancel_onboarding(hass, entry.entry_id)
         try:
             await rt.executor.async_restore_now()
         except Exception as err:  # noqa: BLE001 — rozładunek wpisu nie może się przez to wywrócić

@@ -382,6 +382,45 @@ async def test_remove_control_cancels_onboarding_reporter(monkeypatch):
     assert task.cancelled() and hass.data[rt_mod.ONBOARDING_KEY] == {}
 
 
+def _unload_rt(entry):
+    class Exec:
+        async def async_restore_now(self):
+            return None
+
+        async def async_neutral_at_stop(self):
+            return None
+
+        async def async_stop(self):
+            return None
+
+    class Telemetry:
+        async def async_stop(self):
+            return None
+    return rt_mod.ControlRuntime(executor=Exec(), fetcher=None, telemetry=Telemetry(), cloud=None,
+                                 choice=None, mapped={}, rated_power_w=None, entry=entry)
+
+
+@pytest.mark.asyncio
+async def test_unload_control_with_restore_cancels_onboarding_task():
+    """Właściciel wyłączył wpis (`restore=True`): reporter onboardingu nie żyje dalej bez wpisu."""
+    task = asyncio.get_running_loop().create_task(asyncio.Event().wait())
+    hass = SimpleNamespace(data={rt_mod.ONBOARDING_KEY: {"e1": (task, "s1")}})
+    await rt_mod.async_unload_control(hass, _unload_rt(SimpleNamespace(entry_id="e1")), restore=True)
+    await asyncio.sleep(0)
+    assert task.cancelled() and hass.data[rt_mod.ONBOARDING_KEY] == {}
+
+
+@pytest.mark.asyncio
+async def test_unload_control_without_restore_keeps_reporter():
+    """Zwykłe przeładowanie (np. po zastosowaniu wyboru zdalnego) zostawia reporter tej sesji."""
+    task = asyncio.get_running_loop().create_task(asyncio.Event().wait())
+    hass = SimpleNamespace(data={rt_mod.ONBOARDING_KEY: {"e1": (task, "s1")}})
+    await rt_mod.async_unload_control(hass, _unload_rt(SimpleNamespace(entry_id="e1")))
+    await asyncio.sleep(0)
+    assert not task.done() and hass.data[rt_mod.ONBOARDING_KEY] == {"e1": (task, "s1")}
+    task.cancel()
+
+
 # ── zakres encji falownika (auto-wybór licznika zużycia domu) ─────────────
 
 
