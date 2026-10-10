@@ -95,6 +95,9 @@ NONE_FOUND = "none found"
 NOT_READY = "inverter control entities not found"
 READ_ONLY_NO_READINGS = "read only, no readings"
 NO_READINGS = "no readings"
+NO_READINGS_CODE = "no_readings"
+# Wyniki pierwszego planu, po których ponawiamy plan, gdy pojawią się odczyty.
+_RETRY_ON_READINGS = frozenset({NO_READINGS_CODE, "failed:unreachable", "failed:planner_failed"})
 
 
 def progress_payload(steps: Mapping[str, tuple[str, str | None]], offer: Mapping | None = None) -> list[dict]:
@@ -121,6 +124,8 @@ def plan_outcome(res: Any) -> str:
     skipped = res.get("skipped")
     if skipped == "cooldown":
         return "cooldown"
+    if skipped == NO_READINGS_CODE or res.get("error") == NO_READINGS_CODE:
+        return NO_READINGS_CODE             # serwer: pierwszy plan bez SoC (success:true z polem `error`)
     if res.get("success") is not True:
         err = res.get("error")
         return f"failed:{err}" if isinstance(err, str) and _ERROR_CODE.fullmatch(err) else "failed:planner_failed"
@@ -161,6 +166,8 @@ class Onboarding:
         self._repost_delay = _REPOST_MIN_S
         self._repost_at: datetime | None = None
         self.first_plan_outcome: str | None = None
+        self._last_plan_at: datetime | None = None
+        self._readings_retry_busy = False
         self._search = search
         self._profiles = list(profiles)
         self._direct_report = None             # raport sondy z rozpoznanym falownikiem (bez integracji w HA)
@@ -468,11 +475,12 @@ class Onboarding:
         self._plan_retry_at = None
         if readings_missing(getattr(self._runtime(), "telemetry", None)):
             # Planer bez odczytów odmówi — nie palimy próby; ponowienie po pierwszej udanej telemetrii.
-            self.first_plan_outcome = "no_readings"
+            self.first_plan_outcome = NO_READINGS_CODE
             _LOGGER.info("Volcast onboarding: first plan no_readings")
             await self._set("first_plan", "active", NO_READINGS)
             return
         self._plan_attempts += 1
+        self._last_plan_at = self._utcnow()
         if self._state("first_plan") == "pending":
             await self._set("first_plan", "active")
         res = await self._client.async_request_plan(self._session)
@@ -493,10 +501,48 @@ class Onboarding:
                 await self._set("first_plan", "done", QUEUED)
         elif outcome == "skipped":
             await self._set("first_plan", "done", QUEUED)
+        elif outcome == NO_READINGS_CODE:
+            await self._set("first_plan", "active", NO_READINGS)     # ponowienie przy odczytach
         else:
             await self._set("first_plan", "error", PLAN_UNAVAILABLE)
             if outcome == "failed:unreachable" and can_retry:
                 self._plan_retry_at = self._utcnow() + timedelta(seconds=_PLAN_RETRY_S)
+
+    def _may_retry_on_readings(self) -> bool:
+        return (self._live() and self._entry() is not None and self._plan_attempts < _PLAN_ATTEMPTS
+                and self.first_plan_outcome in _RETRY_ON_READINGS)
+
+    async def _sleep_until(self, due: datetime) -> None:
+        while self._live() and (left := (due - self._utcnow()).total_seconds()) > 0:
+            await self._sleep(min(left, _PLAN_RETRY_S))
+
+    async def async_on_readings(self) -> None:
+        """Pierwsza przyjęta telemetria z odczytem: ponów pierwszy plan (tylko w oknie na żywo, z limitem
+        prób i odstępem cooldownu chmury). Wynik inny niż „brak odczytów/błąd planera" — nic nie robi."""
+        if self._readings_retry_busy:
+            return
+        self._readings_retry_busy = True
+        try:
+            if not self._may_retry_on_readings():
+                return
+            if self._last_plan_at is not None:
+                await self._sleep_until(self._last_plan_at + timedelta(seconds=_PLAN_RETRY_S))
+            if not self._may_retry_on_readings():
+                return
+            await self._request_plan()
+            # Cooldown po stronie chmury: pętla główna mogła już skończyć — dopilnuj ponowienia tu.
+            while self._plan_retry_at is not None and self._live() and self._entry() is not None:
+                due = self._plan_retry_at
+                await self._sleep_until(due)
+                if self._plan_retry_at is None or not self._live():
+                    break
+                await self._request_plan()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001 — onboarding nigdy nie psuje wpisu
+            _LOGGER.warning("Volcast onboarding retry stopped (%s)", type(err).__name__)
+        finally:
+            self._readings_retry_busy = False
 
     async def _loop(self) -> None:
         while self._live():

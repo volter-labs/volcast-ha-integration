@@ -567,3 +567,45 @@ def test_draft_integration_entry_declares_no_capabilities(pid, domain):
     choice = ProfileChoice(load_builtin(pid), domain, None)
     b = driver_block(choice=choice, control_mode="entities", mapped_keys=ALL, local_switch=True, limits=None)
     assert b["id"] == pid and b["capabilities"] and not any(b["capabilities"].values())
+
+
+def test_on_first_success_fires_once_after_first_accepted_reading():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud)
+    fired = []
+    s.on_first_success = lambda: fired.append(1)
+    cloud.ok = False
+    assert asyncio.run(s.async_flush()) is False
+    assert fired == []                                       # odrzucona wysyłka nie liczy się
+    cloud.ok = True
+    assert asyncio.run(s.async_flush()) is True
+    asyncio.run(s.async_flush())
+    asyncio.run(s.async_flush())
+    assert fired == [1]
+
+
+def test_on_first_success_needs_a_non_empty_reading(monkeypatch):
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud)
+    fired = []
+    s.on_first_success = lambda: fired.append(1)
+    real = tm.build_reading
+    monkeypatch.setattr(tm, "build_reading", lambda **kw: {"timestamp": "t", "prices": {"x": 1}})  # same ceny
+    assert asyncio.run(s.async_flush()) is True
+    assert fired == []
+    monkeypatch.setattr(tm, "build_reading", real)
+    assert asyncio.run(s.async_flush()) is True
+    assert fired == [1]
+
+
+def test_on_first_success_error_never_breaks_sending(caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud)
+
+    def boom():
+        raise ValueError("wss://secret")
+    s.on_first_success = boom
+    assert asyncio.run(s.async_flush()) is True
+    assert asyncio.run(s.async_flush()) is True
+    assert "secret" not in caplog.text and "ValueError" in caplog.text

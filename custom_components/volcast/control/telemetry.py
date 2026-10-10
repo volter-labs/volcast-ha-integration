@@ -254,6 +254,9 @@ class TelemetrySender:
         self._loads_warned = False
         # Runtime sterowania (`control_block()` + `async_persist_control_meta()`) — ustawiany po jego złożeniu.
         self.control_runtime = None
+        # Jednorazowy hak (ustawia runtime): pierwsza przyjęta telemetria z choć jednym odczytem.
+        self.on_first_success: Callable[[], None] | None = None
+        self._first_success_done = False
 
     async def async_start(self) -> None:
         if self._unsub is None:
@@ -502,4 +505,12 @@ class TelemetrySender:
                 await self._on_signals(result.signals_raw)
             except Exception as err:  # noqa: BLE001 — sygnały nie psują przyjętej telemetrii
                 _LOGGER.debug("Volcast telemetry: signals handling failed (%s)", type(err).__name__)
+        if ok and not self._first_success_done and any(n in reading for n in TELEMETRY_FIELDS.values()):
+            self._first_success_done = True              # raz na życie nadawcy, także gdy hak rzuci
+            hook = self.on_first_success
+            if hook is not None:
+                try:
+                    hook()
+                except Exception as err:  # noqa: BLE001 — hak nie psuje przyjętej telemetrii
+                    _LOGGER.debug("Volcast telemetry: first-success hook failed (%s)", type(err).__name__)
         return ok

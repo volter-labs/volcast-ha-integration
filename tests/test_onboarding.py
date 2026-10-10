@@ -686,3 +686,111 @@ def test_inverter_step_keeps_label_without_a_direct_hit():
     _no_readings_rt(ob)
     asyncio.run(ob.async_run())
     assert last(client)["inverter"]["detail"] == "GoodWe GW8KN-ET"
+
+
+NO_READINGS_PLAN = {"success": True, "skipped": "no_readings", "slots_count": None, "error": "no_readings"}
+
+
+def _readings_arrive(rt):
+    rt.telemetry = SimpleNamespace(
+        readings_report=lambda: {"readings_source": {"soc": "entity"}, "readings_dropped": []})
+
+
+def _reopen(ob):
+    # Pętla główna kończy się dopiero z oknem na żywo; test wraca do chwili „po onboardingu, okno otwarte".
+    ob._live_until = ob._utcnow() + timedelta(minutes=30)
+
+
+def test_plan_outcome_no_readings():
+    assert plan_outcome(NO_READINGS_PLAN) == "no_readings"
+    assert plan_outcome({"success": False, "error": "no_readings"}) == "no_readings"
+    assert plan_outcome({"success": True, "skipped": "no_readings"}) == "no_readings"
+    assert plan_outcome({"skipped": "cooldown"}) == "cooldown"
+
+
+def test_server_no_readings_is_active_no_readings_not_error():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=NO_READINGS_PLAN)
+    asyncio.run(ob.async_run())
+    assert ob.first_plan_outcome == "no_readings"
+    assert last(client)["first_plan"] == {"key": "first_plan", "state": "active", "detail": "no readings"}
+
+
+def test_plan_retried_after_first_telemetry_success():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    rt = _no_readings_rt(ob)
+    asyncio.run(ob.async_run())
+    assert client.plan_calls == 0 and ob.first_plan_outcome == "no_readings"
+    _readings_arrive(rt)
+    _reopen(ob)
+    asyncio.run(ob.async_on_readings())
+    assert client.plan_calls == 1 and ob.first_plan_outcome == "ok"
+    assert last(client)["first_plan"] == {"key": "first_plan", "state": "done", "detail": "24 slots"}
+    _reopen(ob)
+    asyncio.run(ob.async_on_readings())
+    assert client.plan_calls == 1                           # wynik ok: nic więcej
+
+
+def test_retry_on_readings_respects_server_cooldown_and_attempts():
+    ob, client, _ = make([PollResult("consumed", choices={})],
+                         plan=[NO_READINGS_PLAN, {"skipped": "cooldown"}, OK_PLAN])
+    asyncio.run(ob.async_run())                             # serwer: no_readings (1. próba)
+    assert client.plan_calls == 1
+    sleeps = []
+    real_sleep = ob._sleep
+
+    async def spy(s):
+        sleeps.append(s)
+        await real_sleep(s)
+    ob._sleep = spy
+    _reopen(ob)
+    asyncio.run(ob.async_on_readings())
+    assert client.plan_calls == 3 and ob.first_plan_outcome == "ok"
+    assert sleeps and all(s <= 125.0 for s in sleeps)       # czekamy, nie młotkujemy
+
+
+def test_retry_on_readings_stops_at_attempt_cap():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=NO_READINGS_PLAN)
+    asyncio.run(ob.async_run())
+    for _ in range(6):
+        _reopen(ob)
+    asyncio.run(ob.async_on_readings())
+    assert client.plan_calls <= 3
+
+
+def test_retry_on_readings_after_unreachable_planner():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    _readings_arrive(_no_readings_rt(ob))
+    asyncio.run(ob.async_run())
+    ob.first_plan_outcome, ob._plan_attempts = "failed:unreachable", 1
+    before = client.plan_calls
+    _reopen(ob)
+    asyncio.run(ob.async_on_readings())
+    assert client.plan_calls == before + 1 and ob.first_plan_outcome == "ok"
+
+
+def test_no_retry_when_live_window_closed():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    _no_readings_rt(ob)
+    asyncio.run(ob.async_run())
+    ob._live_until = NOW
+    asyncio.run(ob.async_on_readings())
+    assert client.plan_calls == 0
+
+
+def test_no_retry_when_entry_unloaded():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    _no_readings_rt(ob)
+    asyncio.run(ob.async_run())
+    ob._hass.config_entries.async_get_entry = lambda eid: None
+    _reopen(ob)
+    asyncio.run(ob.async_on_readings())
+    assert client.plan_calls == 0
+
+
+def test_no_retry_when_first_plan_already_ok():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    asyncio.run(ob.async_run())
+    assert client.plan_calls == 1
+    _reopen(ob)
+    asyncio.run(ob.async_on_readings())
+    assert client.plan_calls == 1

@@ -94,6 +94,7 @@ _LOGGER = logging.getLogger(__name__)
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 ONBOARDING_KEY = "volcast_onboarding"
+ONBOARDING_OBJ_KEY = "volcast_onboarding_obj"      # entry_id → żywy `Onboarding` (hak telemetrii)
 # Blokady zapisu per wpis — wspólne dla kolejnych wykonawców (przeładowania).
 _LOCKS_KEY = "volcast_control_locks"
 
@@ -905,6 +906,13 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                             hass=hass, entry=entry)
 
         telemetry.control_runtime = rt
+
+        def _first_readings() -> None:
+            """Pierwsza przyjęta telemetria z odczytem: onboarding ponawia pierwszy plan (jeśli żyje)."""
+            ob = (hass.data.get(ONBOARDING_OBJ_KEY) or {}).get(entry.entry_id)
+            if ob is not None:
+                hass.async_create_background_task(ob.async_on_readings(), "volcast_onboarding_plan")
+        telemetry.on_first_success = _first_readings
         limiter = FlushLimiter(hass, telemetry.async_flush, entry=entry)
         rt.unsubs.append(limiter.cancel)
         rt.unsubs.append(async_dispatcher_connect(
@@ -1048,12 +1056,14 @@ def _maybe_start_onboarding(hass, entry, report, profiles=()) -> None:
                     runtime=runtime, report=report, import_history=import_history, search=search,
                     profiles=list(profiles))
     running[entry.entry_id] = (hass.async_create_background_task(ob.async_run(), "volcast_onboarding"), session_id)
+    hass.data.setdefault(ONBOARDING_OBJ_KEY, {})[entry.entry_id] = ob
 
 
 def _cancel_onboarding(hass, entry_id) -> None:
     """Zdejmij i anuluj reporter onboardingu wpisu (para `(task, session_id)`); brak = no-op."""
     running = getattr(hass, "data", {}).get(ONBOARDING_KEY) or {}
     task, _session = running.pop(entry_id, None) or (None, None)
+    (getattr(hass, "data", {}).get(ONBOARDING_OBJ_KEY) or {}).pop(entry_id, None)
     if task is not None:
         task.cancel()
 
