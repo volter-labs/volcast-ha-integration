@@ -455,7 +455,7 @@
     },
     "consent_other_controller_active": {
       "title": "Řízení Volcast zůstává vypnuté: je aktivní jiný řídicí prvek",
-      "description": "Vaše účet Volcast řídí střídač přes jiný řídicí prvek, například Volcast Box. Chcete-li řídit z Home Assistant, vyberte v aplikaci Volcast Home Assistant."
+      "description": "Váš účet Volcast řídí střídač přes jiný řídicí prvek, například Volcast Box. Chcete-li řídit z Home Assistant, vyberte v aplikaci Volcast Home Assistant."
     },
     "consent_tier_required": {
       "title": "Řízení Volcast zůstává vypnuté: vyžadován tarif",
