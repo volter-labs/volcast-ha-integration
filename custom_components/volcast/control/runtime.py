@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Callable, Mapping
@@ -53,6 +54,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 
+from ..cloud import control_choice
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
 from ..cloud.signal_channel import SignalChannel
@@ -61,7 +63,7 @@ from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERG
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
                      SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED)
-from ..core.control.caps import direct_capabilities
+from ..core.control.caps import direct_capabilities, entity_mode_options, entity_mode_ready
 from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
 from ..core.control.recommend import recommend
@@ -80,7 +82,7 @@ from .history_import import async_import_history_once
 from .live import LiveSender
 from .signals_hub import SignalsHub
 from .store import ControlStore, async_installation_salt
-from .telemetry import TelemetrySender
+from .telemetry import TelemetrySender, control_block
 from .verification import VerificationRunner, default_params, start_rung_for
 
 try:
@@ -102,6 +104,47 @@ _POLL_RANGE_S = (5.0, 60.0)
 RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY})
 # Wybór sterownika z chmury (`control_choice.controller`).
 CONTROLLER_VOLCAST, CONTROLLER_OWN_EMS = "volcast", "own_ems"
+
+
+URGENT_FLUSH_INTERVAL_S = 10.0
+
+
+class FlushLimiter:
+    """Natychmiastowa telemetria po zmianie stanu sterowania: najwyżej jedna na `interval_s`; zmiany w oknie
+    zlewają się w jedną wysyłkę po jego końcu (najnowszy stan)."""
+
+    def __init__(self, hass, flush, *, interval_s: float = URGENT_FLUSH_INTERVAL_S, clock=None) -> None:
+        self._hass, self._flush, self._interval = hass, flush, interval_s
+        self._clock = clock or time.monotonic
+        self._last: float | None = None
+        self._pending = False
+        self._timer = None
+
+    @callback
+    def request(self) -> None:
+        if self._pending:
+            return
+        self._pending = True
+        wait = 0.0 if self._last is None else max(0.0, self._last + self._interval - self._clock())
+        if wait <= 0:
+            self._start()
+        else:
+            self._timer = self._hass.loop.call_later(wait, self._start)
+
+    def _start(self) -> None:
+        self._timer = None
+        self._hass.async_create_background_task(self._run(), "volcast_control_telemetry")
+
+    async def _run(self) -> None:
+        self._pending = False
+        self._last = self._clock()
+        await self._flush()
+
+    def cancel(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._pending = False
 
 
 @dataclass
@@ -136,6 +179,7 @@ class ControlRuntime:
     conflicts: object | None = None
     hass: object | None = None
     entry: object | None = None
+    _meta_dirty: bool = False
 
     def control_state_payload(self) -> dict:
         """Stan sterowania dla chmury: `recommendation`, `verification` (gdy są) i `conflicts` (zawsze)."""
@@ -150,6 +194,57 @@ class ControlRuntime:
         else:
             out["conflicts"] = self.recommendation.conflicts_payload() if self.recommendation is not None else []
         return out
+
+    def control_block(self) -> dict:
+        """Blok `driver.control` (z `seq`) dla telemetrii; `seq` rośnie tylko przy zmianie treści."""
+        meta = self.executor.control_meta
+        before = dict(meta)
+        block = control_block(self.control_state_payload(), meta.get("ack"), meta, dt_util.utcnow().timestamp())
+        self._meta_dirty = self._meta_dirty or meta != before
+        return block
+
+    async def async_persist_control_meta(self) -> None:
+        """Trwały zapis licznika po przyjętej telemetrii (restart nie cofa `seq`)."""
+        if self._meta_dirty:
+            self._meta_dirty = False
+            await self.executor.async_save_control_meta()
+
+    def notify_control_state(self) -> None:
+        """Zmiana stanu sterowania → natychmiastowa telemetria (przez limit)."""
+        if self.hass is not None and self.entry is not None:
+            async_dispatcher_send(self.hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=self.entry.entry_id))
+
+    async def async_apply_path_choice(self, path: str) -> str:
+        """Ścieżka sterowania wybrana zdalnie (chmura albo sesja parowania): "applied"; "ignored" (nie da się
+        jej teraz zastosować); "restore_failed" (jak w `async_apply_controller_choice`). `plan_only` = własny
+        sterownik: tryb „tylko plan” i sterowanie wyłączone."""
+        if path == "plan_only":
+            return await self.async_apply_controller_choice(CONTROLLER_OWN_EMS)
+        entry, ex = self.entry, self.executor
+        if path == CONTROL_MODE_ENTITIES:
+            if not entity_mode_ready(self.choice, self.mapped):
+                return "ignored"
+            patch = entity_mode_options(self.choice)
+        elif path == CONTROL_MODE_DIRECT:
+            hits = ds.found(self.last_probe)
+            if not hits:
+                return "ignored"
+            profiles = await self.hass.async_add_executor_job(ds.load_profiles)
+            clash = await ds.async_clash(self.hass, entry.entry_id, hits[0].candidate.host)
+            if ds.offer_reason(hits[0], profiles, clash) is not None:
+                return "ignored"
+            patch = {OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: ds.target_from_report(hits[0]),
+                     OPT_DIRECT_TRIAL: None}
+        else:
+            return "ignored"
+        if ex.plan_only:
+            await ex.async_set_plan_only(False)
+        old = dict(entry.options)
+        new = {k: v for k, v in {**old, **patch}.items() if v is not None}
+        if control_options_changed(old, new):
+            self.hass.config_entries.async_update_entry(entry, options=new)
+        _LOGGER.info("Volcast control: path %s chosen", path)
+        return "applied"
 
     async def async_set_box_active(self, active: bool) -> None:
         """`box_active` z planu → konflikt `box`."""
@@ -661,6 +756,10 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         async def _apply(raw) -> None:
             await hub.apply(raw)
 
+        async def _control(block) -> None:
+            if rt is not None:
+                await control_choice.apply(block, rt)
+
         async def _fetch(_now=None) -> None:
             # Odświeżenie planu (i zgody) — zaraz po nim cykl: cofnięta zgoda działa od razu.
             await fetcher.async_refresh()
@@ -680,7 +779,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         live = LiveSender(cloud=cloud, telemetry=telemetry, on_signals=_apply, task_factory=_task)
         hub = SignalsHub(base_url=backend.base_url, channel=channel, live=live, refresh=_fetch, task_factory=_task)
         fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
-                                  on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply)
+                                  on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply,
+                                  on_control=_control)
         await telemetry.async_start()
         if choice is not None and not composed.returning:
             # Przed pierwszym cyklem: w trybie bezpośrednim plan czeka na zweryfikowane urządzenie.
@@ -695,6 +795,11 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                             channel=channel, live=live, hub=hub, report=report, verification=verification,
                             hass=hass, entry=entry)
 
+        telemetry.control_runtime = rt
+        limiter = FlushLimiter(hass, telemetry.async_flush)
+        rt.unsubs.append(limiter.cancel)
+        rt.unsubs.append(async_dispatcher_connect(
+            hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=entry.entry_id), limiter.request))
         rt.unsubs.append(async_track_time_interval(hass, _fetch, timedelta(seconds=SCHEDULE_FETCH_INTERVAL_S)))
         rt.conflicts = ConflictMonitor(hass, entry, executor, verification=verification,
                                        clashes=lambda: address_clashes(rt), lan_client=lambda: lan_client_seen(conn))

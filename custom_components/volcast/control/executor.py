@@ -375,6 +375,16 @@ class VolcastExecutor:
         self._notify()
         return ok
 
+    @property
+    def control_meta(self) -> dict:
+        """Licznik `seq` bloku `driver.control` i ostatnia zastosowana decyzja z chmury (zmieniane w miejscu)."""
+        return self._state.control_meta
+
+    async def async_save_control_meta(self) -> bool:
+        if self._disabled:
+            return False
+        return await self._async_save("control meta")
+
     async def async_save_conflict_ack(self, pairs) -> bool:
         """Konflikty, przy których właściciel wybrał sterowanie Volcast (`[kind, label]`)."""
         if self._disabled:

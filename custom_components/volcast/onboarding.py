@@ -422,6 +422,14 @@ class Onboarding:
                 steps.append(("control_mode", "done", "entities"))
             else:
                 steps.append(("control_mode", "error", NOT_READY))
+        elif mode == "plan_only" and self._state("control_mode") == "choice":
+            # Własny sterownik: ta sama obsługa co `path: plan_only` z chmury (tryb „tylko plan”, sterowanie wyłączone).
+            rt = self._runtime()
+            if rt is not None:                    # wpis się przeładowuje — następne odpytanie
+                if await rt.async_apply_path_choice("plan_only") == "applied":
+                    steps.append(("control_mode", "done", "plan_only"))
+                else:
+                    steps.append(("control_mode", "error", NOT_READY))
         elif mode == CONTROL_MODE_DIRECT and self._state("control_mode") == "choice":
             if self._runtime() is not None:        # wpis się przeładowuje — następne odpytanie
                 reason = await self._direct_reason()

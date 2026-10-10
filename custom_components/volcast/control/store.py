@@ -70,6 +70,24 @@ class ControlState:
     verification: dict = field(default_factory=dict)
     plan_only: bool = False
     conflict_ack: list = field(default_factory=list)
+    control_meta: dict = field(default_factory=dict)
+
+
+def control_meta_clean(raw) -> dict:
+    """`seq`/`fp` bloku `driver.control` i `at`/`ack` ostatniej zastosowanej decyzji z chmury; złe pola pomijane."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {}
+    seq = raw.get("seq")
+    if isinstance(seq, int) and not isinstance(seq, bool) and seq >= 0:
+        out["seq"] = seq
+    for key in ("fp", "at"):
+        if isinstance(raw.get(key), str) and len(raw[key]) <= 4096:
+            out[key] = raw[key]
+    ack = raw.get("ack")
+    if isinstance(ack, dict) and isinstance(ack.get("at"), str):
+        out["ack"] = {k: v for k, v in ack.items() if k in ("path", "controller", "at") and isinstance(v, str)}
+    return out
 
 
 CONFLICT_ACK_MAX = 16
@@ -144,7 +162,8 @@ class ControlStore:
             taken_over=_keys(taken_over) if isinstance(taken_over, list) else [],
             tou_snapshot=tou_snapshot, nvm_log=_nvm_log(raw.get("nvm_log")),
             verification=dict(verification) if verification else {}, plan_only=b("plan_only", False),
-            conflict_ack=conflict_ack_pairs(raw.get("conflict_ack")))
+            conflict_ack=conflict_ack_pairs(raw.get("conflict_ack")),
+            control_meta=control_meta_clean(raw.get("control_meta")))
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)
