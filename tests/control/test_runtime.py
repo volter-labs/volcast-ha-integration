@@ -922,3 +922,21 @@ async def test_setup_checks_readings_after_each_telemetry_cycle(monkeypatch):
     await rt.telemetry.async_flush()
     assert any(c[0] == f"no_readings_{entry.entry_id}" for c in created)
     await rt_mod.async_unload_control(hass, rt)
+
+
+@pytest.mark.asyncio
+async def test_flush_completes_when_the_repair_api_raises(monkeypatch):
+    from tests.setup_harness import drain
+    _patch(monkeypatch)
+    _issues(monkeypatch)
+    hass, entry = _setup_hass(), _entry()
+    rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    await drain(hass)
+
+    def boom(*a, **kw):
+        raise RuntimeError("registry down")
+    monkeypatch.setattr(rt_mod.ir, "async_create_issue", boom)
+    monkeypatch.setattr(rt_mod.ir, "async_delete_issue", boom)
+    await rt.telemetry.async_flush()            # nie rzuca
+    monkeypatch.undo()
+    await rt_mod.async_unload_control(hass, rt)

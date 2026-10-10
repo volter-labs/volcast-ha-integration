@@ -878,7 +878,10 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
 
         async def _flush_and_check() -> bool:
             result = await _flush()
-            sync_readings_issue(hass, entry, telemetry)      # po każdym cyklu, także nieudanej wysyłce
+            try:
+                sync_readings_issue(hass, entry, telemetry)      # po każdym cyklu, także nieudanej wysyłce
+            except Exception as err:  # noqa: BLE001 — zgłoszenie nigdy nie psuje telemetrii
+                _LOGGER.debug("Volcast readings repair check failed (%s)", type(err).__name__)
             return result
 
         telemetry.async_flush = _flush_and_check

@@ -365,7 +365,6 @@ class Onboarding:
         await self._set("consumption", "done", f"{days} days of history" if ok else "imported")
 
     async def _request_plan(self) -> None:
-        self._plan_attempts += 1
         self._plan_retry_at = None
         if readings_missing(getattr(self._runtime(), "telemetry", None)):
             # Planer bez odczytów odmówi — nie palimy próby; ponowienie po pierwszej udanej telemetrii.
@@ -373,6 +372,7 @@ class Onboarding:
             _LOGGER.info("Volcast onboarding: first plan no_readings")
             await self._set("first_plan", "active", NO_READINGS)
             return
+        self._plan_attempts += 1
         if self._state("first_plan") == "pending":
             await self._set("first_plan", "active")
         res = await self._client.async_request_plan(self._session)

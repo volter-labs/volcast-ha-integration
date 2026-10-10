@@ -608,6 +608,7 @@ def test_onboarding_skips_plan_when_no_readings():
     asyncio.run(ob.async_run())
     assert client.plan_calls == 0
     assert ob.first_plan_outcome == "no_readings"
+    assert ob._plan_attempts == 0
     assert last(client)["first_plan"]["state"] == "active"
 
 
