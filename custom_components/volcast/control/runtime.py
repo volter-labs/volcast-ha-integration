@@ -69,6 +69,7 @@ from .live import LiveSender
 from .signals_hub import SignalsHub
 from .store import ControlStore, async_installation_salt
 from .telemetry import TelemetrySender
+from .verification import VerificationRunner, default_params, start_rung_for
 
 try:
     from homeassistant.loader import async_get_integration
@@ -115,6 +116,8 @@ class ControlRuntime:
     report: Callable[[], dict | None] | None = None
     recommendation: object | None = None
     recommendation_gen: int = 0           # numer ostatniego przeliczenia (starsze wyniki odrzucane)
+    # drabina weryfikacji urządzenia (`VerificationRunner`); blok `verification` = `verification.payload()`
+    verification: object | None = None
 
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
@@ -531,6 +534,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     await executor.async_start()
     telemetry = None
     rt = None
+    verification = None
     channel = live = hub = None
     try:
         def _task(coro, name):
@@ -575,10 +579,17 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
                                   on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply)
         await telemetry.async_start()
+        if choice is not None and not composed.returning:
+            # Przed pierwszym cyklem: w trybie bezpośrednim plan czeka na zweryfikowane urządzenie.
+            verification = VerificationRunner(
+                hass, entry, executor, params=default_params(choice.profile),
+                start_rung=start_rung_for(choice.profile, choice.integration_domain, direct=conn is not None),
+                salt=await async_installation_salt(hass), on_urgent=telemetry.async_flush)
+            await verification.async_start()
         rt = ControlRuntime(executor, fetcher, telemetry, cloud, choice, mapped, rated,
                             options_at_setup=dict(opts),
                             inverter_entities=inverter_entity_ids(hass, choice, mapped), direct=conn,
-                            channel=channel, live=live, hub=hub, report=report)
+                            channel=channel, live=live, hub=hub, report=report, verification=verification)
 
         rt.unsubs.append(async_track_time_interval(hass, _fetch, timedelta(seconds=SCHEDULE_FETCH_INTERVAL_S)))
 
@@ -595,6 +606,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     except BaseException:
         # Nieudane złożenie nie zostawia żywego wykonawcy (bez encji wyłącznika nikt by go
         # nie zatrzymał, a każde przeładowanie dokładałoby kolejnego).
+        if verification is not None:
+            await verification.async_stop()
         await _async_abort_setup(hass, entry, executor, telemetry, rt, signals=(hub, live, channel))
         if conn is not None:
             await conn.async_stop()
@@ -765,6 +778,8 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
     for unsub in rt.unsubs:
         unsub()
     rt.unsubs.clear()
+    if rt.verification is not None:
+        await rt.verification.async_stop()
     # Sygnały przed powrotem: cykl z pingu po powrocie do trybu bazowego zapisałby plan z powrotem.
     await _async_stop_signals((rt.hub, rt.live, rt.channel))
     if restore:

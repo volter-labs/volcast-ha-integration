@@ -18,6 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.volcast.const import DOMAIN
 from custom_components.volcast.control import direct_search as ds
 from custom_components.volcast.control import runtime as rt_mod
+from custom_components.volcast.core.control.ladder import VERIFIED, Ladder, LadderParams, device_key
 from custom_components.volcast.core.modbus.identity import device_fingerprint
 from custom_components.volcast.core.profile import load_builtin, profile_from_dict
 from custom_components.volcast.core.registers import RegisterImage
@@ -83,9 +84,21 @@ async def _settle(hass, rt) -> None:
                          f"decision={d and (d.status, d.reason)}")
 
 
+def _verified_device(target: dict) -> dict:
+    """Rekord drabiny: urządzenie z celu już zweryfikowane (plan steruje nim od pierwszego cyklu)."""
+    lad = Ladder(3, LadderParams(24, 15, 500),
+                 device_key=device_key(SALT, f"direct|{target['profile_id']}|{target['device_fp']}"))
+    lad.state.state, lad.state.since = VERIFIED, dt_util.utcnow()
+    return lad.to_record()
+
+
 async def _setup(hass, hass_storage, options, *, state=None, profiles=None, monkeypatch=None):
     seed_salt(hass_storage)
-    store_state(hass_storage, "paired01", state or {"consent": True, "local_switch": True, "plan_raw": _plan()})
+    if state is None:
+        state = {"consent": True, "local_switch": True, "plan_raw": _plan()}
+        if options.get("control_mode") == "direct":
+            state["verification"] = _verified_device(options["direct_target"])
+    store_state(hass_storage, "paired01", state)
     if profiles is not None:
         monkeypatch.setattr(rt_mod.ds, "load_profiles", lambda: list(profiles))
     entry = make_entry(hass, options=options)

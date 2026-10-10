@@ -18,6 +18,10 @@ dalej uznać za swój (inaczej zgubiłaby migawkę i własność).
 zapisu okien czasowych; wczytywana przez osobny, walidujący loader (zły kształt → brak
 migawki + ostrzeżenie, powrót idzie wtedy do programów bazowych).
 
+`verification` — rekord drabiny weryfikacji urządzenia (`core/control/ladder.py`, `Ladder.to_record`);
+zły kształt → pusty (drabina rusza od nowa) + ostrzeżenie. `plan_only` — tryb „tylko plan” (wybór
+własnego sterownika): bez zapisów i bez ponownych napraw o konflikcie.
+
 `nvm_log` — ramki zapisu do pamięci nieulotnej falownika w oknie budżetu (`[klucz, czas UTC]`),
 żeby budżet przeżył restart i przeładowanie.
 
@@ -34,6 +38,7 @@ from dataclasses import asdict, dataclass, field
 
 from homeassistant.helpers.storage import Store
 
+from ..core.control.ladder import valid_record
 from ..core.control.tou_writes import validate_tou_snapshot
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,6 +64,8 @@ class ControlState:
     taken_over: list[str] = field(default_factory=list)
     tou_snapshot: dict | None = None
     nvm_log: list = field(default_factory=list)
+    verification: dict = field(default_factory=dict)
+    plan_only: bool = False
 
 
 def _nvm_log(raw) -> list:
@@ -101,6 +108,10 @@ class ControlStore:
         tou_snapshot = validate_tou_snapshot(tou_raw) if tou_raw is not None else None
         if tou_raw is not None and tou_snapshot is None:
             _LOGGER.warning("Stored time-of-use snapshot is malformed; ignoring it")
+        verification = raw.get("verification")
+        if verification is not None and not valid_record(verification):
+            _LOGGER.warning("Stored device verification record is malformed; starting the verification again")
+            verification = None
         mode_uid = raw.get(_OWNER_MODE_UID)
         if owner and isinstance(mode_uid, str) and mode_uid:
             owner["mode_uid"] = mode_uid
@@ -114,7 +125,8 @@ class ControlStore:
             owner=owner,
             restore_keys=_keys(restore_keys) if isinstance(restore_keys, list) else None,
             taken_over=_keys(taken_over) if isinstance(taken_over, list) else [],
-            tou_snapshot=tou_snapshot, nvm_log=_nvm_log(raw.get("nvm_log")))
+            tou_snapshot=tou_snapshot, nvm_log=_nvm_log(raw.get("nvm_log")),
+            verification=dict(verification) if verification else {}, plan_only=b("plan_only", False))
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)

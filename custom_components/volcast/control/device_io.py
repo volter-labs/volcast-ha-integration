@@ -179,6 +179,14 @@ class EntityIO:
     def snapshot_keys(self) -> tuple[str, ...]:
         return tuple(self.mapped)
 
+    def identity(self) -> str | None:
+        """Identyfikacja urządzenia do klucza drabiny weryfikacji (skrót z solą liczy wołający):
+        profil, integracja i encja trybu (identyfikator rejestru, bez niego entity_id). None = brak."""
+        mode = self._mode_uid or self.mapped.get("mode")
+        if self._profile is None or not self._domain or not mode:
+            return None
+        return f"entities|{self._profile.id}|{self._domain}|{mode}"
+
     # ── powrót do trybu bazowego ──
 
     def restore_fit(self, rd: Reading, params: Params) -> tuple[Params, tuple[str, ...]]:
@@ -310,6 +318,12 @@ class DirectIO:
             await conn.async_confirm_identity()
         return conn.identity == "confirmed" and not conn.identity_check_due()
 
+    def identity_confirmed(self) -> bool:
+        """Tożsamość potwierdzona w bieżącej sesji połączenia — bez nowej wymiany na łączu
+        (potwierdzenie prowadzi wykonawca w swoim cyklu, pod swoją blokadą)."""
+        conn = self.conn
+        return conn.client is not None and conn.refused() is None and conn.identity == "confirmed"
+
     def rated_power_w(self) -> float | None:
         r = self.conn.reading
         v = r.values.get("rated_power_w") if r is not None else None
@@ -363,6 +377,14 @@ class DirectIO:
 
     def owner_matches(self, record: Mapping[str, str]) -> bool:
         return dict(record) == self.owner()
+
+    def identity(self) -> str | None:
+        """Identyfikacja urządzenia do klucza drabiny: profil + odcisk urządzenia z sondy (bez adresu
+        połączenia — zmiana IP to nie inne urządzenie). Bez odcisku None."""
+        fp = self.conn.target.get("device_fp") if isinstance(self.conn.target, Mapping) else None
+        if self._profile is None or not isinstance(fp, str) or not fp:
+            return None
+        return f"direct|{self._profile.id}|{fp}"
 
     def snapshot_keys(self) -> tuple[str, ...]:
         write = self._profile.raw.get("write") or {} if self._profile else {}

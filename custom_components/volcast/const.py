@@ -62,6 +62,14 @@ SIGNAL_CONTROL_UPDATED = "volcast_control_updated_{entry_id}"
 # Zmiana stanu onboardingu sterowania (rekomendacja ścieżki, weryfikacja, konflikty) — blok `driver.control`.
 SIGNAL_CONTROL_STATE_UPDATED = "volcast_control_state_updated_{entry_id}"
 EXECUTOR_INTERVAL_S = 60
+# Drabina weryfikacji urządzenia (`core/control/ladder.py`); profil może nadpisać blokiem `verification`.
+VERIFY_TRIAL_HOURS = 24
+VERIFY_WINDOW_MIN = 15
+VERIFY_WINDOW_POWER_W = 500
+# Okno próbne rusza tylko poniżej tego SoC — wymuszone ładowanie musi mieć miejsce w baterii.
+VERIFY_WINDOW_MAX_SOC = 90.0
+# Zgłoszenie w Naprawach po zatrzymaniu drabiny (`verification_stopped_<wpis>`).
+ISSUE_VERIFICATION_STOPPED = "verification_stopped"
 STOP_WRITE_TIMEOUT_S = 10.0
 ERROR_ISSUE_AFTER = 10
 # Pre-release backend; replaced on the stable release.

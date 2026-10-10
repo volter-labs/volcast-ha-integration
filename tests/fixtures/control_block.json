@@ -1,0 +1,27 @@
+{
+  "seq": 1791619200,
+  "recommendation": {
+    "path": "entities",
+    "reason": "integration_write_entities",
+    "integration": { "domain": "goodwe", "name": "GoodWe Inverter", "origin": "core" },
+    "device": { "manufacturer": "GoodWe", "model": "GW8K-ET" },
+    "entity_map": [
+      { "key": "mode", "entity_id": "select.inverter_operation_mode" },
+      { "key": "soc_min", "entity_id": "number.depth_of_discharge_on_grid" },
+      { "key": "eco_power", "entity_id": "number.eco_mode_power" }
+    ],
+    "ladder_start": 3
+  },
+  "verification": {
+    "device_key": "3f9a1c0e7b2d4a6f",
+    "rung": 3,
+    "state": "running",
+    "since": "2026-10-10T08:00:00Z",
+    "next_at": "2026-10-11T08:00:00Z",
+    "trial": { "would_write": 7, "foreign_writes": 0, "hours_done": 5.5 }
+  },
+  "conflicts": [
+    { "kind": "automation", "label": "automation.battery_night_charge", "evidence": "3 writes in 24 h" }
+  ],
+  "choice_ack": { "path": "entities", "controller": "volcast", "at": "2026-10-10T07:58:12Z" }
+}

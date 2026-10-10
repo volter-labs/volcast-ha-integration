@@ -74,6 +74,11 @@ Tryb bezpośredni (`DirectIO`, rejestry falownika):
 * budżet NVM liczy każdą wysłaną ramkę (także powrotu) i jest trwały w magazynie (w trybie encji: każde
   wywołanie usługi zapisu planu, bez powrotu do trybu bazowego); decyzja `RESTORE`
   (wyczerpany budżet przy trybie wymuszonym) idzie przez wykonawcę grupowego tylko przy własności;
+* drabina weryfikacji urządzenia (`verification`, runner `control/verification.py`): przy podpiętej
+  drabinie zapisy planu w trybie bezpośrednim (model trybu i nastawy) dopiero przy zweryfikowanym
+  urządzeniu (`plan_allowed`); zamknięta bramka przy własności = powrót do trybu bazowego. Okno próbne
+  drabiny to plan zastępczy (jeden slot ładowania z sieci) tą samą ścieżką zapisu i strażnikami;
+  po oknie i po stopie drabiny — powrót do trybu bazowego (`async_verification_restore`);
 * okna czasowe: sekwencja OFF → programy → ON, migawka programów właściciela zapisana przed
   pierwszym zapisem, powrót do niej po przerwanej sekwencji i po utracie prawa.
 
@@ -135,6 +140,7 @@ from ..core.modbus.writer import KEPT
 from ..core.params import Params
 from ..core.profile import direct_verified
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
+from ..core.write_sequence import ERROR as WRITE_ERROR, OK as WRITE_OK
 from .device_io import NO_READING, DeviceIO, DirectIO, EntityIO, Reading
 from .direct import START_FAILED
 from .store import ControlState, ControlStore
@@ -275,6 +281,10 @@ class VolcastExecutor:
         # wykonawca złożony tylko do powrotu przez poprzedni sposób sterowania: po oddaniu falownika
         # składający przeładowuje wpis (nowy sposób sterowania)
         self._on_released = on_released
+        # drabina weryfikacji (runner z `plan_allowed()`); None = bez drabiny (zachowanie jak dotąd)
+        self.verification = None
+        self._window: Schedule | None = None           # okno próbne drabiny: plan zastępczy
+        self._verify_restore = False                   # powrót po oknie/stopie drabiny w toku
 
     # ── stan dla encji i telemetrii ───────────────────────────────────────
     @property
@@ -298,6 +308,91 @@ class VolcastExecutor:
     def owned(self) -> bool:
         """Czy to my zmienialiśmy nastawy falownika (jest co przywracać)."""
         return self._state.owned
+
+    @property
+    def profile(self):
+        return self._profile
+
+    @property
+    def last_write_end(self) -> float | None:
+        """Koniec naszego ostatniego zapisu w trybie bezpośrednim (zegar monotoniczny)."""
+        return self._last_write_end
+
+    # ── drabina weryfikacji ───────────────────────────────────────────────
+    @property
+    def verification_record(self) -> dict:
+        return self._state.verification
+
+    async def async_save_verification(self, record: dict) -> bool:
+        """Rekord drabiny w tym samym magazynie co stan sterowania (jeden pisarz rekordu)."""
+        self._state.verification = dict(record)
+        return await self._async_save("device verification")
+
+    def verification_can_write(self) -> bool:
+        """Czy drabina może pisać (szczeble 4–5): zgoda konta, przełącznik, wybrany ten sposób sterowania,
+        nie próba bez zapisu i nie tryb „tylko plan”."""
+        trial = self._direct is not None and self._direct.trial
+        return (self._state.consent is True and self._state.local_switch and not self._stopped
+                and not self._frozen and not self._disabled and not trial and not self._state.plan_only
+                and self._entry.options.get(OPT_CONTROL_MODE) == self.io.kind)
+
+    def start_verification_window(self, schedule: Schedule) -> None:
+        """Okno próbne: do `async_verification_restore` cykl wykonuje ten plan zamiast planu z chmury."""
+        self._window = schedule
+
+    async def async_verification_restore(self) -> None:
+        """Koniec okna albo stop drabiny: powrót do trybu bazowego (przy własności), ponawiany co cykl,
+        aż dojdzie. W trybie encji bez okna nic — plan steruje tam niezależnie od drabiny."""
+        had_window = self._window is not None
+        self._window = None
+        if had_window or (self._direct is not None and self.verification is not None):
+            self._verify_restore = True
+        await self.async_tick()
+
+    async def async_control_write(self) -> bool | None:
+        """Zapis kontrolny drabiny: bieżący tryb falownika zapisany ponownie i odczytany z powrotem.
+
+        True = odczyt zwrotny równy, False = różny albo odmowa, None = bez wyniku (brak potwierdzonej
+        tożsamości, odczytu trybu albo błąd łącza). Bez własności i migawki — wartość się nie zmienia."""
+        if self._profile is None or self._stopped or self._frozen or self._disabled:
+            return None
+        async with self._lock:
+            direct = self._direct
+            rd = self.io.read(self._utcnow())
+            if direct is not None:
+                if not await direct.async_identity_ok():
+                    return None
+                rd = await self._fresh_direct_reading(rd)
+                if rd is None:
+                    return None
+            current = rd.readings.get("mode")
+            if not isinstance(current, str) or current not in self._profile.modes:
+                return None
+            fitted, unfit = self.io.restore_fit(rd, Params(mode=current))
+            writes = self.io.restore_writes(fitted, ["mode"], rd) if "mode" not in unfit else []
+            if len(writes) != 1:
+                return None
+            try:
+                out = await self._writer.async_write(writes[0])
+            except Exception as err:  # noqa: BLE001 — pisarz nie rzuca; zapis niepewny
+                self._log_write_exception("mode", err)
+                return None
+            finally:
+                self._end_direct_writes()
+        if out == WRITE_OK:
+            # Pisarz rejestrów potwierdza odczytem zwrotnym; w trybie encji — stan encji po usłudze.
+            return True if direct is not None else self.io.read(self._utcnow()).readings.get("mode") == current
+        return None if out == WRITE_ERROR else False
+
+    def _verification_hold(self) -> bool:
+        """Powrót wymuszony przez drabinę: po oknie/stopie albo zamknięta bramka planu (tryb bezpośredni)."""
+        if self._window is not None:
+            return False
+        return self._verify_restore or (self._plan_gated() and not self.verification.plan_allowed())
+
+    def _plan_gated(self) -> bool:
+        return (self.verification is not None and self._direct is not None and self._profile is not None
+                and self._profile.control_model == "mode_setpoint")
 
     @property
     def nvm_budget_hit(self) -> bool:
@@ -824,10 +919,15 @@ class VolcastExecutor:
             # Próba przy własności z wcześniejszej sesji: pisarz bez zapisu nie odda falownika.
             self._finish(CycleDecision(BLOCKED, "trial_while_owned"))
             return
-        if needs_restore(owned=self._state.owned, consent=gates.consent, local_switch=gates.local_switch,
-                         control_mode=gates.control_mode, active_mode=self.io.kind) and self._io_ready():
+        if self._verify_restore and not self._state.owned:
+            self._verify_restore = False             # nic do oddania (albo powrót już doszedł)
+        if (needs_restore(owned=self._state.owned, consent=gates.consent, local_switch=gates.local_switch,
+                          control_mode=gates.control_mode, active_mode=self.io.kind)
+                or (self._state.owned and self._verification_hold())) and self._io_ready():
             # Także w pauzie i przy kolizji: powrót nie rusza kluczy, które zmienił właściciel.
             await self._restore(rd)
+            if not self._state.owned:
+                self._verify_restore = False
             await self._persist_budget()
             return
         if direct is not None:
@@ -868,7 +968,8 @@ class VolcastExecutor:
             # Rejestr z wyjątkiem 2 w tej sesji też jest brakującą nastawą (degradacja akcji, nie zgadywanie).
             target.unavailable = target.unavailable | (self._memory.unsupported & set(self._write_keys()))
         decision = decide_cycle(
-            profile=self._profile, schedule=self.schedule, now_utc=now_utc, now_mono=now_mono, tele=tele,
+            profile=self._profile, schedule=self._window or self.schedule, now_utc=now_utc, now_mono=now_mono,
+            tele=tele,
             limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
             gates=dgates, memory=self._memory, **cycle_in)
         self._warn_sell_suspended(decision)
@@ -1570,8 +1671,13 @@ class VolcastExecutor:
 
     def _gates(self) -> Gates:
         direct = self._direct
-        if direct is not None:
+        if self._window is not None:
+            # Okno próbne drabiny weryfikuje urządzenie — także z profilem roboczym (zgoda i strażnicy dalej).
+            verified = direct is None or not direct.trial
+        elif direct is not None:
             verified = direct_verified(self._profile) and not direct.trial
+            if self._plan_gated():
+                verified = verified and self.verification.plan_allowed()
         else:
             verified = control_verified(self._profile, self._domain)
         return Gates(consent=self._state.consent, local_switch=self._state.local_switch,
