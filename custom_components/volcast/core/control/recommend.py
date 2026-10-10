@@ -29,6 +29,7 @@ from typing import Any, Mapping, Sequence
 
 from ..discovery.known import INVERTER_DOMAINS
 from ..profile import Profile, direct_verified, ha_integration
+from .conflict import entry_conflicts
 from .select import InverterHint, ProfileChoice, control_verified, select_profile
 
 ENTITIES, DIRECT = "entities", "direct"
@@ -49,10 +50,6 @@ MAX_TEXT, MAX_EVIDENCE, MAX_ENTITY_MAP, MAX_CONFLICTS = 64, 120, 24, 8
 _ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 _MAP_KEY = re.compile(r"^[a-z0-9_]{1,24}$")
 _DOMAIN = re.compile(r"^[a-z0-9_]{1,32}$")
-# `async_clash` przy błędzie sprawdzenia zwraca `unknown` (fail-closed) — to nie obserwacja wpisu.
-_UNKNOWN = "unknown"
-_CLASH_EVIDENCE = "another entry uses the same inverter address"
-_UNKNOWN_EVIDENCE = "conflict check failed"
 
 
 @dataclass(frozen=True)
@@ -147,15 +144,6 @@ def _probe_device(probe, profile: Profile) -> dict:
     return {"manufacturer": words[0] if words else None, "model": probe.identity.model}
 
 
-def _conflicts(clash: Sequence[str]) -> tuple[dict, ...]:
-    out: list[dict] = []
-    for d in clash:
-        if isinstance(d, str) and d and all(c["label"] != d for c in out):
-            out.append({"kind": "entry", "label": d,
-                        "evidence": _UNKNOWN_EVIDENCE if d == _UNKNOWN else _CLASH_EVIDENCE})
-    return tuple(out)
-
-
 def recommend(report: Mapping | None, profiles: Sequence[Profile], probe=None, offer: str | None = None,
               entity_map: Mapping[str, str] | None = None, conflicts: Sequence[str] = (), *,
               choice: ProfileChoice | None = None, origins: Mapping[str, str] | None = None) -> Recommendation:
@@ -165,7 +153,7 @@ def recommend(report: Mapping | None, profiles: Sequence[Profile], probe=None, o
         choice = select_profile(hints_from_report(report), profiles)
     mapped = dict(entity_map or {})
     origins = origins or {}
-    found = _conflicts(conflicts)
+    found = entry_conflicts(conflicts)
     domain = choice.integration_domain if choice is not None else None
 
     if choice is not None and domain and mapped.get("mode"):

@@ -20,7 +20,9 @@ migawki + ostrzeżenie, powrót idzie wtedy do programów bazowych).
 
 `verification` — rekord drabiny weryfikacji urządzenia (`core/control/ladder.py`, `Ladder.to_record`);
 zły kształt → pusty (drabina rusza od nowa) + ostrzeżenie. `plan_only` — tryb „tylko plan” (wybór
-własnego sterownika): bez zapisów i bez ponownych napraw o konflikcie.
+własnego sterownika): bez zapisów i bez ponownych napraw o konflikcie. `conflict_ack` — pary
+`[kind, label]` konfliktów sterowników, przy których właściciel wybrał sterowanie Volcast: nie
+zatrzymują drabiny ponownie (także po restarcie); złe wpisy pomijane.
 
 `nvm_log` — ramki zapisu do pamięci nieulotnej falownika w oknie budżetu (`[klucz, czas UTC]`),
 żeby budżet przeżył restart i przeładowanie.
@@ -38,6 +40,7 @@ from dataclasses import asdict, dataclass, field
 
 from homeassistant.helpers.storage import Store
 
+from ..core.control.conflict import CONFLICT_KINDS, MAX_LABEL
 from ..core.control.ladder import valid_record
 from ..core.control.tou_writes import validate_tou_snapshot
 
@@ -66,6 +69,20 @@ class ControlState:
     nvm_log: list = field(default_factory=list)
     verification: dict = field(default_factory=dict)
     plan_only: bool = False
+    conflict_ack: list = field(default_factory=list)
+
+
+CONFLICT_ACK_MAX = 16
+
+
+def conflict_ack_pairs(raw) -> list:
+    """Pary `[kind, label]` (rodzaj z kontraktu, etykieta ≤ 64), bez powtórzeń, najwyżej `CONFLICT_ACK_MAX`."""
+    out: list = []
+    for item in raw if isinstance(raw, (list, tuple)) else ():
+        if isinstance(item, (list, tuple)) and len(item) == 2 and item[0] in CONFLICT_KINDS \
+                and isinstance(item[1], str) and len(item[1]) <= MAX_LABEL and [item[0], item[1]] not in out:
+            out.append([item[0], item[1]])
+    return out[:CONFLICT_ACK_MAX]
 
 
 def _nvm_log(raw) -> list:
@@ -126,7 +143,8 @@ class ControlStore:
             restore_keys=_keys(restore_keys) if isinstance(restore_keys, list) else None,
             taken_over=_keys(taken_over) if isinstance(taken_over, list) else [],
             tou_snapshot=tou_snapshot, nvm_log=_nvm_log(raw.get("nvm_log")),
-            verification=dict(verification) if verification else {}, plan_only=b("plan_only", False))
+            verification=dict(verification) if verification else {}, plan_only=b("plan_only", False),
+            conflict_ack=conflict_ack_pairs(raw.get("conflict_ack")))
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)

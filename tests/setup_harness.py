@@ -64,6 +64,11 @@ class _Bus:
         self.listeners.append((event_type, listener))
         return lambda: self.removed.append(listener)
 
+    def async_listen(self, event_type, listener):
+        # Nasłuch stały (np. konflikty sterowników) — bez wpisu w `events`, żeby nie zmieniać ich kolejności.
+        self.listeners.append((event_type, listener))
+        return lambda: self.removed.append(listener)
+
 
 class _Services:
     def __init__(self) -> None:

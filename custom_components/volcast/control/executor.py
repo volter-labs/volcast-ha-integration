@@ -106,6 +106,11 @@ w logu sam klucz. Sygnał poziomu działa raz na epizod i tylko przy otwartym st
 pauzie, gdy epizod się skończył. Pauza nie przeżywa restartu (zegar monotoniczny).
 Zgłoszenie da się naprawić („Wznów sterowanie teraz", `async_resume_control`, też serwis
 `volcast.resume_control`): koniec pauzy bez przeładowania wpisu i od razu cykl z planem.
+
+Tryb „tylko plan” (`plan_only` w magazynie, wybór własnego sterownika — `own_ems`): bramki jak przy
+wyłączonym sterowaniu (zero zapisów planu i drabiny; przy własności — powrót do trybu bazowego), bez
+pauzy i zgłoszeń o obcej zmianie ani kolizji na łączu. Konflikty sterowników liczy `control/conflicts.py`
+(encje zapisu: `write_entity_ids`, potwierdzone konflikty: `conflict_ack`).
 """
 from __future__ import annotations
 
@@ -145,7 +150,7 @@ from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from ..core.write_sequence import ERROR as WRITE_ERROR, OK as WRITE_OK
 from .device_io import NO_READING, DeviceIO, DirectIO, EntityIO, Reading
 from .direct import START_FAILED
-from .store import ControlState, ControlStore
+from .store import ControlState, ControlStore, conflict_ack_pairs
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -337,6 +342,48 @@ class VolcastExecutor:
         return (self._state.consent is True and self._state.local_switch and not self._stopped
                 and not self._frozen and not self._disabled and not trial and not self._state.plan_only
                 and self._entry.options.get(OPT_CONTROL_MODE) == self.io.kind)
+
+    # ── drugi sterownik, tryb „tylko plan” ────────────────────────────────
+    @property
+    def plan_only(self) -> bool:
+        return self._state.plan_only
+
+    @property
+    def write_entity_ids(self) -> frozenset[str]:
+        """Encje kluczy zapisu (tryb encji) — zapis do nich przez kogoś innego to drugi sterownik."""
+        if self._direct is not None:
+            return frozenset()
+        return frozenset(e for k in self._write_keys() if (e := self._mapped.get(k)))
+
+    @property
+    def conflict_ack(self) -> list:
+        return self._state.conflict_ack
+
+    async def async_set_plan_only(self, on: bool) -> bool:
+        """Tryb „tylko plan” (trwały). Włączenie zamyka zgłoszenia obcej zmiany i kolizji na łączu
+        (pauza nie ma już czego chronić). Powrót do trybu bazowego robi następny cykl albo wołający."""
+        if self._disabled:
+            return False
+        self._state.plan_only = bool(on)
+        if on:
+            if self._memory is not None:
+                self._memory.paused_until = None
+            self._foreign_issue_open = self._conflict_issue_open = False
+            ir.async_delete_issue(self._hass, DOMAIN, self._foreign_issue_id)
+            ir.async_delete_issue(self._hass, DOMAIN, self._conflict_issue_id)
+        ok = await self._async_save("plan-only mode")
+        self._notify()
+        return ok
+
+    async def async_save_conflict_ack(self, pairs) -> bool:
+        """Konflikty, przy których właściciel wybrał sterowanie Volcast (`[kind, label]`)."""
+        if self._disabled:
+            return False
+        pairs = conflict_ack_pairs(pairs)
+        if pairs == self._state.conflict_ack:
+            return True                          # powtórzony wybór z chmury — bez zapisu magazynu
+        self._state.conflict_ack = pairs
+        return await self._async_save("controller choice")
 
     def start_verification_window(self, schedule: Schedule) -> None:
         """Okno próbne: do `async_verification_restore` cykl wykonuje ten plan zamiast planu z chmury."""
@@ -714,8 +761,8 @@ class VolcastExecutor:
             _LOGGER.warning("Volcast control: settings change check failed (%s)", type(err).__name__)
 
     def _on_state_event(self, event) -> bool:
-        """True, gdy zmiana była obca (stan do zapisania)."""
-        if self._memory is None or not self._domain or self._stopped or self._disabled:
+        """True, gdy zmiana była obca (stan do zapisania). W trybie „tylko plan” nic nie piszemy — bez pauzy."""
+        if self._memory is None or not self._domain or self._stopped or self._disabled or self._state.plan_only:
             return False
         data = event.data or {}
         eid = data.get("entity_id")
@@ -1250,6 +1297,8 @@ class VolcastExecutor:
         refused_owned = conn.refused() is not None and self._state.owned
         if refused_owned:
             return                          # zgłoszenie odmowy przy własności prowadzi powrót (bez migotania)
+        if self._state.plan_only:
+            return                          # „tylko plan”: bez ponownych napraw o konflikcie
         if conn.conflict and not self._conflict_issue_open:
             self._conflict_issue_open = True
             reason = conn.monitor.reason if conn.monitor.state == "conflict" else \
@@ -1710,8 +1759,10 @@ class VolcastExecutor:
             verified = direct_verified(self._profile) and not direct.trial
         else:
             verified = control_verified(self._profile, self._domain)
+        # „Tylko plan” = sterowanie wyłączone (jak opcja `control_off`), także zanim opcje się przeładują.
+        mode = None if self._state.plan_only else self._entry.options.get(OPT_CONTROL_MODE)
         return Gates(consent=self._state.consent, local_switch=self._state.local_switch,
-                     control_mode=self._entry.options.get(OPT_CONTROL_MODE), verified=verified)
+                     control_mode=mode, verified=verified)
 
     async def _async_brake_after_error(self) -> None:
         """Wyjątek w cyklu: hamulec na świeżym odczycie, jeśli da się go bezpiecznie ustalić."""
@@ -1878,7 +1929,7 @@ class VolcastExecutor:
 
     def _gates_open(self) -> bool:
         return (self._state.consent is True and self._state.local_switch and not self._stopped
-                and not self.paused
+                and not self.paused and not self._state.plan_only
                 and self._entry.options.get(OPT_CONTROL_MODE) == self.io.kind)
 
     async def _restore(self, rd: Reading) -> None:

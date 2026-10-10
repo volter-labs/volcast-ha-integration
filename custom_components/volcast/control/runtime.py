@@ -24,6 +24,15 @@ dostaje `DirectIO` na połączeniu `DirectConnection` (start w tle: kolizje i to
 Kolejność zatrzymania: wykonawca (z powrotem przy wyłączeniu/usunięciu wpisu) → połączenie
 (zwolnienie hosta w `direct_hosts`). Zmiana celu albo trybu próbnego to zmiana sterowania — powrót
 idzie przez STARE połączenie przed przeładowaniem.
+
+Drugi sterownik (`conflicts.ConflictMonitor`, `ControlRuntime.conflicts`): lista `conflicts` obok
+`recommendation` i `verification` (`control_state_payload`); dowody adresu z rekomendacji i połączenia
+bezpośredniego, klient na łączu z połączenia, Box z planu (`async_set_box_active`). Wybór właściciela
+z chmury (`async_apply_controller_choice`): `volcast` — koniec trybu „tylko plan”, obecne konflikty
+potwierdzone (nie zatrzymują już drabiny; naprawa trwa do końca dowodu), drabina zatrzymana konfliktem
+rusza ponownie, pauza przejęcia się kończy; `own_ems` — tryb „tylko plan” w magazynie, powrót do trybu
+bazowego i opcja sterowania wyłączona (ta sama droga co `control_off` w opcjach: powrót przez obecnego
+wykonawcę, potem przeładowanie), bez zgłoszeń o konflikcie.
 """
 from __future__ import annotations
 
@@ -53,6 +62,7 @@ from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERG
                      SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED)
 from ..core.control.caps import direct_capabilities
 from ..core.control.limits import executor_limits, rated_power_from_model
+from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
 from ..core.control.recommend import recommend
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
@@ -62,6 +72,7 @@ from ..registry_compat import all_devices
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
 from .direct import DirectConnection
+from .conflicts import ConflictMonitor
 from .executor import VolcastExecutor
 from .ha_writer import EntityServiceWriter
 from .history_import import async_import_history_once
@@ -88,6 +99,8 @@ CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OP
 _POLL_RANGE_S = (5.0, 60.0)
 # Opcje, których zmiana nie wymaga przeładowania wpisu (wystarczy import historii).
 RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY})
+# Wybór sterownika z chmury (`control_choice.controller`).
+CONTROLLER_VOLCAST, CONTROLLER_OWN_EMS = "volcast", "own_ems"
 
 
 @dataclass
@@ -118,10 +131,94 @@ class ControlRuntime:
     recommendation_gen: int = 0           # numer ostatniego przeliczenia (starsze wyniki odrzucane)
     # drabina weryfikacji urządzenia (`VerificationRunner`); blok `verification` = `verification.payload()`
     verification: object | None = None
+    # drugi sterownik (`ConflictMonitor`); blok `conflicts` = `conflicts.conflicts()`
+    conflicts: object | None = None
+    hass: object | None = None
+    entry: object | None = None
+
+    def control_state_payload(self) -> dict:
+        """Stan sterowania dla chmury: `recommendation`, `verification` (gdy są) i `conflicts` (zawsze)."""
+        out: dict = {}
+        if self.recommendation is not None:
+            out["recommendation"] = self.recommendation.to_payload()
+        ver = self.verification.payload() if self.verification is not None else None
+        if ver is not None:
+            out["verification"] = ver
+        if self.conflicts is not None:
+            out["conflicts"] = self.conflicts.conflicts()
+        else:
+            out["conflicts"] = self.recommendation.conflicts_payload() if self.recommendation is not None else []
+        return out
+
+    async def async_set_box_active(self, active: bool) -> None:
+        """`box_active` z planu → konflikt `box`."""
+        if self.conflicts is not None:
+            await self.conflicts.async_set_box_active(active)
+
+    async def async_apply_controller_choice(self, controller: str) -> str:
+        """Wybór sterownika: "applied"; "ignored" (nieznana wartość); "restore_failed" (`own_ems`: tryb
+        „tylko plan” włączony, ale powrót do trybu bazowego się nie udał — opcje bez zmian, każdy cykl
+        go ponawia)."""
+        ex = self.executor
+        if controller == CONTROLLER_OWN_EMS:
+            await ex.async_set_plan_only(True)
+            if self.conflicts is not None:
+                await self.conflicts.async_refresh()            # zgłoszenie o konflikcie znika
+            entry = self.entry
+            old = dict(entry.options)
+            new = {k: v for k, v in old.items() if k != OPT_CONTROL_MODE}
+            if control_options_changed(old, new):
+                if not await async_control_change_allowed(self, old, new):
+                    _LOGGER.warning("Volcast control: own controller chosen, but the return to the baseline "
+                                    "failed — retrying every cycle")
+                    return "restore_failed"
+                self.hass.config_entries.async_update_entry(entry, options=new)
+            elif getattr(ex, "owned", False):
+                await ex.async_restore_now()
+            _LOGGER.info("Volcast control: own controller chosen — plan only, no writes")
+            return "applied"
+        if controller == CONTROLLER_VOLCAST:
+            if ex.plan_only:
+                await ex.async_set_plan_only(False)
+            if self.conflicts is not None:
+                await self.conflicts.async_acknowledge()
+            lad = getattr(self.verification, "ladder", None)
+            if lad is not None and lad.state.state == STOPPED and lad.state.stop_reason == CONTROLLER_CONFLICT:
+                await self.verification.async_retry()
+            if ex.paused:
+                await ex.async_resume_control()
+            _LOGGER.info("Volcast control: Volcast chosen as the controller")
+            return "applied"
+        return "ignored"
 
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
 _TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp")
+
+
+def address_clashes(rt: ControlRuntime) -> tuple[str, ...]:
+    """Domeny wpisów kolidujących z falownikiem: z rekomendacji i z połączenia bezpośredniego."""
+    out = [c.get("label") for c in getattr(rt.recommendation, "conflicts", None) or ()
+           if isinstance(c, Mapping) and c.get("kind") == "entry"]
+    conn = rt.direct
+    if conn is not None:
+        out.extend(conn.static_conflicts)
+        refused = conn.refused()
+        if isinstance(refused, str) and refused.startswith(ds.CONFLICT + ":"):
+            out.append(refused.split(":", 1)[1])
+    return tuple(d for d in out if isinstance(d, str) and d)
+
+
+def lan_client_seen(conn) -> str | None:
+    """Inny klient na łączu: zajęte połączenie albo sygnały `ContentionMonitor` (kod powodu)."""
+    if conn is None:
+        return None
+    if conn.refused() == ds.IN_USE:
+        return "in_use"
+    monitor = getattr(conn, "monitor", None)
+    if getattr(monitor, "state", None) == "conflict":
+        return monitor.reason or "bus"
+    return None
 
 
 def _target_identity(target) -> tuple | None:
@@ -589,9 +686,14 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         rt = ControlRuntime(executor, fetcher, telemetry, cloud, choice, mapped, rated,
                             options_at_setup=dict(opts),
                             inverter_entities=inverter_entity_ids(hass, choice, mapped), direct=conn,
-                            channel=channel, live=live, hub=hub, report=report, verification=verification)
+                            channel=channel, live=live, hub=hub, report=report, verification=verification,
+                            hass=hass, entry=entry)
 
         rt.unsubs.append(async_track_time_interval(hass, _fetch, timedelta(seconds=SCHEDULE_FETCH_INTERVAL_S)))
+        rt.conflicts = ConflictMonitor(hass, entry, executor, verification=verification,
+                                       clashes=lambda: address_clashes(rt), lan_client=lambda: lan_client_seen(conn))
+        rt.unsubs.append(rt.conflicts.stop)
+        await rt.conflicts.async_start()
 
         @callback
         def _on_discovery() -> None:

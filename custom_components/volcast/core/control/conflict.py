@@ -20,14 +20,22 @@ Nasz zapis NIE kasuje historii rozjazdów; kasuje ją zmiana wartości planu (`f
 wyłącznie odczyt rozpoczęty po końcu naszego ostatniego zapisu. Wołający zgłasza rozjazd raz na
 odczyt, dopóki trwa.
 
+Drugi sterownik (`controllers_from_evidence`, blok `driver.control.conflicts` kontraktu): lista wpisów
+`{kind, label, evidence}` wyłącznie z dowodów — kolizja adresu (`entry`), inny klient na łączu
+(`lan_client`: zajęte połączenie albo sygnały `ContentionMonitor`), aktywny Box konta (`box`, z planu)
+i automatyzacje HA zapisujące zmapowane encje (`automation`, `AutomationWriteTracker`: zapis = wywołanie
+usługi z kontekstem przebiegu automatyzacji albo jego dzieckiem, okno 24 h, bufor przebiegów ≤ 200).
+Flaga `ems` integracji nie jest dowodem. Kolejność stała (wpisy, łącze, Box, automatyzacje od
+największej liczby zapisów), najwyżej `MAX_CONFLICTS` wpisów.
+
 Moduł nie loguje adresów.
 """
 from __future__ import annotations
 
 import ipaddress
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 from ..discovery.known import INVERTER_DOMAINS
 from ..transports.base import TransportStats
@@ -201,3 +209,119 @@ def drifted_keys(last_written: Mapping[str, float | str], device: Mapping[str, f
         if not same_value(ours, theirs):
             out.append(key)
     return tuple(out)
+
+
+
+# ── drugi sterownik: lista `conflicts` z dowodów ───────────────────────────
+
+AUTOMATION, ENTRY, LAN_CLIENT, BOX = "automation", "entry", "lan_client", "box"
+CONFLICT_KINDS = (AUTOMATION, ENTRY, LAN_CLIENT, BOX)
+MAX_CONFLICTS, MAX_LABEL, MAX_EVIDENCE = 8, 64, 120
+AUTOMATION_WINDOW_S = 24 * 3600.0
+AUTOMATION_CONTEXTS_MAX = 200
+_WRITES_MAX = 1000                               # na automatyzację; licznik w dowodzie i tak tego nie przekracza
+_UNKNOWN_CLASH = "unknown"                       # `async_clash` przy błędzie sprawdzenia (fail-closed)
+_CLASH_EVIDENCE = "another entry uses the same inverter address"
+_UNKNOWN_EVIDENCE = "conflict check failed"
+_LAN_LABEL = "Modbus client"
+_LAN_EVIDENCE = {
+    "in_use": "the inverter connection is already in use",
+    "stray_frames": "frames from another client on the inverter link",
+    "peer_resets": "the inverter keeps dropping our connection",
+}
+_LAN_DEFAULT = "another client on the inverter link"
+BOX_LABEL = "Volcast Box"
+_BOX_EVIDENCE = "the account has an active Volcast Box"
+_AUTOMATION_PREFIX = "automation."
+
+
+def _entry(kind: str, label: str, evidence: str) -> dict:
+    return {"kind": kind, "label": str(label)[:MAX_LABEL], "evidence": str(evidence)[:MAX_EVIDENCE]}
+
+
+def entry_conflicts(clash: Iterable[str]) -> tuple[dict, ...]:
+    """Wpisy `entry` z domen kolizji adresu (każda raz, w kolejności); `unknown` = błąd sprawdzenia."""
+    out: list[dict] = []
+    for d in clash:
+        if isinstance(d, str) and d and all(c["label"] != d[:MAX_LABEL] for c in out):
+            out.append(_entry(ENTRY, d, _UNKNOWN_EVIDENCE if d == _UNKNOWN_CLASH else _CLASH_EVIDENCE))
+    return tuple(out)
+
+
+def controllers_from_evidence(automation_writes: Mapping[str, int], address_clashes: Iterable[str],
+                              lan_client_seen: str | None, box_active: bool) -> list[dict]:
+    """Lista `conflicts` (≤ `MAX_CONFLICTS`, stała kolejność, kształt kontraktu)."""
+    out = list(entry_conflicts(address_clashes))
+    if isinstance(lan_client_seen, str) and lan_client_seen:
+        out.append(_entry(LAN_CLIENT, _LAN_LABEL, _LAN_EVIDENCE.get(lan_client_seen, _LAN_DEFAULT)))
+    if box_active is True:
+        out.append(_entry(BOX, BOX_LABEL, _BOX_EVIDENCE))
+    writes = sorted(((a, n) for a, n in (automation_writes or {}).items()
+                     if isinstance(a, str) and a and isinstance(n, int) and not isinstance(n, bool) and n > 0),
+                    key=lambda item: (-item[1], item[0]))
+    out.extend(_entry(AUTOMATION, a, f"{n} writes/24 h") for a, n in writes)
+    return out[:MAX_CONFLICTS]
+
+
+def _entity_ids(raw: Any) -> tuple[str, ...]:
+    if isinstance(raw, str):
+        return (raw,)
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        return tuple(e for e in raw if isinstance(e, str))
+    return ()
+
+
+class AutomationWriteTracker:
+    """Zapisy automatyzacji do obserwowanych encji w oknie `AUTOMATION_WINDOW_S` (zegar monotoniczny).
+
+    `note_trigger` — przebieg automatyzacji (kontekst zdarzenia `automation_triggered`); bufor
+    `AUTOMATION_CONTEXTS_MAX` najnowszych. `note_call` — wywołanie usługi: zapis automatyzacji, gdy
+    cel jest obserwowany, a kontekst (albo jego rodzic) jest przebiegiem z bufora. Wywołanie bez
+    kontekstu automatyzacji (użytkownik, skrypt, nasz zapis) pomijane — to obca zmiana wykonawcy.
+    """
+
+    def __init__(self) -> None:
+        self._runs: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._writes: dict[str, deque[float]] = {}
+
+    def note_trigger(self, context_id: Any, automation_id: Any, now: float) -> None:
+        if not (isinstance(context_id, str) and context_id and isinstance(automation_id, str)
+                and automation_id.startswith(_AUTOMATION_PREFIX)):
+            return
+        self._runs.pop(context_id, None)
+        self._runs[context_id] = (now, automation_id)
+        while len(self._runs) > AUTOMATION_CONTEXTS_MAX:
+            self._runs.popitem(last=False)
+        self._prune(now)
+
+    def note_call(self, context_id: Any, parent_id: Any, entity_ids: Any, watched: frozenset[str],
+                  now: float) -> str | None:
+        """Automatyzacja, której zapis policzono; None = to nie zapis automatyzacji do obserwowanej encji."""
+        if not any(e in watched for e in _entity_ids(entity_ids)):
+            return None
+        self._prune(now)
+        run = self._runs.get(context_id) if isinstance(context_id, str) else None
+        if run is None and isinstance(parent_id, str):
+            run = self._runs.get(parent_id)
+        if run is None:
+            return None
+        automation = run[1]
+        self._writes.setdefault(automation, deque(maxlen=_WRITES_MAX)).append(now)
+        return automation
+
+    def counts(self, now: float) -> dict[str, int]:
+        self._prune(now)
+        return {a: len(q) for a, q in self._writes.items() if q}
+
+    def _prune(self, now: float) -> None:
+        while self._runs:
+            ctx, (t, _) = next(iter(self._runs.items()))
+            if now - t <= AUTOMATION_WINDOW_S:
+                break
+            del self._runs[ctx]
+        for a in list(self._writes):
+            q = self._writes[a]
+            while q and now - q[0] > AUTOMATION_WINDOW_S:
+                q.popleft()
+            if not q:
+                del self._writes[a]
