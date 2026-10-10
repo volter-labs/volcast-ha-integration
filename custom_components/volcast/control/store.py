@@ -74,19 +74,26 @@ class ControlState:
 
 
 def control_meta_clean(raw) -> dict:
-    """`seq`/`fp` bloku `driver.control` i `at`/`ack` ostatniej zastosowanej decyzji z chmury; złe pola pomijane."""
+    """Stan klienta decyzji z chmury i licznik `seq` bloku `driver.control`: `seq`, `fp` (skrót treści bloku),
+    `path_done` / `controller_done` (ostatnia rozstrzygnięta wartość pola), `ver_at` (ostatnie `at` polecenia
+    weryfikacji), `ack` (co faktycznie zastosowano) i `tries` (liczba nieudanych prób na pole+wartość).
+    Złe pola pomijane."""
     if not isinstance(raw, dict):
         return {}
     out: dict = {}
     seq = raw.get("seq")
     if isinstance(seq, int) and not isinstance(seq, bool) and seq >= 0:
         out["seq"] = seq
-    for key in ("fp", "at"):
-        if isinstance(raw.get(key), str) and len(raw[key]) <= 4096:
+    for key in ("fp", "path_done", "controller_done", "ver_at"):
+        if isinstance(raw.get(key), str) and len(raw[key]) <= 128:
             out[key] = raw[key]
     ack = raw.get("ack")
     if isinstance(ack, dict) and isinstance(ack.get("at"), str):
         out["ack"] = {k: v for k, v in ack.items() if k in ("path", "controller", "at") and isinstance(v, str)}
+    tries = raw.get("tries")
+    if isinstance(tries, dict):
+        out["tries"] = {k: v for k, v in tries.items() if isinstance(k, str) and len(k) <= 96
+                        and isinstance(v, int) and not isinstance(v, bool) and 0 < v <= 100}
     return out
 
 

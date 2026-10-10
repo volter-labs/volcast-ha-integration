@@ -237,14 +237,23 @@ class ControlRuntime:
                      OPT_DIRECT_TRIAL: None}
         else:
             return "ignored"
-        if ex.plan_only:
-            await ex.async_set_plan_only(False)
         old = dict(entry.options)
         new = {k: v for k, v in {**old, **patch}.items() if v is not None}
-        if control_options_changed(old, new):
+        changed = control_options_changed(old, new)
+        if changed and not await async_control_change_allowed(self, old, new):
+            _LOGGER.debug("Volcast control: path %s refused (the return to the baseline failed)", path)
+            return "ignored"
+        if ex.plan_only:
+            await ex.async_set_plan_only(False)
+        if changed:
             self.hass.config_entries.async_update_entry(entry, options=new)
         _LOGGER.info("Volcast control: path %s chosen", path)
         return "applied"
+
+    def report_choice_error(self) -> None:
+        """Decyzja z chmury nie dała się zastosować mimo ponowień — to samo zgłoszenie co błąd sterowania."""
+        ir.async_create_issue(self.hass, DOMAIN, f"control_error_{self.entry.entry_id}", is_fixable=False,
+                              severity=getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning"), translation_key="control_error")
 
     async def async_set_box_active(self, active: bool) -> None:
         """`box_active` z planu → konflikt `box`."""

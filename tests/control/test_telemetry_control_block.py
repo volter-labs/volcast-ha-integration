@@ -43,8 +43,8 @@ def test_seq_stays_when_nothing_changed_and_grows_on_change():
     other = _payload()
     other["conflicts"] = [{"kind": "box", "label": "box", "evidence": "x"}]
     assert control_block(other, None, meta, 1010)["seq"] == 1011             # ta sama sekunda: +1
-    assert control_block(other, None, meta, 900)["seq"] == 1011              # bez zmiany, zegar wstecz
-    assert control_block(_payload(), None, meta, 500)["seq"] == 1012         # zmiana przy cofniętym zegarze
+    assert control_block(other, None, meta, 950)["seq"] == 1011              # bez zmiany, zegar wstecz
+    assert control_block(_payload(), None, meta, 950)["seq"] == 1012         # zmiana przy cofniętym zegarze
 
 
 def test_ack_change_bumps_seq():
@@ -56,7 +56,12 @@ def test_ack_change_bumps_seq():
 
 def test_seq_survives_restart_via_meta():
     meta = {"seq": 5000, "fp": "x"}
-    assert control_block(_payload(), None, meta, 10)["seq"] == 5001
+    assert control_block(_payload(), None, meta, 4900)["seq"] == 5001
+
+
+def test_seq_from_the_future_is_not_sticky():
+    meta = {"seq": 9_000_000_000, "fp": "x"}
+    assert control_block(_payload(), None, meta, 1000)["seq"] == 1000
 
 
 class Cloud:
