@@ -2,15 +2,22 @@
 
 Szczeble (kontrakt sterowania, blok `driver.control.verification`):
 1 identyfikacja urządzenia, 2 odczyt, 3 próba bez zapisu (`trial_hours`; licznik „co bym zapisał”,
-obcy zapis = stop), 4 zapis kontrolny (ponowny zapis bieżącego trybu + odczyt zwrotny), 5 okno próbne
-(wymuszone ładowanie `window_power_w` przez `window_minutes`; średnia moc odchylona ≤ 30 % i SoC rośnie
-→ `verified`). Szczeble 4–5 tylko przy zgodzie (`consent(True)`); bez niej drabina czeka na 3 (`waiting`).
-Po próbie przy zgodzie — od razu szczebel 4; okno (5) rusza dopiero na sygnał wołającego (`window_open`),
-który zna warunki dobrego okna (SoC poniżej sufitu, świeży odczyt).
+obcy zapis = stop), 4 zapis kontrolny (ponowny zapis bieżącej wartości + odczyt zwrotny), 5 okno próbne
+(wymuszone ładowanie `window_power_w` przez `window_minutes`; średnia moc odchylona ≤ 30 % i SoC nie spada
+→ `verified`). Profil roboczy startuje od 1, profil i wpis zweryfikowane — od zapisu kontrolnego (4).
+Profil bez okna próbnego (`window=False`, model okien czasowych) kończy na zapisie kontrolnym.
+
+Szczeble 4–5 tylko przy zgodzie (`consent(True)`); bez niej drabina czeka PRZED zapisem kontrolnym:
+`rung 4, waiting` (`rung` = następny szczebel do wykonania) — po próbie profilu roboczego i od razu
+przy profilu zweryfikowanym. Okno (5) rusza dopiero na sygnał wołającego (`window_open`), który zna
+warunki dobrego okna (SoC poniżej sufitu, świeży odczyt).
 
 Stany: `idle` (nic się nie dzieje — nowa drabina albo nowe urządzenie), `running`, `waiting`,
 `stopped` (z `stop_reason` z listy zamkniętej), `verified`. `retry` wraca na szczebel stopu
-(szczebel 4–5 bez zgody → 3 `waiting`; stop identyfikacji → szczebel startowy).
+(szczebel 4–5 bez zgody → 4 `waiting`; stop identyfikacji → szczebel startowy).
+
+`migrated` — urządzenie uznane za zweryfikowane przy aktualizacji (sterowaliśmy nim już wcześniej),
+bez przejścia drabiny; znacznik idzie w bloku i w rekordzie.
 
 Wynik należy do urządzenia: `device_key` = skrót identyfikacji z solą instalacji (nie numer seryjny).
 Inny klucz → nowa drabina `idle` od szczebla startowego; zmiana w trakcie drabiny → stop
@@ -27,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 RUNG_NONE, RUNG_IDENTIFY, RUNG_READ, RUNG_TRIAL, RUNG_CONTROL_WRITE, RUNG_WINDOW = 0, 1, 2, 3, 4, 5
-START_RUNGS = (RUNG_IDENTIFY, RUNG_TRIAL)
+START_RUNGS = (RUNG_IDENTIFY, RUNG_CONTROL_WRITE)
 IDLE, RUNNING, WAITING, STOPPED, VERIFIED = "idle", "running", "waiting", "stopped", "verified"
 STATES = (IDLE, RUNNING, WAITING, STOPPED, VERIFIED)
 FOREIGN_WRITE, READBACK_MISMATCH, WINDOW_DEVIATION = "foreign_write", "readback_mismatch", "window_deviation"
@@ -61,6 +68,7 @@ class LadderParams:
     trial_hours: int
     window_minutes: int
     window_power_w: int
+    window: bool = True                       # okno próbne (szczebel 5); False = koniec na zapisie kontrolnym
 
     def with_overrides(self, block: Mapping[str, Any] | None) -> "LadderParams":
         """Nadpisania z opcjonalnego bloku `verification` profilu; pole złe albo spoza zakresu — pominięte."""
@@ -126,6 +134,7 @@ class Ladder:
         self.device_key = device_key
         self.consent_given = False
         self.state = LadderState(rung=start_rung, state=IDLE)
+        self.migrated = False
 
     # ── odczyt ──
 
@@ -161,16 +170,20 @@ class Ladder:
         s.stop_reason, s.stop_detail = reason, STOP_DETAILS[reason][:MAX_DETAIL]
         s.samples = []
 
-    def _after_trial(self, now: datetime) -> None:
-        if self.consent_given:
-            self._enter(RUNG_CONTROL_WRITE, RUNNING, now)
-        else:
-            self._enter(RUNG_TRIAL, WAITING, now)
+    def _to_control_write(self, now: datetime) -> None:
+        """Zapis kontrolny przy zgodzie, bez niej czekanie przed nim (`rung 4, waiting`)."""
+        self._enter(RUNG_CONTROL_WRITE, RUNNING if self.consent_given else WAITING, now)
+
+    def _waiting_for_consent(self) -> bool:
+        return self.state.rung == RUNG_CONTROL_WRITE and self.state.state == WAITING
 
     def tick(self, now: datetime) -> None:
         s = self.state
         if s.state == IDLE:
-            self._enter(s.rung, RUNNING, now)
+            if s.rung == RUNG_CONTROL_WRITE:
+                self._to_control_write(now)
+            else:
+                self._enter(s.rung, RUNNING, now)
             return
         if s.state != RUNNING:
             return
@@ -181,7 +194,7 @@ class Ladder:
             s.hours_done = round(min(max(done, 0.0), float(self.params.trial_hours)), 1)
             if s.next_at is not None and now >= s.next_at:
                 s.hours_done = float(self.params.trial_hours)
-                self._after_trial(now)
+                self._to_control_write(now)
         elif s.rung == RUNG_WINDOW and s.next_at is not None and now >= s.next_at:
             self._judge_window(now)
 
@@ -207,16 +220,18 @@ class Ladder:
     def consent(self, given: bool, now: datetime) -> None:
         self.consent_given = bool(given)
         s = self.state
-        if given and s.rung == RUNG_TRIAL and s.state == WAITING:
+        if given and self._waiting_for_consent():
             self._enter(RUNG_CONTROL_WRITE, RUNNING, now)
-        elif not given and self._active() and s.rung >= RUNG_CONTROL_WRITE:
+        elif not given and self._active() and s.rung >= RUNG_CONTROL_WRITE and not self._waiting_for_consent():
             self._stop(CONSENT_REVOKED, now)
 
     def write_result(self, readback_equal: bool | None, now: datetime) -> None:
         """Wynik zapisu kontrolnego: True = odczyt zwrotny równy, False = różny, None = odczyt nieudany."""
         if not (self.state.rung == RUNG_CONTROL_WRITE and self.state.state == RUNNING):
             return
-        if readback_equal is True:
+        if readback_equal is True and not self.params.window:
+            self._verified(now)
+        elif readback_equal is True:
             self._enter(RUNG_WINDOW, WAITING, now)
         else:
             self._stop(READBACK_MISMATCH if readback_equal is False else READ_FAILED, now)
@@ -239,11 +254,21 @@ class Ladder:
         mean = sum(p for p, _ in s.samples) / len(s.samples)
         s.measured_w = int(round(mean))
         s.deviation_pct = round(abs(mean - target) / target * 100.0, 1)
-        rising = s.samples[-1][1] > s.samples[0][1]
-        if s.deviation_pct <= MAX_DEVIATION_PCT and rising:
-            s.state, s.since, s.next_at, s.samples = VERIFIED, now, None, []
+        soc_kept = s.samples[-1][1] >= s.samples[0][1]        # SoC nie spada (całe % baterii bywają za grube)
+        if s.deviation_pct <= MAX_DEVIATION_PCT and soc_kept:
+            self._verified(now)
         else:
             self._stop(WINDOW_DEVIATION, now)
+
+    def _verified(self, now: datetime) -> None:
+        s = self.state
+        s.state, s.since, s.next_at, s.samples = VERIFIED, now, None, []
+        s.stop_reason = s.stop_detail = None
+
+    def mark_migrated(self, now: datetime) -> None:
+        """Urządzenie, którym sterowaliśmy przed aktualizacją: zweryfikowane bez przejścia drabiny."""
+        self.migrated = True
+        self._verified(now)
 
     def conflict(self, now: datetime) -> None:
         if self._active():
@@ -259,7 +284,7 @@ class Ladder:
             return
         rung = self.start_rung if s.stop_reason == IDENTIFY_CHANGED else s.rung
         if rung >= RUNG_CONTROL_WRITE and not self.consent_given:
-            self._enter(RUNG_TRIAL, WAITING, now)
+            self._enter(RUNG_CONTROL_WRITE, WAITING, now)
         elif rung == RUNG_WINDOW:
             self._enter(RUNG_WINDOW, WAITING, now)
         else:
@@ -270,6 +295,7 @@ class Ladder:
             return
         mid = self._active() or self.state.state == STOPPED
         self.device_key = new_key
+        self.migrated = False
         self.state = LadderState(rung=self.start_rung, state=IDLE, since=now)
         if mid:
             self._stop(IDENTIFY_CHANGED, now)
@@ -284,6 +310,8 @@ class Ladder:
             out.pop("since")
         if s.next_at is not None:
             out["next_at"] = iso(s.next_at)
+        if self.migrated:
+            out["migrated"] = True
         if s.state == STOPPED and s.stop_reason:
             out["stop_reason"] = s.stop_reason
             if s.stop_detail:
@@ -309,7 +337,8 @@ class Ladder:
                 "next_at": iso(s.next_at) if s.next_at else None, "stop_reason": s.stop_reason,
                 "would_write": s.would_write, "foreign_writes": s.foreign_writes, "hours_done": s.hours_done,
                 "trial_started": iso(s.trial_started) if s.trial_started else None,
-                "target_w": s.target_w, "measured_w": s.measured_w, "deviation_pct": s.deviation_pct}
+                "target_w": s.target_w, "measured_w": s.measured_w, "deviation_pct": s.deviation_pct,
+                "migrated": self.migrated}
 
     @classmethod
     def from_record(cls, raw: Any, params: LadderParams) -> "Ladder | None":
@@ -329,6 +358,7 @@ class Ladder:
         if (state == STOPPED) != (reason in STOP_REASONS):
             return None
         lad = cls(start, params, device_key=key)
+        lad.migrated = raw.get("migrated") is True
         s = lad.state
         s.rung, s.state, s.since = rung, state, since
         s.next_at = _parse_iso(raw.get("next_at"))

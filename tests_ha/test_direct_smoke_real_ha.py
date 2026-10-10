@@ -86,7 +86,7 @@ async def _settle(hass, rt) -> None:
 
 def _verified_device(target: dict) -> dict:
     """Rekord drabiny: urządzenie z celu już zweryfikowane (plan steruje nim od pierwszego cyklu)."""
-    lad = Ladder(3, LadderParams(24, 15, 500),
+    lad = Ladder(4, LadderParams(24, 15, 500),
                  device_key=device_key(SALT, f"direct|{target['profile_id']}|{target['device_fp']}"))
     lad.state.state, lad.state.since = VERIFIED, dt_util.utcnow()
     return lad.to_record()
@@ -166,6 +166,26 @@ async def test_real_ha_direct_write_restore_reload_unload(hass: HomeAssistant, n
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=5))
     await hass.async_block_till_done()
     assert goodwe_sim.requests == before
+
+
+async def test_real_ha_upgrade_keeps_control_of_a_device_controlled_before(hass: HomeAssistant, network_down,
+                                                                       hass_storage, goodwe_sim, monkeypatch):
+    # Magazyn sprzed drabiny: własność tego urządzenia, bez rekordu weryfikacji — sterowanie nie staje.
+    from custom_components.volcast.control.direct import target_fingerprint
+    gw = _verified_goodwe()
+    target = _target(goodwe_sim, gw)
+    owner = {"profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(target, SALT),
+             "device": target["device_fp"]}
+    state = {"consent": True, "local_switch": True, "plan_raw": _plan(), "owned": True, "owner": owner,
+             "snapshot": {"mode": "auto"}, "restore_keys": ["mode"]}
+    entry, rt = await _setup(hass, hass_storage, {"control_mode": "direct", "direct_target": target},
+                             state=state, profiles=[gw], monkeypatch=monkeypatch)
+    await _settle(hass, rt)
+    ladder = rt.verification.ladder
+    assert ladder.verified and ladder.migrated and rt.verification.payload()["migrated"] is True
+    assert rt.executor.last_decision.status == "write" and goodwe_sim.bank.read(MODE, 1) == [10]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_real_ha_stop_event_sets_neutral_mode_and_keeps_ownership(hass: HomeAssistant, network_down,

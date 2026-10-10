@@ -75,7 +75,7 @@ Tryb bezpośredni (`DirectIO`, rejestry falownika):
   wywołanie usługi zapisu planu, bez powrotu do trybu bazowego); decyzja `RESTORE`
   (wyczerpany budżet przy trybie wymuszonym) idzie przez wykonawcę grupowego tylko przy własności;
 * drabina weryfikacji urządzenia (`verification`, runner `control/verification.py`): przy podpiętej
-  drabinie zapisy planu w trybie bezpośrednim (model trybu i nastawy) dopiero przy zweryfikowanym
+  drabinie zapisy planu w trybie bezpośrednim dopiero przy zweryfikowanym
   urządzeniu (`plan_allowed`); zamknięta bramka przy własności = powrót do trybu bazowego. Okno próbne
   drabiny to plan zastępczy (jeden slot ładowania z sieci) tą samą ścieżką zapisu i strażnikami;
   po oknie i po stopie drabiny — powrót do trybu bazowego (`async_verification_restore`);
@@ -139,6 +139,7 @@ from ..core.guard_state import WriteBudget
 from ..core.modbus.writer import KEPT
 from ..core.params import Params
 from ..core.profile import direct_verified
+from ..core.registers import RegisterWrite
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from ..core.write_sequence import ERROR as WRITE_ERROR, OK as WRITE_OK
 from .device_io import NO_READING, DeviceIO, DirectIO, EntityIO, Reading
@@ -365,11 +366,14 @@ class VolcastExecutor:
                 rd = await self._fresh_direct_reading(rd)
                 if rd is None:
                     return None
-            current = rd.readings.get("mode")
-            if not isinstance(current, str) or current not in self._profile.modes:
-                return None
-            fitted, unfit = self.io.restore_fit(rd, Params(mode=current))
-            writes = self.io.restore_writes(fitted, ["mode"], rd) if "mode" not in unfit else []
+            if self._profile.control_model == "time_window":
+                writes, current = self._tou_control_write(rd), None
+            else:
+                current = rd.readings.get("mode")
+                if not isinstance(current, str) or current not in self._profile.modes:
+                    return None
+                fitted, unfit = self.io.restore_fit(rd, Params(mode=current))
+                writes = self.io.restore_writes(fitted, ["mode"], rd) if "mode" not in unfit else []
             if len(writes) != 1:
                 return None
             try:
@@ -384,6 +388,29 @@ class VolcastExecutor:
             return True if direct is not None else self.io.read(self._utcnow()).readings.get("mode") == current
         return None if out == WRITE_ERROR else False
 
+    def _tou_control_write(self, rd: Reading) -> list:
+        """Okna czasowe (tylko tryb bezpośredni): bieżące słowo SoC pierwszego programu zapisane ponownie.
+        Nie słowo włącznika — pisarz celowo nie wysyła włącznika równego odczytowi (NVM), a zapis
+        kontrolny musi wyjść na łącze i wrócić odczytem zwrotnym."""
+        tp = (self._profile.raw.get("write") or {}).get("tou_program") or {}
+        addr = (tp.get("soc") or {}).get("addr")
+        if self._direct is None or rd.source is None or not isinstance(addr, int):
+            return []
+        try:
+            word = rd.source.image.words(addr, 1)[0]
+        except Exception:  # noqa: BLE001 — brak rejestru w obrazie odczytu
+            return []
+        return [RegisterWrite("tou.1.soc", addr, word)]
+
+    def verification_migration_ok(self) -> bool:
+        """Aktualizacja przy trwającym sterowaniu: magazyn pokazuje, że sterowaliśmy TYM urządzeniem
+        (własność, klucze do powrotu albo migawka; rekord właściciela zgodny albo — sprzed powiązania — brak).
+        Rekord innego urządzenia wykonawca porzuca już przy starcie (`_drop_foreign_owner`)."""
+        st = self._state
+        if not (st.owned or st.restore_keys or st.snapshot):
+            return False
+        return not st.owner or self._owner_matches(st.owner)
+
     def _verification_hold(self) -> bool:
         """Powrót wymuszony przez drabinę: po oknie/stopie albo zamknięta bramka planu (tryb bezpośredni)."""
         if self._window is not None:
@@ -391,8 +418,7 @@ class VolcastExecutor:
         return self._verify_restore or (self._plan_gated() and not self.verification.plan_allowed())
 
     def _plan_gated(self) -> bool:
-        return (self.verification is not None and self._direct is not None and self._profile is not None
-                and self._profile.control_model == "mode_setpoint")
+        return self.verification is not None and self._direct is not None and self._profile is not None
 
     @property
     def nvm_budget_hit(self) -> bool:

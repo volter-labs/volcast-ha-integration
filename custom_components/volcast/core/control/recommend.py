@@ -13,8 +13,8 @@ Reguły (kolejność):
    rozpoznanego falownika → `unsupported` (`no_write_path`).
 
 `ladder_start` (pierwszy szczebel weryfikacji): profil i jego droga zapisu zweryfikowane
-(wpis integracji dla encji; sekcja `modbus`, udana próba i oferta bez odmowy dla rejestrów) → 3
-(zapis kontrolny), inaczej 1. Odmowa oferty to nie powód rekomendacji: kolizja adresu trafia do
+(wpis integracji dla encji; sekcja `modbus`, udana próba i oferta bez odmowy dla rejestrów) → 4
+(zapis kontrolny — bez 24-godzinnej próby), inaczej 1. Odmowa oferty to nie powód rekomendacji: kolizja adresu trafia do
 `conflicts`. Flaga `ems` integracji nie jest konfliktem — konflikt wynika tylko z dowodu.
 
 Ładunek (`to_payload`) to blok `driver.control.recommendation` kontraktu sterowania: zamknięte
@@ -44,7 +44,7 @@ REASONS = (INTEGRATION_WRITE_ENTITIES, NO_INTEGRATION_IDENTIFY_OK, INTEGRATION_R
            NO_WRITE_PATH)
 ORIGINS = ("core", "custom")
 
-RUNG_IDENTIFY, RUNG_CONTROL_WRITE = 1, 3
+RUNG_IDENTIFY, RUNG_CONTROL_WRITE = 1, 4
 MAX_TEXT, MAX_EVIDENCE, MAX_ENTITY_MAP, MAX_CONFLICTS = 64, 120, 24, 8
 _ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 _MAP_KEY = re.compile(r"^[a-z0-9_]{1,24}$")

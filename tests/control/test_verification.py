@@ -15,7 +15,8 @@ from custom_components.volcast.core.control.cycle import BLOCKED, DRY_RUN, WRITE
 from custom_components.volcast.core.control.ladder import (
     IDLE, RUNNING, STOPPED, VERIFIED, WAITING, Ladder, LadderParams, device_key)
 from tests.control.test_executor_direct import (  # noqa: F401 — `issues` to fixture
-    GW_NOW, GW_V, MODE, POWER, SALT, Harness, gw_raw_word, gw_target, issues, regs)
+    DEYE_V, GW_DRAFT, GW_NOW, GW_V, MODE, POWER, SALT, TOU_RAW, Harness, _deye, gw_raw_word, gw_target,
+    issues, regs)
 
 BASELINE_AUTO = 1                                   # GoodWe ET: tryb bazowy `auto` (symulator startuje w 11)
 from tests.core.control.test_ladder import shape_errors
@@ -146,7 +147,7 @@ async def test_trial_connection_cannot_run_the_writing_rungs(make_hass, goodwe_u
 async def test_verification_record_saved_with_the_control_state(make_hass, goodwe_udp_sim, goodwe_bank, issues):
     h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
     try:
-        lad = Ladder(3, P, device_key="ab" * 16)
+        lad = Ladder(4, P, device_key="ab" * 16)
         lad.tick(GW_NOW)
         assert await h.ex.async_save_verification(lad.to_record())
         loaded = await h.store.async_load()
@@ -209,6 +210,10 @@ class FakeExecutor:
         self.control_writes = []
         self.control_result = True
         self.saved = []
+        self.migration_ok = False
+
+    def verification_migration_ok(self):
+        return self.migration_ok
 
     def verification_can_write(self):
         return self.can_write
@@ -307,7 +312,7 @@ async def test_runner_full_draft_run_to_verified(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runner_stop_restores_once_raises_an_issue_and_requests_telemetry(monkeypatch):
-    env = Env(monkeypatch, start=3)
+    env = Env(monkeypatch)
     await env.runner.async_start()
     await env.runner.async_on_state_event(foreign_event())
     assert env.state == (3, STOPPED) and env.runner.ladder.state.stop_reason == "foreign_write"
@@ -323,7 +328,7 @@ async def test_runner_stop_restores_once_raises_an_issue_and_requests_telemetry(
 
 @pytest.mark.asyncio
 async def test_runner_ignores_own_and_actorless_entity_changes(monkeypatch):
-    env = Env(monkeypatch, start=3)
+    env = Env(monkeypatch)
     await env.runner.async_start()
     await env.runner.async_on_state_event(foreign_event(ctx_id="ours"))
     await env.runner.async_on_state_event(foreign_event(user=None))
@@ -333,10 +338,10 @@ async def test_runner_ignores_own_and_actorless_entity_changes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runner_waits_without_consent_and_moves_on_with_it(monkeypatch):
-    env = Env(monkeypatch, FakeExecutor(can_write=False), start=3)
+    env = Env(monkeypatch, FakeExecutor(can_write=False))
     await env.runner.async_start()
     await env.step(hours=24)
-    assert env.state == (3, WAITING) and env.ex.control_writes == []
+    assert env.state == (4, WAITING) and env.ex.control_writes == []
     env.ex.can_write = True
     await env.step(minutes=1)
     assert env.ex.control_writes == [1] and env.state == (5, RUNNING)
@@ -344,7 +349,7 @@ async def test_runner_waits_without_consent_and_moves_on_with_it(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runner_waits_for_room_in_the_battery_before_the_window(monkeypatch):
-    env = Env(monkeypatch, start=3)
+    env = Env(monkeypatch)
     env.ex.io.readings["soc"] = 97.0
     await env.runner.async_start()
     await env.step(hours=24)
@@ -356,7 +361,7 @@ async def test_runner_waits_for_room_in_the_battery_before_the_window(monkeypatc
 
 @pytest.mark.asyncio
 async def test_runner_read_back_mismatch_stops_and_restores_once(monkeypatch):
-    env = Env(monkeypatch, start=3)
+    env = Env(monkeypatch)
     env.ex.control_result = False
     await env.runner.async_start()
     await env.step(hours=24)
@@ -366,7 +371,7 @@ async def test_runner_read_back_mismatch_stops_and_restores_once(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runner_window_deviation_stops_and_restores_once(monkeypatch):
-    env = Env(monkeypatch, start=3)
+    env = Env(monkeypatch)
     await env.runner.async_start()
     await env.step(hours=24)
     for soc in (50.0, 51.0, 52.0):
@@ -378,7 +383,7 @@ async def test_runner_window_deviation_stops_and_restores_once(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runner_retry_returns_to_the_stopped_rung_and_clears_the_issue(monkeypatch):
-    env = Env(monkeypatch, start=3)
+    env = Env(monkeypatch)
     await env.runner.async_start()
     await env.runner.async_abort()
     assert env.state == (3, STOPPED) and env.ex.restores == 1
@@ -391,32 +396,33 @@ async def test_runner_retry_returns_to_the_stopped_rung_and_clears_the_issue(mon
 @pytest.mark.asyncio
 async def test_runner_resumes_the_saved_ladder_and_restarts_for_another_device(monkeypatch):
     key = device_key(SALT, "entities|goodwe-et|goodwe|uid")
-    lad = Ladder(3, P, device_key=key)
+    lad = Ladder(1, P, device_key=key)
     lad.tick(GW_NOW - timedelta(hours=5))
+    lad.identify_ok(GW_NOW - timedelta(hours=5))
+    lad.read_ok(GW_NOW - timedelta(hours=5))
     lad.would_write(4)
-    env = Env(monkeypatch, FakeExecutor(record=lad.to_record()), start=3)
+    env = Env(monkeypatch, FakeExecutor(record=lad.to_record()))
     await env.runner.async_start()
     assert env.state == (3, RUNNING) and env.runner.ladder.state.would_write == 4
     assert env.points[-1] == GW_NOW + timedelta(hours=19)
     env.ex.io._identity = "entities|goodwe-et|goodwe|other"
     await env.step(minutes=1)
-    assert env.state == (3, STOPPED) and env.runner.ladder.state.stop_reason == "identify_changed"
+    assert env.state == (1, STOPPED) and env.runner.ladder.state.stop_reason == "identify_changed"
     assert env.runner.ladder.device_key == device_key(SALT, "entities|goodwe-et|goodwe|other")
 
 
 @pytest.mark.asyncio
 async def test_runner_verified_device_allows_the_plan_only_for_that_device(monkeypatch):
     key = device_key(SALT, "direct|goodwe-et|fp")
-    lad = Ladder(3, P, device_key=key)
+    lad = Ladder(4, P, device_key=key)
     lad.state.state, lad.state.since = VERIFIED, GW_NOW
     io = FakeIO(kind="direct", identity="direct|goodwe-et|fp")
-    env = Env(monkeypatch, FakeExecutor(io, record=lad.to_record()), start=3)
+    env = Env(monkeypatch, FakeExecutor(io, record=lad.to_record()), start=4)
     await env.runner.async_start()
     assert env.runner.plan_allowed() is True
     io._identity = "direct|goodwe-et|fp2"
     await env.step(minutes=1)
-    assert env.state == (3, IDLE) or env.state == (3, RUNNING)
-    assert env.runner.plan_allowed() is False
+    assert env.runner.ladder.state.state != VERIFIED and env.runner.plan_allowed() is False
 
 
 @pytest.mark.asyncio
@@ -443,7 +449,7 @@ async def test_runner_direct_draft_identifies_and_reads_before_the_trial(monkeyp
 async def test_runner_direct_register_change_in_the_trial_is_a_foreign_write(monkeypatch):
     io = FakeIO(kind="direct", identity="direct|goodwe-et|fp")
     io.conn = SimpleNamespace(conflict=False)
-    env = Env(monkeypatch, FakeExecutor(io), start=3)
+    env = Env(monkeypatch, FakeExecutor(io))
     await env.runner.async_start()
     await env.step(minutes=1)
     env.ex.last_write_end = 5.0                       # nasz zapis (np. hamulec) — bez stopu
@@ -463,10 +469,13 @@ async def test_runner_without_device_identity_reports_nothing(monkeypatch):
 
 
 def test_start_rung_follows_the_profile_status():
-    from tests.control.test_executor_direct import GW_DRAFT
-
-    assert ver_mod.start_rung_for(GW_V, None, direct=True) == 3
+    assert ver_mod.start_rung_for(GW_V, None, direct=True) == 4
     assert ver_mod.start_rung_for(GW_DRAFT, None, direct=True) == 1
+
+
+def test_default_params_skip_the_window_for_time_window_profiles():
+    assert ver_mod.default_params(GW_V).window is True
+    assert ver_mod.default_params(DEYE_V).window is False
 
 
 @pytest.mark.asyncio
@@ -485,3 +494,148 @@ async def test_device_io_identity_needs_a_device(make_hass):
 def test_blocked_decision_is_not_a_would_write():
     assert not ver_mod.would_write_flat(CycleDecision(BLOCKED, "paused", writes=("w",), flat={"mode": "x"}))
     assert ver_mod.would_write_flat(CycleDecision(DRY_RUN, "x", writes=("w",), flat={"mode": "x"})) == {"mode": "x"}
+
+
+# ── start od zapisu kontrolnego, okna czasowe, migracja, sygnał ──────────
+
+
+@pytest.mark.asyncio
+async def test_runner_verified_profile_goes_straight_to_the_control_write(monkeypatch):
+    env = Env(monkeypatch, start=4)
+    await env.runner.async_start()
+    assert env.ex.control_writes == [1] and env.state == (5, RUNNING)
+    assert "trial" not in env.runner.payload()
+
+
+@pytest.mark.asyncio
+async def test_runner_verified_profile_without_consent_waits_at_the_control_write(monkeypatch):
+    env = Env(monkeypatch, FakeExecutor(can_write=False), start=4)
+    await env.runner.async_start()
+    assert env.state == (4, WAITING) and env.ex.control_writes == []
+    assert shape_errors(env.runner.payload()) == []
+
+
+@pytest.mark.asyncio
+async def test_runner_time_window_profile_is_verified_by_the_control_write(monkeypatch):
+    io = FakeIO(kind="direct", identity="direct|deye-sg|fp")
+    io.conn = SimpleNamespace(conflict=False)
+    ex = FakeExecutor(io, profile=DEYE_V)
+    env = Env(monkeypatch, ex, start=4)
+    env.runner = VerificationRunner(SimpleNamespace(data={}), SimpleNamespace(entry_id="e1", options={}), ex,
+                                    params=ver_mod.default_params(DEYE_V), start_rung=4, salt=SALT,
+                                    utcnow=env.clock, track_point=lambda hass, action, when: (lambda: None))
+    await env.runner.async_start()
+    assert env.state == (4, VERIFIED) and ex.control_writes == [1]
+    assert ex.window is None and ex.restores == 0 and env.runner.plan_allowed() is True
+
+
+@pytest.mark.asyncio
+async def test_runner_time_window_in_entity_mode_cannot_write(monkeypatch):
+    ex = FakeExecutor(FakeIO(identity="entities|deye-sg|x|y"), profile=DEYE_V)
+    env = Env(monkeypatch, ex, start=4)
+    await env.runner.async_start()
+    assert env.state == (4, WAITING) and ex.control_writes == []
+
+
+@pytest.mark.asyncio
+async def test_runner_migrates_a_device_controlled_before_the_update(monkeypatch):
+    io = FakeIO(kind="direct", identity="direct|goodwe-et|fp")
+    io.conn = SimpleNamespace(conflict=False)
+    ex = FakeExecutor(io)
+    ex.migration_ok = True
+    env = Env(monkeypatch, ex, start=4)
+    await env.runner.async_start()
+    assert env.state == (4, VERIFIED) and env.runner.plan_allowed() is True
+    assert ex.verification_record["migrated"] is True and env.runner.payload()["migrated"] is True
+    assert ex.control_writes == [] and ex.restores == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["no_previous_control", "draft_profile", "record_exists"])
+async def test_runner_does_not_migrate_otherwise(monkeypatch, case):
+    io = FakeIO(kind="direct", identity="direct|goodwe-et|fp")
+    io.conn = SimpleNamespace(conflict=False)
+    record = None
+    if case == "record_exists":
+        lad = Ladder(4, P, device_key=device_key(SALT, "direct|goodwe-et|fp"))
+        lad.tick(GW_NOW)
+        record = lad.to_record()
+    ex = FakeExecutor(io, can_write=False, record=record)
+    ex.migration_ok = case != "no_previous_control"
+    env = Env(monkeypatch, ex, start=1 if case == "draft_profile" else 4)
+    await env.runner.async_start()
+    assert env.runner.ladder.state.state != VERIFIED and env.runner.plan_allowed() is False
+    assert not env.runner.ladder.migrated
+
+
+@pytest.mark.asyncio
+async def test_executor_migration_check_needs_previous_control_of_this_device(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
+    try:
+        assert h.ex.verification_migration_ok() is False          # nigdy nie sterowaliśmy
+        await h.ex.async_tick()
+        assert h.ex.owned and h.ex.verification_migration_ok() is True
+        await h.restart()                                         # ten sam falownik — własność zostaje
+        assert h.ex.owned and h.ex.verification_migration_ok() is True
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_executor_migration_check_rejects_another_device(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
+    try:
+        await h.ex.async_tick()
+        assert h.ex.owned
+        state = await h.store.async_load()
+        state.owner = {**state.owner, "device": "another-device"}
+        await h.store.async_save(state)
+        await h.restart()
+        assert h.ex.verification_migration_ok() is False
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_time_window_control_write_rewrites_the_first_program_soc(make_hass, rtu_tcp_sim, deye_bank, issues):
+    h = await _deye(make_hass, rtu_tcp_sim).start(raw=TOU_RAW)
+    try:
+        h.ex.verification = Gate(False)
+        soc1 = DEYE_V.raw["write"]["tou_program"]["soc"]["addr"]
+        before = deye_bank.read(soc1, 1)[0]
+        assert await h.ex.async_control_write() is True
+        assert regs(deye_bank) == [soc1] and deye_bank.read(soc1, 1)[0] == before
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_time_window_plan_waits_for_a_verified_device(make_hass, rtu_tcp_sim, deye_bank, issues):
+    h = await _deye(make_hass, rtu_tcp_sim).start(raw=TOU_RAW)
+    try:
+        h.ex.verification = Gate(False)
+        await h.ex.async_tick()
+        assert deye_bank.writes == [] and h.ex.last_decision.status != WRITE
+        h.ex.verification.allowed = True
+        await h.cycle()
+        assert h.ex.last_decision.status == WRITE and h.ex.owned
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_runner_signals_trial_progress_at_most_hourly(monkeypatch):
+    env = Env(monkeypatch)
+    await env.runner.async_start()
+    assert env.state == (3, RUNNING)
+    start_signals, start_saves = len(env.changes), len(env.ex.saved)
+    for _ in range(30):                                          # 3 h, krok co 6 min
+        await env.step(minutes=6)
+    assert len(env.ex.saved) - start_saves >= 25                  # postęp próby trwały w magazynie
+    assert len(env.changes) - start_signals <= 3                  # sygnał (telemetria) najwyżej co godzinę
+    n = len(env.changes)
+    await env.runner.async_abort()                                # zmiana stanu — sygnał od razu
+    assert len(env.changes) == n + 1
+    await env.runner.async_retry()
+    assert len(env.changes) == n + 2

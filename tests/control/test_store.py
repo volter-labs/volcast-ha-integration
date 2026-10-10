@@ -125,7 +125,7 @@ def _ladder_record():
 
     from custom_components.volcast.core.control.ladder import Ladder, LadderParams
 
-    lad = Ladder(3, LadderParams(24, 15, 500), device_key="3f9a1c0e7b2d4a6f")
+    lad = Ladder(4, LadderParams(24, 15, 500), device_key="3f9a1c0e7b2d4a6f")
     lad.tick(datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc))
     return lad.to_record()
 

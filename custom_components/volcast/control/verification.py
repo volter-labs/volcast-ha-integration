@@ -15,8 +15,12 @@ Krok drabiny (`async_step`) idzie po każdym cyklu wykonawcy (sygnał `SIGNAL_CO
   ścieżka zapisu i `apply_guards`), pomiar mocy ładowania i SoC z odczytu po każdym cyklu; po oknie
   powrót do trybu bazowego.
 
-Zgoda drabiny (szczeble 4–5) = `executor.verification_can_write()` i profil z modelem trybu i nastawy
-z intencją ładowania z sieci; inaczej drabina czeka na szczeblu 3.
+Zgoda drabiny (szczeble 4–5) = `executor.verification_can_write()` i droga zapisu (`writing_supported`);
+inaczej drabina czeka przed zapisem kontrolnym (`rung 4, waiting`). Profil okien czasowych kończy na
+zapisie kontrolnym (okno próbne tylko dla modelu trybu i nastawy).
+
+Migracja: pierwszy start po aktualizacji (brak rekordu), profil i wpis zweryfikowane, a magazyn pokazuje
+sterowanie tym urządzeniem (`executor.verification_migration_ok`) → rekord `verified` z `migrated`.
 
 Każdy stop: jeden powrót (`executor.async_verification_restore`), zgłoszenie
 `verification_stopped_<wpis>` (kod stopu jako parametr tekstu) i natychmiastowa telemetria (`on_urgent`).
@@ -47,19 +51,31 @@ from ..core.slot import Action, Fallback, Schedule, Slot
 _LOGGER = logging.getLogger(__name__)
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 _NO_STATE = ("unavailable", "unknown", "")
+SIGNAL_EVERY = timedelta(hours=1)
 
 
 def default_params(profile) -> LadderParams:
     """Stałe drabiny z `const.py`, nadpisane opcjonalnym blokiem `verification` profilu."""
-    base = LadderParams(VERIFY_TRIAL_HOURS, VERIFY_WINDOW_MIN, VERIFY_WINDOW_POWER_W)
+    base = LadderParams(VERIFY_TRIAL_HOURS, VERIFY_WINDOW_MIN, VERIFY_WINDOW_POWER_W,
+                        window=getattr(profile, "control_model", None) != "time_window")
     raw = getattr(profile, "raw", None) or {}
     return base.with_overrides(raw.get("verification"))
 
 
 def start_rung_for(profile, domain: str | None, *, direct: bool) -> int:
-    """Profil (i jego droga zapisu) zweryfikowany → próba (3), inaczej identyfikacja (1)."""
+    """Profil (i jego droga zapisu) zweryfikowany → zapis kontrolny (4, bez próby), inaczej identyfikacja (1)."""
     ok = direct_verified(profile) if direct else control_verified(profile, domain)
-    return RUNG_TRIAL if ok else RUNG_IDENTIFY
+    return RUNG_CONTROL_WRITE if ok else RUNG_IDENTIFY
+
+
+def writing_supported(profile, kind: str) -> bool:
+    """Czy drabina ma czym pisać: okna czasowe — zapis kontrolny włącznika (tylko tryb bezpośredni; okna
+    próbnego dla nich nie ma), tryb i nastawa — zapis kontrolny trybu i okno ładowania z sieci."""
+    if profile is None:
+        return False
+    if profile.control_model == "time_window":
+        return kind == "direct"
+    return window_capable(profile)
 
 
 def window_capable(profile) -> bool:
@@ -114,6 +130,7 @@ class VerificationRunner:
         self._last_would: dict | None = None
         self._seen: dict | None = None               # rejestry zapisu z poprzedniego kroku (bezpośrednio)
         self._seen_write_end: float | None = None
+        self._signalled_at = None                    # ostatni sygnał zmiany stanu (limit dla samego postępu)
 
     # ── odczyt dla wykonawcy i telemetrii ──
 
@@ -147,6 +164,12 @@ class VerificationRunner:
                 await self._ex.async_verification_restore()
         if self.ladder is None and key is not None:
             self.ladder = Ladder(self._start, self._params, device_key=key)
+            if not record and self._start == RUNG_CONTROL_WRITE and self._ex.verification_migration_ok():
+                # Pierwszy start po aktualizacji przy trwającym sterowaniu tym urządzeniem (profil i wpis
+                # zweryfikowane): bez odcinania sterowania na czas drabiny.
+                self.ladder.mark_migrated(self._utcnow())
+                _LOGGER.info("Volcast verification: device already controlled before the update — kept verified")
+                await self._ex.async_save_verification(self.ladder.to_record())
         unsub = self._ex.io.subscribe_foreign(self.async_on_state_event)
         if unsub is not None:
             self._unsubs.append(unsub)
@@ -261,7 +284,7 @@ class VerificationRunner:
         await self._after(before)
 
     def _can_write(self) -> bool:
-        return bool(self._ex.verification_can_write()) and window_capable(self._ex.profile)
+        return bool(self._ex.verification_can_write()) and writing_supported(self._ex.profile, self._ex.io.kind)
 
     def _identified(self, rd) -> bool:
         if self._ex.io.kind == "direct":
@@ -340,7 +363,13 @@ class VerificationRunner:
         if prev_state == STOPPED and state != STOPPED:
             ir.async_delete_issue(self._hass, DOMAIN, self._issue_id)
         await self._ex.async_save_verification(lad.to_record())
-        async_dispatcher_send(self._hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=self._entry.entry_id))
+        # Sygnał (i telemetria) przy zmianie szczebla, stanu, stopu albo urządzenia; sam postęp liczników
+        # (np. godziny próby) — najwyżej raz na `SIGNAL_EVERY`.
+        now = self._utcnow()
+        if before is None or (after[0], after[1], after[2], after[5]) != (before[0], before[1], before[2], before[5]) \
+                or self._signalled_at is None or now - self._signalled_at >= SIGNAL_EVERY:
+            self._signalled_at = now
+            async_dispatcher_send(self._hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=self._entry.entry_id))
         if state == STOPPED and prev_state != STOPPED and self._on_urgent is not None:
             try:
                 await self._on_urgent()

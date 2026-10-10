@@ -21,7 +21,8 @@ FIXTURE = Path(__file__).parents[2] / "fixtures" / "control_block.json"
 _KEY_RE = re.compile(r"^[a-f0-9]{16,32}$")
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
 _STATES = {"idle", "running", "waiting", "stopped", "verified"}
-_ALLOWED = {"device_key", "rung", "state", "since", "next_at", "stop_reason", "stop_detail", "trial", "window"}
+_ALLOWED = {"device_key", "rung", "state", "since", "next_at", "stop_reason", "stop_detail", "trial", "window",
+            "migrated"}
 
 
 def _int(v, lo=0, hi=None):
@@ -52,6 +53,8 @@ def shape_errors(block) -> list[str]:
             errs.append(name)
     if "stop_reason" in block and (block["stop_reason"] not in STOP_REASONS or block.get("state") != "stopped"):
         errs.append("stop_reason")
+    if "migrated" in block and block["migrated"] is not True:
+        errs.append("migrated")
     if "stop_detail" in block and not (isinstance(block["stop_detail"], str) and len(block["stop_detail"]) <= 120):
         errs.append("stop_detail")
     trial = block.get("trial")
@@ -71,6 +74,13 @@ def shape_errors(block) -> list[str]:
 def started(start=1, key=KEY) -> Ladder:
     lad = Ladder(start, P, device_key=key)
     lad.tick(T0)
+    return lad
+
+
+def in_trial() -> Ladder:
+    lad = started(1)
+    lad.identify_ok(T0)
+    lad.read_ok(T0)
     return lad
 
 
@@ -139,12 +149,25 @@ def test_full_draft_run_with_simulated_time_ends_verified():
     assert lad.verified
 
 
-def test_verified_profile_starts_at_the_trial_rung():
-    lad = started(3)
-    assert (lad.state.rung, lad.state.state, lad.state.next_at) == (3, RUNNING, T0 + timedelta(hours=24))
+def test_verified_profile_starts_at_the_control_write():
+    lad = Ladder(4, P, device_key=KEY)
+    lad.consent(True, T0)
+    lad.tick(T0)
+    assert (lad.state.rung, lad.state.state, lad.state.next_at) == (4, RUNNING, None)
+    assert "trial" not in lad.to_payload()
 
 
-@pytest.mark.parametrize("start", [0, 2, 4, 9])
+def test_verified_profile_without_consent_waits_at_the_control_write():
+    lad = started(4)
+    assert (lad.state.rung, lad.state.state) == (4, WAITING)
+    lad.consent(False, T0 + timedelta(hours=1))         # dalej czeka — to nie cofnięcie zgody
+    assert (lad.state.rung, lad.state.state) == (4, WAITING)
+    lad.consent(True, T0 + timedelta(hours=2))
+    assert (lad.state.rung, lad.state.state, lad.state.since) == (4, RUNNING, T0 + timedelta(hours=2))
+    assert shape_errors(lad.to_payload()) == []
+
+
+@pytest.mark.parametrize("start", [0, 2, 3, 5, 9])
 def test_start_rung_outside_identify_or_trial_is_refused(start):
     with pytest.raises(ValueError):
         Ladder(start, P, device_key=KEY)
@@ -164,12 +187,13 @@ def test_foreign_write_in_trial_stops_the_ladder():
     assert lad.state.since == T0 + timedelta(hours=2)
 
 
-def test_without_consent_the_ladder_waits_at_the_trial_rung_and_consent_moves_it_on():
+def test_without_consent_the_ladder_waits_before_the_control_write_and_consent_moves_it_on():
     lad = started(1)
     end = to_trial_end(lad, consent=False)
-    assert (lad.state.rung, lad.state.state, lad.state.next_at) == (3, WAITING, None)
+    assert (lad.state.rung, lad.state.state, lad.state.next_at) == (4, WAITING, None)
+    assert lad.to_payload()["trial"]["hours_done"] == 24.0          # wynik próby zostaje w bloku
     lad.tick(end + timedelta(hours=5))
-    assert (lad.state.rung, lad.state.state) == (3, WAITING)
+    assert (lad.state.rung, lad.state.state) == (4, WAITING)
     lad.consent(True, end + timedelta(hours=6))
     assert (lad.state.rung, lad.state.state, lad.state.since) == (4, RUNNING, end + timedelta(hours=6))
 
@@ -178,11 +202,11 @@ def test_foreign_write_while_waiting_for_consent_does_not_stop():
     lad = started(1)
     end = to_trial_end(lad, consent=False)
     lad.foreign_write(end + timedelta(hours=1))
-    assert (lad.state.rung, lad.state.state, lad.state.foreign_writes) == (3, WAITING, 0)
+    assert (lad.state.rung, lad.state.state, lad.state.foreign_writes) == (4, WAITING, 0)
 
 
 def test_consent_during_the_trial_does_not_shorten_it():
-    lad = started(3)
+    lad = in_trial()
     lad.consent(True, T0 + timedelta(hours=1))
     assert (lad.state.rung, lad.state.state) == (3, RUNNING)
 
@@ -197,7 +221,7 @@ def test_control_write_read_back_decides(readback, reason):
 
 @pytest.mark.parametrize("samples", [
     [(300.0, 50.0), (320.0, 51.0), (340.0, 52.0)],        # moc o ~36 % za niska
-    [(500.0, 50.0), (500.0, 50.0), (500.0, 49.0)],        # moc dobra, SoC nie rośnie
+    [(500.0, 50.0), (500.0, 50.0), (500.0, 49.0)],        # moc dobra, SoC spada
     [],                                                   # brak pomiaru
 ])
 def test_window_deviation_or_flat_soc_stops_the_ladder(samples):
@@ -208,6 +232,23 @@ def test_window_deviation_or_flat_soc_stops_the_ladder(samples):
     lad.tick(w0 + timedelta(minutes=15))
     assert (lad.state.rung, lad.state.state, lad.state.stop_reason) == (5, STOPPED, "window_deviation")
     assert shape_errors(lad.to_payload()) == []
+
+
+def test_window_with_flat_soc_passes():
+    lad = started(1)
+    w0 = to_window(lad)
+    lad.window_sample(500.0, 50.0, w0)
+    lad.window_sample(490.0, 50.0, w0 + timedelta(minutes=5))
+    lad.tick(w0 + timedelta(minutes=15))
+    assert lad.state.state == VERIFIED
+
+
+def test_time_window_profile_is_verified_by_the_control_write():
+    lad = Ladder(1, LadderParams(24, 15, 500, window=False), device_key=KEY)
+    lad.tick(T0)
+    t = to_trial_end(lad)
+    lad.write_result(True, t)
+    assert (lad.state.rung, lad.state.state) == (4, VERIFIED) and "window" not in lad.to_payload()
 
 
 def test_window_deviation_at_the_limit_passes():
@@ -255,13 +296,13 @@ def test_retry_returns_to_the_rung_that_stopped(stop_at):
         assert lad.to_payload()["trial"] == {"would_write": 0, "foreign_writes": 0, "hours_done": 0.0}
 
 
-def test_retry_above_the_trial_without_consent_waits_at_the_trial_rung():
+def test_retry_above_the_trial_without_consent_waits_before_the_control_write():
     lad = started(1)
     to_trial_end(lad)
     lad.write_result(False, T0 + timedelta(hours=24))
     lad.consent(False, T0 + timedelta(hours=25))
     lad.retry(T0 + timedelta(hours=26))
-    assert (lad.state.rung, lad.state.state) == (3, WAITING)
+    assert (lad.state.rung, lad.state.state) == (4, WAITING)
 
 
 def test_retry_only_acts_on_a_stopped_ladder():
@@ -282,7 +323,7 @@ def test_consent_revoked_on_a_writing_rung_stops(rung):
 
 
 def test_consent_revoked_at_the_trial_rung_only_waits():
-    lad = started(3)
+    lad = in_trial()
     lad.consent(True, T0)
     lad.consent(False, T0 + timedelta(hours=1))
     assert (lad.state.rung, lad.state.state) == (3, RUNNING)
@@ -299,7 +340,7 @@ def test_read_rung_times_out_as_read_failed():
 
 @pytest.mark.parametrize("event, reason", [("conflict", "controller_conflict"), ("abort", "user_abort")])
 def test_conflict_and_abort_stop_a_running_ladder(event, reason):
-    lad = started(3)
+    lad = in_trial()
     getattr(lad, event)(T0 + timedelta(hours=1))
     assert (lad.state.rung, lad.state.state, lad.state.stop_reason) == (3, STOPPED, reason)
 
@@ -317,12 +358,12 @@ def test_verified_device_is_not_stopped_by_trial_events():
 
 
 def test_changed_device_restarts_idle_at_the_start_rung_or_stops_mid_ladder():
-    lad = started(3)
+    lad = in_trial()
     lad.device_changed("a" * 32, T0 + timedelta(hours=1))
-    assert (lad.state.rung, lad.state.state, lad.state.stop_reason) == (3, STOPPED, "identify_changed")
+    assert (lad.state.rung, lad.state.state, lad.state.stop_reason) == (1, STOPPED, "identify_changed")
     assert lad.device_key == "a" * 32
     lad.retry(T0 + timedelta(hours=2))
-    assert (lad.state.rung, lad.state.state) == (3, RUNNING)
+    assert (lad.state.rung, lad.state.state) == (1, RUNNING)
 
     done = started(1)
     w0 = to_window(done)
@@ -335,6 +376,18 @@ def test_changed_device_restarts_idle_at_the_start_rung_or_stops_mid_ladder():
     assert not done.verified
     done.device_changed("b" * 32, w0 + timedelta(hours=2))  # ten sam klucz — bez zmian
     assert done.state.state == IDLE
+
+
+def test_migrated_ladder_is_verified_and_says_so():
+    lad = Ladder(4, P, device_key=KEY)
+    lad.mark_migrated(T0)
+    assert lad.verified and lad.migrated and (lad.state.rung, lad.state.since) == (4, T0)
+    payload = lad.to_payload()
+    assert payload["migrated"] is True and payload["state"] == "verified" and shape_errors(payload) == []
+    back = Ladder.from_record(lad.to_record(), P)
+    assert back.migrated and back.verified and back.to_payload() == payload
+    back.device_changed("c" * 32, T0 + timedelta(hours=1))
+    assert not back.migrated and "migrated" not in back.to_payload()
 
 
 def test_params_from_profile_override_only_valid_fields():
@@ -372,6 +425,7 @@ def test_record_with_a_running_window_comes_back_waiting_for_a_new_window():
     None, [], {}, {"device_key": KEY}, {"v": 1, "device_key": "123", "start": 1, "rung": 1, "state": "running",
                                         "since": T0.isoformat()},
     {"v": 1, "device_key": KEY, "start": 1, "rung": 7, "state": "running", "since": T0.isoformat()},
+    {"v": 1, "device_key": KEY, "start": 3, "rung": 3, "state": "idle", "since": T0.isoformat()},
     {"v": 1, "device_key": KEY, "start": 1, "rung": 1, "state": "dancing", "since": T0.isoformat()},
     {"v": 1, "device_key": KEY, "start": 1, "rung": 1, "state": "running", "since": "yesterday"},
     {"v": 1, "device_key": KEY, "start": 1, "rung": 3, "state": "stopped", "since": T0.isoformat(),

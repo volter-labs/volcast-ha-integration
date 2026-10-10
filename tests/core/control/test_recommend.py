@@ -50,7 +50,7 @@ def test_integration_writing_mode_recommends_entities_from_rung_one():
 
 def test_verified_profile_and_verified_entry_start_at_the_control_write():
     rec = recommend(_report(), [_profile(entry_status="verified")], None, None, MODE_MAP)
-    assert (rec.path, rec.ladder_start) == (ENTITIES, 3)
+    assert (rec.path, rec.ladder_start) == (ENTITIES, 4)
     # profil draft z wpisem verified to nadal draft — drabina od początku
     rec = recommend(_report(), [_profile(status="draft", entry_status="verified")], None, None, MODE_MAP)
     assert (rec.path, rec.ladder_start) == (ENTITIES, 1)
@@ -76,7 +76,7 @@ def test_no_integration_and_identified_inverter_recommends_direct():
     assert rec.device == {"manufacturer": "Test", "model": "GW10K-ET"}
     # zweryfikowana ścieżka rejestrów (profil + modbus), próba udana, oferta bez odmowy → zapis kontrolny
     rec = recommend({"inverters": []}, [_profile(modbus="verified")], _probe(), None, {})
-    assert (rec.path, rec.ladder_start) == (DIRECT, 3)
+    assert (rec.path, rec.ladder_start) == (DIRECT, 4)
     # bez udanej próby zapisu weryfikacja zaczyna od początku; odmowa nie jest powodem rekomendacji
     rec = recommend({"inverters": []}, [_profile(modbus="verified")], _probe(direct_available=False),
                     "direct_unverified", {})
@@ -142,7 +142,7 @@ def test_explicit_choice_overrides_report_hints():
     prof = _profile(entry_status="verified")
     rec = recommend({"inverters": []}, [prof], None, None, MODE_MAP,
                     choice=ProfileChoice(prof, "goodwe", "GW8KN-ET"))
-    assert (rec.path, rec.ladder_start) == (ENTITIES, 3)
+    assert (rec.path, rec.ladder_start) == (ENTITIES, 4)
     assert rec.device == {"manufacturer": None, "model": "GW8KN-ET"}
 
 
@@ -210,5 +210,8 @@ def test_conflicts_payload_is_capped_at_eight():
 
 
 @pytest.mark.parametrize("path", [ENTITIES, DIRECT, DIRECT_WITH_INTEGRATION_DATA, UNSUPPORTED])
-def test_ladder_start_always_in_contract_range(path):
-    assert 1 <= Recommendation(path, "r", 3).to_payload()["ladder_start"] <= 3
+def test_ladder_start_is_identify_or_control_write(path):
+    assert Recommendation(path, "r", 4).to_payload()["ladder_start"] == 4
+    assert Recommendation(path, "r", 1).to_payload()["ladder_start"] == 1
+    assert 1 <= Recommendation(path, "r", 9).to_payload()["ladder_start"] <= 4
+    assert Recommendation(path, "r", 0).to_payload()["ladder_start"] == 1

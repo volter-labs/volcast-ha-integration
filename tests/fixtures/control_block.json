@@ -10,7 +10,7 @@
       { "key": "soc_min", "entity_id": "number.depth_of_discharge_on_grid" },
       { "key": "eco_power", "entity_id": "number.eco_mode_power" }
     ],
-    "ladder_start": 3
+    "ladder_start": 1
   },
   "verification": {
     "device_key": "3f9a1c0e7b2d4a6f",

@@ -515,6 +515,8 @@ def _patch_control(monkeypatch, store, schedule):
     monkeypatch.setattr(rt_mod, "map_entities", lambda hass, choice: dict(GOODWE_ENTITIES))
     monkeypatch.setattr(rt_mod, "ControlStore", lambda hass, entry_id: store)
     monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+    # Drabina weryfikacji w próbie bez zapisu (szczebel 1→3): testy setupu liczą zapisy samego planu.
+    monkeypatch.setattr(rt_mod, "start_rung_for", lambda *_, **__: 1)
 
 
 async def _setup(monkeypatch, hass, coordinator, *, data=PAIRED, options=None):
