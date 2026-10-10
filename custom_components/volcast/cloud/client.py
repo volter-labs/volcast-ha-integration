@@ -134,6 +134,12 @@ class Backend:
     def as_dict(self) -> dict[str, str]:
         return {k: getattr(self, k) for k in _BACKEND_KEYS}
 
+    @property
+    def set_controller(self) -> str:
+        """`set-controller` obok `get-schedule` (ta sama baza funkcji) — wpisy sprzed lustra zgody nie mają
+        tego adresu w danych parowania, a nowy klucz w `_BACKEND_KEYS` unieważniłby je."""
+        return self.schedule.rsplit("/", 1)[0] + "/set-controller"
+
 
 class CloudAuthError(Exception):
     """Klucz konta odrzucony (401)."""
@@ -177,8 +183,62 @@ class TelemetryResult:
         return self.status == 200
 
 
+_SET_CONTROLLER_KINDS = frozenset({"ha", "none"})
+_SET_CONTROLLER_ORIGINS = frozenset({"app", "ha_switch"})
+# Kody odmowy z kontraktu lustra zgody (control-contract §7.3) — inne ciało = "unknown"/"forbidden".
+_REFUSALS_409 = frozenset({"no_readings", "revoked_by_other", "other_controller_active"})
+_REFUSALS_403 = frozenset({"tier_required", "mirror_disabled", "forbidden"})
+_RETRY_AFTER_MAX_S = 24 * 3600
+
+
+@dataclass(frozen=True)
+class SetControllerResult:
+    """Wynik `set-controller` kluczem API: status HTTP (0 = brak odpowiedzi) i typowany `outcome`.
+
+    `outcome`: "ok" | "no_readings" | "revoked_by_other" | "other_controller_active" | "tier_required" |
+    "mirror_disabled" | "forbidden" | "rate_limited" | "unauthorized" | "invalid_body" | "server_error" |
+    "network" | "unknown".
+    """
+    status: int
+    outcome: str
+    retry_after_s: int | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome == "ok"
+
+    @property
+    def retriable(self) -> bool:
+        """Ponowienie ma sens (sieć, 5xx, limit) — odmowa decyzją serwera już nie."""
+        return self.outcome in ("network", "server_error", "rate_limited")
+
+
+def _set_controller_result(status: int, data: Any) -> SetControllerResult:
+    error = data.get("error") if isinstance(data, dict) else None
+    if status == 200:
+        return SetControllerResult(status, "ok")
+    if status == 0:
+        return SetControllerResult(0, "network")
+    if status == 409:
+        return SetControllerResult(status, error if error in _REFUSALS_409 else "unknown")
+    if status == 403:
+        return SetControllerResult(status, error if error in _REFUSALS_403 else "forbidden")
+    if status == 429:
+        after = data.get("retry_after_s") if isinstance(data, dict) else None
+        ok_after = (isinstance(after, int) and not isinstance(after, bool) and 0 <= after <= _RETRY_AFTER_MAX_S)
+        return SetControllerResult(status, "rate_limited", after if ok_after else None)
+    if status == 401:
+        return SetControllerResult(status, "unauthorized")
+    if status == 400:
+        return SetControllerResult(status, "invalid_body")
+    if status >= 500:
+        return SetControllerResult(status, "server_error")
+    return SetControllerResult(status, "unknown")
+
+
 class VolcastCloud:
-    """Plan (`get-schedule`, zawsze `?contract=3`), telemetria i import historii."""
+    """Plan (`get-schedule`, zawsze `?contract=3`), telemetria, import historii i lustro zgody
+    (`set-controller` kluczem API)."""
 
     def __init__(self, session, api_key: str, backend: Backend) -> None:
         self._s = session
@@ -221,6 +281,18 @@ class VolcastCloud:
                                         {"source": "ha_recorder", "hours": hours},
                                         self._headers(), "history import", _HISTORY_TIMEOUT)
         return data if status == 200 and isinstance(data, dict) else None
+
+    async def async_set_controller(self, kind: str, origin: str = "ha_switch") -> SetControllerResult:
+        """Zgoda konta z przełącznika HA (lustro zgody): `kind` "ha" (przywrócenie) albo "none".
+
+        Klucz wyłącznie w nagłówku `X-API-Key` (nigdy w URL), bez przekierowań. Nigdy nie rzuca dla
+        odpowiedzi ani błędu sieci — zły `kind`/`origin` to błąd wołającego (ValueError, bez wywołania).
+        """
+        if kind not in _SET_CONTROLLER_KINDS or origin not in _SET_CONTROLLER_ORIGINS:
+            raise ValueError("unsupported set-controller kind/origin")
+        status, data = await _post_json(self._s, self._b.set_controller, {"kind": kind, "origin": origin},
+                                        self._headers(), "set-controller")
+        return _set_controller_result(status, data)
 
 
 @dataclass(frozen=True)

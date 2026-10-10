@@ -444,6 +444,26 @@
           }
         }
       }
+    },
+    "consent_no_readings": {
+      "title": "Volcast control stays off: no recent readings",
+      "description": "Volcast received no readings from Home Assistant in the last 10 minutes, so control was not turned on. Check the connection and that your inverter readings are available, then turn the Volcast control switch on again."
+    },
+    "consent_revoked_by_other": {
+      "title": "Turn control on in the Volcast app first",
+      "description": "Control was turned off in the Volcast app or by Volcast, so it cannot be turned back on from Home Assistant. Turn control on in the Volcast app first; the switch in Home Assistant follows it."
+    },
+    "consent_other_controller_active": {
+      "title": "Volcast control stays off: another controller is active",
+      "description": "Your Volcast account controls the inverter through another controller, for example a Volcast Box. To control it from Home Assistant, choose Home Assistant in the Volcast app."
+    },
+    "consent_tier_required": {
+      "title": "Volcast control stays off: plan required",
+      "description": "Your Volcast plan does not include inverter control. Check your plan in the Volcast app, then turn the Volcast control switch on again."
+    },
+    "consent_mirror_error": {
+      "title": "Volcast control could not be turned on",
+      "description": "Volcast could not turn control on ({reason}), so the switch stays off. Try again later, or turn control on in the Volcast app."
     }
   },
   "services": {

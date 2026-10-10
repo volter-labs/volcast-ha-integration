@@ -690,6 +690,30 @@ async def test_setup_builds_channel_live_hub_and_passes_on_signals(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_setup_passes_consent_mirror_from_plan_to_executor(monkeypatch):
+    # Lustro zgody: flaga `control.consent_mirror` z planu trafia do wykonawcy (przełącznik czyta ją z niego).
+    from tests.setup_harness import drain
+    _patch_signals(monkeypatch, {"signals": SIG_BLOCK, "control": {"consent_mirror": True}})
+    hass, entry = _setup_hass(), _entry()
+    rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    await drain(hass)
+    assert rt.fetcher._on_consent_mirror == rt.executor.set_consent_mirror
+    assert rt.fetcher.consent_mirror is True and rt.executor.consent_mirror is True
+    await rt_mod.async_unload_control(hass, rt)
+
+
+@pytest.mark.asyncio
+async def test_setup_without_mirror_flag_keeps_legacy_switch(monkeypatch):
+    from tests.setup_harness import drain
+    _patch_signals(monkeypatch, {"signals": SIG_BLOCK})
+    hass, entry = _setup_hass(), _entry()
+    rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    await drain(hass)
+    assert rt.executor.consent_mirror is False
+    await rt_mod.async_unload_control(hass, rt)
+
+
+@pytest.mark.asyncio
 async def test_wake_and_live_callbacks_reach_the_hub(monkeypatch):
     _patch_signals(monkeypatch, None)
     hass, entry = _setup_hass(), _entry()

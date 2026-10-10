@@ -890,7 +890,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         hub = SignalsHub(base_url=backend.base_url, channel=channel, live=live, refresh=_fetch, task_factory=_task)
         fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
                                   on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply,
-                                  on_control=_control, hass=hass)
+                                  on_control=_control, on_consent_mirror=executor.set_consent_mirror, hass=hass)
         await telemetry.async_start()
         if choice is not None and not composed.returning:
             # Przed pierwszym cyklem: w trybie bezpośrednim plan czeka na zweryfikowane urządzenie.

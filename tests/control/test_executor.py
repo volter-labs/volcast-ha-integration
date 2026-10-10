@@ -1949,3 +1949,279 @@ def test_restore_to_baseline_forgets_the_written_setpoint(monkeypatch):
         await ex.async_tick()
     asyncio.run(go())
     assert not ex.owned and ex._memory.live_export.written_for is None
+
+
+# ── lustro zgody (ADR-051): zgoda konta z chmury ↔ lokalny przełącznik ────────
+
+async def _mirrored(ex, *, consent=True, local=True):
+    await ready(ex, consent=consent, local=local)
+    ex.set_consent_mirror(True)
+
+
+def test_consent_false_from_cloud_turns_switch_off(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex)
+        await ex.async_tick()
+        assert h.states.get(E["mode"]).state == "sell_power" and ex.owned
+        await ex.async_set_consent(False)
+        assert ex.local_switch is False and ex.consent is False
+        await ex.async_tick()
+    asyncio.run(go())
+    # istniejące przywracanie stanu bazowego
+    assert h.states.get(E["mode"]).state == "auto" and not ex.owned
+
+
+def test_consent_false_from_cloud_turns_switch_off_even_when_consent_already_false(monkeypatch):
+    # Poziom, nie zbocze: przełącznik włączony przy zgodzie chmury „off” pod lustrem gaśnie.
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, consent=False, local=True)
+        ex.set_consent_mirror(True)
+        await ex.async_set_consent(False)
+    asyncio.run(go())
+    assert ex.local_switch is False
+
+
+def test_mirror_off_cloud_consent_false_keeps_switch(monkeypatch):
+    # Regresja: bez lustra zgoda i przełącznik to dwa niezależne zamki (jak dotąd).
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_set_consent(False)
+        await ex.async_set_consent(True)
+    asyncio.run(go())
+    assert ex.consent is True and ex.local_switch is True and ex.consent_mirror is False
+
+
+def test_mirror_off_cloud_consent_true_never_turns_switch_on(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex, consent=False, local=False)
+        await ex.async_set_consent(True)
+    asyncio.run(go())
+    assert ex.consent is True and ex.local_switch is False
+
+
+def test_consent_true_from_cloud_turns_switch_on(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        await ex.async_set_consent(True)
+        assert ex.local_switch is True
+        await ex.async_tick()
+    asyncio.run(go())
+    assert h.states.get(E["mode"]).state == "sell_power"
+
+
+def test_consent_true_from_cloud_respects_ha_gates(monkeypatch):
+    # Pauza po obcym zapisie: przełącznik zostaje off do końca pauzy, potem włącza się sam.
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        ex._memory.paused_until = ex._clock() + 1800
+        await ex.async_set_consent(True)
+        assert ex.local_switch is False
+        await ex.async_tick()
+        assert ex.local_switch is False
+        ex._clock.t += 1801
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex.local_switch is True
+
+
+def test_consent_true_from_cloud_respects_foreign_mode_episode(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        ex._foreign_episode = True
+        await ex.async_set_consent(True)
+    asyncio.run(go())
+    assert ex.local_switch is False
+
+
+def test_pending_cloud_on_dropped_when_consent_withdrawn_or_owner_turns_off(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        ex._memory.paused_until = ex._clock() + 1800
+        await ex.async_set_consent(True)
+        await ex.async_set_consent(False)              # cofnięte w trakcie pauzy
+        ex._clock.t += 1801
+        await ex.async_tick()
+        first = ex.local_switch
+        ex._memory.paused_until = ex._clock() + 1800
+        await ex.async_set_consent(True)
+        await ex.async_mirror_switch_off()               # właściciel wyłącza w HA
+        ex._clock.t += 1801
+        await ex.async_tick()
+        return first
+    assert asyncio.run(go()) is False and ex.local_switch is False
+
+
+def test_first_cloud_value_true_does_not_turn_switch_on(monkeypatch):
+    # Po starcie/przeładowaniu bez widzianego „off” z chmury nie ma zbocza — przełącznik bez zmian.
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ex.async_start()
+        raw = plan()
+        await ex.async_on_plan(raw, parse_schedule(raw))
+        ex.set_consent_mirror(True)
+        await ex.async_set_consent(True)
+    asyncio.run(go())
+    assert ex.consent is True and ex.local_switch is False
+
+
+def test_auth_failure_consent_loss_never_turns_switch_on_after_recovery(monkeypatch):
+    # Zgoda cofnięta lokalnie (401) to nie zgoda z chmury: powrót klucza nie zapala przełącznika.
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=True, local=False)
+        await ex.async_on_auth_failure(2)
+        assert ex.consent is False and ex.local_switch is False
+        await ex.async_set_consent(True)
+    asyncio.run(go())
+    assert ex.consent is True and ex.local_switch is False
+
+
+def test_auth_failure_under_mirror_keeps_switch_state(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex)
+        await ex.async_on_auth_failure(2)
+    asyncio.run(go())
+    assert ex.consent is False and ex.local_switch is True
+
+
+def test_owner_off_pending_blocks_cloud_on(monkeypatch):
+    # Wyłączenie w HA jeszcze niedoręczone do chmury: zgoda „on” z chmury nie zapala przełącznika.
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        await ex.async_mirror_switch_off()
+        await ex.async_set_consent(True)
+    asyncio.run(go())
+    assert ex.mirror_off_pending is True and ex.local_switch is False
+
+
+def test_cloud_consent_false_settles_pending_owner_off(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex)
+        await ex.async_mirror_switch_off()
+        assert ex.mirror_off_pending is True and ex.local_switch is False
+        await ex.async_set_consent(False)
+    asyncio.run(go())
+    assert ex.mirror_off_pending is False
+
+
+def test_mirror_switch_on_after_server_ok(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        await ex.async_mirror_switch_off()
+        await ex.async_mirror_switch_on()
+    asyncio.run(go())
+    assert ex.local_switch is True and ex.mirror_off_pending is False
+
+
+def test_late_cloud_on_after_owner_on_then_off_does_not_turn_switch_on(monkeypatch):
+    # Wyścig: plan pobrany przed wyłączeniem w HA (zgoda „on”) dociera po doręczonym wyłączeniu.
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        await ex.async_mirror_switch_on()                # 200 z `set-controller {kind:'ha'}`
+        await ex.async_mirror_switch_off()
+        ex.mirror_off_delivered()                        # 200 z `set-controller {kind:'none'}`
+        await ex.async_set_consent(True)                 # spóźniony plan
+    asyncio.run(go())
+    assert ex.local_switch is False
+
+
+def test_mirror_flag_off_drops_pending_state(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        ex._memory.paused_until = ex._clock() + 1800
+        await ex.async_set_consent(True)
+        await ex.async_mirror_switch_off()
+        ex.set_consent_mirror(False)
+        ex._clock.t += 1801
+        await ex.async_tick()
+    asyncio.run(go())
+    assert ex.local_switch is False and ex.mirror_off_pending is False and ex.consent_mirror is False
+
+
+def test_mirrored_switch_state_is_saved(monkeypatch):
+    h = goodwe_hass()
+    store = ControlStore(h, "e1")
+    _, ex = make(h, store=store, monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        await ex.async_set_consent(True)
+        return await store.async_load()
+    saved = asyncio.run(go())
+    assert saved.local_switch is True and saved.consent is True
+
+
+def test_consent_refusal_issue_per_cause_and_cleared(monkeypatch):
+    ir.async_create_issue.reset_mock()
+    ir.async_delete_issue.reset_mock()
+    _, ex = make(monkeypatch=monkeypatch)
+    assert ex.note_consent_refused("revoked_by_other") == "consent_revoked_by_other"
+    call = ir.async_create_issue.call_args
+    assert call.args[2] == "consent_revoked_by_other_e1"
+    assert call.kwargs["translation_key"] == "consent_revoked_by_other"
+    assert call.kwargs["severity"] == ex_mod._WARNING and call.kwargs["is_fixable"] is False
+    # inna przyczyna zastępuje poprzednią
+    assert ex.note_consent_refused("no_readings") == "consent_no_readings"
+    assert ir.async_create_issue.call_args.args[2] == "consent_no_readings_e1"
+    assert "consent_revoked_by_other_e1" in [c.args[2] for c in ir.async_delete_issue.call_args_list]
+    for outcome in ("rate_limited", "mirror_disabled", "forbidden", "unauthorized", "invalid_body", "network",
+                    "server_error", "unknown"):
+        assert ex.note_consent_refused(outcome) == "consent_mirror_error"
+    assert ex.note_consent_refused("other_controller_active") == "consent_other_controller_active"
+    assert ex.note_consent_refused("tier_required") == "consent_tier_required"
+    ir.async_delete_issue.reset_mock()
+    ex.clear_consent_issues()
+    assert {c.args[2] for c in ir.async_delete_issue.call_args_list} == {
+        f"{k}_e1" for k in ("consent_no_readings", "consent_revoked_by_other", "consent_other_controller_active",
+                            "consent_tier_required", "consent_mirror_error")}
+
+
+def test_cloud_mirror_on_clears_consent_issues(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex, consent=False, local=False)
+        ex.note_consent_refused("revoked_by_other")
+        ir.async_delete_issue.reset_mock()
+        await ex.async_set_consent(True)               # właściciel włączył w aplikacji
+    asyncio.run(go())
+    assert "consent_revoked_by_other_e1" in [c.args[2] for c in ir.async_delete_issue.call_args_list]
+
+
+def test_consent_refusal_issue_keys_have_strings():
+    import json
+    from pathlib import Path
+    issues = json.loads((Path(ex_mod.__file__).parents[1] / "strings.json").read_text(encoding="utf-8"))["issues"]
+    for key in ex_mod.CONSENT_ISSUE_KEYS:
+        assert issues[key]["title"] and issues[key]["description"], key
+    assert "app" in issues["consent_revoked_by_other"]["description"].lower()

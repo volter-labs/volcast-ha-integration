@@ -521,3 +521,91 @@ def test_begin_201_carries_latest_version():
     s2 = FakeSession()
     s2.add("POST", PAIR, 201, {**BEGIN_OK, "latest_version": 5})
     assert begin(s2).latest_version is None
+
+
+# ------------------------------------------------- set-controller (lustro zgody)
+
+SET_CTRL = f"{BASE}/functions/v1/set-controller"
+
+
+def _set_ctrl(status, body=None, kind="ha", **kw):
+    s = FakeSession()
+    s.add("POST", SET_CTRL, status, body, **kw)
+    out = run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_set_controller(kind))
+    return s, out
+
+
+def test_set_controller_url_is_sibling_of_schedule_and_key_only_in_header():
+    assert Backend.from_dict(BACKEND).set_controller == SET_CTRL
+    s, out = _set_ctrl(200, {"success": True})
+    call = s.calls[0]
+    assert call["url"] == SET_CTRL and "?" not in call["url"]          # klucz nigdy w URL
+    assert call["headers"] == {"X-API-Key": KEY}
+    assert call["json"] == {"kind": "ha", "origin": "ha_switch"}
+    assert call["allow_redirects"] is False
+    assert out.ok is True and out.outcome == "ok" and out.retriable is False
+
+
+def test_set_controller_none_body():
+    s, out = _set_ctrl(200, {}, kind="none")
+    assert s.calls[0]["json"] == {"kind": "none", "origin": "ha_switch"} and out.ok
+
+
+@pytest.mark.parametrize("status,body,outcome", [
+    (409, {"error": "no_readings", "last_reading_at": None}, "no_readings"),
+    (409, {"error": "revoked_by_other"}, "revoked_by_other"),
+    (409, {"error": "other_controller_active"}, "other_controller_active"),
+    (409, {"error": "something_new"}, "unknown"),
+    (403, {"error": "tier_required", "required": "automat", "current": "plan"}, "tier_required"),
+    (403, {"error": "mirror_disabled"}, "mirror_disabled"),
+    (403, {"error": "forbidden"}, "forbidden"),
+    (403, None, "forbidden"),
+    (401, {"error": "unauthorized"}, "unauthorized"),
+    (400, {"error": "invalid_body"}, "invalid_body"),
+    (500, {"error": "internal"}, "server_error"),
+    (503, None, "server_error"),
+    (418, {}, "unknown"),
+])
+def test_set_controller_maps_refusals(status, body, outcome):
+    _, out = _set_ctrl(status, body)
+    assert out.ok is False and out.outcome == outcome and out.status == status
+    assert out.retriable is (outcome == "server_error")
+
+
+def test_set_controller_200_with_error_body_is_still_ok():
+    # 200 = zapis po stronie serwera (albo no-op) — ciało nie zmienia wyniku.
+    _, out = _set_ctrl(200, None)
+    assert out.ok is True and out.outcome == "ok"
+
+
+def test_set_controller_rate_limited_carries_retry_after():
+    _, out = _set_ctrl(429, {"error": "rate_limited", "retry_after_s": 1200})
+    assert out.outcome == "rate_limited" and out.retry_after_s == 1200 and out.retriable is True
+    _, bad = _set_ctrl(429, {"error": "rate_limited", "retry_after_s": "soon"})
+    assert bad.outcome == "rate_limited" and bad.retry_after_s is None
+
+
+@pytest.mark.parametrize("err", [aiohttp.ClientError(), asyncio.TimeoutError()])
+def test_set_controller_network_error_is_typed_not_raised(err):
+    _, out = _set_ctrl(err)
+    assert out.ok is False and out.outcome == "network" and out.status == 0 and out.retriable is True
+
+
+def test_set_controller_redirect_is_refused():
+    s, out = _set_ctrl(307, None, headers={"Location": EVIL})
+    assert out.outcome == "network" and [c["url"] for c in s.calls] == [SET_CTRL]
+
+
+def test_set_controller_rejects_unknown_kind_without_calling():
+    s = FakeSession()
+    with pytest.raises(ValueError):
+        run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_set_controller("box"))
+    with pytest.raises(ValueError):
+        run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_set_controller("ha", origin="evil"))
+    assert s.calls == []
+
+
+def test_set_controller_logs_no_key(caplog):
+    caplog.set_level(logging.DEBUG)
+    _set_ctrl(500, {"error": "internal"})
+    assert KEY not in caplog.text

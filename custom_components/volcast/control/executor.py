@@ -111,6 +111,15 @@ Tryb „tylko plan” (`plan_only` w magazynie, wybór własnego sterownika — 
 wyłączonym sterowaniu (zero zapisów planu i drabiny; przy własności — powrót do trybu bazowego), bez
 pauzy i zgłoszeń o obcej zmianie ani kolizji na łączu. Konflikty sterowników liczy `control/conflicts.py`
 (encje zapisu: `write_entity_ids`, potwierdzone konflikty: `conflict_ack`).
+
+Lustro zgody (ADR-051, tylko przy `control.consent_mirror: true` z ostatniego planu — `set_consent_mirror`):
+zgoda konta z chmury „off” gasi też lokalny przełącznik (istniejące przywracanie stanu bazowego); zgoda
+„on” zapala przełącznik tylko na zboczu off → on widzianym z chmury w tym przebiegu i tylko przy otwartych
+bramkach HA (bez pauzy po obcej zmianie, bez trybu spoza profilu) — inaczej czeka do ich otwarcia.
+Zgoda cofnięta lokalnie (401) nie jest zgodą z chmury i nie rusza przełącznika. Wyłączenie przełącznikiem
+w HA niedoręczone jeszcze do chmury (`mirror_off_pending`) blokuje zapalenie z chmury. Bez lustra —
+dwa niezależne zamki, jak dotąd. Wykonawca nigdy sam nie woła `set-controller` (robi to tylko akcja
+właściciela na przełączniku).
 """
 from __future__ import annotations
 
@@ -209,6 +218,16 @@ _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
 _Reading = Reading                 # dawna nazwa (odczyt jednego cyklu)
 
+# Odmowa `set-controller` przy włączaniu przełącznikiem (wynik klienta) → klucz zgłoszenia w Naprawach.
+_CONSENT_REFUSAL_KEYS = {
+    "no_readings": "consent_no_readings",
+    "revoked_by_other": "consent_revoked_by_other",
+    "other_controller_active": "consent_other_controller_active",
+    "tier_required": "consent_tier_required",
+}
+_CONSENT_ERROR_KEY = "consent_mirror_error"           # każda inna odmowa / błąd
+CONSENT_ISSUE_KEYS = (*_CONSENT_REFUSAL_KEYS.values(), _CONSENT_ERROR_KEY)
+
 
 class VolcastExecutor:
     def __init__(self, hass, entry, *, choice: ProfileChoice | None, mapped: Mapping[str, str],
@@ -292,6 +311,11 @@ class VolcastExecutor:
         self.verification = None
         self._window: Schedule | None = None           # okno próbne drabiny: plan zastępczy
         self._verify_restore = False                   # powrót po oknie/stopie drabiny w toku
+        # lustro zgody (ADR-051): flaga z ostatniego planu i stan w pamięci (nie przeżywa przeładowania)
+        self._consent_mirror = False
+        self._cloud_consent: bool | None = None        # ostatnia zgoda z chmury w tym przebiegu
+        self._mirror_on_pending = False                # zgoda „on” z chmury czeka na bramki HA
+        self._mirror_off_pending = False               # wyłączenie w HA niedoręczone do chmury
 
     # ── stan dla encji i telemetrii ───────────────────────────────────────
     @property
@@ -588,6 +612,7 @@ class VolcastExecutor:
             ir.async_delete_issue(self._hass, DOMAIN, self._budget_issue_id)
         ir.async_delete_issue(self._hass, DOMAIN, self._unsupported_issue_id)
         self._unsupported_issue = ()
+        self.clear_consent_issues()
         if not self._lock.locked():
             return
         wait_s = self._stop_timeout_s
@@ -879,18 +904,118 @@ class VolcastExecutor:
         await self._async_save("plan")
         self._notify()
 
-    async def async_set_consent(self, value: bool) -> None:
-        if not isinstance(value, bool) or value == self._state.consent:
+    async def async_set_consent(self, value: bool, *, from_cloud: bool = True) -> None:
+        """Zgoda konta; `from_cloud=False` = cofnięcie lokalne (401), poza lustrem zgody."""
+        if not isinstance(value, bool):
             return       # wartość innego typu nie zmienia stanu
-        self._state.consent = value
-        _LOGGER.warning("Volcast account consent for inverter control: %s",
-                        "granted" if value else "withdrawn")
-        await self._async_save("consent")
-        self._notify()
+        prev_cloud = self._cloud_consent
+        if from_cloud:
+            self._cloud_consent = value
+        mirror = from_cloud and self._consent_mirror
+        switch_off = False
+        if mirror and value is False:
+            # Chmura ma zgodę off: oczekujące włączenie przepada, wyłączenie z HA jest już po stronie chmury.
+            self._mirror_on_pending = self._mirror_off_pending = False
+            if self._state.local_switch:
+                self._state.local_switch = False
+                switch_off = True
+                _LOGGER.warning("Volcast control switch turned off: account consent withdrawn in the cloud")
+        if mirror and value is True and prev_cloud is False and not self._mirror_off_pending:
+            self._mirror_on_pending = True               # zbocze off → on z chmury (np. nadanie w aplikacji)
+        if value != self._state.consent:
+            self._state.consent = value
+            _LOGGER.warning("Volcast account consent for inverter control: %s",
+                            "granted" if value else "withdrawn")
+            await self._async_save("consent")
+            self._notify()
+        elif switch_off:
+            await self._async_save("local switch")
+            self._notify()
+        if self._mirror_on_pending:
+            await self._async_apply_mirror_on()
 
     async def async_on_auth_failure(self, count: int) -> None:
         if count >= 2:
-            await self.async_set_consent(False)
+            await self.async_set_consent(False, from_cloud=False)
+
+    # ── lustro zgody (ADR-051) ────────────────────────────────────────────
+    @property
+    def consent_mirror(self) -> bool:
+        return self._consent_mirror
+
+    @property
+    def mirror_off_pending(self) -> bool:
+        return self._mirror_off_pending
+
+    def set_consent_mirror(self, on: bool) -> None:
+        """Flaga `control.consent_mirror` z ostatniego planu; jej zgaszenie porzuca stan lustra."""
+        on = on is True
+        if on == self._consent_mirror:
+            return
+        self._consent_mirror = on
+        if not on:
+            self._mirror_on_pending = self._mirror_off_pending = False
+        _LOGGER.info("Volcast consent mirror %s", "on" if on else "off")
+
+    def _mirror_gates_open(self) -> bool:
+        """Własne bramki HA dla zapalenia z chmury: wykonawca działa, bez pauzy i bez trybu spoza profilu."""
+        return (not (self._stopped or self._disabled or self._frozen) and self._memory is not None
+                and not self.paused and not self._foreign_episode)
+
+    async def _async_apply_mirror_on(self) -> None:
+        if not (self._mirror_on_pending and self._consent_mirror and self._state.consent is True) \
+                or self._mirror_off_pending:
+            self._mirror_on_pending = False
+            return
+        if self._state.local_switch:
+            self._mirror_on_pending = False
+            self.clear_consent_issues()
+            return
+        if not self._mirror_gates_open():
+            return                                   # czeka (sprawdzane w każdym cyklu)
+        self._mirror_on_pending = False
+        self._state.local_switch = True
+        _LOGGER.warning("Volcast control switch turned on: account consent granted in the cloud")
+        self.clear_consent_issues()
+        await self._async_save("local switch")
+        self._notify()
+
+    async def async_mirror_switch_off(self) -> None:
+        """Właściciel wyłącza przełącznik w HA (lustro): lokalnie od razu, dopóki chmura nie potwierdzi —
+        zgoda „on” z chmury nie zapala go z powrotem."""
+        self._mirror_off_pending = True
+        self._mirror_on_pending = False
+        # Stan zgody w chmurze nieznany do następnego planu: spóźniona odpowiedź z „on” nie jest zboczem.
+        self._cloud_consent = None
+        await self.async_set_local_switch(False)
+
+    def mirror_off_delivered(self) -> None:
+        """Chmura przyjęła wyłączenie z HA (200)."""
+        self._mirror_off_pending = False
+
+    async def async_mirror_switch_on(self) -> None:
+        """Chmura przywróciła zgodę na prośbę właściciela (200 z `set-controller {kind:'ha'}`)."""
+        self._mirror_off_pending = self._mirror_on_pending = False
+        self._cloud_consent = True                   # serwer właśnie przywrócił zgodę
+        self.clear_consent_issues()
+        await self.async_set_local_switch(True)
+
+    def _consent_issue_id(self, key: str) -> str:
+        return f"{key}_{self._entry.entry_id}"
+
+    def note_consent_refused(self, outcome: str) -> str:
+        """Odmowa włączenia przełącznikiem → jedno zgłoszenie z przyczyną (poprzednie znikają); klucz tekstu."""
+        key = _CONSENT_REFUSAL_KEYS.get(outcome, _CONSENT_ERROR_KEY)
+        for other in CONSENT_ISSUE_KEYS:
+            if other != key:
+                ir.async_delete_issue(self._hass, DOMAIN, self._consent_issue_id(other))
+        self._create_issue(self._consent_issue_id(key), key, {"reason": outcome} if key == _CONSENT_ERROR_KEY
+                           else None)
+        return key
+
+    def clear_consent_issues(self) -> None:
+        for key in CONSENT_ISSUE_KEYS:
+            ir.async_delete_issue(self._hass, DOMAIN, self._consent_issue_id(key))
 
     async def async_set_local_switch(self, on: bool) -> None:
         self._state.local_switch = bool(on)
@@ -997,6 +1122,8 @@ class VolcastExecutor:
         absent = self._absent_keys() if entities else ()
         live_map = {k: v for k, v in self._mapped.items() if k not in absent}
         self._update_foreign_episode(rd)
+        if self._mirror_on_pending:
+            await self._async_apply_mirror_on()      # lustro zgody: zgoda z chmury czekała na bramki HA
         trial = direct is not None and direct.trial
         gates = self._gates()
         live = entities and self._control_on(gates)

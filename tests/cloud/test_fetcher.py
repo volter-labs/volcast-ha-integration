@@ -242,3 +242,84 @@ def test_update_issue_skipped_without_hass_or_unknown_version(monkeypatch):
     f2 = _with_hass(doc(latest_version="2.0.0b5"))
     asyncio.run(f2.async_refresh())
     create.assert_not_called()
+
+
+# --------------------------------------------------- lustro zgody / plan_meta
+
+def cdoc(*args):
+    """Plan z blokiem `control` (ostatni argument; w `doc` parametr `control` to `control_enabled`)."""
+    *rest, block = args
+    return {**doc(*rest), "control": block}
+
+
+def test_plan_meta_change_alone_does_not_reaccept_plan():
+    f, got = make(doc(plan_meta={"readings_fresh": False}), doc(plan_meta={"readings_fresh": True, "x": 1}),
+                  doc(latest_version="9.9.9", plan_meta={"readings_fresh": True}))
+    assert asyncio.run(f.async_refresh()) == "accepted"
+    assert asyncio.run(f.async_refresh()) == "unchanged"
+    assert asyncio.run(f.async_refresh()) == "unchanged"
+    assert got["plans"] == ["a"]
+
+
+def test_plan_content_change_still_reaccepted_next_to_plan_meta():
+    f, got = make(doc(plan_meta={"readings_fresh": True}), doc(plan_meta={"readings_fresh": True}, price_note=2))
+    assert asyncio.run(f.async_refresh()) == "accepted"
+    assert asyncio.run(f.async_refresh()) == "accepted"
+
+
+def _mirror_fetcher(*responses):
+    seen, order = [], []
+    f = None
+
+    async def on_plan(raw, sched):
+        pass
+
+    async def on_consent(v):
+        order.append(("consent", v, f.consent_mirror))
+
+    async def on_auth(n):
+        pass
+    f = ScheduleFetcher(Cloud(*responses), on_plan=on_plan, on_consent=on_consent, on_auth_failure=on_auth,
+                        on_consent_mirror=seen.append)
+    return f, seen, order
+
+
+def test_consent_mirror_flag_from_control_block():
+    f, seen, order = _mirror_fetcher(cdoc({"consent_mirror": True}), cdoc("b", {}),
+                                     doc("c"), cdoc("d", {"consent_mirror": "yes"}),
+                                     cdoc("e", {"consent_mirror": True}), None)
+    assert f.consent_mirror is False                             # przed pierwszym planem: lustro wył.
+    asyncio.run(f.async_refresh())
+    assert f.consent_mirror is True and order[-1] == ("consent", True, True)   # flaga PRZED zgodą
+    for _ in range(3):
+        asyncio.run(f.async_refresh())
+        assert f.consent_mirror is False                         # brak / nie-bool = lustro wył.
+    asyncio.run(f.async_refresh())
+    assert f.consent_mirror is True
+    assert asyncio.run(f.async_refresh()) == "network"
+    assert f.consent_mirror is True                              # błąd sieci nie zmienia ostatniego stanu
+    assert seen == [True, False, False, False, True]
+
+
+def test_consent_mirror_untouched_on_auth_failure():
+    f, seen, _ = _mirror_fetcher(cdoc({"consent_mirror": True}), CloudAuthError())
+    asyncio.run(f.async_refresh())
+    assert asyncio.run(f.async_refresh()) == "auth"
+    assert f.consent_mirror is True and seen == [True]
+
+
+def test_consent_mirror_callback_error_does_not_abort_refresh():
+    def boom(_v):
+        raise RuntimeError("x")
+
+    async def noop(*_a):
+        pass
+    f = ScheduleFetcher(Cloud(cdoc({"consent_mirror": True})), on_plan=noop, on_consent=noop,
+                        on_auth_failure=noop, on_consent_mirror=boom)
+    assert asyncio.run(f.async_refresh()) == "accepted"
+
+
+def test_consent_mirror_change_does_not_reaccept_plan():
+    f, got = make(cdoc({"consent_mirror": False}), cdoc({"consent_mirror": True}))
+    assert asyncio.run(f.async_refresh()) == "accepted"
+    assert asyncio.run(f.async_refresh()) == "unchanged"
