@@ -216,7 +216,7 @@ class ControlRuntime:
 
     async def async_apply_path_choice(self, path: str) -> str:
         """Ścieżka sterowania wybrana zdalnie (chmura albo sesja parowania): "applied"; "ignored" (nie da się
-        jej teraz zastosować); "restore_failed" (jak w `async_apply_controller_choice`). `plan_only` = własny
+        jej teraz zastosować); "restore_failed" (zmiana opcji odmówiona, bo powrót do trybu bazowego się nie udał; jak w `async_apply_controller_choice`). `plan_only` = własny
         sterownik: tryb „tylko plan” i sterowanie wyłączone."""
         if path == "plan_only":
             return await self.async_apply_controller_choice(CONTROLLER_OWN_EMS)
@@ -242,7 +242,7 @@ class ControlRuntime:
         changed = control_options_changed(old, new)
         if changed and not await async_control_change_allowed(self, old, new):
             _LOGGER.debug("Volcast control: path %s refused (the return to the baseline failed)", path)
-            return "ignored"
+            return "restore_failed"
         if ex.plan_only:
             await ex.async_set_plan_only(False)
         if changed:
@@ -252,8 +252,8 @@ class ControlRuntime:
 
     def report_choice_error(self) -> None:
         """Decyzja z chmury nie dała się zastosować mimo ponowień — to samo zgłoszenie co błąd sterowania."""
-        ir.async_create_issue(self.hass, DOMAIN, f"control_error_{self.entry.entry_id}", is_fixable=False,
-                              severity=getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning"), translation_key="control_error")
+        ir.async_create_issue(self.hass, DOMAIN, f"control_choice_failed_{self.entry.entry_id}", is_fixable=False,
+                              severity=getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning"), translation_key="control_choice_failed")
 
     async def async_set_box_active(self, active: bool) -> None:
         """`box_active` z planu → konflikt `box`."""

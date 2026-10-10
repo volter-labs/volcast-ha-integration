@@ -273,6 +273,10 @@
       "title": "Volcast ne peut pas piloter l'onduleur",
       "description": "Le pilotage de l'onduleur par Volcast a cessé de fonctionner (erreurs d'écriture répétées ou état de pilotage enregistré illisible). L'onduleur utilise peut-être encore les derniers réglages appliqués par Volcast. Vérifiez les réglages de l'onduleur et les journaux de Home Assistant."
     },
+    "control_choice_failed": {
+      "title": "Volcast n'a pas pu appliquer votre choix de pilotage",
+      "description": "Un choix de pilotage fait dans l'application Volcast n'a pas pu être appliqué après plusieurs tentatives. Vérifiez les réglages de pilotage dans les options de Volcast et les journaux de Home Assistant, puis choisissez à nouveau dans l'application."
+    },
     "foreign_control_direct": {
       "title": "Pilotage de l'onduleur par Volcast en pause",
       "description": "Le réglage {setting} de l'onduleur a été modifié en dehors de Volcast. Le pilotage est en pause pendant 30 minutes et Volcast conserve la valeur que vous avez définie jusqu'à ce que son plan pour ce réglage change. Pour arrêter le pilotage, désactivez l'interrupteur de pilotage Volcast."

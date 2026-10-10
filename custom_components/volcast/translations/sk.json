@@ -273,6 +273,10 @@
       "title": "Volcast nemôže riadiť striedač",
       "description": "Riadenie striedača cez Volcast prestalo fungovať (opakované chyby zápisu alebo uložený stav riadenia, ktorý sa nedal prečítať). Striedač môže stále používať posledné nastavenia použité Volcastom. Skontrolujte nastavenia striedača a protokoly Home Assistanta."
     },
+    "control_choice_failed": {
+      "title": "Volcast nemohol použiť vašu voľbu riadenia",
+      "description": "Voľbu riadenia urobenú v aplikácii Volcast sa po niekoľkých pokusoch nepodarilo použiť. Skontrolujte nastavenia riadenia v možnostiach Volcast a protokoly Home Assistant a potom zvoľte znova v aplikácii."
+    },
     "foreign_control_direct": {
       "title": "Riadenie striedača cez Volcast je pozastavené",
       "description": "Nastavenie striedača {setting} bolo zmenené mimo Volcast. Riadenie je pozastavené na 30 minút a Volcast ponecháva vami nastavenú hodnotu, kým sa jeho plán pre dané nastavenie nezmení. Ak chcete riadenie zastaviť, vypnite prepínač riadenia Volcast."

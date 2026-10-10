@@ -273,6 +273,10 @@
       "title": "Volcast nu poate controla invertorul",
       "description": "Controlul invertorului de către Volcast a încetat să funcționeze (erori repetate de scriere sau o stare de control salvată care nu a putut fi citită). Invertorul poate folosi în continuare ultimele setări aplicate de Volcast. Verifică setările invertorului și jurnalele Home Assistant."
     },
+    "control_choice_failed": {
+      "title": "Volcast nu a putut aplica alegerea ta de control",
+      "description": "O alegere de control făcută în aplicația Volcast nu a putut fi aplicată după mai multe încercări. Verifică setările de control din opțiunile Volcast și jurnalele Home Assistant, apoi alege din nou în aplicație."
+    },
     "foreign_control_direct": {
       "title": "Controlul invertorului de către Volcast este în pauză",
       "description": "Setarea {setting} a invertorului a fost modificată în afara Volcast. Controlul este în pauză 30 de minute, iar Volcast păstrează valoarea setată de tine până când planul său pentru acea setare se schimbă. Pentru a opri controlul, oprește comutatorul de control Volcast."

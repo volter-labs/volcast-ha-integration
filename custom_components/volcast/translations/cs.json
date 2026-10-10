@@ -273,6 +273,10 @@
       "title": "Volcast nemůže řídit střídač",
       "description": "Řízení střídače přes Volcast přestalo fungovat (opakované chyby zápisu nebo uložený stav řízení, který nešlo přečíst). Střídač může stále používat poslední nastavení použitá Volcastem. Zkontrolujte nastavení střídače a protokoly Home Assistantu."
     },
+    "control_choice_failed": {
+      "title": "Volcast nemohl použít vaši volbu řízení",
+      "description": "Volbu řízení provedenou v aplikaci Volcast se po několika pokusech nepodařilo použít. Zkontrolujte nastavení řízení v možnostech Volcast a protokoly Home Assistant a poté zvolte znovu v aplikaci."
+    },
     "foreign_control_direct": {
       "title": "Řízení střídače přes Volcast je pozastaveno",
       "description": "Nastavení střídače {setting} bylo změněno mimo Volcast. Řízení je pozastaveno na 30 minut a Volcast ponechává vámi nastavenou hodnotu, dokud se jeho plán pro dané nastavení nezmění. Chcete-li řízení zastavit, vypněte přepínač řízení Volcast."

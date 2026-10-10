@@ -112,8 +112,11 @@ def test_exception_does_not_ack_and_is_retried_at_most_three_times():
         raise RuntimeError("x")
 
     rt.async_apply_controller_choice = boom
+    t = [0.0]
+    rt.choice_clock = lambda: t[0]
     for _ in range(5):
         run(rt, {"controller": "own_ems", "at": AT1})
+        t[0] += 300.0
     meta = rt.executor.control_meta
     assert "ack" not in meta or "controller" not in meta["ack"]
     assert meta["controller_done"] == "own_ems" and rt.errors == [1]
@@ -127,14 +130,17 @@ def test_failure_below_the_bound_is_not_recorded():
         return "restore_failed"
 
     rt.async_apply_controller_choice = failed
+    t = [0.0]
+    rt.choice_clock = lambda: t[0]
     run(rt, {"controller": "own_ems", "at": AT1})
+    t[0] += 300.0
     run(rt, {"controller": "own_ems", "at": AT1})
     meta = rt.executor.control_meta
     assert "controller_done" not in meta and meta["tries"] == {"controller:own_ems": 2}
     assert not getattr(rt, "errors", None) and not getattr(rt, "pings", None)
 
 
-def test_refused_path_change_is_ignored(monkeypatch):
+def test_refused_path_change_is_restore_failed(monkeypatch):
     rt = real_rt()
     rt.choice = SimpleNamespace(profile=SimpleNamespace(id="p"), integration_domain="goodwe")
     monkeypatch.setattr(rt_mod, "entity_mode_ready", lambda c, m: True)
@@ -144,7 +150,7 @@ def test_refused_path_change_is_ignored(monkeypatch):
 
     monkeypatch.setattr(rt_mod, "async_control_change_allowed", refuse)
     rt.executor.plan_only = True
-    assert asyncio.run(rt.async_apply_path_choice("entities")) == "ignored"
+    assert asyncio.run(rt.async_apply_path_choice("entities")) == "restore_failed"
     assert rt.executor.plan_only is True and rt.entry.options == {}
 
 

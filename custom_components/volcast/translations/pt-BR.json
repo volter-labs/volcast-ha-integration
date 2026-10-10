@@ -273,6 +273,10 @@
       "title": "O Volcast não consegue controlar o inversor",
       "description": "O controle do inversor pelo Volcast deixou de funcionar (erros de escrita repetidos ou um estado de controle salvo que não foi possível ler). O inversor pode ainda usar as últimas configurações aplicadas pelo Volcast. Verifique as configurações do inversor e os logs do Home Assistant."
     },
+    "control_choice_failed": {
+      "title": "O Volcast não conseguiu aplicar sua escolha de controle",
+      "description": "Uma escolha de controle feita no app Volcast não pôde ser aplicada após várias tentativas. Verifique as configurações de controle nas opções do Volcast e os registros do Home Assistant e escolha novamente no app."
+    },
     "foreign_control_direct": {
       "title": "Controle do inversor pelo Volcast em pausa",
       "description": "A configuração {setting} do inversor foi alterada fora do Volcast. O controle está em pausa por 30 minutos e o Volcast mantém o valor que definiu até o seu plano para essa configuração mudar. Para parar o controle, desligue o interruptor de controle do Volcast."

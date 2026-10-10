@@ -273,6 +273,10 @@
       "title": "Volcast nie może sterować falownikiem",
       "description": "Sterowanie falownikiem przez Volcast przestało działać (powtarzające się błędy zapisu albo zapisany stan sterowania, którego nie udało się odczytać). Falownik może nadal używać ostatnich ustawień zastosowanych przez Volcast. Sprawdź ustawienia falownika i logi Home Assistanta."
     },
+    "control_choice_failed": {
+      "title": "Volcast nie mógł zastosować Twojego wyboru sterowania",
+      "description": "Wybór sterowania zrobiony w aplikacji Volcast nie został zastosowany mimo kilku prób. Sprawdź ustawienia sterowania w opcjach Volcast i logi Home Assistant, a potem wybierz ponownie w aplikacji."
+    },
     "foreign_control_direct": {
       "title": "Sterowanie falownikiem przez Volcast wstrzymane",
       "description": "Ustawienie falownika {setting} zostało zmienione poza Volcast. Sterowanie jest wstrzymane na 30 minut, a Volcast zachowuje ustawioną przez Ciebie wartość, dopóki jego plan dla tego ustawienia się nie zmieni. Aby zatrzymać sterowanie, wyłącz przełącznik sterowania Volcast."

@@ -104,8 +104,6 @@ def control_block(payload: Mapping, ack: Mapping | None, meta: dict, now_s: floa
     fp = hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
     prev = meta.get("seq")
     prev = prev if isinstance(prev, int) and not isinstance(prev, bool) and prev >= 0 else -1
-    if prev > now_s + 300:
-        prev = -1           # zegar z przyszłości: chmura takich wartości nie przyjęła (§3.0) — liczymy od nowa
     if meta.get("fp") != fp:
         meta["seq"] = max(int(now_s), prev + 1)
         meta["fp"] = fp

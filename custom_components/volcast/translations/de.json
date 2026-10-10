@@ -273,6 +273,10 @@
       "title": "Volcast kann den Wechselrichter nicht steuern",
       "description": "Die Wechselrichter-Steuerung von Volcast funktioniert nicht mehr (wiederholte Schreibfehler oder ein gespeicherter Steuerungszustand, der nicht gelesen werden konnte). Der Wechselrichter nutzt möglicherweise noch die letzten von Volcast angewendeten Einstellungen. Prüfe die Einstellungen des Wechselrichters und die Home-Assistant-Logs."
     },
+    "control_choice_failed": {
+      "title": "Volcast konnte Ihre Steuerungswahl nicht anwenden",
+      "description": "Eine in der Volcast-App getroffene Steuerungswahl konnte nach mehreren Versuchen nicht angewendet werden. Prüfen Sie die Steuerungseinstellungen in den Volcast-Optionen und die Home-Assistant-Protokolle und wählen Sie dann erneut in der App."
+    },
     "foreign_control_direct": {
       "title": "Wechselrichter-Steuerung durch Volcast pausiert",
       "description": "Die Wechselrichter-Einstellung {setting} wurde außerhalb von Volcast geändert. Die Steuerung ist für 30 Minuten pausiert, und Volcast behält den von dir gesetzten Wert bei, bis sich sein Plan für diese Einstellung ändert. Um die Steuerung zu beenden, schalte den Volcast-Steuerungsschalter aus."

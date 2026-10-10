@@ -277,6 +277,10 @@
       "title": "Volcast cannot control the inverter",
       "description": "Volcast inverter control stopped working (repeated write errors or saved control state that could not be read). The inverter may still use the last settings Volcast applied. Check the inverter settings and the Home Assistant logs."
     },
+    "control_choice_failed": {
+      "title": "Volcast could not apply your control choice",
+      "description": "A control choice made in the Volcast app could not be applied after several attempts. Check the control settings in the Volcast options and the Home Assistant logs, then choose again in the app."
+    },
     "foreign_control_direct": {
       "title": "Volcast inverter control paused",
       "description": "Inverter setting {setting} was changed outside Volcast. Control is paused for 30 minutes and Volcast keeps the value you set until its plan for that setting changes. To stop control, turn off the Volcast control switch."

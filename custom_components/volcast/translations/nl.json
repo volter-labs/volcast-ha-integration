@@ -273,6 +273,10 @@
       "title": "Volcast kan de omvormer niet besturen",
       "description": "De omvormerbesturing van Volcast werkt niet meer (herhaalde schrijffouten of een opgeslagen besturingsstatus die niet gelezen kon worden). De omvormer gebruikt mogelijk nog de laatste instellingen die Volcast heeft toegepast. Controleer de instellingen van de omvormer en de Home Assistant-logs."
     },
+    "control_choice_failed": {
+      "title": "Volcast kon je regelkeuze niet toepassen",
+      "description": "Een in de Volcast-app gemaakte regelkeuze kon na meerdere pogingen niet worden toegepast. Controleer de regelinstellingen in de Volcast-opties en de Home Assistant-logboeken en kies daarna opnieuw in de app."
+    },
     "foreign_control_direct": {
       "title": "Omvormerbesturing door Volcast gepauzeerd",
       "description": "Omvormerinstelling {setting} is buiten Volcast om gewijzigd. De besturing is 30 minuten gepauzeerd en Volcast behoudt de waarde die je hebt ingesteld totdat zijn plan voor die instelling verandert. Zet de Volcast-besturingsschakelaar uit om de besturing te stoppen."

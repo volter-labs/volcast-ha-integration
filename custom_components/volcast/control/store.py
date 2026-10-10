@@ -84,7 +84,7 @@ def control_meta_clean(raw) -> dict:
     seq = raw.get("seq")
     if isinstance(seq, int) and not isinstance(seq, bool) and seq >= 0:
         out["seq"] = seq
-    for key in ("fp", "path_done", "controller_done", "ver_at"):
+    for key in ("fp", "path_done", "controller_done", "path_at", "controller_at", "ver_at"):
         if isinstance(raw.get(key), str) and len(raw[key]) <= 128:
             out[key] = raw[key]
     ack = raw.get("ack")
