@@ -29,8 +29,9 @@ Drugi sterownik (`conflicts.ConflictMonitor`, `ControlRuntime.conflicts`): lista
 `recommendation` i `verification` (`control_state_payload`); dowody adresu z rekomendacji i połączenia
 bezpośredniego, klient na łączu z połączenia, Box z planu (`async_set_box_active`). Wybór właściciela
 z chmury (`async_apply_controller_choice`): `volcast` — koniec trybu „tylko plan”, obecne konflikty
-potwierdzone (nie zatrzymują już drabiny; naprawa trwa do końca dowodu), drabina zatrzymana konfliktem
-rusza ponownie, pauza przejęcia się kończy; `own_ems` — tryb „tylko plan” w magazynie, powrót do trybu
+potwierdzone (nie zatrzymują już drabiny; naprawa trwa do końca dowodu), drabina po trybie „tylko plan”
+rusza od szczebla startowego, a zatrzymana konfliktem — ponownie od szczebla stopu; pauza przejęcia się
+kończy; `own_ems` — tryb „tylko plan” w magazynie, drabina odstawiona po cichu (`idle`), powrót do trybu
 bazowego i opcja sterowania wyłączona (ta sama droga co `control_off` w opcjach: powrót przez obecnego
 wykonawcę, potem przeładowanie), bez zgłoszeń o konflikcie.
 """
@@ -162,6 +163,8 @@ class ControlRuntime:
         ex = self.executor
         if controller == CONTROLLER_OWN_EMS:
             await ex.async_set_plan_only(True)
+            if self.verification is not None:
+                await self.verification.async_park()            # po cichu: bez stopu i bez pusha
             if self.conflicts is not None:
                 await self.conflicts.async_refresh()            # zgłoszenie o konflikcie znika
             entry = self.entry
@@ -178,12 +181,15 @@ class ControlRuntime:
             _LOGGER.info("Volcast control: own controller chosen — plan only, no writes")
             return "applied"
         if controller == CONTROLLER_VOLCAST:
-            if ex.plan_only:
+            was_plan_only = ex.plan_only
+            if was_plan_only:
                 await ex.async_set_plan_only(False)
             if self.conflicts is not None:
                 await self.conflicts.async_acknowledge()
             lad = getattr(self.verification, "ladder", None)
-            if lad is not None and lad.state.state == STOPPED and lad.state.stop_reason == CONTROLLER_CONFLICT:
+            if was_plan_only and self.verification is not None:
+                await self.verification.async_restart()          # od szczebla startowego
+            elif lad is not None and lad.state.state == STOPPED and lad.state.stop_reason == CONTROLLER_CONFLICT:
                 await self.verification.async_retry()
             if ex.paused:
                 await ex.async_resume_control()

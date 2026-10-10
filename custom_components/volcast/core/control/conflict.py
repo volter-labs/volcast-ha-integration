@@ -259,7 +259,7 @@ def controllers_from_evidence(automation_writes: Mapping[str, int], address_clas
     writes = sorted(((a, n) for a, n in (automation_writes or {}).items()
                      if isinstance(a, str) and a and isinstance(n, int) and not isinstance(n, bool) and n > 0),
                     key=lambda item: (-item[1], item[0]))
-    out.extend(_entry(AUTOMATION, a, f"{n} writes/24 h") for a, n in writes)
+    out.extend(_entry(AUTOMATION, a, f"{n} writes in 24 h") for a, n in writes)
     return out[:MAX_CONFLICTS]
 
 

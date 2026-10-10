@@ -407,6 +407,8 @@ class VolcastExecutor:
         if self._profile is None or self._stopped or self._frozen or self._disabled:
             return None
         async with self._lock:
+            if self._state.plan_only:
+                return None                      # wybór własnego sterownika w trakcie czekania na blokadę
             direct = self._direct
             rd = self.io.read(self._utcnow())
             if direct is not None:

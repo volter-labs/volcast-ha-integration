@@ -41,6 +41,8 @@ EVENT_AUTOMATION_TRIGGERED = "automation_triggered"
 EVENT_CALL_SERVICE = "call_service"
 ISSUE_CONTROLLER_CONFLICT = "controller_conflict"
 SIGNAL_EVERY_S = 3600.0
+# Usługi z celem w encjach, które niczego nie zapisują (odświeżenie odczytu).
+_NOT_WRITES = frozenset({("homeassistant", "update_entity")})
 
 
 class ConflictMonitor:
@@ -108,7 +110,10 @@ class ConflictMonitor:
     @callback
     def _on_call(self, event) -> None:
         try:
-            service_data = (event.data or {}).get("service_data")
+            data = event.data or {}
+            if (data.get("domain"), data.get("service")) in _NOT_WRITES:
+                return
+            service_data = data.get("service_data")
             if not isinstance(service_data, dict) or "entity_id" not in service_data:
                 return
             ctx = getattr(event, "context", None)

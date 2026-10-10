@@ -22,6 +22,13 @@ zapisie kontrolnym (okno próbne tylko dla modelu trybu i nastawy).
 Migracja: pierwszy start po aktualizacji (brak rekordu), profil i wpis zweryfikowane, a magazyn pokazuje
 sterowanie tym urządzeniem (`executor.verification_migration_ok`) → rekord `verified` z `migrated`.
 
+Tryb „tylko plan” (`executor.plan_only`, wybór własnego sterownika): `async_park` po cichu odstawia
+drabinę (niezweryfikowaną) do `idle` na szczeblu startowym — bez stopu, zgłoszenia i natychmiastowej
+telemetrii (tylko sygnał zmiany stanu), z powrotem do trybu bazowego, jeśli trwało okno; zegar
+anulowany, a kroki i zdarzenia (obce zapisy, zgoda, konflikty) są pomijane, dopóki tryb trwa.
+Wybór Volcast (`async_restart`) rusza drabinę od szczebla startowego. Zweryfikowane urządzenie zostaje
+zweryfikowane (nie pisze, więc nie ma czego odstawiać).
+
 Każdy stop: jeden powrót (`executor.async_verification_restore`), zgłoszenie
 `verification_stopped_<wpis>` (kod stopu jako parametr tekstu) i natychmiastowa telemetria (`on_urgent`).
 Każda zmiana stanu: zapis rekordu w magazynie sterowania i sygnał `SIGNAL_CONTROL_STATE_UPDATED`.
@@ -201,6 +208,35 @@ class VerificationRunner:
         self._timer = self._timer_at = None
         await self.async_step()
 
+    # ── tryb „tylko plan” ──
+
+    def _parked(self) -> bool:
+        return getattr(self._ex, "plan_only", False) is True
+
+    async def async_park(self) -> None:
+        """Wybór własnego sterownika (wołający najpierw włącza `plan_only`): drabina w `idle` po cichu."""
+        self._cancel_timer()
+        lad = self.ladder
+        if lad is None or lad.verified:
+            return
+        before = self._mark()
+        window = lad.window_running
+        lad.park(self._utcnow(), self._start)
+        self._last_would = self._seen = None
+        if window:
+            await self._ex.async_verification_restore()
+        await self._after(before)
+
+    async def async_restart(self) -> None:
+        """Wybór Volcast po trybie „tylko plan”: drabina od szczebla startowego (nie od odstawionego)."""
+        lad = self.ladder
+        if lad is not None and not lad.verified and not self._parked():
+            before = self._mark()
+            lad.park(self._utcnow(), self._start)
+            self._last_would = self._seen = None
+            await self._after(before)
+        await self.async_step()
+
     # ── zdarzenia z zewnątrz (aplikacja, konflikty) ──
 
     async def async_abort(self) -> None:
@@ -230,7 +266,7 @@ class VerificationRunner:
         await self._event(lambda lad, now: lad.foreign_write(now))
 
     async def _event(self, apply: Callable[[Ladder, Any], None]) -> None:
-        if self.ladder is None or self._stopped:
+        if self.ladder is None or self._stopped or self._parked():
             return
         before = self._mark()
         apply(self.ladder, self._utcnow())
@@ -239,7 +275,7 @@ class VerificationRunner:
     # ── krok drabiny ──
 
     async def async_step(self) -> None:
-        if self._stopped:
+        if self._stopped or self._parked():
             return
         if self._busy:
             self._again = True                       # krok w toku (np. powrót wywołał cykl) — powtórzy się
@@ -281,7 +317,10 @@ class VerificationRunner:
         if lad.state.rung == RUNG_TRIAL and lad.state.state == RUNNING:
             self._observe_trial(lad, rd, now)
         if lad.state.state == RUNNING and lad.state.rung == RUNG_CONTROL_WRITE:
-            lad.write_result(await self._ex.async_control_write(), now)
+            result = await self._ex.async_control_write()
+            if self._parked():
+                return                               # wybór własnego sterownika w trakcie zapisu — bez stopu
+            lad.write_result(result, now)
         if lad.state.rung == RUNG_WINDOW and lad.state.state == WAITING and self._window_ok(rd):
             lad.window_open(now)
             if lad.window_running:

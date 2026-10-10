@@ -13,11 +13,11 @@ from custom_components.volcast.control import conflicts as cf_mod
 from custom_components.volcast.control.conflicts import ConflictMonitor
 from custom_components.volcast.control.runtime import ControlRuntime
 from custom_components.volcast.control.store import ControlStore
-from custom_components.volcast.core.control.ladder import RUNNING, STOPPED
+from custom_components.volcast.core.control.ladder import IDLE, RUNNING, STOPPED
 
 from .ha_fakes import GOODWE_ENTITIES as E, FakeState
 from .test_executor import make, ready
-from .test_verification import Env
+from .test_verification import Env, FakeExecutor, foreign_event
 
 ISSUE = "controller_conflict_e1"
 SELECT = E["mode"]
@@ -111,7 +111,7 @@ async def test_automation_writing_three_times_to_a_mapped_select_is_one_conflict
     for _ in range(3):
         await env.automation_write()
     assert env.mon.conflicts() == [
-        {"kind": "automation", "label": "automation.night_charge", "evidence": "3 writes/24 h"}]
+        {"kind": "automation", "label": "automation.night_charge", "evidence": "3 writes in 24 h"}]
     (issue_id, kw), = {i: (i, k) for i, k in env.created}.values()
     assert issue_id == ISSUE and kw["translation_key"] == "controller_conflict"
     assert kw["translation_placeholders"]["label"] == "automation.night_charge"
@@ -163,7 +163,7 @@ async def test_count_only_changes_are_signalled_at_most_hourly(monkeypatch):
     await env.automation_write()
     n = len(env.signals)
     await env.automation_write()                       # sam licznik — bez sygnału w tej godzinie
-    assert len(env.signals) == n and env.mon.conflicts()[0]["evidence"] == "2 writes/24 h"
+    assert len(env.signals) == n and env.mon.conflicts()[0]["evidence"] == "2 writes in 24 h"
     await env.automation_write(automation="automation.other")   # nowa para — od razu
     assert len(env.signals) == n + 1
     env.clock.t += 3600
@@ -335,3 +335,78 @@ async def test_plan_only_closes_the_gates_before_the_options_reload(monkeypatch)
     n = len(h.services.calls)
     await ex.async_tick()
     assert len(h.services.calls) == n
+
+
+@pytest.mark.asyncio
+async def test_update_entity_is_not_a_write(monkeypatch):
+    env = Env6(monkeypatch)
+    await env.start()
+    ctx = Context(id="run-refresh")
+    env.bus.fire("automation_triggered", {"entity_id": "automation.refresh"}, ctx)
+    env.bus.fire("call_service", {"domain": "homeassistant", "service": "update_entity",
+                                  "service_data": {"entity_id": [SELECT]}}, ctx)
+    await env.settle()
+    assert env.mon.conflicts() == [] and env.created == []
+
+
+# ── own_ems odstawia drabinę po cichu, volcast rusza ją od początku ─────────
+
+
+class LinkedEx(FakeExecutor):
+    """Wykonawca drabiny z trybem „tylko plan” prawdziwego wykonawcy (jak jeden obiekt w HA)."""
+    real = None
+
+    @property
+    def plan_only(self):
+        return self.real is not None and self.real.plan_only
+
+
+async def _ladder_and_runtime(monkeypatch, *, start=1):
+    lad = Env(monkeypatch, executor=LinkedEx(), start=start)
+    await lad.runner.async_start()
+    h, ex, env, rt, updates = _runtime(monkeypatch, verification=lad.runner)
+    lad.ex.real = ex
+    await ex.async_start()
+    return lad, ex, env, rt
+
+
+@pytest.mark.asyncio
+async def test_own_ems_during_the_trial_parks_the_ladder_quietly(monkeypatch):
+    lad, ex, env, rt = await _ladder_and_runtime(monkeypatch)
+    assert lad.state == (3, RUNNING)
+    signals = len(lad.changes)
+    assert await rt.async_apply_controller_choice("own_ems") == "applied"
+    assert lad.state == (1, IDLE) and "stop_reason" not in lad.runner.payload()
+    assert lad.runner._timer is None and len(lad.changes) == signals + 1     # tylko sygnał zmiany stanu
+    # zdarzenia i kroki w trybie „tylko plan” nic nie zmieniają: bez stopu, naprawy i pusha
+    await lad.runner.async_on_state_event(foreign_event())
+    await lad.runner.async_conflict()
+    await lad.step(hours=30)
+    assert lad.state == (1, IDLE) and lad.urgent == [] and lad.ex.restores == 0
+    assert not any(i.startswith("verification_stopped") for i, _ in env.created)
+    assert lad.ex.verification_record["state"] == IDLE
+
+
+@pytest.mark.asyncio
+async def test_own_ems_while_the_control_write_waits_for_the_lock_skips_the_write(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+    await ready(ex)
+    n = len(h.services.calls)
+    assert await ex.async_control_write() is True and len(h.services.calls) == n + 1
+    n = len(h.services.calls)
+    async with ex._lock:
+        task = asyncio.ensure_future(ex.async_control_write())
+        await asyncio.sleep(0)
+        await ex.async_set_plan_only(True)
+    assert await task is None and len(h.services.calls) == n
+
+
+@pytest.mark.asyncio
+async def test_volcast_after_own_ems_restarts_the_ladder_from_its_start(monkeypatch):
+    lad, ex, env, rt = await _ladder_and_runtime(monkeypatch, start=4)
+    assert lad.ex.control_writes == [1] and lad.state == (5, RUNNING)          # okno próbne trwa
+    await rt.async_apply_controller_choice("own_ems")
+    assert lad.state == (4, IDLE) and lad.ex.window is None and lad.ex.restores == 1
+    assert await rt.async_apply_controller_choice("volcast") == "applied"
+    assert not ex.plan_only
+    assert lad.ex.control_writes == [1, 1] and lad.state == (5, RUNNING)       # od zapisu kontrolnego

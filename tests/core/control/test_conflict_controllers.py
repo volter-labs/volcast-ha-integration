@@ -19,7 +19,7 @@ def test_no_evidence_no_conflicts():
 
 def test_automation_writes_become_one_entry_with_the_count():
     out = controllers_from_evidence({"automation.night_charge": 3}, (), None, False)
-    assert out == [{"kind": "automation", "label": "automation.night_charge", "evidence": "3 writes/24 h"}]
+    assert out == [{"kind": "automation", "label": "automation.night_charge", "evidence": "3 writes in 24 h"}]
 
 
 def test_box_active_adds_a_box_entry():

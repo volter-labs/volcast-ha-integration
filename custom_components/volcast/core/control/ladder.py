@@ -291,6 +291,15 @@ class Ladder:
         else:
             self._enter(rung, RUNNING, now)
 
+    def park(self, now: datetime, start_rung: int | None = None) -> None:
+        """Tryb „tylko plan” (własny sterownik): drabina czeka w `idle` na szczeblu startowym — bez stopu,
+        bez powodu i bez liczników; po powrocie sterowania Volcast rusza od początku."""
+        if start_rung in START_RUNGS:
+            self.start_rung = start_rung
+        self.consent_given = False
+        self.migrated = False
+        self.state = LadderState(rung=self.start_rung, state=IDLE, since=now)
+
     def device_changed(self, new_key: str, now: datetime) -> None:
         if new_key == self.device_key:
             return
