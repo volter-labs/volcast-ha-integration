@@ -68,3 +68,20 @@ async def test_entity_map_override_wins_over_regex(hass: HomeAssistant, network_
     await hass.async_block_till_done()
     assert control_of(hass, entry).mapped["mode"] == "select.my_mode"
     assert control_of(hass, entry).mapped["power_w"]      # reszta dalej z wzorców
+
+
+async def test_choosing_entities_in_options_leaves_plan_only(hass: HomeAssistant, network_down, hass_storage):
+    """Własny sterownik (tylko plan), potem „Encje” w opcjach HA: tryb „tylko plan” znika i jest zapisany."""
+    entry, rt = await _setup(hass, hass_storage)
+    assert await rt.async_apply_controller_choice("own_ems") == "applied"
+    await hass.async_block_till_done()
+    rt = control_of(hass, entry)
+    assert rt.executor.plan_only is True and "control_mode" not in entry.options
+    menu = await _open_control(hass, entry)
+    done = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "control_entities"})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    rt = control_of(hass, entry)
+    assert rt.executor.plan_only is False and entry.options["control_mode"] == "entities"
+    assert rt.executor._gates().control_mode == "entities"
+    assert hass_storage["volcast.control.paired01"]["data"]["plan_only"] is False

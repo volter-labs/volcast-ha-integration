@@ -76,6 +76,7 @@ class Env6:
         self.tasks: list = []
         self.hass.async_create_task = lambda coro, *a, **k: self.tasks.append(asyncio.ensure_future(coro))
         self.entry = SimpleNamespace(entry_id="e1", options={"control_mode": "entities"})
+        _entry_tasks(self.entry, self.tasks)
         self.ex = executor or FakeEx()
         self.mon = ConflictMonitor(self.hass, self.entry, self.ex, verification=verification, clock=self.clock)
 
@@ -228,6 +229,12 @@ def _event(eid, state, ctx):
                            context=ctx)
 
 
+def _entry_tasks(entry, tasks: list):
+    """Zadania wpisu (jak `ConfigEntry.async_create_background_task`) do listy testu."""
+    entry.async_create_background_task = lambda hass, coro, name=None, **_k: tasks.append(asyncio.ensure_future(coro))
+    return entry
+
+
 def _runtime(monkeypatch, *, verification=None):
     h, ex = make(monkeypatch=monkeypatch)
     updates = []
@@ -237,7 +244,7 @@ def _runtime(monkeypatch, *, verification=None):
         entry.options = dict(options)
     h.config_entries = SimpleNamespace(async_update_entry=update_entry)
     env = Env6(monkeypatch, executor=ex, verification=verification, hass=h)
-    env.entry = ex._entry
+    env.entry = _entry_tasks(ex._entry, env.tasks)
     env.mon = ConflictMonitor(h, ex._entry, ex, verification=verification, clock=env.clock)
     rt = ControlRuntime(ex, None, None, None, None, dict(E), 8000.0, verification=verification,
                         conflicts=env.mon, hass=h, entry=ex._entry)

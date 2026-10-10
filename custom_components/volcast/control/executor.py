@@ -417,8 +417,10 @@ class VolcastExecutor:
         if self._profile is None or self._stopped or self._frozen or self._disabled:
             return None
         async with self._lock:
-            if self._state.plan_only:
-                return None                      # wybór własnego sterownika w trakcie czekania na blokadę
+            if self._state.plan_only or self._stopped or self._frozen or self._disabled:
+                # Wybór własnego sterownika albo rozładunek w trakcie czekania na blokadę — po zapisie
+                # trybu neutralnego przy zatrzymaniu żaden zapis kontrolny już nie idzie.
+                return None
             direct = self._direct
             rd = self.io.read(self._utcnow())
             if direct is not None:

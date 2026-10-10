@@ -114,8 +114,10 @@ class FlushLimiter:
     """Natychmiastowa telemetria po zmianie stanu sterowania: najwyżej jedna na `interval_s`; zmiany w oknie
     zlewają się w jedną wysyłkę po jego końcu (najnowszy stan)."""
 
-    def __init__(self, hass, flush, *, interval_s: float = URGENT_FLUSH_INTERVAL_S, clock=None) -> None:
+    def __init__(self, hass, flush, *, interval_s: float = URGENT_FLUSH_INTERVAL_S, clock=None, entry=None) -> None:
         self._hass, self._flush, self._interval = hass, flush, interval_s
+        self._entry = entry                  # wysyłka jako zadanie wpisu — rozładunek ją anuluje
+        self._task = None
         self._clock = clock or time.monotonic
         self._last: float | None = None
         self._pending = False
@@ -134,7 +136,11 @@ class FlushLimiter:
 
     def _start(self) -> None:
         self._timer = None
-        self._hass.async_create_background_task(self._run(), "volcast_control_telemetry")
+        if self._entry is not None:
+            self._task = self._entry.async_create_background_task(self._hass, self._run(),
+                                                                  "volcast_control_telemetry")
+        else:
+            self._task = self._hass.async_create_background_task(self._run(), "volcast_control_telemetry")
 
     async def _run(self) -> None:
         self._pending = False
@@ -145,6 +151,9 @@ class FlushLimiter:
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
+        if self._task is not None and not self._task.done():
+            self._task.cancel()              # rozpoczęta wysyłka też (rozładunek wpisu)
+        self._task = None
         self._pending = False
 
 
@@ -265,6 +274,21 @@ class ControlRuntime:
         """`box_active` z planu → konflikt `box`."""
         if self.conflicts is not None:
             await self.conflicts.async_set_box_active(active)
+
+    async def async_leave_plan_only(self) -> bool:
+        """Właściciel wybrał w opcjach HA sterowanie (encje albo bezpośrednio) po trybie „tylko plan”: ten
+        tryb znika i jest zapisany (jak wybór `volcast`), drabina od szczebla startowego, zgłoszenia o
+        konflikcie znowu dozwolone. True, gdy tryb był włączony."""
+        ex = self.executor
+        if not ex.plan_only:
+            return False
+        await ex.async_set_plan_only(False)
+        if self.verification is not None:
+            await self.verification.async_restart()
+        if self.conflicts is not None:
+            await self.conflicts.async_refresh()
+        _LOGGER.info("Volcast control: control chosen in the options — plan-only mode ended")
+        return True
 
     async def async_apply_controller_choice(self, controller: str) -> str:
         """Wybór sterownika: "applied"; "ignored" (nieznana wartość); "restore_failed" (`own_ems`: tryb
@@ -829,7 +853,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                             hass=hass, entry=entry)
 
         telemetry.control_runtime = rt
-        limiter = FlushLimiter(hass, telemetry.async_flush)
+        limiter = FlushLimiter(hass, telemetry.async_flush, entry=entry)
         rt.unsubs.append(limiter.cancel)
         rt.unsubs.append(async_dispatcher_connect(
             hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=entry.entry_id), limiter.request))

@@ -130,8 +130,9 @@ class ConflictMonitor:
         self._schedule_refresh()
 
     def _schedule_refresh(self) -> None:
+        # Zadanie WPISU — rozładunek je anuluje.
         if not self._stopped:
-            self._hass.async_create_task(self.async_refresh())
+            self._entry.async_create_background_task(self._hass, self.async_refresh(), "volcast_conflicts_refresh")
 
     # ── dowody spoza HA i wybór właściciela ──
 

@@ -540,18 +540,25 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return (data.get(DOMAIN, {}).get(self.config_entry.entry_id) or {}).get("control")
 
     async def _finish(self, options: dict[str, Any], *,
-                      retry_form: Callable[[dict[str, str]], ConfigFlowResult] | None = None) -> ConfigFlowResult:
+                      retry_form: Callable[[dict[str, str]], ConfigFlowResult] | None = None,
+                      leave_plan_only: bool = False) -> ConfigFlowResult:
         """Zapis opcji; zmiana sterowania najpierw oddaje falownik przez obecnego wykonawcę.
 
         Nieudany powrót blokuje zapis (nic nie zapisane: błąd formularza `retry_form` albo przerwanie),
         gdy wykonawca po przeładowaniu nie przejąłby własności — inny sposób sterowania, cel albo
         mapowanie. Przy tym samym powiązaniu (np. wyłączenie sterowania przez encje) zapis idzie, a nowy
         wykonawca ponawia powrót co cykl, dopóki sterowanie jest wyłączone.
+
+        `leave_plan_only` (wybór sterowania: encje, bezpośrednio): tryb „tylko plan” kończy się i jest zapisany
+        w magazynie, zanim przeładowanie złoży nowego wykonawcę.
         """
         if not await async_control_change_allowed(self._runtime(), self.config_entry.options, options):
             if retry_form is not None:
                 return retry_form({"base": RESTORE_FAILED})
             return self.async_abort(reason=RESTORE_FAILED)
+        rt = self._runtime()
+        if leave_plan_only and rt is not None and hasattr(rt, "async_leave_plan_only"):
+            await rt.async_leave_plan_only()
         return self.async_create_entry(data=options)
 
     def _forecast_options(self, user_input: dict[str, Any]) -> dict[str, Any]:
@@ -639,14 +646,14 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return self.async_abort(reason=reason)
         target = ds.target_from_report(report)
         return await self._finish(self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
-                                                OPT_DIRECT_TRIAL: None}))
+                                                OPT_DIRECT_TRIAL: None}), leave_plan_only=True)
 
     async def async_step_control_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         rt = self._runtime()
         choice = getattr(rt, "choice", None)
         if not entity_mode_ready(choice, getattr(rt, "mapped", None) or {}):
             return self.async_abort(reason="entity_mode_unavailable")
-        return await self._finish(self._merged(entity_mode_options(choice)))
+        return await self._finish(self._merged(entity_mode_options(choice)), leave_plan_only=True)
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._finish(self._merged({OPT_CONTROL_MODE: None}))

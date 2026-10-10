@@ -766,3 +766,18 @@ def test_entity_executor_restore_after_an_interrupted_window(monkeypatch):
 def test_writing_supported_accepts_register_address_zero():
     tou0 = SimpleNamespace(control_model="time_window", raw={"write": {"tou_program": {"soc": {"addr": 0}}}})
     assert ver_mod.writing_supported(tou0, "direct") is True
+
+
+@pytest.mark.asyncio
+async def test_control_write_waiting_for_the_lock_gives_up_after_unload_starts(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    import asyncio
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
+    try:
+        async with h.ex._lock:                                    # cykl albo zapis neutralny przy rozładunku
+            task = asyncio.ensure_future(h.ex.async_control_write())
+            await asyncio.sleep(0)
+            h.ex.freeze()
+        assert await task is None and goodwe_bank.writes == []
+    finally:
+        await h.close()

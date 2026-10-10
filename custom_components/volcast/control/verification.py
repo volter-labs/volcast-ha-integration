@@ -201,12 +201,17 @@ class VerificationRunner:
 
     @callback
     def _on_cycle(self) -> None:
-        if not self._stopped:
-            self._hass.async_create_task(self.async_step())
+        self._spawn_step()
 
-    async def _async_timer(self, _now=None) -> None:
+    @callback
+    def _async_timer(self, _now=None) -> None:
         self._timer = self._timer_at = None
-        await self.async_step()
+        self._spawn_step()
+
+    def _spawn_step(self) -> None:
+        """Krok jako zadanie WPISU — rozładunek je anuluje (nie przeżywa zatrzymania runnera)."""
+        if not self._stopped:
+            self._entry.async_create_background_task(self._hass, self.async_step(), "volcast_verification_step")
 
     # ── tryb „tylko plan” ──
 
@@ -318,9 +323,11 @@ class VerificationRunner:
             self._observe_trial(lad, rd, now)
         if lad.state.state == RUNNING and lad.state.rung == RUNG_CONTROL_WRITE:
             result = await self._ex.async_control_write()
-            if self._parked():
-                return                               # wybór własnego sterownika w trakcie zapisu — bez stopu
+            if self._parked() or self._stopped:
+                return                               # własny sterownik albo rozładunek w trakcie zapisu — bez stopu
             lad.write_result(result, now)
+        if self._stopped:
+            return
         if lad.state.rung == RUNG_WINDOW and lad.state.state == WAITING and self._window_ok(rd):
             lad.window_open(now)
             if lad.window_running:
