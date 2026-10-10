@@ -260,7 +260,7 @@
       },
       "entity_map": {
         "title": "Entidades do inversor",
-        "description": "Escolha a entidade que o Volcast usa para cada definição do inversor. Deixe um campo como sugerido para manter a correspondência automática.",
+        "description": "Escolha a entidade que o Volcast usa para cada definição do inversor. Deixe um campo como sugerido para manter a correspondência automática. Os campos estão agrupados: primeiro o que o plano precisa, depois o que o controlo precisa e por fim os opcionais. Pode verificar os valores no ecrã seguinte antes de guardar.",
         "data": {
           "mode": "Modo de funcionamento",
           "mode_value": "Valor do modo de funcionamento",
@@ -281,6 +281,34 @@
           "load_power_w": "Consumo da casa",
           "pv_energy_total_kwh": "Energia FV total",
           "pv_power_w": "Potência FV"
+        },
+        "data_description": {
+          "soc": "Necessário para o plano. Unidade: %. Sinal: 0-100, sem sinal. Nomes típicos: sensor.<inverter>_battery_state_of_charge, sensor.<battery>_soc.",
+          "pv_power_w": "Necessário para o plano. Unidade: W. Sinal: positivo = produção FV. Nomes típicos: sensor.<inverter>_pv_power, sensor.<inverter>_solar_power.",
+          "load_power_w": "Necessário para o plano. Unidade: W. Sinal: positivo = consumo da casa. Nomes típicos: sensor.<inverter>_house_consumption, sensor.<inverter>_load.",
+          "grid_power_w": "Necessário para o plano. Unidade: W. Sinal: positivo = importação da rede, negativo = exportação. Nomes típicos: sensor.<inverter>_grid_power, sensor.<meter>_active_power.",
+          "battery_power_w": "Necessário para o plano. Unidade: W. Sinal: positivo = descarga, negativo = carga. Nomes típicos: sensor.<inverter>_battery_power, sensor.<battery>_power.",
+          "battery_temp_c": "Opcional. Unidade: °C. Sinal: pode ser negativo. Nomes típicos: sensor.<inverter>_battery_temperature, sensor.<battery>_temp.",
+          "battery_voltage_v": "Opcional. Unidade: V. Sinal: sem sinal. Nomes típicos: sensor.<inverter>_battery_voltage, sensor.<battery>_voltage.",
+          "battery_current_a": "Opcional. Unidade: A. Sinal: positivo = descarga, negativo = carga. Nomes típicos: sensor.<inverter>_battery_current, sensor.<battery>_current.",
+          "active_power_w": "Opcional. Unidade: W. Sinal: positivo = potência de saída do inversor. Nomes típicos: sensor.<inverter>_active_power, sensor.<inverter>_ac_power.",
+          "pv_energy_total_kwh": "Opcional. Unidade: kWh. Sinal: total desde o arranque, só aumenta. Nomes típicos: sensor.<inverter>_total_pv_generation, sensor.<inverter>_pv_energy_total.",
+          "grid_export_total_kwh": "Opcional. Unidade: kWh. Sinal: total desde o arranque, só aumenta. Nomes típicos: sensor.<inverter>_total_energy_export, sensor.<meter>_export_energy.",
+          "grid_import_total_kwh": "Opcional. Unidade: kWh. Sinal: total desde o arranque, só aumenta. Nomes típicos: sensor.<inverter>_total_energy_import, sensor.<meter>_import_energy.",
+          "mode": "Necessário para o controlo. Unidade: opção. Sinal: sem sinal. Nomes típicos: select.<inverter>_ems_mode, select.<inverter>_work_mode.",
+          "mode_value": "Opcional. Unidade: opção. Sinal: sem sinal. Nomes típicos: sensor.<inverter>_ems_mode, sensor.<inverter>_work_mode.",
+          "power_w": "Necessário para o controlo. Unidade: W. Sinal: valor do limite de carga/descarga, sem sinal. Nomes típicos: number.<inverter>_ems_power_limit, number.<inverter>_battery_power_setpoint.",
+          "soc_min": "Necessário para o controlo. Unidade: %. Sinal: 0-100, sem sinal. Nomes típicos: number.<inverter>_battery_min_soc, number.<inverter>_depth_of_discharge.",
+          "soc_max": "Necessário para o controlo. Unidade: %. Sinal: 0-100, sem sinal. Nomes típicos: number.<inverter>_battery_max_soc, number.<inverter>_charge_cutoff_soc.",
+          "export_limit_enabled": "Necessário para o controlo. Unidade: ligado/desligado. Sinal: sem sinal. Nomes típicos: switch.<inverter>_export_limit, switch.<inverter>_grid_export_limit.",
+          "export_limit_w": "Necessário para o controlo. Unidade: W. Sinal: valor do limite de exportação, sem sinal. Nomes típicos: number.<inverter>_export_limit, number.<inverter>_grid_export_limit."
+        }
+      },
+      "entity_map_preview": {
+        "title": "Verifique os valores",
+        "description": "A Volcast vai ler estes valores das entidades escolhidas e convertê-los para as suas próprias unidades.\n\n{preview}\n\nAvisos:\n{warnings}\n\nDesligue o interruptor para voltar atrás e alterar as entidades. O sinal dos valores de potência não é verificado automaticamente: a potência da rede deve ser positiva quando a casa importa da rede.",
+        "data": {
+          "confirm": "Guardar estas entidades"
         }
       }
     },
@@ -306,7 +334,8 @@
       "restore_failed": "O Volcast não conseguiu repor o inversor nas definições anteriores ao controlo, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controlo do Volcast (o Volcast continua a tentar repor o inversor).",
       "role_required": "A entidade de estado é obrigatória.",
       "entity_not_found": "A entidade não foi encontrada. Escolha uma entidade existente.",
-      "status_without_options": "Escolha um sensor ou select com uma lista de estados possíveis. Um sensor ligado/desligado não mostra o carregamento."
+      "status_without_options": "Escolha um sensor ou select com uma lista de estados possíveis. Um sensor ligado/desligado não mostra o carregamento.",
+      "unit_mismatch": "Uma das entidades indica uma unidade que a Volcast não consegue usar para este valor. Volte atrás e escolha outra entidade."
     },
     "progress": {
       "direct_search": "A procurar o inversor na rede local. Pode demorar até um minuto."
@@ -343,6 +372,10 @@
     "control_error": {
       "title": "O Volcast não consegue controlar o inversor",
       "description": "O controlo do inversor pelo Volcast deixou de funcionar (erros de escrita repetidos ou um estado de controlo guardado que não foi possível ler). O inversor pode ainda usar as últimas definições aplicadas pelo Volcast. Verifique as definições do inversor e os registos do Home Assistant."
+    },
+    "no_readings": {
+      "title": "A Volcast não consegue ler o seu inversor",
+      "description": "A Volcast não recebe leituras de carga da bateria, potência FV ou potência da rede, por isso não consegue planear nem controlar. Verifique se a integração do inversor está carregada e se as entidades estão disponíveis, ou escolha as leituras manualmente nas opções da Volcast e depois consulte os registos do Home Assistant."
     },
     "control_choice_failed": {
       "title": "O Volcast não conseguiu aplicar a sua escolha de controlo",
@@ -411,6 +444,26 @@
           }
         }
       }
+    },
+    "consent_no_readings": {
+      "title": "O controlo da Volcast continua desligado: sem leituras recentes",
+      "description": "A Volcast não recebeu leituras do Home Assistant nos últimos 10 minutos, por isso o controlo não foi ligado. Verifique a ligação e se as leituras do inversor estão disponíveis, depois volte a ligar o interruptor de controlo da Volcast."
+    },
+    "consent_revoked_by_other": {
+      "title": "Ligue primeiro o controlo na app Volcast",
+      "description": "O controlo foi desligado na app Volcast ou pela Volcast, por isso não pode ser ligado novamente a partir do Home Assistant. Ligue primeiro o controlo na app Volcast; o interruptor no Home Assistant acompanha-o."
+    },
+    "consent_other_controller_active": {
+      "title": "O controlo da Volcast continua desligado: outro controlador está ativo",
+      "description": "A sua conta Volcast controla o inversor através de outro controlador, por exemplo uma Volcast Box. Para controlar a partir do Home Assistant, escolha o Home Assistant na app Volcast."
+    },
+    "consent_tier_required": {
+      "title": "O controlo da Volcast continua desligado: é necessário um plano",
+      "description": "O seu plano Volcast não inclui o controlo do inversor. Verifique o plano na app Volcast e depois volte a ligar o interruptor de controlo da Volcast."
+    },
+    "consent_mirror_error": {
+      "title": "Não foi possível ligar o controlo da Volcast",
+      "description": "A Volcast não conseguiu ligar o controlo ({reason}), por isso o interruptor continua desligado. Tente novamente mais tarde ou ligue o controlo na app Volcast."
     }
   },
   "services": {

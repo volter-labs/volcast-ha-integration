@@ -260,7 +260,7 @@
       },
       "entity_map": {
         "title": "Encje falownika",
-        "description": "Wybierz encję, której Volcast używa dla każdego ustawienia falownika. Pole zostaw bez zmian, aby zachować dopasowanie automatyczne.",
+        "description": "Wybierz encję, której Volcast używa dla każdego ustawienia falownika. Pole zostaw bez zmian, aby zachować dopasowanie automatyczne. Pola są pogrupowane: najpierw to, czego potrzebuje plan, potem to, czego potrzebuje sterowanie, a na końcu opcjonalne. Wartości możesz sprawdzić na następnym ekranie przed zapisaniem.",
         "data": {
           "mode": "Tryb pracy",
           "mode_value": "Wartość trybu pracy",
@@ -281,6 +281,34 @@
           "load_power_w": "Zużycie domu",
           "pv_energy_total_kwh": "Łączna energia PV",
           "pv_power_w": "Moc PV"
+        },
+        "data_description": {
+          "soc": "Potrzebne dla planu. Jednostka: %. Znak: 0–100, bez znaku. Typowe nazwy: sensor.<inverter>_battery_state_of_charge, sensor.<battery>_soc.",
+          "pv_power_w": "Potrzebne dla planu. Jednostka: W. Znak: dodatni = produkcja z PV. Typowe nazwy: sensor.<inverter>_pv_power, sensor.<inverter>_solar_power.",
+          "load_power_w": "Potrzebne dla planu. Jednostka: W. Znak: dodatni = zużycie domu. Typowe nazwy: sensor.<inverter>_house_consumption, sensor.<inverter>_load.",
+          "grid_power_w": "Potrzebne dla planu. Jednostka: W. Znak: dodatni = pobór z sieci, ujemny = oddawanie do sieci. Typowe nazwy: sensor.<inverter>_grid_power, sensor.<meter>_active_power.",
+          "battery_power_w": "Potrzebne dla planu. Jednostka: W. Znak: dodatni = rozładowanie, ujemny = ładowanie. Typowe nazwy: sensor.<inverter>_battery_power, sensor.<battery>_power.",
+          "battery_temp_c": "Opcjonalne. Jednostka: °C. Znak: może być ujemny. Typowe nazwy: sensor.<inverter>_battery_temperature, sensor.<battery>_temp.",
+          "battery_voltage_v": "Opcjonalne. Jednostka: V. Znak: bez znaku. Typowe nazwy: sensor.<inverter>_battery_voltage, sensor.<battery>_voltage.",
+          "battery_current_a": "Opcjonalne. Jednostka: A. Znak: dodatni = rozładowanie, ujemny = ładowanie. Typowe nazwy: sensor.<inverter>_battery_current, sensor.<battery>_current.",
+          "active_power_w": "Opcjonalne. Jednostka: W. Znak: dodatni = moc wyjściowa falownika. Typowe nazwy: sensor.<inverter>_active_power, sensor.<inverter>_ac_power.",
+          "pv_energy_total_kwh": "Opcjonalne. Jednostka: kWh. Znak: suma od początku pracy, tylko rośnie. Typowe nazwy: sensor.<inverter>_total_pv_generation, sensor.<inverter>_pv_energy_total.",
+          "grid_export_total_kwh": "Opcjonalne. Jednostka: kWh. Znak: suma od początku pracy, tylko rośnie. Typowe nazwy: sensor.<inverter>_total_energy_export, sensor.<meter>_export_energy.",
+          "grid_import_total_kwh": "Opcjonalne. Jednostka: kWh. Znak: suma od początku pracy, tylko rośnie. Typowe nazwy: sensor.<inverter>_total_energy_import, sensor.<meter>_import_energy.",
+          "mode": "Potrzebne do sterowania. Jednostka: opcja. Znak: bez znaku. Typowe nazwy: select.<inverter>_ems_mode, select.<inverter>_work_mode.",
+          "mode_value": "Opcjonalne. Jednostka: opcja. Znak: bez znaku. Typowe nazwy: sensor.<inverter>_ems_mode, sensor.<inverter>_work_mode.",
+          "power_w": "Potrzebne do sterowania. Jednostka: W. Znak: wielkość limitu ładowania/rozładowania, bez znaku. Typowe nazwy: number.<inverter>_ems_power_limit, number.<inverter>_battery_power_setpoint.",
+          "soc_min": "Potrzebne do sterowania. Jednostka: %. Znak: 0–100, bez znaku. Typowe nazwy: number.<inverter>_battery_min_soc, number.<inverter>_depth_of_discharge.",
+          "soc_max": "Potrzebne do sterowania. Jednostka: %. Znak: 0–100, bez znaku. Typowe nazwy: number.<inverter>_battery_max_soc, number.<inverter>_charge_cutoff_soc.",
+          "export_limit_enabled": "Potrzebne do sterowania. Jednostka: włącz/wyłącz. Znak: bez znaku. Typowe nazwy: switch.<inverter>_export_limit, switch.<inverter>_grid_export_limit.",
+          "export_limit_w": "Potrzebne do sterowania. Jednostka: W. Znak: wielkość limitu eksportu, bez znaku. Typowe nazwy: number.<inverter>_export_limit, number.<inverter>_grid_export_limit."
+        }
+      },
+      "entity_map_preview": {
+        "title": "Sprawdź wartości",
+        "description": "Volcast odczyta te wartości z wybranych encji i przeliczy je na własne jednostki.\n\n{preview}\n\nOstrzeżenia:\n{warnings}\n\nWyłącz przełącznik, aby wrócić i zmienić encje. Znak wartości mocy nie jest sprawdzany automatycznie: moc sieci powinna być dodatnia, gdy dom pobiera z sieci.",
+        "data": {
+          "confirm": "Zapisz te encje"
         }
       }
     },
@@ -306,7 +334,8 @@
       "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik).",
       "role_required": "Encja statusu jest wymagana.",
       "entity_not_found": "Nie znaleziono encji. Wybierz istniejącą encję.",
-      "status_without_options": "Wybierz sensor lub select z listą możliwych stanów. Czujnik włącz/wyłącz nie pokazuje ładowania."
+      "status_without_options": "Wybierz sensor lub select z listą możliwych stanów. Czujnik włącz/wyłącz nie pokazuje ładowania.",
+      "unit_mismatch": "Jedna z encji podaje jednostkę, której Volcast nie może użyć dla tej wartości. Wróć i wybierz inną encję."
     },
     "progress": {
       "direct_search": "Wyszukiwanie falownika w sieci lokalnej. Może to potrwać do minuty."
@@ -343,6 +372,10 @@
     "control_error": {
       "title": "Volcast nie może sterować falownikiem",
       "description": "Sterowanie falownikiem przez Volcast przestało działać (powtarzające się błędy zapisu albo zapisany stan sterowania, którego nie udało się odczytać). Falownik może nadal używać ostatnich ustawień zastosowanych przez Volcast. Sprawdź ustawienia falownika i logi Home Assistanta."
+    },
+    "no_readings": {
+      "title": "Volcast nie może odczytać falownika",
+      "description": "Volcast nie otrzymuje odczytów stanu naładowania baterii, mocy PV ani mocy sieci, więc nie może planować ani sterować. Sprawdź, czy integracja falownika jest załadowana i jej encje są dostępne, albo wybierz odczyty ręcznie w opcjach Volcast, a potem sprawdź logi Home Assistant."
     },
     "control_choice_failed": {
       "title": "Volcast nie mógł zastosować Twojego wyboru sterowania",
@@ -411,6 +444,26 @@
           }
         }
       }
+    },
+    "consent_no_readings": {
+      "title": "Sterowanie Volcast pozostaje wyłączone: brak aktualnych odczytów",
+      "description": "Volcast nie otrzymał odczytów z Home Assistant w ciągu ostatnich 10 minut, więc sterowania nie włączono. Sprawdź połączenie i dostępność odczytów falownika, a potem ponownie włącz przełącznik sterowania Volcast."
+    },
+    "consent_revoked_by_other": {
+      "title": "Najpierw włącz sterowanie w aplikacji Volcast",
+      "description": "Sterowanie zostało wyłączone w aplikacji Volcast albo przez Volcast, więc nie można go włączyć z Home Assistant. Najpierw włącz sterowanie w aplikacji Volcast; przełącznik w Home Assistant będzie za nim podążał."
+    },
+    "consent_other_controller_active": {
+      "title": "Sterowanie Volcast pozostaje wyłączone: aktywny inny sterownik",
+      "description": "Twoje konto Volcast steruje falownikiem przez inny sterownik, na przykład Volcast Box. Aby sterować z Home Assistant, wybierz Home Assistant w aplikacji Volcast."
+    },
+    "consent_tier_required": {
+      "title": "Sterowanie Volcast pozostaje wyłączone: wymagany plan",
+      "description": "Twój plan Volcast nie obejmuje sterowania falownikiem. Sprawdź plan w aplikacji Volcast, a potem ponownie włącz przełącznik sterowania Volcast."
+    },
+    "consent_mirror_error": {
+      "title": "Nie udało się włączyć sterowania Volcast",
+      "description": "Volcast nie mógł włączyć sterowania ({reason}), więc przełącznik pozostaje wyłączony. Spróbuj ponownie później albo włącz sterowanie w aplikacji Volcast."
     }
   },
   "services": {

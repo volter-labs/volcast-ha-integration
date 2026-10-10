@@ -260,7 +260,7 @@
       },
       "entity_map": {
         "title": "Omvormerentiteiten",
-        "description": "Kies de entiteit die Volcast voor elke omvormerinstelling gebruikt. Laat een veld zoals voorgesteld staan om de automatische koppeling te behouden.",
+        "description": "Kies de entiteit die Volcast voor elke omvormerinstelling gebruikt. Laat een veld zoals voorgesteld staan om de automatische koppeling te behouden. De velden zijn gegroepeerd: eerst wat het plan nodig heeft, daarna wat de regeling nodig heeft, en tot slot de optionele. Je kunt de waarden op het volgende scherm controleren voordat je opslaat.",
         "data": {
           "mode": "Bedrijfsmodus",
           "mode_value": "Waarde bedrijfsmodus",
@@ -281,6 +281,34 @@
           "load_power_w": "Huisverbruik",
           "pv_energy_total_kwh": "Totale PV-energie",
           "pv_power_w": "PV-vermogen"
+        },
+        "data_description": {
+          "soc": "Nodig voor het plan. Eenheid: %. Teken: 0–100, zonder teken. Gangbare namen: sensor.<inverter>_battery_state_of_charge, sensor.<battery>_soc.",
+          "pv_power_w": "Nodig voor het plan. Eenheid: W. Teken: positief = PV-opbrengst. Gangbare namen: sensor.<inverter>_pv_power, sensor.<inverter>_solar_power.",
+          "load_power_w": "Nodig voor het plan. Eenheid: W. Teken: positief = verbruik van het huis. Gangbare namen: sensor.<inverter>_house_consumption, sensor.<inverter>_load.",
+          "grid_power_w": "Nodig voor het plan. Eenheid: W. Teken: positief = afname van het net, negatief = teruglevering. Gangbare namen: sensor.<inverter>_grid_power, sensor.<meter>_active_power.",
+          "battery_power_w": "Nodig voor het plan. Eenheid: W. Teken: positief = ontladen, negatief = laden. Gangbare namen: sensor.<inverter>_battery_power, sensor.<battery>_power.",
+          "battery_temp_c": "Optioneel. Eenheid: °C. Teken: kan negatief zijn. Gangbare namen: sensor.<inverter>_battery_temperature, sensor.<battery>_temp.",
+          "battery_voltage_v": "Optioneel. Eenheid: V. Teken: zonder teken. Gangbare namen: sensor.<inverter>_battery_voltage, sensor.<battery>_voltage.",
+          "battery_current_a": "Optioneel. Eenheid: A. Teken: positief = ontladen, negatief = laden. Gangbare namen: sensor.<inverter>_battery_current, sensor.<battery>_current.",
+          "active_power_w": "Optioneel. Eenheid: W. Teken: positief = uitgangsvermogen van de omvormer. Gangbare namen: sensor.<inverter>_active_power, sensor.<inverter>_ac_power.",
+          "pv_energy_total_kwh": "Optioneel. Eenheid: kWh. Teken: totaal sinds de start, loopt alleen op. Gangbare namen: sensor.<inverter>_total_pv_generation, sensor.<inverter>_pv_energy_total.",
+          "grid_export_total_kwh": "Optioneel. Eenheid: kWh. Teken: totaal sinds de start, loopt alleen op. Gangbare namen: sensor.<inverter>_total_energy_export, sensor.<meter>_export_energy.",
+          "grid_import_total_kwh": "Optioneel. Eenheid: kWh. Teken: totaal sinds de start, loopt alleen op. Gangbare namen: sensor.<inverter>_total_energy_import, sensor.<meter>_import_energy.",
+          "mode": "Nodig voor de regeling. Eenheid: keuze. Teken: zonder teken. Gangbare namen: select.<inverter>_ems_mode, select.<inverter>_work_mode.",
+          "mode_value": "Optioneel. Eenheid: keuze. Teken: zonder teken. Gangbare namen: sensor.<inverter>_ems_mode, sensor.<inverter>_work_mode.",
+          "power_w": "Nodig voor de regeling. Eenheid: W. Teken: grootte van de laad-/ontlaadlimiet, zonder teken. Gangbare namen: number.<inverter>_ems_power_limit, number.<inverter>_battery_power_setpoint.",
+          "soc_min": "Nodig voor de regeling. Eenheid: %. Teken: 0–100, zonder teken. Gangbare namen: number.<inverter>_battery_min_soc, number.<inverter>_depth_of_discharge.",
+          "soc_max": "Nodig voor de regeling. Eenheid: %. Teken: 0–100, zonder teken. Gangbare namen: number.<inverter>_battery_max_soc, number.<inverter>_charge_cutoff_soc.",
+          "export_limit_enabled": "Nodig voor de regeling. Eenheid: aan/uit. Teken: zonder teken. Gangbare namen: switch.<inverter>_export_limit, switch.<inverter>_grid_export_limit.",
+          "export_limit_w": "Nodig voor de regeling. Eenheid: W. Teken: grootte van de terugleverlimiet, zonder teken. Gangbare namen: number.<inverter>_export_limit, number.<inverter>_grid_export_limit."
+        }
+      },
+      "entity_map_preview": {
+        "title": "Controleer de waarden",
+        "description": "Volcast leest deze waarden uit de gekozen entiteiten en rekent ze om naar de eigen eenheden.\n\n{preview}\n\nWaarschuwingen:\n{warnings}\n\nZet de schakelaar uit om terug te gaan en de entiteiten te wijzigen. Het teken van vermogenswaarden wordt niet automatisch gecontroleerd: het netvermogen moet positief zijn wanneer het huis van het net afneemt.",
+        "data": {
+          "confirm": "Deze entiteiten opslaan"
         }
       }
     },
@@ -306,7 +334,8 @@
       "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten).",
       "role_required": "De statusentiteit is verplicht.",
       "entity_not_found": "De entiteit is niet gevonden. Kies een bestaande entiteit.",
-      "status_without_options": "Kies een sensor of select met een lijst van mogelijke toestanden. Een aan/uit-sensor laat het laden niet zien."
+      "status_without_options": "Kies een sensor of select met een lijst van mogelijke toestanden. Een aan/uit-sensor laat het laden niet zien.",
+      "unit_mismatch": "Een van de entiteiten meldt een eenheid die Volcast voor deze waarde niet kan gebruiken. Ga terug en kies een andere entiteit."
     },
     "progress": {
       "direct_search": "Het lokale netwerk wordt doorzocht op de omvormer. Dit kan tot een minuut duren."
@@ -343,6 +372,10 @@
     "control_error": {
       "title": "Volcast kan de omvormer niet besturen",
       "description": "De omvormerbesturing van Volcast werkt niet meer (herhaalde schrijffouten of een opgeslagen besturingsstatus die niet gelezen kon worden). De omvormer gebruikt mogelijk nog de laatste instellingen die Volcast heeft toegepast. Controleer de instellingen van de omvormer en de Home Assistant-logs."
+    },
+    "no_readings": {
+      "title": "Volcast kan uw omvormer niet uitlezen",
+      "description": "Volcast ontvangt geen metingen van batterijlading, PV-vermogen of netvermogen en kan daardoor niet plannen of regelen. Controleer of de omvormerintegratie is geladen en de entiteiten beschikbaar zijn, of kies de metingen handmatig in de Volcast-opties en controleer daarna de Home Assistant-logs."
     },
     "control_choice_failed": {
       "title": "Volcast kon je besturingskeuze niet toepassen",
@@ -411,6 +444,26 @@
           }
         }
       }
+    },
+    "consent_no_readings": {
+      "title": "Volcast-regeling blijft uit: geen recente metingen",
+      "description": "Volcast heeft in de afgelopen 10 minuten geen metingen van Home Assistant ontvangen, dus de regeling is niet ingeschakeld. Controleer de verbinding en of de omvormermetingen beschikbaar zijn, en zet daarna de Volcast-regelschakelaar weer aan."
+    },
+    "consent_revoked_by_other": {
+      "title": "Zet eerst de regeling aan in de Volcast-app",
+      "description": "De regeling is uitgeschakeld in de Volcast-app of door Volcast, en kan daarom niet vanuit Home Assistant weer worden ingeschakeld. Zet eerst de regeling aan in de Volcast-app; de schakelaar in Home Assistant volgt die."
+    },
+    "consent_other_controller_active": {
+      "title": "Volcast-regeling blijft uit: een andere regelaar is actief",
+      "description": "Uw Volcast-account regelt de omvormer via een andere regelaar, bijvoorbeeld een Volcast Box. Kies in de Volcast-app Home Assistant om vanuit Home Assistant te regelen."
+    },
+    "consent_tier_required": {
+      "title": "Volcast-regeling blijft uit: abonnement vereist",
+      "description": "Uw Volcast-abonnement omvat geen regeling van de omvormer. Controleer uw abonnement in de Volcast-app en zet daarna de Volcast-regelschakelaar weer aan."
+    },
+    "consent_mirror_error": {
+      "title": "Volcast-regeling kon niet worden ingeschakeld",
+      "description": "Volcast kon de regeling niet inschakelen ({reason}), dus de schakelaar blijft uit. Probeer het later opnieuw of zet de regeling aan in de Volcast-app."
     }
   },
   "services": {

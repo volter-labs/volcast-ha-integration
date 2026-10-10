@@ -260,7 +260,7 @@
       },
       "entity_map": {
         "title": "Entități ale invertorului",
-        "description": "Alege entitatea pe care o folosește Volcast pentru fiecare setare a invertorului. Lasă un câmp cum este sugerat pentru a păstra potrivirea automată.",
+        "description": "Alege entitatea pe care o folosește Volcast pentru fiecare setare a invertorului. Lasă un câmp cum este sugerat pentru a păstra potrivirea automată. Câmpurile sunt grupate: întâi ce are nevoie planul, apoi ce are nevoie controlul și la final cele opționale. Puteți verifica valorile pe ecranul următor, înainte de salvare.",
         "data": {
           "mode": "Mod de funcționare",
           "mode_value": "Valoarea modului de funcționare",
@@ -281,6 +281,34 @@
           "load_power_w": "Consumul casei",
           "pv_energy_total_kwh": "Energia PV totală",
           "pv_power_w": "Puterea PV"
+        },
+        "data_description": {
+          "soc": "Necesar pentru plan. Unitate: %. Semn: 0-100, fără semn. Nume tipice: sensor.<inverter>_battery_state_of_charge, sensor.<battery>_soc.",
+          "pv_power_w": "Necesar pentru plan. Unitate: W. Semn: pozitiv = producție FV. Nume tipice: sensor.<inverter>_pv_power, sensor.<inverter>_solar_power.",
+          "load_power_w": "Necesar pentru plan. Unitate: W. Semn: pozitiv = consumul casei. Nume tipice: sensor.<inverter>_house_consumption, sensor.<inverter>_load.",
+          "grid_power_w": "Necesar pentru plan. Unitate: W. Semn: pozitiv = import din rețea, negativ = export. Nume tipice: sensor.<inverter>_grid_power, sensor.<meter>_active_power.",
+          "battery_power_w": "Necesar pentru plan. Unitate: W. Semn: pozitiv = descărcare, negativ = încărcare. Nume tipice: sensor.<inverter>_battery_power, sensor.<battery>_power.",
+          "battery_temp_c": "Opțional. Unitate: °C. Semn: poate fi negativ. Nume tipice: sensor.<inverter>_battery_temperature, sensor.<battery>_temp.",
+          "battery_voltage_v": "Opțional. Unitate: V. Semn: fără semn. Nume tipice: sensor.<inverter>_battery_voltage, sensor.<battery>_voltage.",
+          "battery_current_a": "Opțional. Unitate: A. Semn: pozitiv = descărcare, negativ = încărcare. Nume tipice: sensor.<inverter>_battery_current, sensor.<battery>_current.",
+          "active_power_w": "Opțional. Unitate: W. Semn: pozitiv = putere de ieșire a invertorului. Nume tipice: sensor.<inverter>_active_power, sensor.<inverter>_ac_power.",
+          "pv_energy_total_kwh": "Opțional. Unitate: kWh. Semn: total de la pornire, crește doar. Nume tipice: sensor.<inverter>_total_pv_generation, sensor.<inverter>_pv_energy_total.",
+          "grid_export_total_kwh": "Opțional. Unitate: kWh. Semn: total de la pornire, crește doar. Nume tipice: sensor.<inverter>_total_energy_export, sensor.<meter>_export_energy.",
+          "grid_import_total_kwh": "Opțional. Unitate: kWh. Semn: total de la pornire, crește doar. Nume tipice: sensor.<inverter>_total_energy_import, sensor.<meter>_import_energy.",
+          "mode": "Necesar pentru control. Unitate: opțiune. Semn: fără semn. Nume tipice: select.<inverter>_ems_mode, select.<inverter>_work_mode.",
+          "mode_value": "Opțional. Unitate: opțiune. Semn: fără semn. Nume tipice: sensor.<inverter>_ems_mode, sensor.<inverter>_work_mode.",
+          "power_w": "Necesar pentru control. Unitate: W. Semn: valoarea limitei de încărcare/descărcare, fără semn. Nume tipice: number.<inverter>_ems_power_limit, number.<inverter>_battery_power_setpoint.",
+          "soc_min": "Necesar pentru control. Unitate: %. Semn: 0-100, fără semn. Nume tipice: number.<inverter>_battery_min_soc, number.<inverter>_depth_of_discharge.",
+          "soc_max": "Necesar pentru control. Unitate: %. Semn: 0-100, fără semn. Nume tipice: number.<inverter>_battery_max_soc, number.<inverter>_charge_cutoff_soc.",
+          "export_limit_enabled": "Necesar pentru control. Unitate: pornit/oprit. Semn: fără semn. Nume tipice: switch.<inverter>_export_limit, switch.<inverter>_grid_export_limit.",
+          "export_limit_w": "Necesar pentru control. Unitate: W. Semn: valoarea limitei de export, fără semn. Nume tipice: number.<inverter>_export_limit, number.<inverter>_grid_export_limit."
+        }
+      },
+      "entity_map_preview": {
+        "title": "Verificați valorile",
+        "description": "Volcast va citi aceste valori din entitățile alese și le va converti în unitățile proprii.\n\n{preview}\n\nAvertismente:\n{warnings}\n\nOpriți comutatorul pentru a reveni și a schimba entitățile. Semnul valorilor de putere nu este verificat automat: puterea din rețea trebuie să fie pozitivă când casa importă din rețea.",
+        "data": {
+          "confirm": "Salvați aceste entități"
         }
       }
     },
@@ -306,7 +334,8 @@
       "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul).",
       "role_required": "Entitatea de stare este obligatorie.",
       "entity_not_found": "Entitatea nu a fost găsită. Alege o entitate existentă.",
-      "status_without_options": "Alegeți un senzor sau un select cu o listă de stări posibile. Un senzor pornit/oprit nu arată încărcarea."
+      "status_without_options": "Alegeți un senzor sau un select cu o listă de stări posibile. Un senzor pornit/oprit nu arată încărcarea.",
+      "unit_mismatch": "Una dintre entități raportează o unitate pe care Volcast nu o poate folosi pentru această valoare. Reveniți și alegeți altă entitate."
     },
     "progress": {
       "direct_search": "Se caută invertorul în rețeaua locală. Poate dura până la un minut."
@@ -343,6 +372,10 @@
     "control_error": {
       "title": "Volcast nu poate controla invertorul",
       "description": "Controlul invertorului de către Volcast a încetat să funcționeze (erori repetate de scriere sau o stare de control salvată care nu a putut fi citită). Invertorul poate folosi în continuare ultimele setări aplicate de Volcast. Verifică setările invertorului și jurnalele Home Assistant."
+    },
+    "no_readings": {
+      "title": "Volcast nu poate citi invertorul",
+      "description": "Volcast nu primește citiri ale încărcării bateriei, ale puterii FV sau ale puterii din rețea, așa că nu poate planifica sau controla. Verificați dacă integrarea invertorului este încărcată și entitățile sunt disponibile sau alegeți citirile manual în opțiunile Volcast, apoi verificați jurnalele Home Assistant."
     },
     "control_choice_failed": {
       "title": "Volcast nu a putut aplica alegerea ta de control",
@@ -411,6 +444,26 @@
           }
         }
       }
+    },
+    "consent_no_readings": {
+      "title": "Controlul Volcast rămâne oprit: fără citiri recente",
+      "description": "Volcast nu a primit citiri de la Home Assistant în ultimele 10 minute, deci controlul nu a fost pornit. Verificați conexiunea și disponibilitatea citirilor invertorului, apoi porniți din nou comutatorul de control Volcast."
+    },
+    "consent_revoked_by_other": {
+      "title": "Mai întâi porniți controlul în aplicația Volcast",
+      "description": "Controlul a fost oprit în aplicația Volcast sau de Volcast, deci nu poate fi pornit din nou din Home Assistant. Porniți mai întâi controlul în aplicația Volcast; comutatorul din Home Assistant îl va urma."
+    },
+    "consent_other_controller_active": {
+      "title": "Controlul Volcast rămâne oprit: un alt controler este activ",
+      "description": "Contul dvs. Volcast controlează invertorul printr-un alt controler, de exemplu un Volcast Box. Pentru a controla din Home Assistant, alegeți Home Assistant în aplicația Volcast."
+    },
+    "consent_tier_required": {
+      "title": "Controlul Volcast rămâne oprit: este necesar un abonament",
+      "description": "Abonamentul dvs. Volcast nu include controlul invertorului. Verificați abonamentul în aplicația Volcast, apoi porniți din nou comutatorul de control Volcast."
+    },
+    "consent_mirror_error": {
+      "title": "Controlul Volcast nu a putut fi pornit",
+      "description": "Volcast nu a putut porni controlul ({reason}), deci comutatorul rămâne oprit. Încercați din nou mai târziu sau porniți controlul în aplicația Volcast."
     }
   },
   "services": {

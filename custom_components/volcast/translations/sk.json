@@ -260,7 +260,7 @@
       },
       "entity_map": {
         "title": "Entity striedača",
-        "description": "Vyberte entitu, ktorú Volcast použije pre každé nastavenie striedača. Ponechajte pole tak, ako je navrhnuté, aby sa zachovalo automatické párovanie.",
+        "description": "Vyberte entitu, ktorú Volcast použije pre každé nastavenie striedača. Ponechajte pole tak, ako je navrhnuté, aby sa zachovalo automatické párovanie. Polia sú zoskupené: najprv to, čo potrebuje plán, potom to, čo potrebuje riadenie, a nakoniec voliteľné. Hodnoty môžete skontrolovať na ďalšej obrazovke pred uložením.",
         "data": {
           "mode": "Prevádzkový režim",
           "mode_value": "Hodnota prevádzkového režimu",
@@ -281,6 +281,34 @@
           "load_power_w": "Spotreba domu",
           "pv_energy_total_kwh": "Celková energia FV",
           "pv_power_w": "Výkon FV"
+        },
+        "data_description": {
+          "soc": "Potrebné pre plán. Jednotka: %. Znamienko: 0–100, bez znamienka. Typické názvy: sensor.<inverter>_battery_state_of_charge, sensor.<battery>_soc.",
+          "pv_power_w": "Potrebné pre plán. Jednotka: W. Znamienko: kladné = výroba z FV. Typické názvy: sensor.<inverter>_pv_power, sensor.<inverter>_solar_power.",
+          "load_power_w": "Potrebné pre plán. Jednotka: W. Znamienko: kladné = spotreba domu. Typické názvy: sensor.<inverter>_house_consumption, sensor.<inverter>_load.",
+          "grid_power_w": "Potrebné pre plán. Jednotka: W. Znamienko: kladné = odber zo siete, záporné = dodávka do siete. Typické názvy: sensor.<inverter>_grid_power, sensor.<meter>_active_power.",
+          "battery_power_w": "Potrebné pre plán. Jednotka: W. Znamienko: kladné = vybíjanie, záporné = nabíjanie. Typické názvy: sensor.<inverter>_battery_power, sensor.<battery>_power.",
+          "battery_temp_c": "Voliteľné. Jednotka: °C. Znamienko: môže byť záporné. Typické názvy: sensor.<inverter>_battery_temperature, sensor.<battery>_temp.",
+          "battery_voltage_v": "Voliteľné. Jednotka: V. Znamienko: bez znamienka. Typické názvy: sensor.<inverter>_battery_voltage, sensor.<battery>_voltage.",
+          "battery_current_a": "Voliteľné. Jednotka: A. Znamienko: kladné = vybíjanie, záporné = nabíjanie. Typické názvy: sensor.<inverter>_battery_current, sensor.<battery>_current.",
+          "active_power_w": "Voliteľné. Jednotka: W. Znamienko: kladné = výkon meniča. Typické názvy: sensor.<inverter>_active_power, sensor.<inverter>_ac_power.",
+          "pv_energy_total_kwh": "Voliteľné. Jednotka: kWh. Znamienko: súčet od začiatku prevádzky, len rastie. Typické názvy: sensor.<inverter>_total_pv_generation, sensor.<inverter>_pv_energy_total.",
+          "grid_export_total_kwh": "Voliteľné. Jednotka: kWh. Znamienko: súčet od začiatku prevádzky, len rastie. Typické názvy: sensor.<inverter>_total_energy_export, sensor.<meter>_export_energy.",
+          "grid_import_total_kwh": "Voliteľné. Jednotka: kWh. Znamienko: súčet od začiatku prevádzky, len rastie. Typické názvy: sensor.<inverter>_total_energy_import, sensor.<meter>_import_energy.",
+          "mode": "Potrebné pre riadenie. Jednotka: voľba. Znamienko: bez znamienka. Typické názvy: select.<inverter>_ems_mode, select.<inverter>_work_mode.",
+          "mode_value": "Voliteľné. Jednotka: voľba. Znamienko: bez znamienka. Typické názvy: sensor.<inverter>_ems_mode, sensor.<inverter>_work_mode.",
+          "power_w": "Potrebné pre riadenie. Jednotka: W. Znamienko: veľkosť limitu nabíjania/vybíjania, bez znamienka. Typické názvy: number.<inverter>_ems_power_limit, number.<inverter>_battery_power_setpoint.",
+          "soc_min": "Potrebné pre riadenie. Jednotka: %. Znamienko: 0–100, bez znamienka. Typické názvy: number.<inverter>_battery_min_soc, number.<inverter>_depth_of_discharge.",
+          "soc_max": "Potrebné pre riadenie. Jednotka: %. Znamienko: 0–100, bez znamienka. Typické názvy: number.<inverter>_battery_max_soc, number.<inverter>_charge_cutoff_soc.",
+          "export_limit_enabled": "Potrebné pre riadenie. Jednotka: zap/vyp. Znamienko: bez znamienka. Typické názvy: switch.<inverter>_export_limit, switch.<inverter>_grid_export_limit.",
+          "export_limit_w": "Potrebné pre riadenie. Jednotka: W. Znamienko: veľkosť limitu pretoku, bez znamienka. Typické názvy: number.<inverter>_export_limit, number.<inverter>_grid_export_limit."
+        }
+      },
+      "entity_map_preview": {
+        "title": "Skontrolujte hodnoty",
+        "description": "Volcast načíta tieto hodnoty z vybraných entít a prepočíta ich na vlastné jednotky.\n\n{preview}\n\nUpozornenia:\n{warnings}\n\nVypnutím prepínača sa vrátite a môžete entity zmeniť. Znamienko výkonov sa automaticky nekontroluje: výkon zo siete má byť kladný, keď dom odoberá zo siete.",
+        "data": {
+          "confirm": "Uložiť tieto entity"
         }
       }
     },
@@ -306,7 +334,8 @@
       "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť).",
       "role_required": "Entita stavu je povinná.",
       "entity_not_found": "Entita sa nenašla. Vyberte existujúcu entitu.",
-      "status_without_options": "Vyberte senzor alebo select so zoznamom možných stavov. Senzor zapnuté/vypnuté nabíjanie neukazuje."
+      "status_without_options": "Vyberte senzor alebo select so zoznamom možných stavov. Senzor zapnuté/vypnuté nabíjanie neukazuje.",
+      "unit_mismatch": "Jedna z entít udáva jednotku, ktorú Volcast pre túto hodnotu nemôže použiť. Vráťte sa a vyberte inú entitu."
     },
     "progress": {
       "direct_search": "Vyhľadávanie striedača v miestnej sieti. Môže to trvať až minútu."
@@ -343,6 +372,10 @@
     "control_error": {
       "title": "Volcast nemôže riadiť striedač",
       "description": "Riadenie striedača cez Volcast prestalo fungovať (opakované chyby zápisu alebo uložený stav riadenia, ktorý sa nedal prečítať). Striedač môže stále používať posledné nastavenia použité Volcastom. Skontrolujte nastavenia striedača a protokoly Home Assistanta."
+    },
+    "no_readings": {
+      "title": "Volcast nemôže načítať údaje zo meniča",
+      "description": "Volcast nedostáva údaje o stave nabitia batérie, výkone FV ani výkone zo siete, takže nemôže plánovať ani riadiť. Skontrolujte, či je integrácia meniča načítaná a jej entity sú dostupné, alebo vyberte údaje ručne v možnostiach Volcast a potom skontrolujte protokoly Home Assistant."
     },
     "control_choice_failed": {
       "title": "Volcast nemohol uplatniť vašu voľbu riadenia",
@@ -411,6 +444,26 @@
           }
         }
       }
+    },
+    "consent_no_readings": {
+      "title": "Riadenie Volcast zostáva vypnuté: chýbajú aktuálne údaje",
+      "description": "Volcast za posledných 10 minút nedostal od Home Assistant žiadne údaje, preto riadenie nebolo zapnuté. Skontrolujte pripojenie a dostupnosť údajov meniča a potom znova zapnite prepínač riadenia Volcast."
+    },
+    "consent_revoked_by_other": {
+      "title": "Najprv zapnite riadenie v aplikácii Volcast",
+      "description": "Riadenie bolo vypnuté v aplikácii Volcast alebo Volcastom, a preto ho nemožno znova zapnúť z Home Assistant. Najprv zapnite riadenie v aplikácii Volcast; prepínač v Home Assistant ho potom bude nasledovať."
+    },
+    "consent_other_controller_active": {
+      "title": "Riadenie Volcast zostáva vypnuté: je aktívny iný riadiaci prvok",
+      "description": "Vaše konto Volcast riadi menič cez iný riadiaci prvok, napríklad Volcast Box. Ak chcete riadiť z Home Assistant, vyberte v aplikácii Volcast Home Assistant."
+    },
+    "consent_tier_required": {
+      "title": "Riadenie Volcast zostáva vypnuté: vyžaduje sa tarif",
+      "description": "Váš tarif Volcast nezahŕňa riadenie meniča. Skontrolujte tarif v aplikácii Volcast a potom znova zapnite prepínač riadenia Volcast."
+    },
+    "consent_mirror_error": {
+      "title": "Riadenie Volcast sa nepodarilo zapnúť",
+      "description": "Volcast nemohol riadenie zapnúť ({reason}), preto prepínač zostáva vypnutý. Skúste to neskôr znova alebo zapnite riadenie v aplikácii Volcast."
     }
   },
   "services": {

@@ -260,7 +260,7 @@
       },
       "entity_map": {
         "title": "Entités de l'onduleur",
-        "description": "Choisissez l'entité que Volcast utilise pour chaque réglage de l'onduleur. Laissez un champ tel que suggéré pour conserver la correspondance automatique.",
+        "description": "Choisissez l'entité que Volcast utilise pour chaque réglage de l'onduleur. Laissez un champ tel que suggéré pour conserver la correspondance automatique. Les champs sont regroupés : d’abord ce dont le plan a besoin, puis ce dont le pilotage a besoin, et enfin les champs facultatifs. Vous pouvez vérifier les valeurs à l’écran suivant avant d’enregistrer.",
         "data": {
           "mode": "Mode de fonctionnement",
           "mode_value": "Valeur du mode de fonctionnement",
@@ -281,6 +281,34 @@
           "load_power_w": "Consommation de la maison",
           "pv_energy_total_kwh": "Énergie PV totale",
           "pv_power_w": "Puissance PV"
+        },
+        "data_description": {
+          "soc": "Nécessaire pour le plan. Unité : %. Signe : 0-100, sans signe. Noms typiques : sensor.<inverter>_battery_state_of_charge, sensor.<battery>_soc.",
+          "pv_power_w": "Nécessaire pour le plan. Unité : W. Signe : positif = production PV. Noms typiques : sensor.<inverter>_pv_power, sensor.<inverter>_solar_power.",
+          "load_power_w": "Nécessaire pour le plan. Unité : W. Signe : positif = consommation de la maison. Noms typiques : sensor.<inverter>_house_consumption, sensor.<inverter>_load.",
+          "grid_power_w": "Nécessaire pour le plan. Unité : W. Signe : positif = soutirage du réseau, négatif = injection. Noms typiques : sensor.<inverter>_grid_power, sensor.<meter>_active_power.",
+          "battery_power_w": "Nécessaire pour le plan. Unité : W. Signe : positif = décharge, négatif = charge. Noms typiques : sensor.<inverter>_battery_power, sensor.<battery>_power.",
+          "battery_temp_c": "Facultatif. Unité : °C. Signe : peut être négatif. Noms typiques : sensor.<inverter>_battery_temperature, sensor.<battery>_temp.",
+          "battery_voltage_v": "Facultatif. Unité : V. Signe : sans signe. Noms typiques : sensor.<inverter>_battery_voltage, sensor.<battery>_voltage.",
+          "battery_current_a": "Facultatif. Unité : A. Signe : positif = décharge, négatif = charge. Noms typiques : sensor.<inverter>_battery_current, sensor.<battery>_current.",
+          "active_power_w": "Facultatif. Unité : W. Signe : positif = puissance de sortie de l’onduleur. Noms typiques : sensor.<inverter>_active_power, sensor.<inverter>_ac_power.",
+          "pv_energy_total_kwh": "Facultatif. Unité : kWh. Signe : total depuis la mise en service, ne fait qu’augmenter. Noms typiques : sensor.<inverter>_total_pv_generation, sensor.<inverter>_pv_energy_total.",
+          "grid_export_total_kwh": "Facultatif. Unité : kWh. Signe : total depuis la mise en service, ne fait qu’augmenter. Noms typiques : sensor.<inverter>_total_energy_export, sensor.<meter>_export_energy.",
+          "grid_import_total_kwh": "Facultatif. Unité : kWh. Signe : total depuis la mise en service, ne fait qu’augmenter. Noms typiques : sensor.<inverter>_total_energy_import, sensor.<meter>_import_energy.",
+          "mode": "Nécessaire pour le pilotage. Unité : option. Signe : sans signe. Noms typiques : select.<inverter>_ems_mode, select.<inverter>_work_mode.",
+          "mode_value": "Facultatif. Unité : option. Signe : sans signe. Noms typiques : sensor.<inverter>_ems_mode, sensor.<inverter>_work_mode.",
+          "power_w": "Nécessaire pour le pilotage. Unité : W. Signe : valeur absolue de la limite de charge/décharge, sans signe. Noms typiques : number.<inverter>_ems_power_limit, number.<inverter>_battery_power_setpoint.",
+          "soc_min": "Nécessaire pour le pilotage. Unité : %. Signe : 0-100, sans signe. Noms typiques : number.<inverter>_battery_min_soc, number.<inverter>_depth_of_discharge.",
+          "soc_max": "Nécessaire pour le pilotage. Unité : %. Signe : 0-100, sans signe. Noms typiques : number.<inverter>_battery_max_soc, number.<inverter>_charge_cutoff_soc.",
+          "export_limit_enabled": "Nécessaire pour le pilotage. Unité : marche/arrêt. Signe : sans signe. Noms typiques : switch.<inverter>_export_limit, switch.<inverter>_grid_export_limit.",
+          "export_limit_w": "Nécessaire pour le pilotage. Unité : W. Signe : valeur absolue de la limite d’injection, sans signe. Noms typiques : number.<inverter>_export_limit, number.<inverter>_grid_export_limit."
+        }
+      },
+      "entity_map_preview": {
+        "title": "Vérifier les valeurs",
+        "description": "Volcast lira ces valeurs depuis les entités choisies et les convertira dans ses propres unités.\n\n{preview}\n\nAvertissements :\n{warnings}\n\nDésactivez l’interrupteur pour revenir en arrière et modifier les entités. Le signe des valeurs de puissance n’est pas vérifié automatiquement : la puissance du réseau doit être positive lorsque la maison soutire du réseau.",
+        "data": {
+          "confirm": "Enregistrer ces entités"
         }
       }
     },
@@ -306,7 +334,8 @@
       "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état).",
       "role_required": "L'entité d'état est obligatoire.",
       "entity_not_found": "L'entité est introuvable. Choisissez une entité existante.",
-      "status_without_options": "Choisissez un capteur ou un select avec une liste d'états possibles. Un capteur marche/arrêt n'indique pas la charge."
+      "status_without_options": "Choisissez un capteur ou un select avec une liste d'états possibles. Un capteur marche/arrêt n'indique pas la charge.",
+      "unit_mismatch": "L’une des entités indique une unité que Volcast ne peut pas utiliser pour cette valeur. Revenez en arrière et choisissez une autre entité."
     },
     "progress": {
       "direct_search": "Recherche de l'onduleur sur le réseau local. Cela peut prendre jusqu'à une minute."
@@ -343,6 +372,10 @@
     "control_error": {
       "title": "Volcast ne peut pas piloter l'onduleur",
       "description": "Le pilotage de l'onduleur par Volcast a cessé de fonctionner (erreurs d'écriture répétées ou état de pilotage enregistré illisible). L'onduleur utilise peut-être encore les derniers réglages appliqués par Volcast. Vérifiez les réglages de l'onduleur et les journaux de Home Assistant."
+    },
+    "no_readings": {
+      "title": "Volcast ne peut pas lire votre onduleur",
+      "description": "Volcast ne reçoit aucune mesure de charge de batterie, de puissance PV ou de puissance réseau, il ne peut donc ni planifier ni piloter. Vérifiez que l’intégration de l’onduleur est chargée et que ses entités sont disponibles, ou choisissez les mesures manuellement dans les options de Volcast, puis consultez les journaux de Home Assistant."
     },
     "control_choice_failed": {
       "title": "Volcast n'a pas pu appliquer votre choix de pilotage",
@@ -411,6 +444,26 @@
           }
         }
       }
+    },
+    "consent_no_readings": {
+      "title": "Le pilotage Volcast reste désactivé : aucune mesure récente",
+      "description": "Volcast n’a reçu aucune mesure de Home Assistant depuis 10 minutes, le pilotage n’a donc pas été activé. Vérifiez la connexion et la disponibilité des mesures de l’onduleur, puis réactivez l’interrupteur de pilotage Volcast."
+    },
+    "consent_revoked_by_other": {
+      "title": "Activez d’abord le pilotage dans l’application Volcast",
+      "description": "Le pilotage a été désactivé dans l’application Volcast ou par Volcast, il ne peut donc pas être réactivé depuis Home Assistant. Activez d’abord le pilotage dans l’application Volcast ; l’interrupteur dans Home Assistant suivra cet état."
+    },
+    "consent_other_controller_active": {
+      "title": "Le pilotage Volcast reste désactivé : un autre contrôleur est actif",
+      "description": "Votre compte Volcast pilote l’onduleur via un autre contrôleur, par exemple un Volcast Box. Pour piloter depuis Home Assistant, choisissez Home Assistant dans l’application Volcast."
+    },
+    "consent_tier_required": {
+      "title": "Le pilotage Volcast reste désactivé : abonnement requis",
+      "description": "Votre abonnement Volcast ne comprend pas le pilotage de l’onduleur. Vérifiez votre abonnement dans l’application Volcast, puis réactivez l’interrupteur de pilotage Volcast."
+    },
+    "consent_mirror_error": {
+      "title": "Impossible d’activer le pilotage Volcast",
+      "description": "Volcast n’a pas pu activer le pilotage ({reason}), l’interrupteur reste donc désactivé. Réessayez plus tard ou activez le pilotage dans l’application Volcast."
     }
   },
   "services": {

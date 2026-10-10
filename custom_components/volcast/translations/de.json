@@ -260,7 +260,7 @@
       },
       "entity_map": {
         "title": "Wechselrichter-Entitäten",
-        "description": "Wähle die Entität, die Volcast für jede Wechselrichter-Einstellung verwendet. Lass ein Feld wie vorgeschlagen, um die automatische Zuordnung beizubehalten.",
+        "description": "Wähle die Entität, die Volcast für jede Wechselrichter-Einstellung verwendet. Lass ein Feld wie vorgeschlagen, um die automatische Zuordnung beizubehalten. Die Felder sind gruppiert: zuerst das, was der Plan braucht, dann das für die Steuerung, zuletzt die optionalen. Die Werte kannst du vor dem Speichern auf dem nächsten Bildschirm prüfen.",
         "data": {
           "mode": "Betriebsmodus",
           "mode_value": "Wert des Betriebsmodus",
@@ -281,6 +281,34 @@
           "load_power_w": "Hausverbrauch",
           "pv_energy_total_kwh": "PV-Energie gesamt",
           "pv_power_w": "PV-Leistung"
+        },
+        "data_description": {
+          "soc": "Für den Plan nötig. Einheit: %. Vorzeichen: 0–100, ohne Vorzeichen. Typische Namen: sensor.<inverter>_battery_state_of_charge, sensor.<battery>_soc.",
+          "pv_power_w": "Für den Plan nötig. Einheit: W. Vorzeichen: positiv = PV-Erzeugung. Typische Namen: sensor.<inverter>_pv_power, sensor.<inverter>_solar_power.",
+          "load_power_w": "Für den Plan nötig. Einheit: W. Vorzeichen: positiv = Hausverbrauch. Typische Namen: sensor.<inverter>_house_consumption, sensor.<inverter>_load.",
+          "grid_power_w": "Für den Plan nötig. Einheit: W. Vorzeichen: positiv = Bezug aus dem Netz, negativ = Einspeisung. Typische Namen: sensor.<inverter>_grid_power, sensor.<meter>_active_power.",
+          "battery_power_w": "Für den Plan nötig. Einheit: W. Vorzeichen: positiv = Entladen, negativ = Laden. Typische Namen: sensor.<inverter>_battery_power, sensor.<battery>_power.",
+          "battery_temp_c": "Optional. Einheit: °C. Vorzeichen: kann negativ sein. Typische Namen: sensor.<inverter>_battery_temperature, sensor.<battery>_temp.",
+          "battery_voltage_v": "Optional. Einheit: V. Vorzeichen: ohne Vorzeichen. Typische Namen: sensor.<inverter>_battery_voltage, sensor.<battery>_voltage.",
+          "battery_current_a": "Optional. Einheit: A. Vorzeichen: positiv = Entladen, negativ = Laden. Typische Namen: sensor.<inverter>_battery_current, sensor.<battery>_current.",
+          "active_power_w": "Optional. Einheit: W. Vorzeichen: positiv = Wechselrichterleistung. Typische Namen: sensor.<inverter>_active_power, sensor.<inverter>_ac_power.",
+          "pv_energy_total_kwh": "Optional. Einheit: kWh. Vorzeichen: Summe seit Inbetriebnahme, steigt nur. Typische Namen: sensor.<inverter>_total_pv_generation, sensor.<inverter>_pv_energy_total.",
+          "grid_export_total_kwh": "Optional. Einheit: kWh. Vorzeichen: Summe seit Inbetriebnahme, steigt nur. Typische Namen: sensor.<inverter>_total_energy_export, sensor.<meter>_export_energy.",
+          "grid_import_total_kwh": "Optional. Einheit: kWh. Vorzeichen: Summe seit Inbetriebnahme, steigt nur. Typische Namen: sensor.<inverter>_total_energy_import, sensor.<meter>_import_energy.",
+          "mode": "Für die Steuerung nötig. Einheit: Option. Vorzeichen: ohne Vorzeichen. Typische Namen: select.<inverter>_ems_mode, select.<inverter>_work_mode.",
+          "mode_value": "Optional. Einheit: Option. Vorzeichen: ohne Vorzeichen. Typische Namen: sensor.<inverter>_ems_mode, sensor.<inverter>_work_mode.",
+          "power_w": "Für die Steuerung nötig. Einheit: W. Vorzeichen: Betrag des Lade-/Entladelimits, ohne Vorzeichen. Typische Namen: number.<inverter>_ems_power_limit, number.<inverter>_battery_power_setpoint.",
+          "soc_min": "Für die Steuerung nötig. Einheit: %. Vorzeichen: 0–100, ohne Vorzeichen. Typische Namen: number.<inverter>_battery_min_soc, number.<inverter>_depth_of_discharge.",
+          "soc_max": "Für die Steuerung nötig. Einheit: %. Vorzeichen: 0–100, ohne Vorzeichen. Typische Namen: number.<inverter>_battery_max_soc, number.<inverter>_charge_cutoff_soc.",
+          "export_limit_enabled": "Für die Steuerung nötig. Einheit: ein/aus. Vorzeichen: ohne Vorzeichen. Typische Namen: switch.<inverter>_export_limit, switch.<inverter>_grid_export_limit.",
+          "export_limit_w": "Für die Steuerung nötig. Einheit: W. Vorzeichen: Betrag des Einspeiselimits, ohne Vorzeichen. Typische Namen: number.<inverter>_export_limit, number.<inverter>_grid_export_limit."
+        }
+      },
+      "entity_map_preview": {
+        "title": "Werte prüfen",
+        "description": "Volcast liest diese Werte aus den gewählten Entitäten und rechnet sie in die eigenen Einheiten um.\n\n{preview}\n\nWarnungen:\n{warnings}\n\nSchalte den Schalter aus, um zurückzugehen und die Entitäten zu ändern. Das Vorzeichen der Leistungswerte wird nicht automatisch geprüft: Netzleistung sollte positiv sein, wenn das Haus aus dem Netz bezieht.",
+        "data": {
+          "confirm": "Diese Entitäten speichern"
         }
       }
     },
@@ -306,7 +334,8 @@
       "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen).",
       "role_required": "Die Status-Entität ist erforderlich.",
       "entity_not_found": "Die Entität wurde nicht gefunden. Wähle eine vorhandene Entität.",
-      "status_without_options": "Wähle einen Sensor oder ein Select mit einer Liste möglicher Zustände. Ein Ein/Aus-Sensor zeigt das Laden nicht an."
+      "status_without_options": "Wähle einen Sensor oder ein Select mit einer Liste möglicher Zustände. Ein Ein/Aus-Sensor zeigt das Laden nicht an.",
+      "unit_mismatch": "Eine der Entitäten meldet eine Einheit, die Volcast für diesen Wert nicht verwenden kann. Gehe zurück und wähle eine andere Entität."
     },
     "progress": {
       "direct_search": "Das lokale Netzwerk wird nach dem Wechselrichter durchsucht. Das kann bis zu einer Minute dauern."
@@ -343,6 +372,10 @@
     "control_error": {
       "title": "Volcast kann den Wechselrichter nicht steuern",
       "description": "Die Wechselrichter-Steuerung von Volcast funktioniert nicht mehr (wiederholte Schreibfehler oder ein gespeicherter Steuerungszustand, der nicht gelesen werden konnte). Der Wechselrichter nutzt möglicherweise noch die letzten von Volcast angewendeten Einstellungen. Prüfe die Einstellungen des Wechselrichters und die Home-Assistant-Logs."
+    },
+    "no_readings": {
+      "title": "Volcast kann den Wechselrichter nicht auslesen",
+      "description": "Volcast erhält keine Messwerte für Batterieladestand, PV-Leistung oder Netzleistung und kann daher nicht planen oder steuern. Prüfe, ob die Wechselrichter-Integration geladen ist und ihre Entitäten verfügbar sind, oder wähle die Messwerte manuell in den Volcast-Optionen. Prüfe danach die Home-Assistant-Protokolle."
     },
     "control_choice_failed": {
       "title": "Volcast konnte deine Steuerungswahl nicht anwenden",
@@ -411,6 +444,26 @@
           }
         }
       }
+    },
+    "consent_no_readings": {
+      "title": "Volcast-Steuerung bleibt aus: keine aktuellen Messwerte",
+      "description": "Volcast hat in den letzten 10 Minuten keine Messwerte von Home Assistant erhalten, daher wurde die Steuerung nicht eingeschaltet. Prüfe die Verbindung und ob die Wechselrichter-Messwerte verfügbar sind, und schalte dann den Volcast-Steuerungsschalter wieder ein."
+    },
+    "consent_revoked_by_other": {
+      "title": "Schalte die Steuerung zuerst in der Volcast-App ein",
+      "description": "Die Steuerung wurde in der Volcast-App oder von Volcast ausgeschaltet und kann daher nicht aus Home Assistant wieder eingeschaltet werden. Schalte die Steuerung zuerst in der Volcast-App ein; der Schalter in Home Assistant folgt dann."
+    },
+    "consent_other_controller_active": {
+      "title": "Volcast-Steuerung bleibt aus: ein anderer Regler ist aktiv",
+      "description": "Dein Volcast-Konto steuert den Wechselrichter über einen anderen Regler, zum Beispiel eine Volcast Box. Um aus Home Assistant zu steuern, wähle in der Volcast-App Home Assistant."
+    },
+    "consent_tier_required": {
+      "title": "Volcast-Steuerung bleibt aus: Tarif erforderlich",
+      "description": "Dein Volcast-Tarif enthält keine Wechselrichtersteuerung. Prüfe deinen Tarif in der Volcast-App und schalte dann den Volcast-Steuerungsschalter wieder ein."
+    },
+    "consent_mirror_error": {
+      "title": "Volcast-Steuerung konnte nicht eingeschaltet werden",
+      "description": "Volcast konnte die Steuerung nicht einschalten ({reason}), daher bleibt der Schalter aus. Versuche es später erneut oder schalte die Steuerung in der Volcast-App ein."
     }
   },
   "services": {
