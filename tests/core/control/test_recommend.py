@@ -215,3 +215,75 @@ def test_ladder_start_is_identify_or_control_write(path):
     assert Recommendation(path, "r", 1).to_payload()["ladder_start"] == 1
     assert 1 <= Recommendation(path, "r", 9).to_payload()["ladder_start"] <= 4
     assert Recommendation(path, "r", 0).to_payload()["ladder_start"] == 1
+
+
+# ── wpis ze skonfigurowanym celem bezpośrednim (tożsamość znana bez sondy) ──
+
+
+GW_TARGET = {"profile_id": "goodwe-et", "host": "inverter.lan", "device_fp": "abcd"}
+
+
+def _goodwe_report(host="box.lan", model="GW-HUB"):
+    report = _report(model=model)
+    report["inverters"][0]["host"] = host
+    return report
+
+
+def test_configured_direct_target_with_an_unrelated_integration_recommends_direct():
+    goodwe = load_builtin("goodwe-et")
+    rec = recommend(_goodwe_report(), [goodwe], None, None, {}, target=GW_TARGET, origins=CORE)
+    assert (rec.path, rec.reason, rec.ladder_start) == (DIRECT, "no_integration_identify_ok", 4)
+    assert rec.integration is None and rec.device == {"manufacturer": "GoodWe", "model": None}
+
+
+def test_configured_direct_target_without_any_integration_recommends_direct():
+    goodwe = load_builtin("goodwe-et")
+    rec = recommend({"inverters": []}, [goodwe], None, None, {}, target=GW_TARGET)
+    assert (rec.path, rec.reason, rec.ladder_start) == (DIRECT, "no_integration_identify_ok", 4)
+    # model z sondy tego samego urządzenia (ten sam odcisk), gdy jest
+    probe = ProbeReport(Identity("goodwe-et", "goodwe_udp", 8899, 247, "GW8KN-ET", 8000.0, device_fp="abcd"),
+                        {"mode": True}, (), True, None, "verified", 3, ())
+    rec = recommend({"inverters": []}, [goodwe], probe, None, {}, target=GW_TARGET)
+    assert rec.device == {"manufacturer": "GoodWe", "model": "GW8KN-ET"}
+
+
+def test_configured_direct_target_wins_over_an_entities_path_of_another_device():
+    goodwe = load_builtin("goodwe-et")
+    rec = recommend(_goodwe_report(), [goodwe], None, None, {"mode": "select.box_mode"}, target=GW_TARGET,
+                    choice=ProfileChoice(goodwe, "goodwe", "GW-HUB"))
+    assert (rec.path, rec.ladder_start) == (DIRECT, 4)
+
+
+def test_read_only_integration_on_the_target_address_is_the_data_source():
+    goodwe = load_builtin("goodwe-et")
+    rec = recommend(_goodwe_report(host="inverter.lan"), [goodwe], None, None, {}, target=GW_TARGET,
+                    origins=CORE)
+    assert (rec.path, rec.reason, rec.ladder_start) == (DIRECT_WITH_INTEGRATION_DATA, "integration_read_only", 4)
+    assert rec.integration["domain"] == "goodwe"
+
+
+def test_configured_draft_target_starts_at_identify_and_keeps_the_clash_as_conflict():
+    rec = recommend({"inverters": []}, [_profile()], None, None, {}, ("modbus",),
+                    target={"profile_id": "test-ms", "host": "inverter.lan", "device_fp": "abcd"})
+    assert (rec.path, rec.ladder_start) == (DIRECT, 1)
+    assert [c["label"] for c in rec.conflicts] == ["modbus"]
+
+
+def test_probed_inverter_at_another_address_than_the_brand_integration_recommends_direct():
+    from custom_components.volcast.core.discovery.identify import Candidate
+    goodwe = load_builtin("goodwe-et")
+    probe = ProbeReport(Identity("goodwe-et", "goodwe_udp", 8899, 247, "GW8KN-ET", 8000.0, device_fp="abcd"),
+                        {"mode": True}, (), True, None, "verified", 3, (),
+                        candidate=Candidate(host="inverter.lan", source="udp_48899"))
+    rec = recommend(_goodwe_report(), [goodwe], probe, None, {})
+    assert (rec.path, rec.integration) == (DIRECT, None)
+    rec = recommend(_goodwe_report(host="inverter.lan"), [goodwe], probe, None, {})
+    assert rec.path == DIRECT_WITH_INTEGRATION_DATA
+
+
+def test_without_a_configured_target_or_identity_nothing_changes():
+    rec = recommend(_goodwe_report(), [load_builtin("goodwe-et")], None, None, {}, target=None)
+    assert (rec.path, rec.reason) == (UNSUPPORTED, "no_write_path")
+    # cel z nieznanym profilem nie udaje rozpoznanego falownika
+    rec = recommend({"inverters": []}, [], None, None, {}, target={"profile_id": "nope", "device_fp": "abcd"})
+    assert (rec.path, rec.reason) == (UNSUPPORTED, "no_profile")

@@ -408,7 +408,9 @@ async def async_update_recommendation(hass, entry, rt: ControlRuntime, profiles=
         if profiles is None:
             profiles = await hass.async_add_executor_job(ds.load_profiles)
         probe = _recommendation_probe(entry.options, rt.last_probe)
-        clash = await ds.async_clash(hass, entry.entry_id, probe.candidate.host) if probe is not None else ()
+        target = _configured_target(entry.options, rt.direct)
+        host = target.get("host") if target is not None else (probe.candidate.host if probe is not None else None)
+        clash = await ds.async_clash(hass, entry.entry_id, host) if host else ()
         choice = _choice_for(hass, entry, profiles)
         report = rt.report() if rt.report is not None else None
         domains = {i.get("domain") for i in (report or {}).get("inverters") or () if isinstance(i, Mapping)}
@@ -416,7 +418,7 @@ async def async_update_recommendation(hass, entry, rt: ControlRuntime, profiles=
             domains.add(choice.integration_domain)
         rec = recommend(report, profiles, probe, ds.offer_reason(probe, profiles, clash),
                         mapped_with_overrides(hass, choice, entry.options), clash, choice=choice,
-                        origins=await _async_origins(hass, domains))
+                        origins=await _async_origins(hass, domains), target=target)
     except Exception as err:  # noqa: BLE001 — rekomendacja nie psuje sterowania ani opcji
         _LOGGER.warning("Volcast control: path recommendation failed (%s)", type(err).__name__)
         return None
@@ -432,6 +434,18 @@ def schedule_recommendation(hass, entry, rt: ControlRuntime) -> None:
     """Przeliczenie w tle wpisu (unload je anuluje) — sprawdzenie kolizji rozwiązuje nazwy hostów
     i nie może opóźniać wołającego."""
     entry.async_create_background_task(hass, async_update_recommendation(hass, entry, rt), "volcast_recommendation")
+
+
+def _configured_target(options: Mapping, conn) -> dict | None:
+    """Cel bezpośredni wpisu (tryb bezpośredni albo próba) ze znaną tożsamością — rekomendacja nie czeka
+    na sondę. Połączenie, które stwierdziło inne urządzenie pod adresem (`mismatch`), celu nie potwierdza."""
+    found = _direct_target(options)
+    if found is None or getattr(conn, "identity", None) == "mismatch":
+        return None
+    target = found[0]
+    if not target.get("profile_id") or not target.get("device_fp"):
+        return None
+    return {"profile_id": target["profile_id"], "device_fp": target["device_fp"], "host": target.get("host")}
 
 
 def _recommendation_probe(options: Mapping, reports):
@@ -887,7 +901,9 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     hass.async_create_background_task(executor.async_tick(), "volcast_first_tick")
     hass.async_create_background_task(_fetch(), "volcast_first_fetch")
     if conn is not None:
-        entry.async_create_background_task(hass, _async_start_direct(conn, executor), "volcast_direct_start")
+        entry.async_create_background_task(
+            hass, _async_start_direct(conn, executor, on_started=lambda: schedule_recommendation(hass, entry, rt)),
+            "volcast_direct_start")
     entry.async_create_background_task(
         hass, async_import_history_once(hass, cloud, executor, load_entity=opts.get(OPT_LOAD_ENERGY),
                                         pv_entity=opts.get(CONF_PV_ENERGY_ENTITY) or None,
@@ -896,8 +912,9 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     return rt
 
 
-async def _async_start_direct(conn, executor) -> None:
-    """Start połączenia w tle (kolizje, tożsamość), pierwszy odczyt i od razu cykl."""
+async def _async_start_direct(conn, executor, on_started: Callable[[], None] | None = None) -> None:
+    """Start połączenia w tle (kolizje, tożsamość), pierwszy odczyt i od razu cykl; potem `on_started`
+    (przeliczenie rekomendacji — po starcie `last_probe` jest pusty, a cel i tożsamość już znane)."""
     try:
         # Własność z wcześniejszej sesji: kolizja statyczna nie odcina powrotu do trybu bazowego.
         conn.allow_conflicted_restore = bool(getattr(executor, "owned", False))
@@ -907,6 +924,12 @@ async def _async_start_direct(conn, executor) -> None:
             await executor.async_tick()
     except Exception as err:  # noqa: BLE001 — połączenie nie psuje prognozy ani wpisu
         _LOGGER.warning("Volcast direct connection start failed (%s)", type(err).__name__)
+    if on_started is not None:
+        try:
+            on_started()
+        except Exception as err:  # noqa: BLE001 — rekomendacja nie psuje startu połączenia
+            _LOGGER.warning("Volcast control: recommendation after the direct start failed (%s)",
+                            type(err).__name__)
 
 
 async def _async_stop_signals(parts) -> None:

@@ -197,3 +197,61 @@ def test_recommendation_text_for_the_control_mode_step():
     assert ds.recommendation_text(Recommendation(UNSUPPORTED, "no_profile", 1)) == "recommended: unsupported"
     long = Recommendation(DIRECT, "identified", 1, device={"manufacturer": "X", "model": "M" * 300})
     assert len(ds.recommendation_text(long)) <= 200
+
+
+# ── wpis już w trybie bezpośrednim: tożsamość z celu w opcjach, bez sondy ──
+
+DIRECT_OPTIONS = {"control_mode": "direct",
+                  "direct_target": {"profile_id": "goodwe-et", "transport": "goodwe_udp", "host": "inverter.lan",
+                                    "port": 8899, "unit_id": 247, "device_fp": "abcd"}}
+BOX_REPORT = {"inverters": [{"domain": "goodwe", "host": "box.lan", "matched_by": "domain",
+                             "devices": [{"manufacturer": "GoodWe", "model": "GW-HUB"}]}]}
+
+
+def test_configured_direct_entry_recommends_direct_without_a_probe(sent, monkeypatch):
+    hosts = []
+
+    async def clash(hass, entry_id, host, **_kw):
+        hosts.append(host)
+        return ()
+    monkeypatch.setattr(ds, "async_clash", clash)
+    entry = SimpleNamespace(entry_id="e1", options=DIRECT_OPTIONS)
+    rt = _rt(BOX_REPORT)                     # po starcie: `last_probe` pusty, cel znany z opcji
+    rec = asyncio.run(rt_mod.async_update_recommendation(SimpleNamespace(data={}), entry, rt, [GOODWE]))
+    payload = rec.to_payload()
+    assert (payload["path"], payload["reason"], payload["ladder_start"]) == (DIRECT, "no_integration_identify_ok", 4)
+    assert "integration" not in payload and hosts == ["inverter.lan"]
+    assert "inverter.lan" not in str(payload)
+
+
+def test_identity_mismatch_of_the_running_connection_is_not_a_known_inverter(sent):
+    entry = SimpleNamespace(entry_id="e1", options=DIRECT_OPTIONS)
+    rt = _rt({"inverters": []})
+    rt.direct = SimpleNamespace(identity="mismatch")
+    rec = asyncio.run(rt_mod.async_update_recommendation(SimpleNamespace(data={}), entry, rt, [GOODWE]))
+    assert rec.path == UNSUPPORTED
+
+
+def test_direct_start_triggers_a_recompute():
+    calls = []
+
+    class Conn:
+        allow_conflicted_restore = False
+
+        async def async_start(self):
+            calls.append("start")
+
+        def refused(self):
+            return None
+
+        async def async_poll(self):
+            calls.append("poll")
+
+    class Exec:
+        owned = False
+
+        async def async_tick(self):
+            calls.append("tick")
+
+    asyncio.run(rt_mod._async_start_direct(Conn(), Exec(), on_started=lambda: calls.append("recommend")))
+    assert calls == ["start", "poll", "tick", "recommend"]

@@ -7,8 +7,10 @@ mapa encji wybranej integracji, kolizje statyczne adresu (domeny) i pochodzenie 
 
 Reguły (kolejność):
 1. integracja falownika z encją trybu (`mode` w mapie) → `entities`;
-2. falownik rozpoznany sondą: integracja TEGO falownika bez zapisu → `direct_with_integration_data`,
-   inaczej (brak integracji albo integracja innego urządzenia) → `direct`;
+   (chyba że wpis ma już skonfigurowany cel bezpośredni — wtedy pkt 2);
+2. falownik rozpoznany (skonfigurowany cel wpisu albo sonda): integracja TEGO falownika bez zapisu
+   → `direct_with_integration_data`, inaczej (brak integracji albo integracja innego urządzenia,
+   np. pod innym adresem) → `direct`;
 3. brak profilu → `unsupported` (`no_profile`); profil jest, ale nie ma ani encji trybu, ani
    rozpoznanego falownika → `unsupported` (`no_write_path`).
 
@@ -127,6 +129,39 @@ def _belongs(inv: Mapping, profile: Profile) -> bool:
                or (in_profile and _model_ok(profile, d.get("model"))) for d in _devices(inv))
 
 
+def _data_source(report: Mapping | None, profile: Profile, host: Any) -> Mapping | None:
+    """Integracja z raportu, która czyta TEN falownik. Znany adres falownika i adres wpisu integracji
+    rozstrzygają (integracja tej samej marki może wskazywać inne urządzenie, np. hub); bez adresu
+    po obu stronach — dopasowanie marki/modelu (`_belongs`)."""
+    for inv in _inverters(report):
+        if not isinstance(inv.get("domain"), str):
+            continue
+        inv_host = inv.get("host")
+        if isinstance(host, str) and host and isinstance(inv_host, str) and inv_host:
+            if inv_host.lower() == host.lower():
+                return inv
+        elif _belongs(inv, profile):
+            return inv
+    return None
+
+
+def _identified(profiles: Sequence[Profile], probe, target: Mapping | None):
+    """(profil, model, adres, cel skonfigurowany?) rozpoznanego falownika: skonfigurowany cel wpisu
+    (tożsamość potwierdzona przy konfiguracji) ma pierwszeństwo przed sondą; None, gdy brak."""
+    ident = getattr(probe, "identity", None)
+    if isinstance(target, Mapping) and target.get("profile_id") and target.get("device_fp"):
+        profile = next((p for p in profiles if p.id == target["profile_id"]), None)
+        if profile is not None:
+            same = ident is not None and ident.device_fp == target["device_fp"]
+            return profile, (ident.model if same else None), target.get("host"), True
+    if ident is not None:
+        profile = next((p for p in profiles if p.id == ident.profile_id), None)
+        if profile is not None:
+            host = getattr(getattr(probe, "candidate", None), "host", None)
+            return profile, ident.model, host, False
+    return None
+
+
 def _integration(domain: str, origins: Mapping[str, str]) -> dict:
     out = {"domain": domain, "name": INVERTER_DOMAINS.get(domain, domain)}
     if origins.get(domain) in ORIGINS:
@@ -139,39 +174,43 @@ def _report_device(inv: Mapping | None) -> dict | None:
     return {"manufacturer": dev.get("manufacturer"), "model": dev.get("model")} if dev else None
 
 
-def _probe_device(probe, profile: Profile) -> dict:
-    words = str(profile.raw.get("label") or "").split()
-    return {"manufacturer": words[0] if words else None, "model": probe.identity.model}
-
 
 def recommend(report: Mapping | None, profiles: Sequence[Profile], probe=None, offer: str | None = None,
               entity_map: Mapping[str, str] | None = None, conflicts: Sequence[str] = (), *,
-              choice: ProfileChoice | None = None, origins: Mapping[str, str] | None = None) -> Recommendation:
+              choice: ProfileChoice | None = None, origins: Mapping[str, str] | None = None,
+              target: Mapping | None = None) -> Recommendation:
     """Rekomendacja ścieżki; `choice` = wybór profilu, z którego pochodzi `entity_map`
-    (None → wybór ze wskazówek raportu, jak `select_profile`)."""
+    (None → wybór ze wskazówek raportu, jak `select_profile`). `target` = skonfigurowany cel
+    bezpośredni wpisu (`profile_id`, `device_fp`, `host`) — wpis już steruje tym falownikiem
+    bezpośrednio, więc ścieżka to `direct` (adres służy tylko do dopasowania integracji, nie trafia
+    do ładunku)."""
     if choice is None:
         choice = select_profile(hints_from_report(report), profiles)
     mapped = dict(entity_map or {})
     origins = origins or {}
     found = entry_conflicts(conflicts)
     domain = choice.integration_domain if choice is not None else None
+    known = _identified(profiles, probe, target)
 
-    if choice is not None and domain and mapped.get("mode"):
+    if choice is not None and domain and mapped.get("mode") and not (known and known[3]):
         inv = _report_inverter(report, domain)
         device = _report_device(inv) or ({"manufacturer": None, "model": choice.model} if choice.model else None)
         start = RUNG_CONTROL_WRITE if control_verified(choice.profile, domain) else RUNG_IDENTIFY
         return Recommendation(ENTITIES, INTEGRATION_WRITE_ENTITIES, start, _integration(domain, origins),
                               device, tuple(sorted(mapped.items())), found)
 
-    ident = getattr(probe, "identity", None)
-    probe_profile = next((p for p in profiles if ident is not None and p.id == ident.profile_id), None)
-    if probe_profile is not None:
-        ready = offer is None and direct_verified(probe_profile) and bool(probe.direct_available)
+    if known is not None:
+        probe_profile, model, host, configured = known
+        if configured:
+            # Tożsamość potwierdzona przy konfiguracji; szczebel startowy jak w drabinie wpisu (profil).
+            ready = direct_verified(probe_profile)
+        else:
+            ready = offer is None and direct_verified(probe_profile) and bool(probe.direct_available)
         start = RUNG_CONTROL_WRITE if ready else RUNG_IDENTIFY
-        device = _probe_device(probe, probe_profile)
-        inv = next((i for i in _inverters(report) if isinstance(i.get("domain"), str) and _belongs(i, probe_profile)),
-                   None)
-        if inv is None and choice is not None and domain and choice.profile.id == probe_profile.id:
+        words = str(probe_profile.raw.get("label") or "").split()
+        device = {"manufacturer": words[0] if words else None, "model": model}
+        inv = _data_source(report, probe_profile, host)
+        if inv is None and not host and choice is not None and domain and choice.profile.id == probe_profile.id:
             inv = _report_inverter(report, domain) or {"domain": domain}
         if inv is not None:
             return Recommendation(DIRECT_WITH_INTEGRATION_DATA, INTEGRATION_READ_ONLY, start,
