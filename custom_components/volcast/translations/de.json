@@ -125,7 +125,7 @@
       },
       "control": {
         "title": "Wechselrichter-Steuerung",
-        "description": "Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungs-Entitäten des Wechselrichters. Direkt — Volcast spricht den Wechselrichter über das lokale Netzwerk an; nur verfügbar für Wechselrichter mit geprüfter Direktsteuerung und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Anlagendetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
+        "description": "Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungsentitäten des Wechselrichters. Direkt — Volcast spricht über das lokale Netzwerk mit dem Wechselrichter; verfügbar nur für Wechselrichter, deren direkte Steuerung geprüft ist, und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Installationsdetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk",
@@ -219,7 +219,7 @@
       },
       "control_integration_write_entities": {
         "title": "Wechselrichter-Steuerung",
-        "description": "Empfohlen: Die Wechselrichter-Integration kann Einstellungen schreiben, daher nutzt Volcast ihre Entitäten. Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungs-Entitäten des Wechselrichters. Direkt — Volcast spricht den Wechselrichter über das lokale Netzwerk an; nur verfügbar für Wechselrichter mit geprüfter Direktsteuerung und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Anlagendetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
+        "description": "Empfohlen: Die Wechselrichter-Integration kann die Einstellungen des Wechselrichters schreiben, daher nutzt Volcast deren Entitäten. Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungsentitäten des Wechselrichters. Direkt — Volcast spricht über das lokale Netzwerk mit dem Wechselrichter; verfügbar nur für Wechselrichter, deren direkte Steuerung geprüft ist, und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Installationsdetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten) (empfohlen)",
           "control_direct": "Direkt über das lokale Netzwerk",
@@ -229,7 +229,7 @@
       },
       "control_no_integration_identify_ok": {
         "title": "Wechselrichter-Steuerung",
-        "description": "Empfohlen: Der Wechselrichter wurde erkannt und Volcast erreicht ihn direkt, während keine Integration Schreiben anbietet. Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungs-Entitäten des Wechselrichters. Direkt — Volcast spricht den Wechselrichter über das lokale Netzwerk an; nur verfügbar für Wechselrichter mit geprüfter Direktsteuerung und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Anlagendetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
+        "description": "Empfohlen: Der Wechselrichter wurde erkannt und Volcast erreicht ihn direkt, aber keine Integration bietet Schreibzugriff an. Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungsentitäten des Wechselrichters. Direkt — Volcast spricht über das lokale Netzwerk mit dem Wechselrichter; verfügbar nur für Wechselrichter, deren direkte Steuerung geprüft ist, und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Installationsdetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk (empfohlen)",
@@ -239,7 +239,7 @@
       },
       "control_integration_read_only": {
         "title": "Wechselrichter-Steuerung",
-        "description": "Empfohlen: Die Wechselrichter-Integration liest nur Daten, daher steuert Volcast den Wechselrichter direkt. Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungs-Entitäten des Wechselrichters. Direkt — Volcast spricht den Wechselrichter über das lokale Netzwerk an; nur verfügbar für Wechselrichter mit geprüfter Direktsteuerung und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Anlagendetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
+        "description": "Empfohlen: Die Wechselrichter-Integration liest nur Daten, daher steuert Volcast den Wechselrichter direkt. Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungsentitäten des Wechselrichters. Direkt — Volcast spricht über das lokale Netzwerk mit dem Wechselrichter; verfügbar nur für Wechselrichter, deren direkte Steuerung geprüft ist, und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Installationsdetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk (empfohlen)",
@@ -249,7 +249,7 @@
       },
       "control_unsupported": {
         "title": "Wechselrichter-Steuerung",
-        "description": "Für diesen Wechselrichter wurde automatisch kein sicherer Steuerungsweg gefunden, daher wird nichts empfohlen. Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungs-Entitäten des Wechselrichters. Direkt — Volcast spricht den Wechselrichter über das lokale Netzwerk an; nur verfügbar für Wechselrichter mit geprüfter Direktsteuerung und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Anlagendetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
+        "description": "Für diesen Wechselrichter wurde automatisch kein sicherer Steuerungsweg gefunden, daher wird nichts empfohlen. Über die Wechselrichter-Integration — Volcast schreibt die Modus- und Leistungsentitäten des Wechselrichters. Direkt — Volcast spricht über das lokale Netzwerk mit dem Wechselrichter; verfügbar nur für Wechselrichter, deren direkte Steuerung geprüft ist, und wenn keine andere Integration den Wechselrichter nutzt (suche ihn zuerst unter Installationsdetails). Die Steuerung braucht außerdem den Schalter in Home Assistant und deine Zustimmung in der Volcast-App.",
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk",
@@ -259,27 +259,27 @@
       },
       "entity_map": {
         "title": "Wechselrichter-Entitäten",
-        "description": "Wähle die Entität, die Volcast für jede Wechselrichter-Einstellung verwendet. Lass ein Feld unverändert, um die automatische Zuordnung zu behalten.",
+        "description": "Wähle die Entität, die Volcast für jede Wechselrichter-Einstellung verwendet. Lass ein Feld wie vorgeschlagen, um die automatische Zuordnung beizubehalten.",
         "data": {
-          "mode": "Operating mode",
-          "mode_value": "Operating mode value",
-          "power_w": "Charge/discharge power limit",
-          "soc": "Battery state of charge",
-          "soc_min": "Minimum state of charge",
-          "soc_max": "Maximum state of charge",
-          "export_limit_enabled": "Export limit switch",
-          "export_limit_w": "Export limit",
-          "active_power_w": "Inverter active power",
-          "battery_current_a": "Battery current",
-          "battery_power_w": "Battery power",
-          "battery_temp_c": "Battery temperature",
-          "battery_voltage_v": "Battery voltage",
-          "grid_export_total_kwh": "Grid export total",
-          "grid_import_total_kwh": "Grid import total",
-          "grid_power_w": "Grid power",
-          "load_power_w": "House load",
-          "pv_energy_total_kwh": "PV energy total",
-          "pv_power_w": "PV power"
+          "mode": "Betriebsmodus",
+          "mode_value": "Wert des Betriebsmodus",
+          "power_w": "Grenzwert für Lade-/Entladeleistung",
+          "soc": "Ladezustand der Batterie",
+          "soc_min": "Minimaler Ladezustand",
+          "soc_max": "Maximaler Ladezustand",
+          "export_limit_enabled": "Schalter für Einspeisebegrenzung",
+          "export_limit_w": "Einspeisebegrenzung",
+          "active_power_w": "Wirkleistung des Wechselrichters",
+          "battery_current_a": "Batteriestrom",
+          "battery_power_w": "Batterieleistung",
+          "battery_temp_c": "Batterietemperatur",
+          "battery_voltage_v": "Batteriespannung",
+          "grid_export_total_kwh": "Netzeinspeisung gesamt",
+          "grid_import_total_kwh": "Netzbezug gesamt",
+          "grid_power_w": "Netzleistung",
+          "load_power_w": "Hausverbrauch",
+          "pv_energy_total_kwh": "PV-Energie gesamt",
+          "pv_power_w": "PV-Leistung"
         }
       }
     },
@@ -340,8 +340,8 @@
       "description": "Die Wechselrichter-Steuerung von Volcast funktioniert nicht mehr (wiederholte Schreibfehler oder ein gespeicherter Steuerungszustand, der nicht gelesen werden konnte). Der Wechselrichter nutzt möglicherweise noch die letzten von Volcast angewendeten Einstellungen. Prüfe die Einstellungen des Wechselrichters und die Home-Assistant-Logs."
     },
     "control_choice_failed": {
-      "title": "Volcast konnte Ihre Steuerungswahl nicht anwenden",
-      "description": "Eine in der Volcast-App getroffene Steuerungswahl konnte nach mehreren Versuchen nicht angewendet werden. Prüfen Sie die Steuerungseinstellungen in den Volcast-Optionen und die Home-Assistant-Protokolle und wählen Sie dann erneut in der App."
+      "title": "Volcast konnte deine Steuerungswahl nicht anwenden",
+      "description": "Eine in der Volcast-App getroffene Steuerungswahl konnte nach mehreren Versuchen nicht angewendet werden. Prüfe die Steuerungseinstellungen in den Volcast-Optionen und die Home-Assistant-Logs und wähle dann erneut in der App."
     },
     "foreign_control_direct": {
       "title": "Wechselrichter-Steuerung durch Volcast pausiert",
@@ -377,7 +377,7 @@
     },
     "controller_conflict": {
       "title": "Ein anderer Regler steuert deinen Wechselrichter",
-      "description": "Ein anderer Regler ({kind}: {label}) schreibt dieselben Wechselrichter-Einstellungen wie Volcast. Wähle Beheben, um zu entscheiden, wer den Wechselrichter steuert: Volcast oder dein eigener Regler (Volcast plant dann nur).",
+      "description": "Ein anderer Regler ({kind}: {label}) schreibt dieselben Wechselrichter-Einstellungen wie Volcast. Wähle Beheben, um festzulegen, wer den Wechselrichter steuert: Volcast oder dein eigener Regler (Volcast plant dann nur).",
       "fix_flow": {
         "step": {
           "init": {
@@ -397,7 +397,7 @@
     },
     "verification_stopped": {
       "title": "Volcast-Geräteprüfung gestoppt",
-      "description": "Die Prüfung des Wechselrichters wurde gestoppt ({reason}). Volcast steuert den Wechselrichter erst nach erfolgreicher Prüfung. Wähle Beheben, um es erneut zu versuchen.",
+      "description": "Die Prüfung des Wechselrichters wurde gestoppt ({reason}). Volcast steuert den Wechselrichter erst, wenn er geprüft ist. Wähle Beheben, um es erneut zu versuchen.",
       "fix_flow": {
         "step": {
           "confirm": {

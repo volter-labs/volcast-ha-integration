@@ -125,12 +125,12 @@
       },
       "control": {
         "title": "Řízení střídače",
-        "description": "Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače s ověřeným přímým řízením a když střídač nepoužívá žádná jiná integrace (nejprve ho vyhledejte v Podrobnostech o instalaci). Řízení vyžaduje také přepínač v Home Assistantu a váš souhlas v aplikaci Volcast.",
+        "description": "Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače, jejichž přímé řízení je ověřeno, a pokud střídač nepoužívá jiná integrace (nejprve jej vyhledejte v Podrobnostech instalace). Řízení také vyžaduje přepínač v Home Assistant a váš souhlas v aplikaci Volcast.",
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity)",
           "control_direct": "Přímo přes místní síť",
-          "control_off": "Vypnuto — pouze předpověď a monitorování",
-          "entity_map": "Vybrat entity střídače ručně"
+          "control_off": "Vypnuto — pouze předpověď a sledování",
+          "entity_map": "Ručně vybrat entity střídače"
         }
       },
       "details": {
@@ -219,67 +219,67 @@
       },
       "control_integration_write_entities": {
         "title": "Řízení střídače",
-        "description": "Doporučeno: integrace střídače umí zapisovat jeho nastavení, proto Volcast používá její entity. Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače s ověřeným přímým řízením a když střídač nepoužívá žádná jiná integrace (nejprve ho vyhledejte v Podrobnostech o instalaci). Řízení vyžaduje také přepínač v Home Assistantu a váš souhlas v aplikaci Volcast.",
+        "description": "Doporučeno: vaše integrace střídače může zapisovat nastavení střídače, takže Volcast použije její entity. Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače, jejichž přímé řízení je ověřeno, a pokud střídač nepoužívá jiná integrace (nejprve jej vyhledejte v Podrobnostech instalace). Řízení také vyžaduje přepínač v Home Assistant a váš souhlas v aplikaci Volcast.",
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity) (doporučeno)",
           "control_direct": "Přímo přes místní síť",
-          "control_off": "Vypnuto — pouze předpověď a monitorování",
-          "entity_map": "Vybrat entity střídače ručně"
+          "control_off": "Vypnuto — pouze předpověď a sledování",
+          "entity_map": "Ručně vybrat entity střídače"
         }
       },
       "control_no_integration_identify_ok": {
         "title": "Řízení střídače",
-        "description": "Doporučeno: střídač byl rozpoznán a Volcast se k němu dostane přímo, zatímco žádná integrace zápis nenabízí. Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače s ověřeným přímým řízením a když střídač nepoužívá žádná jiná integrace (nejprve ho vyhledejte v Podrobnostech o instalaci). Řízení vyžaduje také přepínač v Home Assistantu a váš souhlas v aplikaci Volcast.",
+        "description": "Doporučeno: střídač byl rozpoznán a Volcast se k němu dostane přímo, ale žádná integrace nenabízí zápis. Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače, jejichž přímé řízení je ověřeno, a pokud střídač nepoužívá jiná integrace (nejprve jej vyhledejte v Podrobnostech instalace). Řízení také vyžaduje přepínač v Home Assistant a váš souhlas v aplikaci Volcast.",
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity)",
           "control_direct": "Přímo přes místní síť (doporučeno)",
-          "control_off": "Vypnuto — pouze předpověď a monitorování",
-          "entity_map": "Vybrat entity střídače ručně"
+          "control_off": "Vypnuto — pouze předpověď a sledování",
+          "entity_map": "Ručně vybrat entity střídače"
         }
       },
       "control_integration_read_only": {
         "title": "Řízení střídače",
-        "description": "Doporučeno: integrace střídače pouze čte data, proto Volcast řídí střídač přímo. Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače s ověřeným přímým řízením a když střídač nepoužívá žádná jiná integrace (nejprve ho vyhledejte v Podrobnostech o instalaci). Řízení vyžaduje také přepínač v Home Assistantu a váš souhlas v aplikaci Volcast.",
+        "description": "Doporučeno: vaše integrace střídače pouze čte data, takže Volcast střídač řídí přímo. Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače, jejichž přímé řízení je ověřeno, a pokud střídač nepoužívá jiná integrace (nejprve jej vyhledejte v Podrobnostech instalace). Řízení také vyžaduje přepínač v Home Assistant a váš souhlas v aplikaci Volcast.",
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity)",
           "control_direct": "Přímo přes místní síť (doporučeno)",
-          "control_off": "Vypnuto — pouze předpověď a monitorování",
-          "entity_map": "Vybrat entity střídače ručně"
+          "control_off": "Vypnuto — pouze předpověď a sledování",
+          "entity_map": "Ručně vybrat entity střídače"
         }
       },
       "control_unsupported": {
         "title": "Řízení střídače",
-        "description": "Pro tento střídač nebyla automaticky nalezena bezpečná cesta řízení, proto se nic nedoporučuje. Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače s ověřeným přímým řízením a když střídač nepoužívá žádná jiná integrace (nejprve ho vyhledejte v Podrobnostech o instalaci). Řízení vyžaduje také přepínač v Home Assistantu a váš souhlas v aplikaci Volcast.",
+        "description": "Pro tento střídač nebyla automaticky nalezena žádná bezpečná cesta řízení, proto se nic nedoporučuje. Přes integraci střídače — Volcast zapisuje entity režimu a výkonu střídače. Přímo — Volcast komunikuje se střídačem přes místní síť; dostupné jen pro střídače, jejichž přímé řízení je ověřeno, a pokud střídač nepoužívá jiná integrace (nejprve jej vyhledejte v Podrobnostech instalace). Řízení také vyžaduje přepínač v Home Assistant a váš souhlas v aplikaci Volcast.",
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity)",
           "control_direct": "Přímo přes místní síť",
-          "control_off": "Vypnuto — pouze předpověď a monitorování",
-          "entity_map": "Vybrat entity střídače ručně"
+          "control_off": "Vypnuto — pouze předpověď a sledování",
+          "entity_map": "Ručně vybrat entity střídače"
         }
       },
       "entity_map": {
         "title": "Entity střídače",
-        "description": "Vyberte entitu, kterou Volcast používá pro každé nastavení střídače. Ponechte pole beze změny, aby zůstalo automatické přiřazení.",
+        "description": "Vyberte entitu, kterou Volcast použije pro každé nastavení střídače. Ponechte pole tak, jak je navrženo, pro zachování automatického párování.",
         "data": {
-          "mode": "Operating mode",
-          "mode_value": "Operating mode value",
-          "power_w": "Charge/discharge power limit",
-          "soc": "Battery state of charge",
-          "soc_min": "Minimum state of charge",
-          "soc_max": "Maximum state of charge",
-          "export_limit_enabled": "Export limit switch",
-          "export_limit_w": "Export limit",
-          "active_power_w": "Inverter active power",
-          "battery_current_a": "Battery current",
-          "battery_power_w": "Battery power",
-          "battery_temp_c": "Battery temperature",
-          "battery_voltage_v": "Battery voltage",
-          "grid_export_total_kwh": "Grid export total",
-          "grid_import_total_kwh": "Grid import total",
-          "grid_power_w": "Grid power",
-          "load_power_w": "House load",
-          "pv_energy_total_kwh": "PV energy total",
-          "pv_power_w": "PV power"
+          "mode": "Provozní režim",
+          "mode_value": "Hodnota provozního režimu",
+          "power_w": "Limit výkonu nabíjení/vybíjení",
+          "soc": "Stav nabití baterie",
+          "soc_min": "Minimální stav nabití",
+          "soc_max": "Maximální stav nabití",
+          "export_limit_enabled": "Přepínač limitu přetoku",
+          "export_limit_w": "Limit přetoku",
+          "active_power_w": "Činný výkon střídače",
+          "battery_current_a": "Proud baterie",
+          "battery_power_w": "Výkon baterie",
+          "battery_temp_c": "Teplota baterie",
+          "battery_voltage_v": "Napětí baterie",
+          "grid_export_total_kwh": "Celkový přetok do sítě",
+          "grid_import_total_kwh": "Celkový odběr ze sítě",
+          "grid_power_w": "Výkon sítě",
+          "load_power_w": "Spotřeba domu",
+          "pv_energy_total_kwh": "Celková energie FVE",
+          "pv_power_w": "Výkon FVE"
         }
       }
     },
@@ -340,8 +340,8 @@
       "description": "Řízení střídače přes Volcast přestalo fungovat (opakované chyby zápisu nebo uložený stav řízení, který nešlo přečíst). Střídač může stále používat poslední nastavení použitá Volcastem. Zkontrolujte nastavení střídače a protokoly Home Assistantu."
     },
     "control_choice_failed": {
-      "title": "Volcast nemohl použít vaši volbu řízení",
-      "description": "Volbu řízení provedenou v aplikaci Volcast se po několika pokusech nepodařilo použít. Zkontrolujte nastavení řízení v možnostech Volcast a protokoly Home Assistant a poté zvolte znovu v aplikaci."
+      "title": "Volcast nemohl uplatnit vaši volbu řízení",
+      "description": "Volba řízení provedená v aplikaci Volcast se po několika pokusech nepodařila uplatnit. Zkontrolujte nastavení řízení v možnostech Volcast a v protokolech Home Assistant a poté volbu v aplikaci zopakujte."
     },
     "foreign_control_direct": {
       "title": "Řízení střídače přes Volcast je pozastaveno",
@@ -376,33 +376,33 @@
       "description": "Volcast nemůže tato nastavení střídače používat, protože jejich entity chybí, jsou vypnuté nebo nedostupné: {entities}. Řízení pokračuje bez nich a plán Volcast se na ně už nespoléhá. Jakmile budou entity opět dostupné, Volcast je použije automaticky."
     },
     "controller_conflict": {
-      "title": "Střídač řídí jiný ovladač",
-      "description": "Jiný ovladač ({kind}: {label}) zapisuje stejná nastavení střídače jako Volcast. Vyberte Opravit a rozhodněte, kdo střídač řídí: Volcast, nebo váš vlastní ovladač (Volcast pak jen plánuje).",
+      "title": "Jiný regulátor řídí váš střídač",
+      "description": "Jiný regulátor ({kind}: {label}) zapisuje do stejných nastavení střídače jako Volcast. Vyberte Opravit a rozhodněte, kdo střídač řídí: Volcast, nebo váš vlastní regulátor (Volcast pak pouze plánuje).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Kdo řídí střídač?",
-            "description": "Dokud zapisuje jiný ovladač, Volcast ověřování pozastaví. Vyberte, kdo střídač řídí.",
+            "description": "Dokud jiný regulátor zapisuje, Volcast ověřování pozastavuje. Vyberte, který z nich střídač řídí.",
             "menu_options": {
               "volcast": "Střídač řídí Volcast",
-              "own_ems": "Můj vlastní ovladač (Volcast jen plánuje)"
+              "own_ems": "Můj vlastní regulátor (Volcast pouze plánuje)"
             }
           }
         },
         "abort": {
           "not_loaded": "Řízení Volcast neběží. Znovu načtěte integraci a zkuste to znovu.",
-          "restore_failed": "Volcast nemohl vrátit střídač do základního stavu, proto se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný."
+          "restore_failed": "Volcast nemohl vrátit střídač do původního stavu, takže nic nebylo změněno. Zkuste to znovu, až bude střídač dostupný."
         }
       }
     },
     "verification_stopped": {
-      "title": "Ověřování zařízení Volcast se zastavilo",
-      "description": "Ověřování střídače se zastavilo ({reason}). Volcast střídač neřídí, dokud není ověřen. Vyberte Opravit a zkuste to znovu.",
+      "title": "Ověřování zařízení Volcast bylo zastaveno",
+      "description": "Ověřování střídače bylo zastaveno ({reason}). Volcast střídač neřídí, dokud není ověřen. Vyberte Opravit a zkuste to znovu.",
       "fix_flow": {
         "step": {
           "confirm": {
-            "title": "Zopakovat ověření",
-            "description": "Volcast znovu spustí ověřování střídače od kroku, na kterém se zastavilo."
+            "title": "Zopakovat ověřování",
+            "description": "Volcast restartuje ověřování střídače od kroku, na kterém se zastavilo."
           }
         }
       }
@@ -522,7 +522,7 @@
         "name": "Vypršení časových limitů spojení se střídačem"
       },
       "verification": {
-        "name": "Ověření zařízení"
+        "name": "Ověřování zařízení"
       }
     },
     "binary_sensor": {

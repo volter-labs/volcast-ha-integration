@@ -31,6 +31,27 @@ file in `profiles/` automatically.
 
 New profiles are always `draft` with a `status_note` (section 8).
 
+### Where the verification ladder starts
+
+The status only sets the rung where the per-device verification ladder starts:
+
+* `draft` — the ladder starts at identification and reading and runs through the read-only trial
+  (it counts the writes it would have made; nothing reaches the inverter).
+* `verified` — the ladder starts at the control write (the current value is re-written and confirmed
+  by read-back).
+
+An optional top-level `verification` block sets the ladder's parameters. Every key is optional and
+must lie within its range:
+
+* `trial_hours` — 1 to 72, the length of the read-only trial.
+* `window_minutes` — 5 to 60, the length of the short test window.
+* `window_power_w` — 100 to 3000, the power of the test window.
+
+Vendor features the schema cannot express yet are listed in `engine-gaps.md`. For a profile that
+depends on one of them, the ladder ends at the control write instead of the test window. Two rows were
+added for this: "Test window without a guarded forced grid charge" and "Test window for time-window
+profiles".
+
 ## 3. Top-level keys
 
 All of these are required: `schema_version` (always `1`), `id`, `label`, `status`,

@@ -125,12 +125,12 @@
       },
       "control": {
         "title": "Control del inversor",
-        "description": "A través de la integración de tu inversor: Volcast escribe las entidades de modo y potencia del inversor. Directamente: Volcast se comunica con el inversor por la red local; disponible solo para inversores con control directo verificado y cuando ninguna otra integración usa el inversor (búscalo primero en Detalles de la instalación). El control también necesita el interruptor en Home Assistant y tu consentimiento en la aplicación de Volcast.",
+        "description": "A través de la integración del inversor — Volcast escribe las entidades de modo y potencia del inversor. Directamente — Volcast se comunica con el inversor por la red local; disponible solo para inversores cuyo control directo esté verificado y cuando ninguna otra integración use el inversor (búscalo primero en Detalles de la instalación). El control también requiere el interruptor en Home Assistant y tu consentimiento en la app de Volcast.",
         "menu_options": {
           "control_entities": "A través de la integración del inversor (entidades)",
           "control_direct": "Directamente por la red local",
-          "control_off": "Desactivado: solo previsión y monitorización",
-          "entity_map": "Elegir las entidades del inversor manualmente"
+          "control_off": "Apagado — solo previsión y monitorización",
+          "entity_map": "Elegir manualmente las entidades del inversor"
         }
       },
       "details": {
@@ -219,67 +219,67 @@
       },
       "control_integration_write_entities": {
         "title": "Control del inversor",
-        "description": "Recomendado: la integración del inversor puede escribir sus ajustes, así que Volcast usa sus entidades. A través de la integración de tu inversor: Volcast escribe las entidades de modo y potencia del inversor. Directamente: Volcast se comunica con el inversor por la red local; disponible solo para inversores con control directo verificado y cuando ninguna otra integración usa el inversor (búscalo primero en Detalles de la instalación). El control también necesita el interruptor en Home Assistant y tu consentimiento en la aplicación de Volcast.",
+        "description": "Recomendado: tu integración del inversor puede escribir los ajustes del inversor, así que Volcast usa sus entidades. A través de la integración del inversor — Volcast escribe las entidades de modo y potencia del inversor. Directamente — Volcast se comunica con el inversor por la red local; disponible solo para inversores cuyo control directo esté verificado y cuando ninguna otra integración use el inversor (búscalo primero en Detalles de la instalación). El control también requiere el interruptor en Home Assistant y tu consentimiento en la app de Volcast.",
         "menu_options": {
           "control_entities": "A través de la integración del inversor (entidades) (recomendado)",
           "control_direct": "Directamente por la red local",
-          "control_off": "Desactivado: solo previsión y monitorización",
-          "entity_map": "Elegir las entidades del inversor manualmente"
+          "control_off": "Apagado — solo previsión y monitorización",
+          "entity_map": "Elegir manualmente las entidades del inversor"
         }
       },
       "control_no_integration_identify_ok": {
         "title": "Control del inversor",
-        "description": "Recomendado: el inversor se identificó y Volcast lo alcanza directamente, mientras ninguna integración ofrece escritura. A través de la integración de tu inversor: Volcast escribe las entidades de modo y potencia del inversor. Directamente: Volcast se comunica con el inversor por la red local; disponible solo para inversores con control directo verificado y cuando ninguna otra integración usa el inversor (búscalo primero en Detalles de la instalación). El control también necesita el interruptor en Home Assistant y tu consentimiento en la aplicación de Volcast.",
+        "description": "Recomendado: el inversor se ha identificado y Volcast puede acceder a él directamente, pero ninguna integración ofrece escritura. A través de la integración del inversor — Volcast escribe las entidades de modo y potencia del inversor. Directamente — Volcast se comunica con el inversor por la red local; disponible solo para inversores cuyo control directo esté verificado y cuando ninguna otra integración use el inversor (búscalo primero en Detalles de la instalación). El control también requiere el interruptor en Home Assistant y tu consentimiento en la app de Volcast.",
         "menu_options": {
           "control_entities": "A través de la integración del inversor (entidades)",
           "control_direct": "Directamente por la red local (recomendado)",
-          "control_off": "Desactivado: solo previsión y monitorización",
-          "entity_map": "Elegir las entidades del inversor manualmente"
+          "control_off": "Apagado — solo previsión y monitorización",
+          "entity_map": "Elegir manualmente las entidades del inversor"
         }
       },
       "control_integration_read_only": {
         "title": "Control del inversor",
-        "description": "Recomendado: la integración del inversor solo lee datos, así que Volcast controla el inversor directamente. A través de la integración de tu inversor: Volcast escribe las entidades de modo y potencia del inversor. Directamente: Volcast se comunica con el inversor por la red local; disponible solo para inversores con control directo verificado y cuando ninguna otra integración usa el inversor (búscalo primero en Detalles de la instalación). El control también necesita el interruptor en Home Assistant y tu consentimiento en la aplicación de Volcast.",
+        "description": "Recomendado: tu integración del inversor solo lee datos, así que Volcast controla el inversor directamente. A través de la integración del inversor — Volcast escribe las entidades de modo y potencia del inversor. Directamente — Volcast se comunica con el inversor por la red local; disponible solo para inversores cuyo control directo esté verificado y cuando ninguna otra integración use el inversor (búscalo primero en Detalles de la instalación). El control también requiere el interruptor en Home Assistant y tu consentimiento en la app de Volcast.",
         "menu_options": {
           "control_entities": "A través de la integración del inversor (entidades)",
           "control_direct": "Directamente por la red local (recomendado)",
-          "control_off": "Desactivado: solo previsión y monitorización",
-          "entity_map": "Elegir las entidades del inversor manualmente"
+          "control_off": "Apagado — solo previsión y monitorización",
+          "entity_map": "Elegir manualmente las entidades del inversor"
         }
       },
       "control_unsupported": {
         "title": "Control del inversor",
-        "description": "No se encontró automáticamente una vía de control segura para este inversor, así que no se recomienda nada. A través de la integración de tu inversor: Volcast escribe las entidades de modo y potencia del inversor. Directamente: Volcast se comunica con el inversor por la red local; disponible solo para inversores con control directo verificado y cuando ninguna otra integración usa el inversor (búscalo primero en Detalles de la instalación). El control también necesita el interruptor en Home Assistant y tu consentimiento en la aplicación de Volcast.",
+        "description": "No se encontró automáticamente ninguna vía de control segura para este inversor, así que no se recomienda ninguna. A través de la integración del inversor — Volcast escribe las entidades de modo y potencia del inversor. Directamente — Volcast se comunica con el inversor por la red local; disponible solo para inversores cuyo control directo esté verificado y cuando ninguna otra integración use el inversor (búscalo primero en Detalles de la instalación). El control también requiere el interruptor en Home Assistant y tu consentimiento en la app de Volcast.",
         "menu_options": {
           "control_entities": "A través de la integración del inversor (entidades)",
           "control_direct": "Directamente por la red local",
-          "control_off": "Desactivado: solo previsión y monitorización",
-          "entity_map": "Elegir las entidades del inversor manualmente"
+          "control_off": "Apagado — solo previsión y monitorización",
+          "entity_map": "Elegir manualmente las entidades del inversor"
         }
       },
       "entity_map": {
         "title": "Entidades del inversor",
-        "description": "Elige la entidad que Volcast usa para cada ajuste del inversor. Deja un campo sin cambios para mantener la asignación automática.",
+        "description": "Elige la entidad que usa Volcast para cada ajuste del inversor. Deja un campo como se sugiere para mantener la coincidencia automática.",
         "data": {
-          "mode": "Operating mode",
-          "mode_value": "Operating mode value",
-          "power_w": "Charge/discharge power limit",
-          "soc": "Battery state of charge",
-          "soc_min": "Minimum state of charge",
-          "soc_max": "Maximum state of charge",
-          "export_limit_enabled": "Export limit switch",
-          "export_limit_w": "Export limit",
-          "active_power_w": "Inverter active power",
-          "battery_current_a": "Battery current",
-          "battery_power_w": "Battery power",
-          "battery_temp_c": "Battery temperature",
-          "battery_voltage_v": "Battery voltage",
-          "grid_export_total_kwh": "Grid export total",
-          "grid_import_total_kwh": "Grid import total",
-          "grid_power_w": "Grid power",
-          "load_power_w": "House load",
-          "pv_energy_total_kwh": "PV energy total",
-          "pv_power_w": "PV power"
+          "mode": "Modo de funcionamiento",
+          "mode_value": "Valor del modo de funcionamiento",
+          "power_w": "Límite de potencia de carga/descarga",
+          "soc": "Estado de carga de la batería",
+          "soc_min": "Estado de carga mínimo",
+          "soc_max": "Estado de carga máximo",
+          "export_limit_enabled": "Interruptor del límite de exportación",
+          "export_limit_w": "Límite de exportación",
+          "active_power_w": "Potencia activa del inversor",
+          "battery_current_a": "Corriente de la batería",
+          "battery_power_w": "Potencia de la batería",
+          "battery_temp_c": "Temperatura de la batería",
+          "battery_voltage_v": "Tensión de la batería",
+          "grid_export_total_kwh": "Exportación total a la red",
+          "grid_import_total_kwh": "Importación total de la red",
+          "grid_power_w": "Potencia de red",
+          "load_power_w": "Consumo de la casa",
+          "pv_energy_total_kwh": "Energía FV total",
+          "pv_power_w": "Potencia FV"
         }
       }
     },
@@ -341,7 +341,7 @@
     },
     "control_choice_failed": {
       "title": "Volcast no pudo aplicar tu elección de control",
-      "description": "Una elección de control hecha en la app de Volcast no se pudo aplicar tras varios intentos. Revisa los ajustes de control en las opciones de Volcast y los registros de Home Assistant, y vuelve a elegir en la app."
+      "description": "La elección de control hecha en la app de Volcast no se pudo aplicar tras varios intentos. Revisa los ajustes de control en las opciones de Volcast y los registros de Home Assistant, y luego elige de nuevo en la app."
     },
     "foreign_control_direct": {
       "title": "Control del inversor por Volcast en pausa",
@@ -376,13 +376,13 @@
       "description": "Volcast no puede usar estos ajustes del inversor porque sus entidades faltan, están desactivadas o no están disponibles: {entities}. El control continúa sin ellos y el plan de Volcast ya no depende de ellos. Cuando las entidades vuelvan a estar disponibles, Volcast las usará automáticamente."
     },
     "controller_conflict": {
-      "title": "Otro controlador controla tu inversor",
-      "description": "Otro controlador ({kind}: {label}) escribe en los mismos ajustes del inversor que Volcast. Selecciona Reparar para decidir quién controla el inversor: Volcast o tu propio controlador (Volcast solo planifica).",
+      "title": "Otro controlador está controlando tu inversor",
+      "description": "Otro controlador ({kind}: {label}) escribe en los mismos ajustes del inversor que Volcast. Selecciona Corregir para elegir quién controla el inversor: Volcast, o tu propio controlador (entonces Volcast solo planifica).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "¿Quién controla el inversor?",
-            "description": "Mientras otro controlador escribe, Volcast pausa la verificación. Elige quién controla el inversor.",
+            "description": "Mientras otro controlador escribe, Volcast pausa la verificación. Elige cuál controla el inversor.",
             "menu_options": {
               "volcast": "Volcast controla el inversor",
               "own_ems": "Mi propio controlador (Volcast solo planifica)"
@@ -391,13 +391,13 @@
         },
         "abort": {
           "not_loaded": "El control de Volcast no está en marcha. Recarga la integración e inténtalo de nuevo.",
-          "restore_failed": "Volcast no pudo devolver el inversor a su estado base, así que no se cambió nada. Inténtalo de nuevo cuando el inversor sea accesible."
+          "restore_failed": "Volcast no pudo devolver el inversor a su estado inicial, así que no se cambió nada. Inténtalo de nuevo cuando el inversor sea accesible."
         }
       }
     },
     "verification_stopped": {
       "title": "Verificación del dispositivo de Volcast detenida",
-      "description": "La verificación del inversor se detuvo ({reason}). Volcast no controla el inversor hasta que se verifique. Selecciona Reparar para reintentar.",
+      "description": "La verificación del inversor se detuvo ({reason}). Volcast no controla el inversor hasta que esté verificado. Selecciona Corregir para volver a intentarlo.",
       "fix_flow": {
         "step": {
           "confirm": {

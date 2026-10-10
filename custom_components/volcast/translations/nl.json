@@ -125,7 +125,7 @@
       },
       "control": {
         "title": "Omvormerbesturing",
-        "description": "Via je omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert via het lokale netwerk met de omvormer; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst onder Installatiegegevens). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
+        "description": "Via de omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert met de omvormer via het lokale netwerk; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst op onder Installatiedetails). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten)",
           "control_direct": "Rechtstreeks via het lokale netwerk",
@@ -219,7 +219,7 @@
       },
       "control_integration_write_entities": {
         "title": "Omvormerbesturing",
-        "description": "Aanbevolen: de omvormerintegratie kan instellingen schrijven, dus Volcast gebruikt de bijbehorende entiteiten. Via je omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert via het lokale netwerk met de omvormer; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst onder Installatiegegevens). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
+        "description": "Aanbevolen: je omvormerintegratie kan de instellingen van de omvormer schrijven, dus Volcast gebruikt de entiteiten daarvan. Via de omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert met de omvormer via het lokale netwerk; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst op onder Installatiedetails). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten) (aanbevolen)",
           "control_direct": "Rechtstreeks via het lokale netwerk",
@@ -229,7 +229,7 @@
       },
       "control_no_integration_identify_ok": {
         "title": "Omvormerbesturing",
-        "description": "Aanbevolen: de omvormer is herkend en Volcast bereikt hem rechtstreeks, terwijl geen integratie schrijven biedt. Via je omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert via het lokale netwerk met de omvormer; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst onder Installatiegegevens). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
+        "description": "Aanbevolen: je omvormer is herkend en Volcast bereikt hem rechtstreeks, maar geen integratie biedt schrijftoegang. Via de omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert met de omvormer via het lokale netwerk; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst op onder Installatiedetails). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten)",
           "control_direct": "Rechtstreeks via het lokale netwerk (aanbevolen)",
@@ -239,7 +239,7 @@
       },
       "control_integration_read_only": {
         "title": "Omvormerbesturing",
-        "description": "Aanbevolen: de omvormerintegratie leest alleen gegevens, dus Volcast bestuurt de omvormer rechtstreeks. Via je omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert via het lokale netwerk met de omvormer; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst onder Installatiegegevens). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
+        "description": "Aanbevolen: je omvormerintegratie leest alleen gegevens, dus Volcast bestuurt de omvormer rechtstreeks. Via de omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert met de omvormer via het lokale netwerk; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst op onder Installatiedetails). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten)",
           "control_direct": "Rechtstreeks via het lokale netwerk (aanbevolen)",
@@ -249,7 +249,7 @@
       },
       "control_unsupported": {
         "title": "Omvormerbesturing",
-        "description": "Voor deze omvormer is automatisch geen veilige besturingsweg gevonden, dus er wordt niets aanbevolen. Via je omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert via het lokale netwerk met de omvormer; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst onder Installatiegegevens). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
+        "description": "Voor deze omvormer is automatisch geen veilige besturingsmethode gevonden, dus er wordt niets aanbevolen. Via de omvormerintegratie — Volcast schrijft de modus- en vermogensentiteiten van de omvormer. Rechtstreeks — Volcast communiceert met de omvormer via het lokale netwerk; alleen beschikbaar voor omvormers waarvan de directe besturing is geverifieerd en wanneer geen andere integratie de omvormer gebruikt (zoek hem eerst op onder Installatiedetails). Besturing vereist ook de schakelaar in Home Assistant en je toestemming in de Volcast-app.",
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten)",
           "control_direct": "Rechtstreeks via het lokale netwerk",
@@ -259,27 +259,27 @@
       },
       "entity_map": {
         "title": "Omvormerentiteiten",
-        "description": "Kies de entiteit die Volcast voor elke omvormerinstelling gebruikt. Laat een veld ongewijzigd om de automatische koppeling te behouden.",
+        "description": "Kies de entiteit die Volcast voor elke omvormerinstelling gebruikt. Laat een veld zoals voorgesteld staan om de automatische koppeling te behouden.",
         "data": {
-          "mode": "Operating mode",
-          "mode_value": "Operating mode value",
-          "power_w": "Charge/discharge power limit",
-          "soc": "Battery state of charge",
-          "soc_min": "Minimum state of charge",
-          "soc_max": "Maximum state of charge",
-          "export_limit_enabled": "Export limit switch",
-          "export_limit_w": "Export limit",
-          "active_power_w": "Inverter active power",
-          "battery_current_a": "Battery current",
-          "battery_power_w": "Battery power",
-          "battery_temp_c": "Battery temperature",
-          "battery_voltage_v": "Battery voltage",
-          "grid_export_total_kwh": "Grid export total",
-          "grid_import_total_kwh": "Grid import total",
-          "grid_power_w": "Grid power",
-          "load_power_w": "House load",
-          "pv_energy_total_kwh": "PV energy total",
-          "pv_power_w": "PV power"
+          "mode": "Bedrijfsmodus",
+          "mode_value": "Waarde bedrijfsmodus",
+          "power_w": "Limiet laad-/ontlaadvermogen",
+          "soc": "Laadstatus van de batterij",
+          "soc_min": "Minimale laadstatus",
+          "soc_max": "Maximale laadstatus",
+          "export_limit_enabled": "Schakelaar exportlimiet",
+          "export_limit_w": "Exportlimiet",
+          "active_power_w": "Actief vermogen omvormer",
+          "battery_current_a": "Batterijstroom",
+          "battery_power_w": "Batterijvermogen",
+          "battery_temp_c": "Batterijtemperatuur",
+          "battery_voltage_v": "Batterijspanning",
+          "grid_export_total_kwh": "Totale netexport",
+          "grid_import_total_kwh": "Totale netimport",
+          "grid_power_w": "Netvermogen",
+          "load_power_w": "Huisverbruik",
+          "pv_energy_total_kwh": "Totale PV-energie",
+          "pv_power_w": "PV-vermogen"
         }
       }
     },
@@ -340,8 +340,8 @@
       "description": "De omvormerbesturing van Volcast werkt niet meer (herhaalde schrijffouten of een opgeslagen besturingsstatus die niet gelezen kon worden). De omvormer gebruikt mogelijk nog de laatste instellingen die Volcast heeft toegepast. Controleer de instellingen van de omvormer en de Home Assistant-logs."
     },
     "control_choice_failed": {
-      "title": "Volcast kon je regelkeuze niet toepassen",
-      "description": "Een in de Volcast-app gemaakte regelkeuze kon na meerdere pogingen niet worden toegepast. Controleer de regelinstellingen in de Volcast-opties en de Home Assistant-logboeken en kies daarna opnieuw in de app."
+      "title": "Volcast kon je besturingskeuze niet toepassen",
+      "description": "Een besturingskeuze die in de Volcast-app is gemaakt, kon na meerdere pogingen niet worden toegepast. Controleer de besturingsinstellingen in de Volcast-opties en de Home Assistant-logs en kies daarna opnieuw in de app."
     },
     "foreign_control_direct": {
       "title": "Omvormerbesturing door Volcast gepauzeerd",
@@ -377,7 +377,7 @@
     },
     "controller_conflict": {
       "title": "Een andere regelaar bestuurt je omvormer",
-      "description": "Een andere regelaar ({kind}: {label}) schrijft naar dezelfde omvormerinstellingen als Volcast. Kies Repareren om te bepalen wie de omvormer bestuurt: Volcast of je eigen regelaar (Volcast plant dan alleen).",
+      "description": "Een andere regelaar ({kind}: {label}) schrijft naar dezelfde omvormerinstellingen als Volcast. Kies Oplossen om te bepalen wie de omvormer bestuurt: Volcast, of je eigen regelaar (Volcast plant dan alleen).",
       "fix_flow": {
         "step": {
           "init": {
@@ -390,19 +390,19 @@
           }
         },
         "abort": {
-          "not_loaded": "Volcast-besturing draait niet. Laad de integratie opnieuw en probeer het nog eens.",
-          "restore_failed": "Volcast kon de omvormer niet terugbrengen naar de basisinstelling, dus er is niets gewijzigd. Probeer het opnieuw zodra de omvormer bereikbaar is."
+          "not_loaded": "Volcast-besturing draait niet. Laad de integratie opnieuw en probeer het opnieuw.",
+          "restore_failed": "Volcast kon de omvormer niet terugzetten naar de uitgangssituatie, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is."
         }
       }
     },
     "verification_stopped": {
       "title": "Volcast-apparaatverificatie gestopt",
-      "description": "De verificatie van de omvormer is gestopt ({reason}). Volcast bestuurt de omvormer pas na verificatie. Kies Repareren om opnieuw te proberen.",
+      "description": "De verificatie van de omvormer is gestopt ({reason}). Volcast bestuurt de omvormer pas als hij geverifieerd is. Kies Oplossen om het opnieuw te proberen.",
       "fix_flow": {
         "step": {
           "confirm": {
-            "title": "Verificatie opnieuw proberen",
-            "description": "Volcast start de verificatie van de omvormer opnieuw vanaf de stap waar ze stopte."
+            "title": "Verificatie opnieuw uitvoeren",
+            "description": "Volcast start de verificatie van de omvormer opnieuw vanaf de stap waar die is gestopt."
           }
         }
       }

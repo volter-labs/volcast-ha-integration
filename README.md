@@ -80,6 +80,8 @@ Once a brand is verified, nothing is written unless all of these are also true a
 
 Entity-mode control and account pairing are both beta features.
 
+**Verification ladder and plan-only mode.** Before the first write to an inverter, Volcast verifies the device step by step: a read-only trial that only counts the writes it would make, a control write confirmed by read-back, and, where the profile allows it, a short test window. A stop returns the inverter to the settings it had before Volcast took control, and the verification sensor shows the current step. If another controller writes the same settings, Volcast asks you to choose who controls the inverter; choosing your own controller keeps Volcast in plan-only mode, where it computes the plan but does not write.
+
 ### Safety behaviour
 
 - **Daily limit on setting changes** — Plan writes made through the inverter integration entities now count against a daily write limit per setting and in total over a rolling 24 hours. When the limit is reached, further plan writes are held. Returning the inverter to its own settings is never blocked by the limit.
