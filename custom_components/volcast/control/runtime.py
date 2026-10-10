@@ -60,7 +60,7 @@ from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
 from ..cloud.signal_channel import SignalChannel
 from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
-                     OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
+                     OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
                      SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED)
 from ..core.control.caps import direct_capabilities, entity_mode_options, entity_mode_ready
@@ -98,7 +98,8 @@ ONBOARDING_KEY = "volcast_onboarding"
 _LOCKS_KEY = "volcast_control_locks"
 
 # Opcje, od których zależą: czy sterujemy i przez które encje.
-CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL)
+CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL,
+                       OPT_ENTITY_MAP)
 _POLL_RANGE_S = (5.0, 60.0)
 # Opcje, których zmiana nie wymaga przeładowania wpisu (wystarczy import historii).
 RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY})
@@ -248,12 +249,17 @@ class ControlRuntime:
         if changed:
             self.hass.config_entries.async_update_entry(entry, options=new)
         _LOGGER.info("Volcast control: path %s chosen", path)
+        self.clear_choice_error()
         return "applied"
 
     def report_choice_error(self) -> None:
         """Decyzja z chmury nie dała się zastosować mimo ponowień — to samo zgłoszenie co błąd sterowania."""
         ir.async_create_issue(self.hass, DOMAIN, f"control_choice_failed_{self.entry.entry_id}", is_fixable=False,
                               severity=getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning"), translation_key="control_choice_failed")
+
+    def clear_choice_error(self) -> None:
+        """Późniejszy wybór (sterownika albo ścieżki) się zastosował — zgłoszenie o nieudanym wyborze znika."""
+        ir.async_delete_issue(self.hass, DOMAIN, f"control_choice_failed_{self.entry.entry_id}")
 
     async def async_set_box_active(self, active: bool) -> None:
         """`box_active` z planu → konflikt `box`."""
@@ -283,6 +289,7 @@ class ControlRuntime:
             elif getattr(ex, "owned", False):
                 await ex.async_restore_now()
             _LOGGER.info("Volcast control: own controller chosen — plan only, no writes")
+            self.clear_choice_error()
             return "applied"
         if controller == CONTROLLER_VOLCAST:
             was_plan_only = ex.plan_only
@@ -298,6 +305,7 @@ class ControlRuntime:
             if ex.paused:
                 await ex.async_resume_control()
             _LOGGER.info("Volcast control: Volcast chosen as the controller")
+            self.clear_choice_error()
             return "applied"
         return "ignored"
 
@@ -383,7 +391,7 @@ async def async_update_recommendation(hass, entry, rt: ControlRuntime, profiles=
         if choice is not None and choice.integration_domain:
             domains.add(choice.integration_domain)
         rec = recommend(report, profiles, probe, ds.offer_reason(probe, profiles, clash),
-                        map_entities(hass, choice), clash, choice=choice,
+                        mapped_with_overrides(hass, choice, entry.options), clash, choice=choice,
                         origins=await _async_origins(hass, domains))
     except Exception as err:  # noqa: BLE001 — rekomendacja nie psuje sterowania ani opcji
         _LOGGER.warning("Volcast control: path recommendation failed (%s)", type(err).__name__)
@@ -532,6 +540,22 @@ def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
         unit = (st.attributes.get("unit_of_measurement") if st else None) or getattr(e, "unit_of_measurement", None)
         cands.append(EntityCandidate(e.entity_id, e.platform, e.unique_id or "", unit))
     return dict(resolve_entities(choice.profile, choice.integration_domain, cands).mapped)
+
+
+def mapped_with_overrides(hass, choice: ProfileChoice | None, options: Mapping) -> dict[str, str]:
+    """Mapa encji z dopasowania po wzorcach plus ręczne poprawki z opcji (`OPT_ENTITY_MAP`): poprawka wygrywa,
+    ale tylko dla klucza, który profil tej integracji opisuje, i dla encji, która istnieje."""
+    mapped = map_entities(hass, choice)
+    overrides = options.get(OPT_ENTITY_MAP)
+    if choice is None or not choice.integration_domain or not isinstance(overrides, Mapping):
+        return mapped
+    known = next((i["entities"] for i in choice.profile.raw["ha"]["integrations"]
+                  if i["domain"] == choice.integration_domain), {})
+    for key, eid in overrides.items():
+        if key in known and isinstance(eid, str) and (hass.states.get(eid) is not None
+                                                      or er.async_get(hass).async_get(eid) is not None):
+            mapped[key] = eid
+    return mapped
 
 
 def mode_unique_id(hass, mapped: Mapping[str, str]) -> str | None:
@@ -683,7 +707,7 @@ def _compose_return(hass, entry, profiles, record: Mapping, salt: bytes | None) 
     if profile is None or not isinstance(domain, str) or not domain:
         return None
     choice = ProfileChoice(profile, domain, None)
-    mapped = map_entities(hass, choice)
+    mapped = mapped_with_overrides(hass, choice, entry.options)
     if not _entity_owner_matches(hass, choice, mapped, record):
         return None
     return _Composed(choice, mapped, None, None, returning=True)
@@ -707,7 +731,7 @@ async def _async_compose(hass, entry, profiles, store: ControlStore) -> _Compose
         matches = record is None or io.owner_matches(record)
     else:
         choice = _choice_for(hass, entry, profiles)
-        out = _Composed(choice, map_entities(hass, choice), None, None)
+        out = _Composed(choice, mapped_with_overrides(hass, choice, entry.options), None, None)
         matches = record is None or _entity_owner_matches(hass, choice, out.mapped, record)
     if matches:
         return out

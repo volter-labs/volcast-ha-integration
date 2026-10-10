@@ -410,9 +410,10 @@ class VerificationRunner:
         if state == STOPPED and prev_state != STOPPED:
             _LOGGER.warning("Volcast verification stopped at step %s (%s)", lad.state.rung, lad.state.stop_reason)
             await self._ex.async_verification_restore()
-            ir.async_create_issue(self._hass, DOMAIN, self._issue_id, is_fixable=False, severity=_WARNING,
+            ir.async_create_issue(self._hass, DOMAIN, self._issue_id, is_fixable=True, severity=_WARNING,
                                   translation_key=ISSUE_VERIFICATION_STOPPED,
-                                  translation_placeholders={"reason": lad.state.stop_reason or ""})
+                                  translation_placeholders={"reason": lad.state.stop_reason or ""},
+                                  data={"entry_id": self._entry.entry_id})
         elif state == VERIFIED and prev_state != VERIFIED and prev_rung == RUNG_WINDOW:
             _LOGGER.info("Volcast verification passed — returning the inverter to its baseline after the test")
             await self._ex.async_verification_restore()

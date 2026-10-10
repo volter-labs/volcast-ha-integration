@@ -129,7 +129,8 @@
         "menu_options": {
           "control_entities": "Prin integrarea invertorului (entități)",
           "control_direct": "Direct prin rețeaua locală",
-          "control_off": "Oprit — doar prognoză și monitorizare"
+          "control_off": "Oprit — doar prognoză și monitorizare",
+          "entity_map": "Alege manual entitățile invertorului"
         }
       },
       "details": {
@@ -214,6 +215,71 @@
           "stop": "Oprire",
           "power": "Putere",
           "energy": "Energie"
+        }
+      },
+      "control_integration_write_entities": {
+        "title": "Controlul invertorului",
+        "description": "Recomandat: integrarea invertorului poate scrie setările acestuia, așa că Volcast folosește entitățile ei. Prin integrarea invertorului — Volcast scrie entitățile de mod și putere ale invertorului. Direct — Volcast comunică cu invertorul prin rețeaua locală; disponibil doar pentru invertoare cu control direct verificat și când nicio altă integrare nu folosește invertorul (caută-l mai întâi în Detalii instalație). Controlul necesită și comutatorul din Home Assistant și acordul tău în aplicația Volcast.",
+        "menu_options": {
+          "control_entities": "Prin integrarea invertorului (entități) (recomandat)",
+          "control_direct": "Direct prin rețeaua locală",
+          "control_off": "Oprit — doar prognoză și monitorizare",
+          "entity_map": "Alege manual entitățile invertorului"
+        }
+      },
+      "control_no_integration_identify_ok": {
+        "title": "Controlul invertorului",
+        "description": "Recomandat: invertorul a fost identificat și Volcast îl accesează direct, iar nicio integrare nu oferă scriere. Prin integrarea invertorului — Volcast scrie entitățile de mod și putere ale invertorului. Direct — Volcast comunică cu invertorul prin rețeaua locală; disponibil doar pentru invertoare cu control direct verificat și când nicio altă integrare nu folosește invertorul (caută-l mai întâi în Detalii instalație). Controlul necesită și comutatorul din Home Assistant și acordul tău în aplicația Volcast.",
+        "menu_options": {
+          "control_entities": "Prin integrarea invertorului (entități)",
+          "control_direct": "Direct prin rețeaua locală (recomandat)",
+          "control_off": "Oprit — doar prognoză și monitorizare",
+          "entity_map": "Alege manual entitățile invertorului"
+        }
+      },
+      "control_integration_read_only": {
+        "title": "Controlul invertorului",
+        "description": "Recomandat: integrarea invertorului doar citește date, așa că Volcast controlează invertorul direct. Prin integrarea invertorului — Volcast scrie entitățile de mod și putere ale invertorului. Direct — Volcast comunică cu invertorul prin rețeaua locală; disponibil doar pentru invertoare cu control direct verificat și când nicio altă integrare nu folosește invertorul (caută-l mai întâi în Detalii instalație). Controlul necesită și comutatorul din Home Assistant și acordul tău în aplicația Volcast.",
+        "menu_options": {
+          "control_entities": "Prin integrarea invertorului (entități)",
+          "control_direct": "Direct prin rețeaua locală (recomandat)",
+          "control_off": "Oprit — doar prognoză și monitorizare",
+          "entity_map": "Alege manual entitățile invertorului"
+        }
+      },
+      "control_unsupported": {
+        "title": "Controlul invertorului",
+        "description": "Nu s-a găsit automat o cale de control sigură pentru acest invertor, deci nu se recomandă nimic. Prin integrarea invertorului — Volcast scrie entitățile de mod și putere ale invertorului. Direct — Volcast comunică cu invertorul prin rețeaua locală; disponibil doar pentru invertoare cu control direct verificat și când nicio altă integrare nu folosește invertorul (caută-l mai întâi în Detalii instalație). Controlul necesită și comutatorul din Home Assistant și acordul tău în aplicația Volcast.",
+        "menu_options": {
+          "control_entities": "Prin integrarea invertorului (entități)",
+          "control_direct": "Direct prin rețeaua locală",
+          "control_off": "Oprit — doar prognoză și monitorizare",
+          "entity_map": "Alege manual entitățile invertorului"
+        }
+      },
+      "entity_map": {
+        "title": "Entitățile invertorului",
+        "description": "Alege entitatea pe care Volcast o folosește pentru fiecare setare a invertorului. Lasă un câmp neschimbat pentru a păstra potrivirea automată.",
+        "data": {
+          "mode": "Operating mode",
+          "mode_value": "Operating mode value",
+          "power_w": "Charge/discharge power limit",
+          "soc": "Battery state of charge",
+          "soc_min": "Minimum state of charge",
+          "soc_max": "Maximum state of charge",
+          "export_limit_enabled": "Export limit switch",
+          "export_limit_w": "Export limit",
+          "active_power_w": "Inverter active power",
+          "battery_current_a": "Battery current",
+          "battery_power_w": "Battery power",
+          "battery_temp_c": "Battery temperature",
+          "battery_voltage_v": "Battery voltage",
+          "grid_export_total_kwh": "Grid export total",
+          "grid_import_total_kwh": "Grid import total",
+          "grid_power_w": "Grid power",
+          "load_power_w": "House load",
+          "pv_energy_total_kwh": "PV energy total",
+          "pv_power_w": "PV power"
         }
       }
     },
@@ -308,6 +374,38 @@
     "unsupported_setting": {
       "title": "Unele setări ale invertorului nu sunt disponibile pentru Volcast",
       "description": "Volcast nu poate folosi aceste setări ale invertorului deoarece entitățile lor lipsesc, sunt dezactivate sau indisponibile: {entities}. Controlul continuă fără ele, iar planul Volcast nu se mai bazează pe ele. Când entitățile devin din nou disponibile, Volcast le folosește automat."
+    },
+    "controller_conflict": {
+      "title": "Alt controler îți controlează invertorul",
+      "description": "Alt controler ({kind}: {label}) scrie în aceleași setări ale invertorului ca Volcast. Selectează Remediază pentru a decide cine controlează invertorul: Volcast sau propriul tău controler (Volcast doar planifică).",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Cine controlează invertorul?",
+            "description": "Cât timp scrie alt controler, Volcast oprește temporar verificarea. Alege cine controlează invertorul.",
+            "menu_options": {
+              "volcast": "Volcast controlează invertorul",
+              "own_ems": "Propriul meu controler (Volcast doar planifică)"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "Controlul Volcast nu rulează. Reîncarcă integrarea și încearcă din nou.",
+          "restore_failed": "Volcast nu a putut readuce invertorul la starea de bază, așa că nu s-a schimbat nimic. Încearcă din nou când invertorul este accesibil."
+        }
+      }
+    },
+    "verification_stopped": {
+      "title": "Verificarea dispozitivului Volcast s-a oprit",
+      "description": "Verificarea invertorului s-a oprit ({reason}). Volcast nu controlează invertorul până nu este verificat. Selectează Remediază pentru a încerca din nou.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Reia verificarea",
+            "description": "Volcast reia verificarea invertorului de la pasul la care s-a oprit."
+          }
+        }
+      }
     }
   },
   "services": {
@@ -422,6 +520,9 @@
       },
       "control_direct_link_quality": {
         "name": "Depășiri de timp ale legăturii cu invertorul"
+      },
+      "verification": {
+        "name": "Verificarea dispozitivului"
       }
     },
     "binary_sensor": {

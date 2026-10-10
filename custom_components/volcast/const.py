@@ -50,6 +50,8 @@ OPT_CONTROL_MODE = "control_mode"
 CONTROL_MODE_ENTITIES = "entities"
 OPT_PROFILE_ID = "profile_id"
 OPT_INVERTER_DOMAIN = "inverter_domain"
+# Ręczne poprawki mapy encji falownika: {klucz profilu: entity_id}; wygrywają z dopasowaniem po wzorcach.
+OPT_ENTITY_MAP = "entity_map"
 OPT_TELEMETRY_MAP = "telemetry_map"
 OPT_GRID_NEGATE = "grid_power_negate"
 OPT_RATED_POWER_W = "rated_power_w"

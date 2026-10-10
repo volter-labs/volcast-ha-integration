@@ -22,6 +22,7 @@ from .coordinator import VolcastCoordinator, VolcastData
 from .control.direct_sensors import direct_sensors
 from .control_entities import VolcastControlStatusSensor, VolcastPlanSensor
 from .discovery_entities import VolcastDiscoverySensor
+from .verification_entities import VolcastVerificationSensor
 
 
 async def async_setup_entry(
@@ -65,6 +66,7 @@ async def async_setup_entry(
     control = entry_data.get("control")
     if control is not None:
         entities.extend([VolcastPlanSensor(entry, control), VolcastControlStatusSensor(entry, control)])
+        entities.append(VolcastVerificationSensor(entry, control))
         # Tryb bezpośredni (albo próba): odczyty rejestrów falownika jako encje.
         direct = getattr(control, "direct", None)
         if direct is not None:

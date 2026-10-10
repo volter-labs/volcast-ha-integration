@@ -129,7 +129,8 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network",
-          "control_off": "Off — forecast and monitoring only"
+          "control_off": "Off — forecast and monitoring only",
+          "entity_map": "Choose inverter entities manually"
         }
       },
       "details": {
@@ -214,6 +215,71 @@
           "stop": "Stop",
           "power": "Power",
           "energy": "Energy"
+        }
+      },
+      "control_integration_write_entities": {
+        "title": "Inverter control",
+        "description": "Recommended: your inverter integration can write the inverter's settings, so Volcast uses its entities. Through your inverter integration — Volcast writes the inverter's mode and power entities. Directly — Volcast talks to the inverter over the local network; available only for inverters whose direct control is verified and when no other integration uses the inverter (search for it under Installation details first). Control also needs the switch in Home Assistant and your consent in the Volcast app.",
+        "menu_options": {
+          "control_entities": "Through the inverter integration (entities) (recommended)",
+          "control_direct": "Directly over the local network",
+          "control_off": "Off — forecast and monitoring only",
+          "entity_map": "Choose inverter entities manually"
+        }
+      },
+      "control_no_integration_identify_ok": {
+        "title": "Inverter control",
+        "description": "Recommended: your inverter was identified and Volcast can reach it directly, while no integration offers writing. Through your inverter integration — Volcast writes the inverter's mode and power entities. Directly — Volcast talks to the inverter over the local network; available only for inverters whose direct control is verified and when no other integration uses the inverter (search for it under Installation details first). Control also needs the switch in Home Assistant and your consent in the Volcast app.",
+        "menu_options": {
+          "control_entities": "Through the inverter integration (entities)",
+          "control_direct": "Directly over the local network (recommended)",
+          "control_off": "Off — forecast and monitoring only",
+          "entity_map": "Choose inverter entities manually"
+        }
+      },
+      "control_integration_read_only": {
+        "title": "Inverter control",
+        "description": "Recommended: your inverter integration only reads data, so Volcast controls the inverter directly. Through your inverter integration — Volcast writes the inverter's mode and power entities. Directly — Volcast talks to the inverter over the local network; available only for inverters whose direct control is verified and when no other integration uses the inverter (search for it under Installation details first). Control also needs the switch in Home Assistant and your consent in the Volcast app.",
+        "menu_options": {
+          "control_entities": "Through the inverter integration (entities)",
+          "control_direct": "Directly over the local network (recommended)",
+          "control_off": "Off — forecast and monitoring only",
+          "entity_map": "Choose inverter entities manually"
+        }
+      },
+      "control_unsupported": {
+        "title": "Inverter control",
+        "description": "No safe control path was found automatically for this inverter, so nothing is recommended. Through your inverter integration — Volcast writes the inverter's mode and power entities. Directly — Volcast talks to the inverter over the local network; available only for inverters whose direct control is verified and when no other integration uses the inverter (search for it under Installation details first). Control also needs the switch in Home Assistant and your consent in the Volcast app.",
+        "menu_options": {
+          "control_entities": "Through the inverter integration (entities)",
+          "control_direct": "Directly over the local network",
+          "control_off": "Off — forecast and monitoring only",
+          "entity_map": "Choose inverter entities manually"
+        }
+      },
+      "entity_map": {
+        "title": "Inverter entities",
+        "description": "Pick the entity Volcast uses for each inverter setting. Leave a field as suggested to keep the automatic match.",
+        "data": {
+          "mode": "Operating mode",
+          "mode_value": "Operating mode value",
+          "power_w": "Charge/discharge power limit",
+          "soc": "Battery state of charge",
+          "soc_min": "Minimum state of charge",
+          "soc_max": "Maximum state of charge",
+          "export_limit_enabled": "Export limit switch",
+          "export_limit_w": "Export limit",
+          "active_power_w": "Inverter active power",
+          "battery_current_a": "Battery current",
+          "battery_power_w": "Battery power",
+          "battery_temp_c": "Battery temperature",
+          "battery_voltage_v": "Battery voltage",
+          "grid_export_total_kwh": "Grid export total",
+          "grid_import_total_kwh": "Grid import total",
+          "grid_power_w": "Grid power",
+          "load_power_w": "House load",
+          "pv_energy_total_kwh": "PV energy total",
+          "pv_power_w": "PV power"
         }
       }
     },
@@ -308,6 +374,38 @@
     "direct_start_failed": {
       "title": "Volcast could not start the direct inverter connection",
       "description": "The direct connection to the inverter failed to start because of an unexpected error. Volcast retries a few times; until it connects, it cannot change or return the inverter settings. If this stays, reload Volcast and check the Home Assistant logs."
+    },
+    "controller_conflict": {
+      "title": "Another controller is controlling your inverter",
+      "description": "Another controller ({kind}: {label}) writes to the same inverter settings as Volcast. Select Fix to choose who controls the inverter: Volcast, or your own controller (Volcast then only plans).",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Who controls the inverter?",
+            "description": "While another controller writes, Volcast pauses verification. Choose which one controls the inverter.",
+            "menu_options": {
+              "volcast": "Volcast controls the inverter",
+              "own_ems": "My own controller (Volcast only plans)"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "Volcast control is not running. Reload the integration and try again.",
+          "restore_failed": "Volcast could not return the inverter to its baseline, so nothing was changed. Try again when the inverter is reachable."
+        }
+      }
+    },
+    "verification_stopped": {
+      "title": "Volcast device verification stopped",
+      "description": "Verification of the inverter stopped ({reason}). Volcast does not control the inverter until it is verified. Select Fix to try again.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Retry verification",
+            "description": "Volcast restarts the verification of the inverter from the step where it stopped."
+          }
+        }
+      }
     }
   },
   "services": {
@@ -422,6 +520,9 @@
       },
       "control_direct_link_quality": {
         "name": "Inverter link timeouts"
+      },
+      "verification": {
+        "name": "Device verification"
       }
     },
     "binary_sensor": {
