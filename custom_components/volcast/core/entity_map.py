@@ -285,19 +285,19 @@ _NONE = "no sign"
 KEY_DESCRIPTORS: dict[str, dict] = {
     "soc": _d("plan", "%", "0-100, no sign", True,
               ["sensor.<inverter>_battery_state_of_charge", "sensor.<battery>_soc"]),
-    "pv_power_w": _d("plan", "W", "positive = PV production, never negative", True,
+    "pv_power_w": _d("plan", "W", "positive = PV production", True,
                      ["sensor.<inverter>_pv_power", "sensor.<inverter>_solar_power"]),
     "load_power_w": _d("plan", "W", "positive = house consumption", True,
                        ["sensor.<inverter>_house_consumption", "sensor.<inverter>_load"]),
     "grid_power_w": _d("plan", "W", "positive = import from the grid, negative = export", True,
                        ["sensor.<inverter>_grid_power", "sensor.<meter>_active_power"]),
-    "battery_power_w": _d("plan", "W", "positive = charging, negative = discharging", True,
+    "battery_power_w": _d("plan", "W", "positive = discharging, negative = charging", True,
                           ["sensor.<inverter>_battery_power", "sensor.<battery>_power"]),
     "battery_temp_c": _d("control", "°C", "can be negative", False,
                          ["sensor.<inverter>_battery_temperature", "sensor.<battery>_temp"]),
     "battery_voltage_v": _d("control", "V", "no sign", False,
                             ["sensor.<inverter>_battery_voltage", "sensor.<battery>_voltage"]),
-    "battery_current_a": _d("control", "A", "positive = charging, negative = discharging", False,
+    "battery_current_a": _d("control", "A", "positive = discharging, negative = charging", False,
                             ["sensor.<inverter>_battery_current", "sensor.<battery>_current"]),
     "active_power_w": _d("control", "W", "positive = inverter output", False,
                          ["sensor.<inverter>_active_power", "sensor.<inverter>_ac_power"]),
@@ -350,6 +350,16 @@ def field_group(key: str) -> str:
     if desc is not None and desc["required"]:
         return "plan"
     return "control" if key in _WRITE_KEYS else "optional"
+
+
+_GROUP_LABELS = {"plan": "Needed for the plan.", "control": "Needed for control.", "optional": "Optional."}
+
+
+def describe_key(key: str) -> str:
+    """Tekst `data_description` pola mapy (angielski, źródło dla strings.json — test pilnuje zgodności)."""
+    d = KEY_DESCRIPTORS[key]
+    return (f"{_GROUP_LABELS[field_group(key)]} Unit: {d['unit']}. Sign: {d['sign']}. "
+            f"Typical names: {', '.join(d['examples'])}.")
 
 
 def preview_entity(key: str, state: str | None, unit: str | None) -> tuple[str, float | None]:

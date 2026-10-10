@@ -441,3 +441,27 @@ def test_entity_map_preview_back_returns_to_map():
     asyncio.run(f.async_step_entity_map({"soc": "sensor.soc"}))
     r = asyncio.run(f.async_step_entity_map_preview({"confirm": False}))
     assert (r["type"], r["step_id"]) == ("form", "entity_map")
+
+
+def test_entity_map_back_from_preview_keeps_pending_selections():
+    f = _map_flow({"sensor.soc": _St("55", "%")})
+    asyncio.run(f.async_step_entity_map({"soc": "sensor.soc"}))
+    r = asyncio.run(f.async_step_entity_map_preview({"confirm": False}))
+    key, _ = _field(r["data_schema"], "soc")
+    assert key.description["suggested_value"] == "sensor.soc"
+
+
+def test_strings_data_description_is_derived_from_descriptors():
+    import json
+    from pathlib import Path
+    from custom_components.volcast.core.entity_map import KEY_DESCRIPTORS, describe_key
+    step = json.loads((Path(__file__).resolve().parents[1] / "custom_components" / "volcast" / "strings.json")
+                      .read_text(encoding="utf-8"))["options"]["step"]["entity_map"]
+    assert set(step["data"]) <= set(KEY_DESCRIPTORS)
+    assert set(step["data_description"]) == set(step["data"])
+    for key, text in step["data_description"].items():
+        assert text == describe_key(key)
+    # konwencja integracji: dodatnia moc/prąd baterii = rozładowanie, dodatnia moc sieci = pobór
+    assert "positive = discharging" in step["data_description"]["battery_power_w"]
+    assert "positive = discharging" in step["data_description"]["battery_current_a"]
+    assert "positive = import" in step["data_description"]["grid_power_w"]

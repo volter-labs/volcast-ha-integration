@@ -622,7 +622,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             # Zapis dopiero po podglądzie: właściciel widzi, jaką wartość Volcast odczyta z każdej encji.
             self._pending_entity_map = {k: v for k in specs if (v := (user_input.get(k) or "").strip())}
             return self._show_entity_map_preview(self._pending_entity_map)
-        current = mapped_with_overrides(self.hass, choice, self.config_entry.options)
+        pending = getattr(self, "_pending_entity_map", None)   # powrót z podglądu: wybór właściciela, nie zapis
+        current = pending if pending is not None else mapped_with_overrides(self.hass, choice, self.config_entry.options)
         fields: dict[Any, Any] = {}
         # Kolejność: najpierw to, co potrzebne planowi, potem sterowanie, na końcu opcjonalne.
         order = {"plan": 0, "control": 1, "optional": 2}
