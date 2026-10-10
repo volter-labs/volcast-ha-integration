@@ -105,7 +105,7 @@ Volcast can connect to a supported inverter directly on your local network — *
 - **Sensors**: state of charge, temperatures, voltages, power flows, lifetime energy counters (Energy dashboard), the inverter mode and diagnostic settings, refreshed every 10 s by default.
 - **Read-only test connection**: for inverters whose direct control is not verified yet, **Installation details → Read-only test connection** shows the sensors and what Volcast *would* write, and never writes.
 
-**Direct control is enabled per brand only after its register map has been verified on a live inverter.**
+**Direct mode is offered once the inverter is identified, but every device first goes through a verification ladder before Volcast writes to it.** The ladder starts with a read-only trial: Volcast reads the inverter and counts what it would have written. Only after you allow control does it make a control write (the current setting is written again and read back) and run a short test window. Brands marked verified skip the trial and start at the control write.
 
 - **GoodWe** (ET/EH/BT/BH) — verified since v2.0.0b6 on a live GW8KN-ET over the Wi-Fi module (UDP). Writes are also enabled over Modbus TCP and over an RS485 ↔ TCP gateway (Modbus RTU framing); these use the same registers but have not been tried on hardware yet. Other ET/EH/BT/BH models share the register map but have not been tried yet; the search detects registers a model does not have, and Volcast does not use them. Choose **Options → Inverter control → Directly over the local network**.
 - **Deye** — still draft: only the read-only test connection is available, and nothing is written.
