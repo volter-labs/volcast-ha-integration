@@ -205,7 +205,11 @@ Intents are chosen from `charge_grid`, `charge_pv`, `discharge_forced`, `sell`, 
   path the `driver.limits` block then carries `max_charge_w` / `max_discharge_w` = BMS current ×
   battery voltage, clipped to the rated power and rounded down to 100 W, and `battery_capacity_kwh`
   (a capacity the owner entered wins). The planner needs the battery's capability, not the BMS taper
-  at a high state of charge, so the power sent is the peak of the last 24 hours. Implausible readings
+  at a high state of charge, so a charge sample is taken only below 80 % SoC and a discharge sample
+  only above 20 % SoC (unknown SoC: no sample), and the power sent is the peak of such samples over
+  the last 24 hours. The peak lives in memory: after an HA restart, an options reload or a first
+  pairing, the field is left out until the first sample inside the band, and the cloud uses its
+  configured power meanwhile. Implausible readings
   are left out, never sent as `0`: current outside 1-1000 A, battery voltage outside 40-1000 V, power
   outside 100 W to 30 kW, capacity outside 0.5-200 kWh (`core/control/limits.py`). Without these
   fields the readings are still sent as counters/sources, but no limit is derived from them.

@@ -165,21 +165,36 @@ def _gw_conn(**words):
 
 
 def test_direct_limits_include_max_charge_w():
-    sender, cloud = _sender(FakeConn(GW), limits=executor_limits(rated_power_w=8000.0, source="registers"))
-    # 9 A × 304,9 V i 22 A × 304,9 V z rejestrów BMS (ramki golden), w dół do 100 W
+    # SoC 50 %: 9 A × 304,9 V i 22 A × 304,9 V z rejestrów BMS (ramki golden), w dół do 100 W
+    sender, cloud = _sender(_gw_conn(**{"37007": 50}), limits=executor_limits(rated_power_w=8000.0,
+                                                                                 source="registers"))
     assert _flush(sender, cloud)["driver"]["limits"] == {
         "rated_power_w": 8000, "max_charge_w": 2700, "max_discharge_w": 6700, "source": "registers"}
     # bez mocy znamionowej (sonda jej nie dała) — same limity BMS
-    sender, cloud = _sender(FakeConn(GW), limits=None)
+    sender, cloud = _sender(_gw_conn(**{"37007": 50}), limits=None)
     assert _flush(sender, cloud)["driver"]["limits"] == {
         "max_charge_w": 2700, "max_discharge_w": 6700, "source": "registers"}
 
 
+def test_direct_limits_omit_charge_sampled_at_high_soc():
+    # ramka golden: SoC 83 %, BMS już ogranicza ładowanie (9 A) — także po restarcie / pierwszym parowaniu
+    sender, cloud = _sender(FakeConn(GW), limits=executor_limits(rated_power_w=8000.0, source="registers"))
+    assert _flush(sender, cloud)["driver"]["limits"] == {
+        "rated_power_w": 8000, "max_discharge_w": 6700, "source": "registers"}
+
+
+def test_direct_limits_omit_discharge_sampled_at_low_soc():
+    sender, cloud = _sender(_gw_conn(**{"37007": 10, "37005": 3}),
+                            limits=executor_limits(rated_power_w=8000.0, source="registers"))
+    assert _flush(sender, cloud)["driver"]["limits"] == {
+        "rated_power_w": 8000, "max_charge_w": 2700, "source": "registers"}
+
+
 def test_direct_limits_keep_peak_when_bms_tapers():
-    conn = FakeConn(GW)
+    conn = _gw_conn(**{"37007": 50})
     sender, cloud = _sender(conn, limits=executor_limits(rated_power_w=8000.0, source="registers"))
     assert _flush(sender, cloud)["driver"]["limits"]["max_charge_w"] == 2700
-    conn.reading = _gw_conn(**{"37004": 1}).reading              # 1 A przy pełnej baterii
+    conn.reading = _gw_conn(**{"37004": 1, "37007": 90}).reading     # 1 A przy pełnej baterii
     assert _flush(sender, cloud)["driver"]["limits"]["max_charge_w"] == 2700
 
 
@@ -189,6 +204,7 @@ def test_direct_limits_keep_peak_when_bms_tapers():
     {"35180": 0},                                # brak napięcia baterii
 ])
 def test_direct_limits_omit_implausible_bms_values(words):
+    words = {"37007": 50, **words}               # SoC w paśmie — sprawdzamy same zakresy
     sender, cloud = _sender(_gw_conn(**words), limits=executor_limits(rated_power_w=8000.0, source="registers"))
     assert _flush(sender, cloud)["driver"]["limits"] == {"rated_power_w": 8000, "source": "registers"}
     sender, cloud = _sender(_gw_conn(**words), limits=None)

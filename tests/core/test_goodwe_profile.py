@@ -124,8 +124,13 @@ def test_goodwe_et_limits_from_bms_registers(image):
         "bms_charge_current_max_a", "bms_discharge_current_max_a")
     assert "capacity_register" not in lim
     v = read_values(p.raw["read"], image)
-    # 9 A × 304,9 V = 2744 W, 22 A × 304,9 V = 6708 W — w dół do pełnych 100 W
+    # Ramka: SoC 83 %, prąd baterii −9 A = dokładnie dozwolone 9 A ładowania — BMS już ogranicza
+    # (chwilowe dopuszczenie), więc moc ładowania pominięta; 22 A × 304,9 V = 6708 W → 6700 W.
+    assert v["soc"] == 83
     assert register_limits({"rated_power_w": 8000, "source": "registers"}, lim, v) == {
+        "rated_power_w": 8000, "max_discharge_w": 6700, "source": "registers"}
+    # ta sama ramka przy SoC poniżej progu: 9 A × 304,9 V = 2744 W → 2700 W
+    assert register_limits({"rated_power_w": 8000, "source": "registers"}, lim, {**v, "soc": 50}) == {
         "rated_power_w": 8000, "max_charge_w": 2700, "max_discharge_w": 6700, "source": "registers"}
     # przycięte do mocy znamionowej
     assert register_limits({"rated_power_w": 5000, "source": "registers"}, lim, v)["max_discharge_w"] == 5000

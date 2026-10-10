@@ -28,7 +28,8 @@ falownika, `load_energy_day_kwh` zeruje się o północy lokalnej falownika. Lic
 w swoich kolumnach odczytu. Odczyt na żywo liczników nie niesie.
 
 Limity w trybie bezpośrednim: bazowe (`direct_limits`) + moc z prądu BMS wskazanego w `$.limits` profilu
-(`core/control/limits.py`, szczyt z doby), przeliczane przy każdej telemetrii.
+(`core/control/limits.py`: próbki tylko w paśmie SoC bez dławienia BMS, szczyt z doby w pamięci — po
+restarcie albo przeładowaniu opcji pola nie ma do pierwszej próbki z pasma), przeliczane przy każdej telemetrii.
 
 Źródła odczytów: blok `driver` w KAŻDYM odczycie (oba tryby) niesie pełną mapę
 `meta.readings_source` (klucz → `entity|register|manual|none`, `core/control/readings.py`) — chmura
