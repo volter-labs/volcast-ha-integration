@@ -977,12 +977,16 @@ def _maybe_start_onboarding(hass, entry, report, profiles=()) -> None:
     live_until = dt_util.parse_datetime(str(p.get("live_until") or ""))
     if live_until is None or live_until <= dt_util.utcnow():
         return
+    session_id = str(p.get("session_id"))
     running = hass.data.setdefault(ONBOARDING_KEY, {})
-    task = running.get(entry.entry_id)
+    task, task_session = running.get(entry.entry_id) or (None, None)
     if task is not None and not task.done():
-        return      # przeładowanie wpisu (zmiana opcji) nie startuje drugiego onboardingu
+        if task_session == session_id:
+            return  # przeładowanie wpisu (zmiana opcji) nie startuje drugiego onboardingu
+        # Nowe parowanie w żywym oknie poprzedniej sesji: stary reporter pisałby do starej sesji.
+        _cancel_onboarding(hass, entry.entry_id)
     client = PairingClient(async_get_clientsession(hass), p.get("url") or BETA_PAIRING_URL)
-    session = PairingSession(str(p.get("session_id")), str(p.get("poll_token")), "", "")
+    session = PairingSession(session_id, str(p.get("poll_token")), "", "")
 
     def runtime():
         return (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
@@ -1005,7 +1009,15 @@ def _maybe_start_onboarding(hass, entry, report, profiles=()) -> None:
     ob = Onboarding(hass, entry.entry_id, client=client, session=session, live_until=live_until,
                     runtime=runtime, report=report, import_history=import_history, search=search,
                     profiles=list(profiles))
-    running[entry.entry_id] = hass.async_create_background_task(ob.async_run(), "volcast_onboarding")
+    running[entry.entry_id] = (hass.async_create_background_task(ob.async_run(), "volcast_onboarding"), session_id)
+
+
+def _cancel_onboarding(hass, entry_id) -> None:
+    """Zdejmij i anuluj reporter onboardingu wpisu (para `(task, session_id)`); brak = no-op."""
+    running = getattr(hass, "data", {}).get(ONBOARDING_KEY) or {}
+    task, _session = running.pop(entry_id, None) or (None, None)
+    if task is not None:
+        task.cancel()
 
 
 def freeze_control(rt: ControlRuntime) -> None:
@@ -1107,9 +1119,7 @@ async def async_remove_control(hass, entry) -> None:
     """Usunięcie wpisu: przywróć tryb bazowy, jeśli to my zmienialiśmy nastawy; skasuj stan."""
     if Backend.from_dict(entry.data.get(CONF_BACKEND)) is None:
         return
-    task = hass.data.get(ONBOARDING_KEY, {}).pop(entry.entry_id, None)
-    if task is not None:
-        task.cancel()
+    _cancel_onboarding(hass, entry.entry_id)
     store = ControlStore(hass, entry.entry_id)
     try:
         state = await store.async_load()

@@ -283,6 +283,105 @@ async def test_runtime_is_stored_before_onboarding_reads_it(monkeypatch):
         t.cancel()
 
 
+def _pairing(session_id, minutes=20):
+    import homeassistant.util.dt as dt_util
+    return {"session_id": session_id, "poll_token": "p", "url": f"{BASE}/functions/v1/pairing-session",
+            "live_until": (dt_util.utcnow() + timedelta(minutes=minutes)).isoformat()}
+
+
+def _fake_onboarding(monkeypatch):
+    """Atrapa `Onboarding`: zapisuje sesję i czeka do anulowania (żywy reporter)."""
+    import custom_components.volcast.onboarding as ob_mod
+    started = []
+
+    class FakeOnboarding:
+        def __init__(self, hass, entry_id, *, session, **_kw):
+            started.append(session.session_id)
+
+        async def async_run(self):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(ob_mod, "Onboarding", FakeOnboarding)
+    return started
+
+
+@pytest.mark.asyncio
+async def test_new_session_in_live_window_restarts_reporter(monkeypatch):
+    """Ponowne parowanie w żywym oknie poprzedniej sesji: reporter nowej sesji startuje, stary znika."""
+    _patch(monkeypatch)
+    started = _fake_onboarding(monkeypatch)
+    hass, entry = _setup_hass(), _entry(pairing=_pairing("s1"))
+    rt_mod._maybe_start_onboarding(hass, entry, lambda: None)
+    await asyncio.sleep(0)
+    first = hass.tasks[-1]
+    entry.data["pairing"] = _pairing("s2")
+    rt_mod._maybe_start_onboarding(hass, entry, lambda: None)
+    await asyncio.sleep(0)
+    assert started == ["s1", "s2"]
+    assert first.cancelled()
+    assert not hass.tasks[-1].done()
+    for t in hass.tasks:
+        t.cancel()
+
+
+@pytest.mark.asyncio
+async def test_same_session_does_not_start_a_second_reporter(monkeypatch):
+    """Strażnik regresji: ta sama sesja przy żywym reporterze to no-op."""
+    _patch(monkeypatch)
+    started = _fake_onboarding(monkeypatch)
+    hass, entry = _setup_hass(), _entry(pairing=_pairing("s1"))
+    rt_mod._maybe_start_onboarding(hass, entry, lambda: None)
+    await asyncio.sleep(0)
+    first = hass.tasks[-1]
+    rt_mod._maybe_start_onboarding(hass, entry, lambda: None)
+    await asyncio.sleep(0)
+    assert started == ["s1"] and len(hass.tasks) == 1 and not first.done()
+    first.cancel()
+
+
+@pytest.mark.asyncio
+async def test_new_session_after_window_of_old_one_ended_still_starts(monkeypatch):
+    """Zakończony reporter (okno minęło) nie blokuje startu, także dla tej samej sesji."""
+    _patch(monkeypatch)
+    started = _fake_onboarding(monkeypatch)
+    hass, entry = _setup_hass(), _entry(pairing=_pairing("s1"))
+    rt_mod._maybe_start_onboarding(hass, entry, lambda: None)
+    await asyncio.sleep(0)
+    hass.tasks[-1].cancel()
+    await asyncio.sleep(0)
+    rt_mod._maybe_start_onboarding(hass, entry, lambda: None)
+    await asyncio.sleep(0)
+    assert started == ["s1", "s1"] and not hass.tasks[-1].done()
+    hass.tasks[-1].cancel()
+
+
+@pytest.mark.asyncio
+async def test_expired_live_window_starts_nothing(monkeypatch):
+    _patch(monkeypatch)
+    started = _fake_onboarding(monkeypatch)
+    hass, entry = _setup_hass(), _entry(pairing=_pairing("s1", minutes=-1))
+    rt_mod._maybe_start_onboarding(hass, entry, lambda: None)
+    assert started == [] and hass.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_remove_control_cancels_onboarding_reporter(monkeypatch):
+    """Strażnik regresji: usunięcie wpisu nadal anuluje reporter (zapis jako para z sesją)."""
+    class Store:
+        async def async_load(self):
+            return ControlState()
+
+        async def async_remove(self):
+            return None
+    monkeypatch.setattr(rt_mod, "ControlStore", lambda h, eid: Store())
+    task = asyncio.get_running_loop().create_task(asyncio.Event().wait())
+    hass = SimpleNamespace(data={rt_mod.ONBOARDING_KEY: {"e1": (task, "s1")}})
+    entry = SimpleNamespace(entry_id="e1", options={}, data={"api_key": "vk_x", "backend": BACKEND})
+    await rt_mod.async_remove_control(hass, entry)
+    await asyncio.sleep(0)
+    assert task.cancelled() and hass.data[rt_mod.ONBOARDING_KEY] == {}
+
+
 # ── zakres encji falownika (auto-wybór licznika zużycia domu) ─────────────
 
 
