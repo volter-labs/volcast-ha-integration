@@ -9,8 +9,8 @@ Reguły (kolejność):
 1. integracja falownika z encją trybu (`mode` w mapie) → `entities`;
 2. falownik rozpoznany sondą: integracja TEGO falownika bez zapisu → `direct_with_integration_data`,
    inaczej (brak integracji albo integracja innego urządzenia) → `direct`;
-3. w pozostałych przypadkach → `unsupported` (`no_profile` — jedyny kod kontraktu dla tej ścieżki,
-   także gdy profil jest, ale nie ma ani encji trybu, ani rozpoznanego falownika).
+3. brak profilu → `unsupported` (`no_profile`); profil jest, ale nie ma ani encji trybu, ani
+   rozpoznanego falownika → `unsupported` (`no_write_path`).
 
 `ladder_start` (pierwszy szczebel weryfikacji): profil i jego droga zapisu zweryfikowane
 (wpis integracji dla encji; sekcja `modbus`, udana próba i oferta bez odmowy dla rejestrów) → 3
@@ -39,9 +39,9 @@ PATHS = (ENTITIES, DIRECT, DIRECT_WITH_INTEGRATION_DATA, UNSUPPORTED)
 INTEGRATION_WRITE_ENTITIES = "integration_write_entities"
 NO_INTEGRATION_IDENTIFY_OK = "no_integration_identify_ok"
 INTEGRATION_READ_ONLY = "integration_read_only"
-NO_PROFILE = "no_profile"
+NO_PROFILE, NO_WRITE_PATH = "no_profile", "no_write_path"
 REASONS = (INTEGRATION_WRITE_ENTITIES, NO_INTEGRATION_IDENTIFY_OK, INTEGRATION_READ_ONLY, NO_PROFILE,
-           "profile_draft", "profile_verified")
+           NO_WRITE_PATH)
 ORIGINS = ("core", "custom")
 
 RUNG_IDENTIFY, RUNG_CONTROL_WRITE = 1, 3
@@ -195,4 +195,5 @@ def recommend(report: Mapping | None, profiles: Sequence[Profile], probe=None, o
     if choice is not None and domain:
         inv = _report_inverter(report, domain)
         integration, device = _integration(domain, origins), _report_device(inv)
-    return Recommendation(UNSUPPORTED, NO_PROFILE, RUNG_IDENTIFY, integration, device, (), found)
+    reason = NO_PROFILE if choice is None else NO_WRITE_PATH
+    return Recommendation(UNSUPPORTED, reason, RUNG_IDENTIFY, integration, device, (), found)

@@ -14,7 +14,7 @@ MODE_MAP = {"mode": "select.inverter_ems_mode", "soc": "sensor.inverter_battery_
 CORE = {"goodwe": "core", "sma": "core"}
 # Lista zamknięta kontraktu `driver.control.recommendation.reason` (chmura odrzuca inne kody).
 CONTRACT_REASONS = {"integration_write_entities", "no_integration_identify_ok", "integration_read_only",
-                    "no_profile", "profile_draft", "profile_verified"}
+                    "no_profile", "no_write_path"}
 
 
 def _profile(*, status="verified", entry_status="draft", ems=False, modbus="draft"):
@@ -116,9 +116,9 @@ def test_integration_matched_by_profile_candidates_or_brand_is_the_data_source()
     assert recommend(by_brand, [_profile()], _probe(), None, {}).path == DIRECT_WITH_INTEGRATION_DATA
 
 
-def test_profile_without_any_write_path_is_unsupported_with_the_closest_contract_code():
+def test_profile_without_any_write_path_is_unsupported_with_its_own_reason():
     rec = recommend(_report(), [_profile()], None, "direct_not_found", {"soc": "sensor.x"}, origins=CORE)
-    assert (rec.path, rec.reason) == (UNSUPPORTED, "no_profile")
+    assert (rec.path, rec.reason) == (UNSUPPORTED, "no_write_path")
     assert rec.integration == {"domain": "goodwe", "name": "GoodWe", "origin": "core"}
 
 
