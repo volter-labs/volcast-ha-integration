@@ -33,7 +33,7 @@ for _name, _fn in {
         setattr(_ce.ConfigFlow, _name, _fn)
 
 from custom_components.volcast import config_flow as cf  # noqa: E402
-from custom_components.volcast.cloud.client import (Backend, PairingDisabled, PairingError,  # noqa: E402
+from custom_components.volcast.cloud.client import (Backend, ClientOutdated, PairingDisabled, PairingError,  # noqa: E402
                                                     PairingSession, PollResult)
 from custom_components.volcast.key_format import account_unique_id  # noqa: E402
 
@@ -448,3 +448,15 @@ def test_english_translation_matches_strings():
     strings = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))
     en = json.loads((COMPONENT / "translations" / "en.json").read_text(encoding="utf-8"))
     assert en == strings
+
+
+def test_config_flow_aborts_client_outdated(monkeypatch):
+    flow = make_flow(monkeypatch, polls=[PollResult("pending")],
+                     begin_error=ClientOutdated("2.0.0b4", "2.0.0b5"))
+    from unittest.mock import patch
+    with patch.object(flow, "async_abort", wraps=flow.async_abort) as ab:
+        r = asyncio.run(flow.async_step_pair(SUBMIT))
+    assert r["reason"] == "client_outdated"
+    assert ab.call_args.kwargs["description_placeholders"] == {"min_version": "2.0.0b4",
+                                                               "latest_version": "2.0.0b5"}
+    assert flow._tasks == []

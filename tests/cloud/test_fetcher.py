@@ -192,3 +192,53 @@ def test_plan_callback_never_receives_signals_block():
                         on_consent=noop, on_auth_failure=noop, on_signals=noop)
     assert asyncio.run(f.async_refresh()) == "accepted"
     assert len(seen) == 1 and "signals" not in seen[0]
+
+
+# ------------------------------------------------------- zgłoszenie update_available
+
+def _issues(monkeypatch, current):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.volcast.cloud import fetcher as fm
+    create, delete = MagicMock(), MagicMock()
+    monkeypatch.setattr(fm.ir, "async_create_issue", create)
+    monkeypatch.setattr(fm.ir, "async_delete_issue", delete)
+    monkeypatch.setattr(fm, "async_integration_version", AsyncMock(return_value=current))
+    return create, delete
+
+
+def _with_hass(*responses):
+    f, got = make(*responses)
+    f._hass = object()
+    return f
+
+
+def test_update_available_issue_created_when_latest_newer(monkeypatch):
+    create, delete = _issues(monkeypatch, "2.0.0b4")
+    f = _with_hass(doc(latest_version="2.0.0b5"))
+    assert asyncio.run(f.async_refresh()) == "accepted"
+    assert create.call_count == 1
+    assert create.call_args.args[2] == "update_available"
+    kw = create.call_args.kwargs
+    assert kw["is_fixable"] is False and kw["translation_key"] == "update_available"
+    assert kw["translation_placeholders"] == {"latest_version": "2.0.0b5", "current_version": "2.0.0b4"}
+    delete.assert_not_called()
+
+
+def test_update_available_issue_removed_when_versions_equal_or_absent(monkeypatch):
+    create, delete = _issues(monkeypatch, "2.0.0b5")
+    f = _with_hass(doc(latest_version="2.0.0b5"), doc("b"), doc("c", latest_version="2.0.0b3"),
+                   doc("d", latest_version=7))
+    for _ in range(4):
+        asyncio.run(f.async_refresh())
+    create.assert_not_called()
+    assert delete.call_count == 4
+
+
+def test_update_issue_skipped_without_hass_or_unknown_version(monkeypatch):
+    create, delete = _issues(monkeypatch, "unknown")
+    f, _ = make(doc(latest_version="2.0.0b5"))
+    asyncio.run(f.async_refresh())
+    f2 = _with_hass(doc(latest_version="2.0.0b5"))
+    asyncio.run(f2.async_refresh())
+    create.assert_not_called()

@@ -31,7 +31,7 @@ try:
 except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w formularzu
     section = None
 
-from .cloud.client import Backend, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
+from .cloud.client import Backend, ClientOutdated, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control import direct_search as ds
 from .control.runtime import async_control_change_allowed, async_direct_search, map_entities, mapped_with_overrides
 from .control.telemetry import TELEMETRY_FIELDS
@@ -234,6 +234,9 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                     ha_version=HA_VERSION,
                     client_version=await async_integration_version(self.hass),
                 )
+            except ClientOutdated as err:
+                return self.async_abort(reason="client_outdated", description_placeholders={
+                    "min_version": err.min_version or "?", "latest_version": err.latest_version or "?"})
             except PairingDisabled:
                 return self.async_abort(reason="pairing_disabled")
             except PairingError as err:

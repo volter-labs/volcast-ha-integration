@@ -70,6 +70,7 @@
       "single_instance_allowed": "Volcast is already set up here, and installation discovery already runs as part of it.",
       "cannot_connect": "Unable to reach the Volcast pairing service. Check your internet connection and try again.",
       "pairing_expired": "The pairing request expired or was cancelled before it was confirmed. Start again and confirm within 10 minutes.",
+      "client_outdated": "This version of the Volcast integration is too old to connect to your account (minimum {min_version}, latest {latest_version}). Update Volcast in HACS, restart Home Assistant and try again.",
       "pairing_disabled": "Pairing is not available right now. Try again later, or connect with an API key.",
       "pairing_failed": "Pairing did not complete. Start again; if it keeps failing, connect with an API key.",
       "paired_existing": "Your existing Volcast entry is now connected to your account.",
@@ -315,6 +316,10 @@
     "production_tracking_available": {
       "title": "Improve forecast accuracy with production tracking",
       "description": "Volcast v1.5.0 can now track your actual PV production and use it to calibrate forecasts. Go to the integration options and select your inverter's energy or power sensor to enable this feature."
+    },
+    "update_available": {
+      "title": "A Volcast update is available",
+      "description": "Volcast {latest_version} is available (you have {current_version}). Update Volcast in HACS and restart Home Assistant to get the latest fixes."
     },
     "foreign_control": {
       "title": "Volcast inverter control paused",

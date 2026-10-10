@@ -14,11 +14,32 @@ import json
 import logging
 from typing import Awaitable, Callable
 
+from homeassistant.helpers import issue_registry as ir
+
+from ..const import DOMAIN
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
+from ..version import async_integration_version
 from .client import CloudAuthError
+
+try:
+    from packaging.version import InvalidVersion, Version
+except ImportError:  # HA dostarcza `packaging`; bez niego porównujemy tylko równość
+    Version = None
 
 _LOGGER = logging.getLogger(__name__)
 SCHEDULE_FETCH_INTERVAL_S = 300
+UPDATE_ISSUE_ID = "update_available"
+# Waga zgłoszeń — z rejestru zgłoszeń (jak w `__init__`).
+_ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
+
+
+def _is_newer(latest: str, current: str) -> bool:
+    if Version is not None:
+        try:
+            return Version(latest) > Version(current)
+        except InvalidVersion:
+            pass
+    return latest != current
 
 
 class ScheduleFetcher:
@@ -26,7 +47,9 @@ class ScheduleFetcher:
                  on_consent: Callable[[bool], Awaitable[None]],
                  on_auth_failure: Callable[[int], Awaitable[None]],
                  on_signals: Callable[[dict | None], Awaitable[None]] | None = None,
-                 on_control: Callable[[dict | None], Awaitable[None]] | None = None) -> None:
+                 on_control: Callable[[dict | None], Awaitable[None]] | None = None,
+                 hass=None) -> None:
+        self._hass = hass   # tylko do zgłoszenia „dostępna aktualizacja"
         self._cloud = cloud
         self._on_plan = on_plan
         self._on_consent = on_consent
@@ -64,10 +87,11 @@ class ScheduleFetcher:
         self._auth_failures = 0
         await self._async_signals(raw)
         await self._async_control(raw)
+        await self._async_update_issue(raw.get("latest_version"))
         consent = raw.get("control_enabled")
         if isinstance(consent, bool):
             await self._on_consent(consent)
-        body = {k: v for k, v in raw.items() if k not in ("control_enabled", "signals", "control")}
+        body = {k: v for k, v in raw.items() if k not in ("control_enabled", "signals", "control", "latest_version")}
         signature = json.dumps(body, sort_keys=True, default=str)
         if signature == self._last_signature:
             return "unchanged"
@@ -106,3 +130,20 @@ class ScheduleFetcher:
             await self._on_control(block if isinstance(block, dict) else None)
         except Exception as err:  # noqa: BLE001 — callback decyzji nie może zatrzymać planu
             _LOGGER.debug("Volcast control callback failed (%s)", type(err).__name__)
+
+    async def _async_update_issue(self, latest) -> None:
+        """Zgłoszenie `update_available`, gdy chmura zna nowszą wersję integracji niż zainstalowana;
+        znika, gdy wersje się zrównają albo pole zniknie. Jego błąd nie wywraca odświeżenia."""
+        if self._hass is None:
+            return
+        try:
+            current = await async_integration_version(self._hass)
+            if isinstance(latest, str) and latest and current != "unknown" and _is_newer(latest, current):
+                ir.async_create_issue(
+                    self._hass, DOMAIN, UPDATE_ISSUE_ID, is_fixable=False, severity=_ISSUE_WARNING,
+                    translation_key=UPDATE_ISSUE_ID,
+                    translation_placeholders={"latest_version": latest, "current_version": current})
+            else:
+                ir.async_delete_issue(self._hass, DOMAIN, UPDATE_ISSUE_ID)
+        except Exception as err:  # noqa: BLE001 — zgłoszenie jest informacyjne
+            _LOGGER.debug("Volcast update issue failed (%s)", type(err).__name__)

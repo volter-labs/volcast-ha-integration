@@ -4,7 +4,7 @@ import logging
 import aiohttp
 import pytest
 
-from custom_components.volcast.cloud.client import (Backend, CloudAuthError, PairingClient,
+from custom_components.volcast.cloud.client import (Backend, ClientOutdated, CloudAuthError, PairingClient,
                                                     PairingDisabled, PairingError, PairingSession,
                                                     TelemetryResult, VolcastCloud)
 
@@ -468,3 +468,33 @@ def test_telemetry_oversized_body_is_refused():
     s = FakeSession()
     s.add("POST", BACKEND["telemetry"], 200, {"signals": {}}, content_length=10_000_000)
     assert run(_tel(s).async_post_telemetry({})) == TelemetryResult(0, None)
+
+
+def test_begin_409_client_outdated_raises():
+    s = FakeSession()
+    s.add("POST", PAIR, 409, {"error": "client_outdated", "min_client_version": "2.0.0b4",
+                              "latest_version": "2.0.0b5"})
+    with pytest.raises(ClientOutdated) as err:
+        begin(s)
+    assert err.value.min_version == "2.0.0b4" and err.value.latest_version == "2.0.0b5"
+    # Brak wersji w odpowiedzi nie wywraca mapowania.
+    s2 = FakeSession()
+    s2.add("POST", PAIR, 409, {"error": "client_outdated"})
+    with pytest.raises(ClientOutdated) as err2:
+        begin(s2)
+    assert err2.value.min_version is None and err2.value.latest_version is None
+    # Inne 409 to zwykły błąd parowania, nie nieaktualny klient.
+    s3 = FakeSession()
+    s3.add("POST", PAIR, 409, {"error": "other"})
+    with pytest.raises(PairingError) as err3:
+        begin(s3)
+    assert not isinstance(err3.value, ClientOutdated)
+
+
+def test_begin_201_carries_latest_version():
+    s = FakeSession()
+    s.add("POST", PAIR, 201, {**BEGIN_OK, "latest_version": "2.0.0b5", "min_client_version": "2.0.0b4"})
+    assert begin(s).latest_version == "2.0.0b5"
+    s2 = FakeSession()
+    s2.add("POST", PAIR, 201, {**BEGIN_OK, "latest_version": 5})
+    assert begin(s2).latest_version is None

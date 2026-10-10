@@ -8,7 +8,7 @@ Klucz konta i tokeny nigdy nie trafiają do logów: logujemy wyłącznie status 
 albo nazwę klasy wyjątku (treść wyjątku sieciowego bywa adresem z parametrami).
 
 Kontrakt parowania (`POST pairing-session`, akcja w `body.action`):
-begin 201 / 400 / 429 / 503; poll 202 pending, 200 confirmed (klucz RAZ) albo
+begin 201 / 400 / 409 (client_outdated) / 429 / 503; poll 202 pending, 200 confirmed (klucz RAZ) albo
 consumed (wybory), 410 expired/cancelled, 404; progress 200 / 409 / 400;
 request_plan 200 / 429 (ochłonięcie) / 409; cancel 200 / 409. Integracja nie słucha
 kanału Realtime (pingi są bez danych) — wybory odczytuje z `poll` po `consumed`.
@@ -229,6 +229,7 @@ class PairingSession:
     poll_token: str
     connect_url: str
     expires_at: str
+    latest_version: str | None = None   # najnowsza wydana wersja integracji (opcjonalna w odpowiedzi)
 
 
 @dataclass(frozen=True)
@@ -247,6 +248,23 @@ class PairingDisabled(Exception):
 
 class PairingError(Exception):
     """Sesji nie da się założyć (limit, zły format odpowiedzi, sieć)."""
+
+
+class ClientOutdated(PairingError):
+    """Chmura odrzuciła wersję integracji (409 `client_outdated`) — trzeba ją zaktualizować."""
+
+    def __init__(self, min_version: str | None, latest_version: str | None) -> None:
+        super().__init__("begin: client_outdated")
+        self.min_version = min_version
+        self.latest_version = latest_version
+
+
+def _version(v: Any) -> str | None:
+    """Wersja z odpowiedzi chmury: krótki napis bez znaków sterujących albo None."""
+    if not isinstance(v, str):
+        return None
+    cleaned = _clean(v, _VERSION_MAX)
+    return cleaned or None
 
 
 class PairingClient:
@@ -278,6 +296,8 @@ class PairingClient:
         status, data = await self._call(body)
         if status == 503:
             raise PairingDisabled
+        if status == 409 and isinstance(data, dict) and data.get("error") == "client_outdated":
+            raise ClientOutdated(_version(data.get("min_client_version")), _version(data.get("latest_version")))
         if status != 201 or not isinstance(data, dict):
             code = data.get("error") if isinstance(data, dict) else None
             raise PairingError(f"begin HTTP {status}" + (f" ({code})" if isinstance(code, str) else ""))
@@ -291,7 +311,7 @@ class PairingClient:
             raise PairingError("begin: connect_url must be https")
         if not _iso(expires):
             raise PairingError("begin: malformed expires_at")
-        return PairingSession(sid, token, url, expires)
+        return PairingSession(sid, token, url, expires, _version(data.get("latest_version")))
 
     async def async_poll(self, s: PairingSession) -> PollResult:
         status, data = await self._call(self._auth(s, "poll"))
