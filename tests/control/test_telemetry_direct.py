@@ -153,6 +153,82 @@ def test_stale_direct_reading_reports_none_sources():
     assert set(sender.readings_report()["readings_source"].values()) == {"none"}
 
 
+_COUNTERS = {"load_energy_total_kwh": 4315.5, "load_energy_day_kwh": 39.8,
+             "battery_charge_total_kwh": 2495.1, "battery_discharge_total_kwh": 1987.9}
+
+
+def _gw_conn(**words):
+    from tests.sim.fixtures import goodwe_words
+    w = goodwe_words()
+    w.update({int(a): v for a, v in words.items()})
+    return FakeConn(GW, w)
+
+
+def test_direct_limits_include_max_charge_w():
+    sender, cloud = _sender(FakeConn(GW), limits=executor_limits(rated_power_w=8000.0, source="registers"))
+    # 9 A × 304,9 V i 22 A × 304,9 V z rejestrów BMS (ramki golden), w dół do 100 W
+    assert _flush(sender, cloud)["driver"]["limits"] == {
+        "rated_power_w": 8000, "max_charge_w": 2700, "max_discharge_w": 6700, "source": "registers"}
+    # bez mocy znamionowej (sonda jej nie dała) — same limity BMS
+    sender, cloud = _sender(FakeConn(GW), limits=None)
+    assert _flush(sender, cloud)["driver"]["limits"] == {
+        "max_charge_w": 2700, "max_discharge_w": 6700, "source": "registers"}
+
+
+def test_direct_limits_keep_peak_when_bms_tapers():
+    conn = FakeConn(GW)
+    sender, cloud = _sender(conn, limits=executor_limits(rated_power_w=8000.0, source="registers"))
+    assert _flush(sender, cloud)["driver"]["limits"]["max_charge_w"] == 2700
+    conn.reading = _gw_conn(**{"37004": 1}).reading              # 1 A przy pełnej baterii
+    assert _flush(sender, cloud)["driver"]["limits"]["max_charge_w"] == 2700
+
+
+@pytest.mark.parametrize("words", [
+    {"37004": 0, "37005": 0},                    # BMS zgłasza 0 A
+    {"37004": 65535, "37005": 65535},            # śmieci
+    {"35180": 0},                                # brak napięcia baterii
+])
+def test_direct_limits_omit_implausible_bms_values(words):
+    sender, cloud = _sender(_gw_conn(**words), limits=executor_limits(rated_power_w=8000.0, source="registers"))
+    assert _flush(sender, cloud)["driver"]["limits"] == {"rated_power_w": 8000, "source": "registers"}
+    sender, cloud = _sender(_gw_conn(**words), limits=None)
+    assert "limits" not in _flush(sender, cloud)["driver"]
+
+
+def test_direct_counters_in_extra_and_sources():
+    sender, cloud = _sender(FakeConn(GW))
+    r = _flush(sender, cloud)
+    assert r["extra"]["counters"] == pytest.approx(_COUNTERS)
+    assert set(r["extra"]) == {"volcast", "counters"}
+    assert not set(_COUNTERS) & set(r)                   # nigdy jako pola odczytu
+    src = r["driver"]["meta"]["readings_source"]
+    for key in (*_COUNTERS, "bms_charge_current_max_a", "bms_discharge_current_max_a"):
+        assert src[key] == "register", key
+    assert "battery_capacity_kwh" not in src             # profil nie opisuje, nikt nie podał
+    assert "counters" not in (sender.build_live_reading() or {})
+
+
+def test_direct_counters_only_valid_keys():
+    # 0xFFFFFFFF ×0,1 kWh = śmieci; licznik dobowy 0 kWh tuż po północy jest prawdziwą wartością
+    conn = _gw_conn(**{"35203": 0xFFFF, "35204": 0xFFFF, "35205": 0})
+    sender, cloud = _sender(conn)
+    counters = _flush(sender, cloud)["extra"]["counters"]
+    assert "load_energy_total_kwh" not in counters and counters["load_energy_day_kwh"] == 0.0
+    assert counters["battery_charge_total_kwh"] == pytest.approx(2495.1)
+
+
+def test_no_counters_block_without_any_valid_counter():
+    from custom_components.volcast.control.telemetry import counters_block
+    assert counters_block({}, {}) is None
+    assert counters_block({"load_energy_total_kwh": -1.0, "battery_charge_total_kwh": float("nan"),
+                           "battery_discharge_total_kwh": True, "load_energy_day_kwh": "7"}, {}) is None
+    # encja wskazana ręcznie wygrywa, także nieczytelna (jak pozostałe pola)
+    assert counters_block({"load_energy_total_kwh": 10.0, "battery_charge_total_kwh": 5.0},
+                          {"load_energy_total_kwh": None}) == {"battery_charge_total_kwh": 5.0}
+    assert counters_block({}, {"load_energy_total_kwh": 12.3456}) == {"load_energy_total_kwh": 12.346}
+    assert counters_block({"pv_energy_total_kwh": 100.0}, {}) is None    # kolumny odczytu zostają kolumnami
+
+
 def test_direct_driver_limits_source_registers():
     limits = executor_limits(rated_power_w=10000.0, source="registers")
     b = direct_driver_block(profile=GW, access="direct", capabilities={"sell_from_battery": True},
@@ -205,3 +281,5 @@ def test_entity_mode_telemetry_unchanged():
     r = cloud.sent[-1]
     assert "access" not in r["driver"] and "direct" not in r["extra"]["volcast"]
     assert r["driver"]["capabilities"] and "battery_soc" in r
+    # tryb encji bez encji liczników i bez limitów: bez bloku liczników (chmura liczy ze średniej mocy)
+    assert "counters" not in r["extra"] and "limits" not in r["driver"]

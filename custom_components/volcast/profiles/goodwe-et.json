@@ -8,7 +8,8 @@
   "sources": [
     {"what": "register map", "ref": "goodwe python library (ET family), cross-checked with recorded frames"},
     {"what": "mode semantics", "ref": "measurements on GW8KN-ET: standby honours Xset, sell_power covers house then exports Xset"},
-    {"what": "golden vectors", "ref": "tests/golden/goodwe_et"}
+    {"what": "golden vectors", "ref": "tests/golden/goodwe_et"},
+    {"what": "energy counters and BMS current limits (verify: true)", "ref": "goodwe python library ET sensor order (tests/golden/goodwe_et/ha_candidates.json) anchored at the measured 35191, 37003 and 37007; register widths and scales from the library map; values plausible in tests/golden/goodwe_et/frames.json; not yet checked against the inverter display"}
   ],
   "unit_id": 247,
   "transports": ["goodwe_udp", "modbus_tcp", "modbus_rtu"],
@@ -38,6 +39,12 @@
     "grid_power_w": {"addr": 36008, "type": "i16", "sign": -1},
     "grid_export_total_kwh": {"addr": 36015, "type": "f32", "scale": 0.001},
     "grid_import_total_kwh": {"addr": 36017, "type": "f32", "scale": 0.001},
+    "load_energy_total_kwh": {"addr": 35203, "type": "u32", "scale": 0.1, "verify": true, "note": "e_load_total (Total Load) in the goodwe library ET map, u32 x0.1 kWh; recorded frame 4315.5 kWh"},
+    "load_energy_day_kwh": {"addr": 35205, "type": "u16", "scale": 0.1, "verify": true, "note": "e_load_day (Today Load) in the goodwe library ET map, u16 x0.1 kWh, resets at the inverter's local midnight; recorded frame 39.8 kWh does not balance with the other day counters of the same frame - check the scale on the device"},
+    "battery_charge_total_kwh": {"addr": 35206, "type": "u32", "scale": 0.1, "verify": true, "note": "e_bat_charge_total (Total Battery Charge) in the goodwe library ET map, u32 x0.1 kWh; recorded frame 2495.1 kWh"},
+    "battery_discharge_total_kwh": {"addr": 35209, "type": "u32", "scale": 0.1, "verify": true, "note": "e_bat_discharge_total (Total Battery Discharge) in the goodwe library ET map, u32 x0.1 kWh; recorded frame 1987.9 kWh"},
+    "bms_charge_current_max_a": {"addr": 37004, "type": "u16", "verify": true, "note": "battery_charge_limit (A) in the goodwe library ET battery block, between battery_temperature 37003 and battery_soc 37007; recorded frame 9 A at 83 % SoC"},
+    "bms_discharge_current_max_a": {"addr": 37005, "type": "u16", "verify": true, "note": "battery_discharge_limit (A) in the goodwe library ET battery block; recorded frame 22 A"},
     "export_limit_enabled": {"addr": 47509, "type": "u16"},
     "export_limit_w": {"addr": 47510, "type": "u16"},
     "mode_value": {"addr": 47511, "type": "u16"},
@@ -79,7 +86,8 @@
     "readback_settle_s": 1.5,
     "nvm_budget": {"window_h": 24, "per_key": 144, "total": 600}
   },
-  "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
+  "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w",
+             "max_charge_register": "bms_charge_current_max_a", "max_discharge_register": "bms_discharge_current_max_a"},
   "ha": {"integrations": [{
     "domain": "goodwe",
     "ems": true,

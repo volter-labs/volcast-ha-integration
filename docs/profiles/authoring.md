@@ -34,6 +34,25 @@ file in `profiles/` automatically.
 
 New profiles are always `draft` with a `status_note` (section 8).
 
+### Unverified registers in a verified profile (`verify: true`)
+
+A verified profile may gain counter or limit reads (section 3, `read`) before they are checked on a
+unit. Each such entry carries `"verify": true` and a `note` naming its source. Its effect:
+
+* the validator accepts the profile and reports a **warning**, not an error, for every `verify: true`
+  entry of a `verified` profile (`profile_warnings` in `core/profile_schema.py`); in a `draft` profile
+  everything is unverified anyway, so there is no warning;
+* the register is read, sent to the cloud (counters, BMS limits) and reported as `register` in
+  `driver.meta.readings_source` like any other reading — the owner sees the value, the app shows no
+  separate per-reading badge, and the profile's own status (and the owner-facing control offer) does
+  not change;
+* it never influences a write: the flag is allowed only on informational keys, the write path never
+  reads them, and the cloud cross-checks counters against the power average and clips limits to the
+  rated power.
+
+The flag is removed (set to `false` or dropped) only after the address, type and scale are checked on a
+real unit with a read-only register dump against the inverter's own display or app.
+
 ### Where the verification ladder starts
 
 The status only sets the rung where the per-device verification ladder starts:
@@ -84,6 +103,11 @@ Used in `identify`, `read` and `limits`:
   input.
 * A `read` entry may instead be `{"sum": [<register spec or {"ref": "<other read key>", "sign": -1}>, ...]}`.
   Cycles are rejected.
+* Optional `note` (non-empty text, any register spec): where the address comes from and what is left
+  to check. The code never reads it.
+* Optional `verify` (boolean, default `false`) — only on the counter and limit keys of `read` (see
+  below); anywhere else, including `sum` terms, `identify` and `write`, it is rejected. `verify: true`
+  marks an address taken from a vendor map or library that has not been checked on a real unit yet.
 
 ### `read`
 
@@ -94,6 +118,30 @@ keys `mode_value`, `power_w`, `soc_min`, `soc_max`, `export_limit_w`, `export_li
 `tou_enabled` is allowed for time-window profiles and must use the address of `write.tou_enable`.
 Sign conventions follow the existing profiles (`grid_power_w` positive = import); fix a
 vendor's opposite convention with `sign`.
+
+Counters and limits (optional; the same closed list as the cloud's reading-source map,
+`EXTRA_KEYS` in `core/control/readings.py` — the validator reads it from there):
+
+| Key | Unit | Meaning |
+|---|---|---|
+| `load_energy_total_kwh` | kWh | house consumption, lifetime total, only grows |
+| `load_energy_day_kwh` | kWh | house consumption today, resets at the inverter's local midnight |
+| `battery_charge_total_kwh` | kWh | energy into the battery, lifetime total |
+| `battery_discharge_total_kwh` | kWh | energy out of the battery, lifetime total |
+| `bms_charge_current_max_a` | A | charge current the BMS currently allows |
+| `bms_discharge_current_max_a` | A | discharge current the BMS currently allows |
+| `battery_capacity_kwh` | kWh | battery capacity |
+
+The four energy counters go to the cloud in `extra.counters` of each reading (signals contract §6.3):
+only keys with a valid value (finite, `>= 0`, below 10 GWh), never `0` or `null` in place of a missing
+reading; no valid counter means no block, and the cloud then integrates the power average. The PV and
+grid counters keep their own reading fields. The cloud cross-checks each counter against the power
+average of the same window and falls back to the average when the scale is off (×10 and more), so a
+wrong scale costs accuracy, not the energy balance.
+
+These keys are informational: they never reach the write path (settings, read-back, guards, the sell
+set-point) — only cloud accounting and the planner's limits. That is why `verify: true` is allowed
+on them and nowhere else.
 
 ### `identify`
 
@@ -151,6 +199,16 @@ Intents are chosen from `charge_grid`, `charge_pv`, `discharge_forced`, `sell`, 
   `max_direction_changes_per_hour` (1-60 for `mode_setpoint`), `max_state_age_s` (> 0) and optional
   `nvm_budget`, `readback_settle_s` (0-10).
 * `limits.battery_temp_c` `{min, max}` and `limits.rated_power_register`.
+* Optional `limits.max_charge_register` (`"bms_charge_current_max_a"`), `limits.max_discharge_register`
+  (`"bms_discharge_current_max_a"`) and `limits.capacity_register` (`"battery_capacity_kwh"`): each must
+  name that key of `read`, and the two current limits also need `read.battery_voltage_v`. On the direct
+  path the `driver.limits` block then carries `max_charge_w` / `max_discharge_w` = BMS current ×
+  battery voltage, clipped to the rated power and rounded down to 100 W, and `battery_capacity_kwh`
+  (a capacity the owner entered wins). The planner needs the battery's capability, not the BMS taper
+  at a high state of charge, so the power sent is the peak of the last 24 hours. Implausible readings
+  are left out, never sent as `0`: current outside 1-1000 A, battery voltage outside 40-1000 V, power
+  outside 100 W to 30 kW, capacity outside 0.5-200 kWh (`core/control/limits.py`). Without these
+  fields the readings are still sent as counters/sources, but no limit is derived from them.
 * `capabilities`: eight booleans (`force_charge_from_grid`, `sell_from_battery`, `force_discharge`,
   `standby`, `set_power_w`, `limit_export`, `set_soc_floor`, `set_soc_ceiling`) that must reflect
   what can really be written: `set_power_w` <=> a power write, `set_soc_floor` <=> `soc_min`,

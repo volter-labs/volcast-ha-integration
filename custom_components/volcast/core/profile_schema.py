@@ -12,15 +12,24 @@ import math
 import re
 from typing import Any
 
+from .control.readings import EXTRA_KEYS, MEASURED_KEYS
 from .params import TOU_FIELDS, WRITE_PARAMS
 
+# Odczyty pomiarowe, liczniki i limity — ta sama zamknięta lista co mapa źródeł chmury
+# (`core/control/readings.py`, jedno źródło) — plus odczyt nastaw do uzgadniania z falownikiem.
 READ_KEYS = frozenset({
-    "soc", "battery_temp_c", "battery_voltage_v", "battery_current_a", "battery_power_w",
-    "pv_power_w", "grid_power_w", "load_power_w", "active_power_w", "pv_energy_total_kwh",
-    "grid_import_total_kwh", "grid_export_total_kwh",
-    # odczyt nastaw — do uzgadniania z tym, co falownik faktycznie ma
+    *MEASURED_KEYS, *EXTRA_KEYS,
     "mode_value", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled",
 })
+# Flaga `verify: true` (rejestr z mapy producenta, niepotwierdzony na urządzeniu) — tylko przy
+# licznikach i limitach: te odczyty idą do chmury, nigdy do toru zapisu (nastawy, strażnicy, sprzedaż).
+VERIFY_KEYS = frozenset(EXTRA_KEYS)
+# Opcjonalne wskazania limitów w `$.limits`: pole → dozwolony klucz `$.read`.
+LIMIT_REGISTERS = {"max_charge_register": ("bms_charge_current_max_a",),
+                   "max_discharge_register": ("bms_discharge_current_max_a",),
+                   "capacity_register": ("battery_capacity_kwh",)}
+# Prąd BMS × napięcie baterii — moc limitu wymaga odczytu napięcia.
+_LIMIT_NEEDS_VOLTAGE = ("max_charge_register", "max_discharge_register")
 INTENTS = ("charge_grid", "charge_pv", "discharge_forced", "sell", "self_consume", "standby")
 # Tylko te intencje wychodzą z rozstrzygania slotu z gwarantowaną mocą (silnik tryb+nastawa).
 POWERED_INTENTS = ("charge_grid", "sell", "discharge_forced")
@@ -126,11 +135,20 @@ class _V:
         return v
 
 
-def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True) -> None:
+def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True, verify: bool = False) -> None:
+    """Wpis rejestru; `verify` = dozwolona flaga `verify` (tylko liczniki i limity w `$.read`).
+    `note` (skąd adres, co sprawdzić) wolno przy każdym wpisie — kod go nie czyta."""
     r = v.obj(raw, path, ("addr",) + (("type",) if need_type else ()),
-              ("type", "scale", "sign", "undef", "len", "word_order", "expect", "fc"))
+              ("type", "scale", "sign", "undef", "len", "word_order", "expect", "fc", "note", "verify"))
     if r is None:
         return
+    if "verify" in r:
+        if not verify:
+            v.err(f"{path}.verify", "flaga verify tylko przy licznikach i limitach w $.read")
+        else:
+            v.bool_(r["verify"], f"{path}.verify")
+    if "note" in r:
+        v.str_(r["note"], f"{path}.note")
     v.int_(r.get("addr"), f"{path}.addr", 0, 65535)
     if "fc" in r:
         _read_function(v, r["fc"], f"{path}.fc")
@@ -193,7 +211,7 @@ def _read(v: _V, raw: Any) -> None:
                 else:
                     _reg(v, t, tp)
         else:
-            _reg(v, spec, path)
+            _reg(v, spec, path, verify=key in VERIFY_KEYS)
     _ref_cycles(v, edges)
 
 
@@ -499,6 +517,32 @@ def _verification(v: _V, raw: Any) -> None:
             v.int_(b[key], f"{path}.{key}", lo, hi)
 
 
+def _limit_registers(v: _V, lim: dict, read: dict) -> None:
+    """`$.limits.<pole>_register` → klucz `$.read` właściwego rodzaju (prąd BMS, pojemność)."""
+    for field, allowed in LIMIT_REGISTERS.items():
+        if field not in lim:
+            continue
+        path = f"$.limits.{field}"
+        key = lim[field]
+        if not isinstance(key, str) or key not in allowed:
+            v.err(path, f"dozwolone: {list(allowed)}")
+        elif key not in read:
+            v.err(path, f"musi wskazywać $.read.{key}")
+        elif field in _LIMIT_NEEDS_VOLTAGE and "battery_voltage_v" not in read:
+            v.err(path, "limit z prądu BMS wymaga $.read.battery_voltage_v")
+
+
+def profile_warnings(raw: object) -> list[str]:
+    """Ostrzeżenia (nie błędy): profil `verified` z odczytami `verify: true` — adres z mapy
+    producenta, niepotwierdzony na urządzeniu. Profil testowy (`draft`) cały jest niepotwierdzony,
+    więc tam bez ostrzeżeń. Nigdy nie rzuca — także na pliku, którego walidator nie przyjął."""
+    if not isinstance(raw, dict) or raw.get("status") != "verified" or not isinstance(raw.get("read"), dict):
+        return []
+    return [f"$.read.{key}.verify: odczyt niepotwierdzony na urządzeniu w profilu verified"
+            for key, spec in raw["read"].items()
+            if isinstance(spec, dict) and spec.get("verify") is True]
+
+
 def validate_profile(raw: object) -> list[str]:
     v = _V()
     top = v.obj(raw, "$", _TOP_REQ, _TOP_OPT)
@@ -664,8 +708,9 @@ def validate_profile(raw: object) -> list[str]:
         if v.num(wp.get("max_state_age_s"), "$.write_policy.max_state_age_s") and wp["max_state_age_s"] <= 0:
             v.err("$.write_policy.max_state_age_s", "oczekiwano liczby > 0")
 
-    lim = v.obj(top.get("limits"), "$.limits", ("battery_temp_c", "rated_power_register"))
+    lim = v.obj(top.get("limits"), "$.limits", ("battery_temp_c", "rated_power_register"), tuple(LIMIT_REGISTERS))
     if lim is not None:
+        _limit_registers(v, lim, rd if isinstance(rd, dict) else {})
         t = v.obj(lim.get("battery_temp_c"), "$.limits.battery_temp_c", ("min", "max"))
         if t is not None and v.num(t.get("min"), "$.limits.battery_temp_c.min") \
                 and v.num(t.get("max"), "$.limits.battery_temp_c.max") and t["min"] >= t["max"]:

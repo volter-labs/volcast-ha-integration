@@ -81,6 +81,93 @@ def test_executor_limits_upper_bound_matches_guard():
         "rated_power_w": 8000, "source": "entities"}
 
 
+def test_executor_limits_from_bms_current_and_battery_voltage():
+    lim = executor_limits(rated_power_w=8000.0, bms_charge_current_a=9, bms_discharge_current_a=22,
+                          battery_voltage_v=304.9, source="registers")
+    assert lim == {"rated_power_w": 8000, "max_charge_w": 2700, "max_discharge_w": 6700, "source": "registers"}
+    # przycięte do mocy znamionowej; bez znanej mocy znamionowej — sam iloczyn
+    assert executor_limits(rated_power_w=8000.0, bms_charge_current_a=30, battery_voltage_v=400.0)[
+        "max_charge_w"] == 8000
+    assert executor_limits(rated_power_w=None, bms_charge_current_a=100, battery_voltage_v=51.2,
+                           source="registers") == {"max_charge_w": 5100, "source": "registers"}
+    # jawna moc ma pierwszeństwo przed iloczynem
+    assert executor_limits(rated_power_w=8000.0, max_charge_w=3000.0, bms_charge_current_a=9,
+                           battery_voltage_v=304.9)["max_charge_w"] == 3000
+
+
+@pytest.mark.parametrize("current,voltage", [
+    (0, 304.9), (-9, 304.9), (0.5, 304.9), (1001, 304.9), (65535, 304.9), (float("nan"), 304.9),
+    (float("inf"), 304.9), (True, 304.9), ("9", 304.9), (None, 304.9),
+    (9, None), (9, 0), (9, 39.9), (9, 1000.1), (9, float("nan")), (9, -304.9),
+    (0.6, 100.0),                                       # 60 W < 100 W — poniżej sensownej mocy
+])
+def test_implausible_bms_values_are_omitted(current, voltage):
+    lim = executor_limits(rated_power_w=8000.0, bms_charge_current_a=current, bms_discharge_current_a=current,
+                          battery_voltage_v=voltage)
+    assert lim == {"rated_power_w": 8000, "source": "entities"}        # nigdy 0 ani śmieci
+    assert executor_limits(rated_power_w=None, bms_charge_current_a=current, battery_voltage_v=voltage) is None
+
+
+def test_bms_power_bounds_are_documented_constants():
+    from custom_components.volcast.core.control import limits as L
+    assert L.BMS_CURRENT_RANGE_A == (1.0, 1000.0)
+    assert L.BATTERY_VOLTAGE_RANGE_V == (40.0, 1000.0)
+    assert L.BMS_POWER_STEP_W == 100
+
+
+def test_register_limits_capacity_and_owner_values():
+    from custom_components.volcast.core.control.limits import register_limits
+    spec = {"max_charge_register": "bms_charge_current_max_a", "capacity_register": "battery_capacity_kwh"}
+    values = {"bms_charge_current_max_a": 25, "battery_voltage_v": 300.0, "battery_capacity_kwh": 10.24,
+              "bms_discharge_current_max_a": 25}
+    # rozładowanie bez `max_discharge_register` w profilu — nie liczymy go, choć odczyt jest
+    assert register_limits({"rated_power_w": 10000, "source": "registers"}, spec, values) == {
+        "rated_power_w": 10000, "max_charge_w": 7500, "battery_capacity_kwh": 10.24, "source": "registers"}
+    # pojemność wpisana przez właściciela wygrywa z rejestrem; bez bazy źródło = rejestry
+    assert register_limits({"rated_power_w": 10000, "battery_capacity_kwh": 15.0, "source": "user"}, spec,
+                           values)["battery_capacity_kwh"] == 15.0
+    assert register_limits(None, spec, values) == {"max_charge_w": 7500, "battery_capacity_kwh": 10.24,
+                                                   "source": "registers"}
+    assert register_limits(None, spec, {**values, "battery_capacity_kwh": 0}) == {
+        "max_charge_w": 7500, "source": "registers"}
+    assert register_limits(None, {}, values) is None
+    assert register_limits({"rated_power_w": 8000, "source": "registers"}, spec, {}) == {
+        "rated_power_w": 8000, "source": "registers"}
+
+
+def test_peak_limit_keeps_24h_peak_against_bms_taper():
+    from custom_components.volcast.core.control.limits import PeakLimit
+    peak = PeakLimit()
+    assert peak.peak(0.0) is None
+    peak.observe(6700.0, 0.0)
+    peak.observe(2700.0, 2 * 3600.0)                  # BMS ogranicza prąd przy wysokim SoC
+    peak.observe(None, 2 * 3600.0 + 60)               # brak odczytu nie kasuje szczytu
+    for bad in (float("nan"), float("inf"), True, "7000", -1.0):
+        peak.observe(bad, 3 * 3600.0)                 # śmieci nie wchodzą do szczytu
+    assert peak.peak(2 * 3600.0) == 6700.0
+    assert peak.peak(23 * 3600.0 + 3599) == 6700.0
+    assert peak.peak(24 * 3600.0) == 2700.0           # szczyt sprzed doby wygasł
+    assert peak.peak(26 * 3600.0) is None             # po dobie bez odczytu — nic
+    peak.observe(5000.0, 10.0)                        # zegar cofnięty: próbka z przeszłości nie psuje
+    assert peak.peak(26 * 3600.0) is None
+
+
+def test_register_limits_with_peaks():
+    from custom_components.volcast.core.control.limits import PeakLimit, register_limits
+    spec = {"max_charge_register": "bms_charge_current_max_a", "max_discharge_register": "bms_discharge_current_max_a"}
+    peaks = {"max_charge_w": PeakLimit(), "max_discharge_w": PeakLimit()}
+    base = {"rated_power_w": 8000, "source": "registers"}
+    high = {"bms_charge_current_max_a": 25, "bms_discharge_current_max_a": 25, "battery_voltage_v": 300.0}
+    low = {"bms_charge_current_max_a": 2, "bms_discharge_current_max_a": 25, "battery_voltage_v": 301.0}
+    assert register_limits(base, spec, high, peaks=peaks, now_s=0.0)["max_charge_w"] == 7500
+    assert register_limits(base, spec, low, peaks=peaks, now_s=60.0)["max_charge_w"] == 7500
+    assert register_limits(base, spec, {}, peaks=peaks, now_s=120.0)["max_charge_w"] == 7500
+    # moc znamionowa obniżona później (np. korekta właściciela) — szczyt nadal przycięty
+    assert register_limits({"rated_power_w": 5000, "source": "user"}, spec, {}, peaks=peaks,
+                           now_s=180.0) == {"rated_power_w": 5000, "max_charge_w": 5000,
+                                            "max_discharge_w": 5000, "source": "user"}
+
+
 DRAFT_ENTITY_PROFILES = (("huawei-sun2000", "huawei_solar"), ("foxess-h", "foxess_modbus"),
                          ("solax-x-hybrid", "solax_modbus"), ("solaredge-storedge", "solaredge_modbus_multi"))
 

@@ -551,3 +551,81 @@ def test_verification_block_rejected(block, needle):
 def test_verification_block_is_optional():
     p = ms_profile()
     assert "verification" not in p and validate_profile(p) == []
+
+
+# ── liczniki energii, limity BMS i flaga `verify` ──
+
+_NOTE = "candidate from the vendor map — unverified"
+
+
+def _with_counters(status="verified"):
+    p = ms_profile()
+    p["status"] = status
+    p["read"].update({
+        "battery_voltage_v": {"addr": 35180, "type": "u16", "scale": 0.1},
+        "load_energy_total_kwh": {"addr": 35203, "type": "u32", "scale": 0.1, "verify": True, "note": _NOTE},
+        "load_energy_day_kwh": {"addr": 35205, "type": "u16", "scale": 0.1, "verify": True, "note": _NOTE},
+        "battery_charge_total_kwh": {"addr": 35206, "type": "u32", "scale": 0.1, "verify": True, "note": _NOTE},
+        "battery_discharge_total_kwh": {"addr": 35209, "type": "u32", "scale": 0.1, "verify": False},
+        "bms_charge_current_max_a": {"addr": 37004, "type": "u16", "verify": True, "note": _NOTE},
+        "bms_discharge_current_max_a": {"addr": 37005, "type": "u16", "verify": True, "note": _NOTE},
+        "battery_capacity_kwh": {"addr": 37050, "type": "u16", "scale": 0.1, "verify": True, "note": _NOTE},
+    })
+    p["limits"].update(max_charge_register="bms_charge_current_max_a",
+                       max_discharge_register="bms_discharge_current_max_a",
+                       capacity_register="battery_capacity_kwh")
+    return p
+
+
+def test_schema_accepts_counter_keys_and_verify_flag():
+    from custom_components.volcast.core.control.readings import EXTRA_KEYS
+    from custom_components.volcast.core.profile_schema import READ_KEYS
+    assert set(EXTRA_KEYS) <= READ_KEYS                     # jedno źródło listy kluczy
+    assert validate_profile(_with_counters()) == []
+    assert validate_profile(_with_counters("draft")) == []
+
+
+def test_limits_registers_are_optional():
+    p = ms_profile()
+    assert "max_charge_register" not in p["limits"] and validate_profile(p) == []
+
+
+@pytest.mark.parametrize("mutate,needle", [
+    (lambda p: p["read"]["load_energy_total_kwh"].update(verify="yes"), "$.read.load_energy_total_kwh.verify"),
+    (lambda p: p["read"]["load_energy_total_kwh"].update(verify=1), "$.read.load_energy_total_kwh.verify"),
+    (lambda p: p["read"]["load_energy_total_kwh"].update(note=""), "$.read.load_energy_total_kwh.note"),
+    (lambda p: p["read"]["load_energy_total_kwh"].update(note=["x"]), "$.read.load_energy_total_kwh.note"),
+    # rejestr do weryfikacji nigdy nie wpływa na zapis: flaga tylko przy licznikach i limitach
+    (lambda p: p["read"]["soc"].update(verify=True), "$.read.soc.verify"),
+    (lambda p: p["read"]["soc"].update(verify=False), "$.read.soc.verify"),
+    (lambda p: p["read"]["pv_power_w"]["sum"][0].update(verify=True), "$.read.pv_power_w.sum[0].verify"),
+    (lambda p: p["identify"]["registers"]["rated_power_w"].update(verify=True),
+     "$.identify.registers.rated_power_w.verify"),
+    (lambda p: p["write"]["mode"].update(verify=True), "$.write.mode.verify"),
+    (lambda p: p["limits"].update(max_charge_register="nope"), "$.limits.max_charge_register"),
+    (lambda p: p["limits"].update(max_charge_register="soc"), "$.limits.max_charge_register"),
+    (lambda p: p["limits"].update(max_discharge_register="bms_charge_current_max_a"),
+     "$.limits.max_discharge_register"),
+    (lambda p: p["limits"].update(capacity_register=7), "$.limits.capacity_register"),
+    (lambda p: p["read"].pop("bms_charge_current_max_a"), "$.limits.max_charge_register"),
+    (lambda p: p["read"].pop("battery_voltage_v"), "$.limits.max_charge_register"),
+    (lambda p: p["limits"].update(max_export_register="x"), "$.limits.max_export_register"),
+])
+def test_counter_and_limit_fields_rejected(mutate, needle):
+    p = _with_counters()
+    mutate(p)
+    assert needle in _errs(p)
+
+
+def test_verify_flag_warns_only_in_verified_profile():
+    from custom_components.volcast.core.profile_schema import profile_warnings
+    warned = profile_warnings(_with_counters())
+    keys = {"load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_total_kwh",
+            "bms_charge_current_max_a", "bms_discharge_current_max_a", "battery_capacity_kwh"}
+    assert len(warned) == len(keys)
+    for key in keys:
+        assert any(w.startswith(f"$.read.{key}.verify:") for w in warned), key
+    assert not any("battery_discharge_total_kwh" in w for w in warned)   # verify: false
+    assert profile_warnings(_with_counters("draft")) == []               # cały profil i tak testowy
+    assert profile_warnings(ms_profile()) == []
+    assert profile_warnings("not a profile") == []                        # nigdy wyjątek

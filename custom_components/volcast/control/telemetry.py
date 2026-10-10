@@ -21,6 +21,15 @@ kanał sygnałów jest dołączony, a blok `signals` z przyjętej odpowiedzi idz
 `build_live_reading` to lekki odczyt na żywo (same wartości + `live: true`, bez cen, `driver`,
 `extra` i ładowarek) — wysyła go `LiveSender`, nie ten nadawca.
 
+Liczniki energii (kontrakt sygnałów §6.3): `extra.counters` w odczycie niesie tylko klucze
+`COUNTER_KEYS` z ważną wartością (skończona liczba ≥ 0, kWh, poniżej `COUNTER_MAX_KWH`); brak ważnego
+licznika = brak bloku (chmura liczy wtedy ze średniej mocy). `*_total_kwh` rosną przez całe życie
+falownika, `load_energy_day_kwh` zeruje się o północy lokalnej falownika. Liczniki PV i sieci zostają
+w swoich kolumnach odczytu. Odczyt na żywo liczników nie niesie.
+
+Limity w trybie bezpośrednim: bazowe (`direct_limits`) + moc z prądu BMS wskazanego w `$.limits` profilu
+(`core/control/limits.py`, szczyt z doby), przeliczane przy każdej telemetrii.
+
 Źródła odczytów: blok `driver` w KAŻDYM odczycie (oba tryby) niesie pełną mapę
 `meta.readings_source` (klucz → `entity|register|manual|none`, `core/control/readings.py`) — chmura
 czyści brakującą mapę w trybie bezpośrednim, a w trybie encji trzymałaby nieaktualną. Inne pola
@@ -42,6 +51,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from ..const import (CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_CURRENCY,
                      OPT_PRICE_SELL)
 from ..core.control.caps import capabilities_for
+from ..core.control.limits import BMS_POWER_FIELDS, PeakLimit, register_limits
 from ..core.control.readings import RawState, manual_reading, normalize_readings_report, readings_sources
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
@@ -60,6 +70,11 @@ TELEMETRY_FIELDS = {
     "pv_energy_total_kwh": "pv_energy_total_kwh", "grid_import_total_kwh": "grid_import_total_kwh",
     "grid_export_total_kwh": "grid_export_total_kwh",
 }
+# Liczniki w `extra.counters` (zamknięty zbiór kontraktu §6.3; podzbiór `EXTRA_KEYS` mapy źródeł).
+COUNTER_KEYS = ("load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_total_kwh",
+                "battery_discharge_total_kwh")
+# Sanity HA: 10 GWh to wiele żyć domowego falownika; powyżej = śmieci (np. 0xFFFFFFFF × 0,1 kWh).
+COUNTER_MAX_KWH = 1e7
 # Cechy integracji deklarowane chmurze w bloku `driver` (zamknięty słownik kontraktu sygnałów;
 # chmura przyjmuje dowolny jego podzbiór). `signals` w kontrakcie znaczy także obsługę wznowienia
 # (`resume_requested_at`) — deklarujemy ją dopiero razem z tą obsługą, inaczej aplikacja pokazałaby
@@ -104,15 +119,20 @@ def direct_driver_block(*, profile, access: str, capabilities: Mapping[str, bool
     return _with_sources(block, readings_source)
 
 
-def _declared_keys(choice: ProfileChoice | None, manual_keys: Iterable[str]) -> frozenset[str]:
-    """Klucze, które profil (rejestry, encje wybranej integracji) albo mapa ręczna w ogóle opisują."""
+def _declared_keys(choice: ProfileChoice | None, manual_keys: Iterable[str], *, direct: bool) -> frozenset[str]:
+    """Klucze, które ścieżka odczytu w ogóle opisuje: rejestry profilu (tryb bezpośredni) albo encje
+    wybranej integracji (tryb encji), plus mapa ręczna. Licznik z mapy rejestrów nie jest źródłem
+    w trybie encji — nie deklarujemy go tam jako `none`."""
     if choice is None:
         return frozenset(manual_keys)
     raw = getattr(choice.profile, "raw", None) or {}
-    keys = set(raw.get("read") or ())
-    for integ in (raw.get("ha") or {}).get("integrations") or ():
-        if integ.get("domain") == choice.integration_domain:
-            keys.update(integ.get("entities") or ())
+    keys: set[str] = set()
+    if direct:
+        keys.update(raw.get("read") or ())
+    else:
+        for integ in (raw.get("ha") or {}).get("integrations") or ():
+            if integ.get("domain") == choice.integration_domain:
+                keys.update(integ.get("entities") or ())
     return frozenset(keys | set(manual_keys))
 
 
@@ -155,6 +175,18 @@ def _values(profile_readings: Mapping[str, float | str], manual: Mapping[str, fl
     return values
 
 
+def counters_block(profile_readings: Mapping[str, float | str], manual: Mapping[str, float | None]
+                   ) -> dict | None:
+    """`extra.counters`: tylko liczniki z ważną wartością; None = żadnego (bloku nie wysyłamy).
+    Encja wskazana ręcznie ma pierwszeństwo (także gdy nieczytelna) — jak w `_values`."""
+    out: dict = {}
+    for key in COUNTER_KEYS:
+        v = _number(manual.get(key) if key in manual else profile_readings.get(key))
+        if v is not None and 0 <= v < COUNTER_MAX_KWH:
+            out[key] = v
+    return out or None
+
+
 def build_live_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | str],
                        manual: Mapping[str, float | None]) -> dict | None:
     """Odczyt na żywo: same wartości z `live: true`; None, gdy nie ma czego wysłać."""
@@ -177,6 +209,9 @@ def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | s
     if not values and prices is None:
         return None
     reading = {"timestamp": now_utc.isoformat(), **values, "extra": {"volcast": extra}}
+    counters = counters_block(profile_readings, manual)
+    if counters is not None:
+        reading["extra"]["counters"] = counters
     if driver is not None:
         reading["driver"] = driver
     if loads:
@@ -199,8 +234,10 @@ class TelemetrySender:
         self._manual_map = dict(manual_map)
         self._negate = grid_negate
         self._limits = limits
+        # Szczyt mocy z prądu BMS (doba) — tylko tryb bezpośredni.
+        self._peaks = {key: PeakLimit() for key in BMS_POWER_FIELDS}
         # Źródło każdego odczytu i klucze z encją bez odczytu — z ostatniego `_current()`.
-        self._declared = _declared_keys(choice, self._manual_map)
+        self._declared = _declared_keys(choice, self._manual_map, direct=direct is not None)
         self._sources: dict[str, str] = {}
         self._dropped: tuple[str, ...] = ()
         self._utcnow = utcnow
@@ -318,11 +355,23 @@ class TelemetrySender:
     def _direct_readings(self, r) -> dict:
         if r is None:
             return {}
-        out = {k: v for k, v in r.values.items() if k in TELEMETRY_FIELDS}
+        out = {k: v for k, v in r.values.items() if k in TELEMETRY_FIELDS or k in COUNTER_KEYS}
         mode = r.device.get("mode")
         if isinstance(mode, str) and mode in self._choice.profile.modes:
             out["mode"] = mode
         return out
+
+    def _direct_limits(self) -> dict | None:
+        """Limity bazowe + moc z prądu BMS ze świeżego odczytu rejestrów (szczyt z doby; bez świeżego
+        odczytu — dotychczasowy szczyt). Błąd nigdy nie zabiera telemetrii — wtedy same bazowe."""
+        try:
+            fresh = self._direct_fresh()
+            spec = self._choice.profile.raw.get("limits") or {}
+            return register_limits(self._limits, spec, fresh.values if fresh is not None else {},
+                                   peaks=self._peaks, now_s=self._utcnow().timestamp())
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Volcast telemetry: register limits skipped (%s)", type(err).__name__)
+            return self._limits
 
     def _driver(self) -> dict | None:
         """Blok `driver` (oba tryby) z cechami integracji dopisanymi w jednym miejscu."""
@@ -330,7 +379,7 @@ class TelemetrySender:
         if self._direct is not None:
             block = direct_driver_block(profile=self._choice.profile, access="direct",
                                         capabilities=None if self._direct.trial else self._direct_caps,
-                                        local_switch=local, limits=self._limits, readings_source=self._sources)
+                                        local_switch=local, limits=self._direct_limits(), readings_source=self._sources)
         else:
             unsupported = self._unsupported()
             block = driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
