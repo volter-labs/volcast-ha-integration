@@ -386,3 +386,58 @@ def test_control_entities_aborts_for_draft_integration_entry():
                             mapped={k: f"x.{k}" for k in WRITE_KEYS}, executor=None)
     assert asyncio.run(flow(runtime=draft).async_step_control_entities()) == {
         "type": "abort", "reason": "entity_mode_unavailable"}
+
+
+# ── ręczna mapa encji: opisy pól i podgląd wartości ────────────────────────
+
+
+class _St:
+    def __init__(self, state, unit=None):
+        self.state = state
+        self.attributes = {"unit_of_measurement": unit} if unit else {}
+
+
+def _map_flow(states):
+    f = flow(runtime=rt())
+    f.hass.data["entity_registry"] = SimpleNamespace(entities={})
+    f.async_show_form = lambda **kw: {"type": "form", "errors": kw.pop("errors", None) or {}, **kw}   # pełne dane formularza
+    f.hass.states = SimpleNamespace(get=lambda eid: states.get(eid), async_all=lambda domain=None: [])
+    return f
+
+
+def test_entity_map_form_orders_plan_before_control_before_optional():
+    f = _map_flow({})
+    r = asyncio.run(f.async_step_entity_map())
+    names = [str(k) for k in r["data_schema"].schema]
+    assert names.index("soc") < names.index("mode") < names.index("battery_temp_c")
+
+
+def test_entity_map_preview_shows_canonical_values():
+    f = _map_flow({"sensor.grid": _St("1.5", "kW"), "sensor.soc": _St("55", "%")})
+    r = asyncio.run(f.async_step_entity_map({"grid_power_w": "sensor.grid", "soc": "sensor.soc"}))
+    assert (r["type"], r["step_id"]) == ("form", "entity_map_preview")
+    text = r["description_placeholders"]["preview"]
+    assert "1500" in text and "55" in text and "sensor.grid" in text
+    assert not r.get("errors")
+
+
+def test_entity_map_flags_unit_mismatch():
+    f = _map_flow({"sensor.soc": _St("55", "W")})
+    asyncio.run(f.async_step_entity_map({"soc": "sensor.soc"}))
+    r = asyncio.run(f.async_step_entity_map_preview({"confirm": True}))
+    assert r["type"] == "form" and r["errors"] == {"base": "unit_mismatch"}
+
+
+def test_entity_map_preview_warns_on_unavailable_and_confirm_saves():
+    f = _map_flow({"sensor.soc": _St("unavailable", "%")})
+    r = asyncio.run(f.async_step_entity_map({"soc": "sensor.soc"}))
+    assert "unavailable" in r["description_placeholders"]["warnings"]
+    done = asyncio.run(f.async_step_entity_map_preview({"confirm": True}))
+    assert done["type"] == "create_entry"
+
+
+def test_entity_map_preview_back_returns_to_map():
+    f = _map_flow({"sensor.soc": _St("55", "%")})
+    asyncio.run(f.async_step_entity_map({"soc": "sensor.soc"}))
+    r = asyncio.run(f.async_step_entity_map_preview({"confirm": False}))
+    assert (r["type"], r["step_id"]) == ("form", "entity_map")

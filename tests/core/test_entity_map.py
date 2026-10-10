@@ -301,3 +301,29 @@ def test_unknown_mode_is_unmapped_not_keyerror():
 def test_state_none_reads_as_none():
     assert entity_value("soc", None, GW, "goodwe") is None
     assert entity_value("export_limit_enabled", None, GW, "goodwe") is None
+
+
+# ── opisy kluczy i podgląd wartości ────────────────────────────────────────
+
+
+def test_descriptors_cover_every_read_and_write_key():
+    from custom_components.volcast.core.control.readings import SOURCE_KEYS
+    from custom_components.volcast.core.entity_map import KEY_DESCRIPTORS
+    assert set(SOURCE_KEYS) <= set(KEY_DESCRIPTORS)
+    for key in ("mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled"):
+        assert key in KEY_DESCRIPTORS
+    for key, d in KEY_DESCRIPTORS.items():
+        assert d["purpose"] in ("plan", "control")
+        assert isinstance(d["required"], bool) and d["examples"] and d["sign"]
+    assert {k for k, d in KEY_DESCRIPTORS.items() if d["required"]} == {
+        "soc", "pv_power_w", "load_power_w", "grid_power_w", "battery_power_w"}
+
+
+def test_preview_statuses():
+    from custom_components.volcast.core.entity_map import preview_entity
+    assert preview_entity("grid_power_w", "1.5", "kW") == ("ok", 1500.0)
+    assert preview_entity("soc", "55", "W")[0] == "unit_mismatch"
+    assert preview_entity("soc", "unavailable", "%")[0] == "unavailable"
+    assert preview_entity("soc", None, None)[0] == "unavailable"
+    assert preview_entity("soc", "abc", "%")[0] == "unreadable"
+    assert preview_entity("mode", "Eco", None) == ("ok", None)

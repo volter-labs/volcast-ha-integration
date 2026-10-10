@@ -36,6 +36,7 @@ from .control import direct_search as ds
 from .control.runtime import async_control_change_allowed, async_direct_search, map_entities, mapped_with_overrides
 from .control.telemetry import TELEMETRY_FIELDS
 from .core.control.caps import entity_mode_options, entity_mode_ready
+from .core.entity_map import KEY_DESCRIPTORS, field_group, preview_entity
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
 from .core.discovery.identify import Candidate
 from .core.prices import has_usable_prices_now
@@ -618,16 +619,60 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         specs = next((i["entities"] for i in choice.profile.raw["ha"]["integrations"]
                       if i["domain"] == choice.integration_domain), {})
         if user_input is not None:
-            auto = map_entities(self.hass, choice)
-            chosen = {k: v for k in specs if (v := (user_input.get(k) or "").strip())}
-            return await self._finish(self._merged({OPT_ENTITY_MAP: {
-                k: v for k, v in chosen.items() if auto.get(k) != v}}))
+            # Zapis dopiero po podglądzie: właściciel widzi, jaką wartość Volcast odczyta z każdej encji.
+            self._pending_entity_map = {k: v for k in specs if (v := (user_input.get(k) or "").strip())}
+            return self._show_entity_map_preview(self._pending_entity_map)
         current = mapped_with_overrides(self.hass, choice, self.config_entry.options)
         fields: dict[Any, Any] = {}
-        for key, spec in specs.items():
+        # Kolejność: najpierw to, co potrzebne planowi, potem sterowanie, na końcu opcjonalne.
+        order = {"plan": 0, "control": 1, "optional": 2}
+        for key in sorted(specs, key=lambda k: order[field_group(k)]):
+            spec = specs[key]
             sel = selector.EntitySelector(selector.EntitySelectorConfig(domain=[spec["domain"]]))
             fields[vol.Optional(key, description={"suggested_value": current.get(key)})] = sel
         return self.async_show_form(step_id="entity_map", data_schema=vol.Schema(fields))
+
+    def _entity_map_preview_rows(self, chosen: dict[str, str]) -> list[tuple[str, str, str, float | None]]:
+        rows = []
+        for key, eid in chosen.items():
+            st = self.hass.states.get(eid)
+            unit = (getattr(st, "attributes", None) or {}).get("unit_of_measurement") if st else None
+            status, value = preview_entity(key, getattr(st, "state", None), unit)
+            rows.append((key, eid, status, value))
+        return rows
+
+    def _show_entity_map_preview(self, chosen: dict[str, str], errors: dict[str, str] | None = None) -> ConfigFlowResult:
+        rows = self._entity_map_preview_rows(chosen)
+        lines, warnings = [], []
+        for key, eid, status, value in rows:
+            st = self.hass.states.get(eid)
+            shown = f"{value:g} {KEY_DESCRIPTORS.get(key, {}).get('unit', '')}" if value is not None else (
+                getattr(st, "state", None) or "-")
+            lines.append(f"{key}: {eid} = {shown}")
+            if status != "ok":
+                warnings.append(f"{key}: {status}")
+        return self.async_show_form(
+            step_id="entity_map_preview",
+            data_schema=vol.Schema({vol.Required("confirm", default=True): bool}),
+            description_placeholders={"preview": "\n".join(lines) or "-", "warnings": "\n".join(warnings) or "-"},
+            errors=errors or None)
+
+    async def async_step_entity_map_preview(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        chosen = getattr(self, "_pending_entity_map", None)
+        if chosen is None:
+            return await self.async_step_entity_map()
+        if user_input is None:
+            return self._show_entity_map_preview(chosen)
+        if not user_input.get("confirm"):
+            return await self.async_step_entity_map()
+        # Niezgodna jednostka = Volcast nie odczyta encji; nie zapisujemy, dopóki właściciel jej nie poprawi.
+        if any(status == "unit_mismatch" for _k, _e, status, _v in self._entity_map_preview_rows(chosen)):
+            return self._show_entity_map_preview(chosen, {"base": "unit_mismatch"})
+        choice = getattr(self._runtime(), "choice", None)
+        auto = map_entities(self.hass, choice)
+        self._pending_entity_map = None
+        return await self._finish(self._merged({OPT_ENTITY_MAP: {
+            k: v for k, v in chosen.items() if auto.get(k) != v}}))
 
     async def async_step_control_direct(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """„Bezpośrednio”: tylko z ostatniego wyszukiwania — falownik rozpoznany, próba udana, profil i jego

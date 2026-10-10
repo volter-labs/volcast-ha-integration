@@ -260,7 +260,7 @@
       },
       "entity_map": {
         "title": "Inverter entities",
-        "description": "Pick the entity Volcast uses for each inverter setting. Leave a field as suggested to keep the automatic match.",
+        "description": "Pick the entity Volcast uses for each inverter setting. Leave a field as suggested to keep the automatic match. Fields are grouped: first what the plan needs, then what control needs, then optional ones. You can check the values on the next screen before saving.",
         "data": {
           "mode": "Operating mode",
           "mode_value": "Operating mode value",
@@ -281,6 +281,34 @@
           "load_power_w": "House load",
           "pv_energy_total_kwh": "PV energy total",
           "pv_power_w": "PV power"
+        },
+        "data_description": {
+          "soc": "Needed for the plan. Unit: %. Sign: 0-100, no sign. Typical names: sensor.<inverter>_battery_state_of_charge, sensor.<battery>_soc.",
+          "pv_power_w": "Needed for the plan. Unit: W. Sign: positive = PV production, never negative. Typical names: sensor.<inverter>_pv_power, sensor.<inverter>_solar_power.",
+          "load_power_w": "Needed for the plan. Unit: W. Sign: positive = house consumption. Typical names: sensor.<inverter>_house_consumption, sensor.<inverter>_load.",
+          "grid_power_w": "Needed for the plan. Unit: W. Sign: positive = import from the grid, negative = export. Typical names: sensor.<inverter>_grid_power, sensor.<meter>_active_power.",
+          "battery_power_w": "Needed for the plan. Unit: W. Sign: positive = charging, negative = discharging. Typical names: sensor.<inverter>_battery_power, sensor.<battery>_power.",
+          "battery_temp_c": "Optional. Unit: °C. Sign: can be negative. Typical names: sensor.<inverter>_battery_temperature, sensor.<battery>_temp.",
+          "battery_voltage_v": "Optional. Unit: V. Sign: no sign. Typical names: sensor.<inverter>_battery_voltage, sensor.<battery>_voltage.",
+          "battery_current_a": "Optional. Unit: A. Sign: positive = charging, negative = discharging. Typical names: sensor.<inverter>_battery_current, sensor.<battery>_current.",
+          "active_power_w": "Optional. Unit: W. Sign: positive = inverter output. Typical names: sensor.<inverter>_active_power, sensor.<inverter>_ac_power.",
+          "pv_energy_total_kwh": "Optional. Unit: kWh. Sign: lifetime total, only grows. Typical names: sensor.<inverter>_total_pv_generation, sensor.<inverter>_pv_energy_total.",
+          "grid_export_total_kwh": "Optional. Unit: kWh. Sign: lifetime total, only grows. Typical names: sensor.<inverter>_total_energy_export, sensor.<meter>_export_energy.",
+          "grid_import_total_kwh": "Optional. Unit: kWh. Sign: lifetime total, only grows. Typical names: sensor.<inverter>_total_energy_import, sensor.<meter>_import_energy.",
+          "mode": "Needed for control. Unit: option. Sign: no sign. Typical names: select.<inverter>_ems_mode, select.<inverter>_work_mode.",
+          "mode_value": "Optional. Unit: option. Sign: no sign. Typical names: sensor.<inverter>_ems_mode, sensor.<inverter>_work_mode.",
+          "power_w": "Needed for control. Unit: W. Sign: magnitude of the charge/discharge limit, no sign. Typical names: number.<inverter>_ems_power_limit, number.<inverter>_battery_power_setpoint.",
+          "soc_min": "Needed for control. Unit: %. Sign: 0-100, no sign. Typical names: number.<inverter>_battery_min_soc, number.<inverter>_depth_of_discharge.",
+          "soc_max": "Needed for control. Unit: %. Sign: 0-100, no sign. Typical names: number.<inverter>_battery_max_soc, number.<inverter>_charge_cutoff_soc.",
+          "export_limit_enabled": "Needed for control. Unit: on/off. Sign: no sign. Typical names: switch.<inverter>_export_limit, switch.<inverter>_grid_export_limit.",
+          "export_limit_w": "Needed for control. Unit: W. Sign: magnitude of the grid export limit, no sign. Typical names: number.<inverter>_export_limit, number.<inverter>_grid_export_limit."
+        }
+      },
+      "entity_map_preview": {
+        "title": "Check the values",
+        "description": "Volcast will read these values from the entities you chose, converted to its own units.\n\n{preview}\n\nWarnings:\n{warnings}\n\nTurn the switch off to go back and change the entities. The sign of power values is not checked automatically: grid power should be positive when the house imports from the grid.",
+        "data": {
+          "confirm": "Save these entities"
         }
       }
     },
@@ -306,7 +334,8 @@
       "restore_failed": "Volcast could not return the inverter to its settings from before control, so nothing was changed. Try again when the inverter is reachable, or turn off the Volcast control switch (Volcast keeps trying to return the inverter).",
       "role_required": "The status entity is required.",
       "entity_not_found": "The entity was not found. Choose an existing entity.",
-      "status_without_options": "Choose a sensor or select that lists its possible states. An on/off sensor cannot show charging."
+      "status_without_options": "Choose a sensor or select that lists its possible states. An on/off sensor cannot show charging.",
+      "unit_mismatch": "One of the entities reports a unit Volcast cannot use for that value. Go back and choose another entity."
     },
     "progress": {
       "direct_search": "Searching the local network for the inverter. This can take up to a minute."

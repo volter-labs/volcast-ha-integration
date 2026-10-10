@@ -268,3 +268,106 @@ def entity_value(key: str, state: str | None, profile, integration_domain: str,
     if spec.get("transform") == "invert_percent":
         return round(100.0 - value, 1)
     return value
+
+
+# ── Opisy kluczy dla ręcznej mapy encji (czyste dane, bez HA) ──────────────
+
+
+def _d(purpose: str, unit: str, sign: str, required: bool, examples: list[str]) -> dict:
+    return {"purpose": purpose, "unit": unit, "sign": sign, "required": required, "examples": examples}
+
+
+_NONE = "no sign"
+
+# `purpose`: „plan" = dane wejściowe planu baterii, „control" = sterowanie falownikiem i jego straże.
+# `sign`: konwencja znaku po przeliczeniu na jednostkę kanoniczną (Volcast liczy w tej konwencji).
+# `examples`: typowe wzorce nazw encji (podpowiedź ogólna, nie lista wspieranych marek).
+KEY_DESCRIPTORS: dict[str, dict] = {
+    "soc": _d("plan", "%", "0-100, no sign", True,
+              ["sensor.<inverter>_battery_state_of_charge", "sensor.<battery>_soc"]),
+    "pv_power_w": _d("plan", "W", "positive = PV production, never negative", True,
+                     ["sensor.<inverter>_pv_power", "sensor.<inverter>_solar_power"]),
+    "load_power_w": _d("plan", "W", "positive = house consumption", True,
+                       ["sensor.<inverter>_house_consumption", "sensor.<inverter>_load"]),
+    "grid_power_w": _d("plan", "W", "positive = import from the grid, negative = export", True,
+                       ["sensor.<inverter>_grid_power", "sensor.<meter>_active_power"]),
+    "battery_power_w": _d("plan", "W", "positive = charging, negative = discharging", True,
+                          ["sensor.<inverter>_battery_power", "sensor.<battery>_power"]),
+    "battery_temp_c": _d("control", "°C", "can be negative", False,
+                         ["sensor.<inverter>_battery_temperature", "sensor.<battery>_temp"]),
+    "battery_voltage_v": _d("control", "V", "no sign", False,
+                            ["sensor.<inverter>_battery_voltage", "sensor.<battery>_voltage"]),
+    "battery_current_a": _d("control", "A", "positive = charging, negative = discharging", False,
+                            ["sensor.<inverter>_battery_current", "sensor.<battery>_current"]),
+    "active_power_w": _d("control", "W", "positive = inverter output", False,
+                         ["sensor.<inverter>_active_power", "sensor.<inverter>_ac_power"]),
+    "pv_energy_total_kwh": _d("plan", "kWh", "lifetime total, only grows", False,
+                              ["sensor.<inverter>_total_pv_generation", "sensor.<inverter>_pv_energy_total"]),
+    "grid_export_total_kwh": _d("plan", "kWh", "lifetime total, only grows", False,
+                                ["sensor.<inverter>_total_energy_export", "sensor.<meter>_export_energy"]),
+    "grid_import_total_kwh": _d("plan", "kWh", "lifetime total, only grows", False,
+                                ["sensor.<inverter>_total_energy_import", "sensor.<meter>_import_energy"]),
+    "load_energy_total_kwh": _d("plan", "kWh", "lifetime total, only grows", False,
+                                ["sensor.<inverter>_total_load_energy", "sensor.<inverter>_house_consumption_total"]),
+    "load_energy_day_kwh": _d("plan", "kWh", "resets at midnight", False,
+                              ["sensor.<inverter>_today_load", "sensor.<inverter>_daily_house_consumption"]),
+    "battery_charge_total_kwh": _d("plan", "kWh", "lifetime total, only grows", False,
+                                   ["sensor.<inverter>_total_battery_charge", "sensor.<battery>_charge_energy_total"]),
+    "battery_discharge_total_kwh": _d("plan", "kWh", "lifetime total, only grows", False,
+                                      ["sensor.<inverter>_total_battery_discharge",
+                                       "sensor.<battery>_discharge_energy_total"]),
+    "bms_charge_current_max_a": _d("control", "A", "no sign", False,
+                                   ["sensor.<battery>_max_charge_current", "number.<inverter>_bms_charge_limit"]),
+    "bms_discharge_current_max_a": _d("control", "A", "no sign", False,
+                                      ["sensor.<battery>_max_discharge_current",
+                                       "number.<inverter>_bms_discharge_limit"]),
+    "battery_capacity_kwh": _d("plan", "kWh", "no sign", False,
+                               ["sensor.<battery>_capacity", "sensor.<inverter>_battery_capacity"]),
+    # Klucze zapisu / sterowania.
+    "mode": _d("control", "option", _NONE, False,
+               ["select.<inverter>_ems_mode", "select.<inverter>_work_mode"]),
+    "mode_value": _d("control", "option", _NONE, False,
+                     ["sensor.<inverter>_ems_mode", "sensor.<inverter>_work_mode"]),
+    "power_w": _d("control", "W", "magnitude of the charge/discharge limit, no sign", False,
+                  ["number.<inverter>_ems_power_limit", "number.<inverter>_battery_power_setpoint"]),
+    "soc_min": _d("control", "%", "0-100, no sign", False,
+                  ["number.<inverter>_battery_min_soc", "number.<inverter>_depth_of_discharge"]),
+    "soc_max": _d("control", "%", "0-100, no sign", False,
+                  ["number.<inverter>_battery_max_soc", "number.<inverter>_charge_cutoff_soc"]),
+    "export_limit_enabled": _d("control", "on/off", _NONE, False,
+                               ["switch.<inverter>_export_limit", "switch.<inverter>_grid_export_limit"]),
+    "export_limit_w": _d("control", "W", "magnitude of the grid export limit, no sign", False,
+                         ["number.<inverter>_export_limit", "number.<inverter>_grid_export_limit"]),
+}
+
+
+_WRITE_KEYS = ("mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled")
+
+
+def field_group(key: str) -> str:
+    """Grupa pola w formularzu: `plan` (wymagane do planu), `control` (nastawy falownika), `optional`."""
+    desc = KEY_DESCRIPTORS.get(key)
+    if desc is not None and desc["required"]:
+        return "plan"
+    return "control" if key in _WRITE_KEYS else "optional"
+
+
+def preview_entity(key: str, state: str | None, unit: str | None) -> tuple[str, float | None]:
+    """Podgląd odczytu jednej encji przed zapisem mapy: (status, wartość kanoniczna).
+
+    Statusy: `ok` (wartość albo None dla kluczy nienumerycznych), `unavailable` (brak/`unknown`),
+    `unit_mismatch` (jednostka encji niezgodna z kluczem), `unreadable` (nie liczba).
+    Znak nie jest sprawdzany — z pojedynczej wartości nie da się go wiarygodnie ocenić.
+    """
+    if state is None or state in _UNAVAILABLE:
+        return "unavailable", None
+    if _quantity(key) is None:
+        return "ok", None
+    if _unit_factor(key, unit) is None:
+        return "unit_mismatch", None
+    try:
+        float(state)
+    except ValueError:
+        return "unreadable", None
+    value = canonical_value(key, state, unit)
+    return ("ok", value) if value is not None else ("unreadable", None)
