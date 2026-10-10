@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from .base import ModbusException, Request, Stray
 from .modbus_frames import (
-    FC_READ, FrameError, mbap, parse_mbap, parse_pdu_read, parse_pdu_write)
+    READ_FUNCTIONS, FrameError, mbap, parse_mbap, parse_pdu_read, parse_pdu_write)
 from .stream import StreamTransport
 
 
@@ -33,8 +33,8 @@ class ModbusTcpTransport(StreamTransport):
         if pdu and pdu[0] & 0x80 and pdu[0] != req.fc | 0x80:
             raise Stray("exception for another function")
         try:
-            if req.fc == FC_READ:
-                return parse_pdu_read(pdu, req.count)
+            if req.fc in READ_FUNCTIONS:
+                return parse_pdu_read(pdu, req.count, req.fc)
             parse_pdu_write(pdu, req.fc, req.addr, req.echo)
             return None
         except FrameError as err:

@@ -1,0 +1,365 @@
+{
+  "schema_version": 1,
+  "id": "solaredge-storedge",
+  "label": "SolarEdge Home Hub / StorEdge with battery (Modbus TCP)",
+  "status": "draft",
+  "status_note": "Public community sources only; nothing verified on hardware, and the SolarEdge technical notes on SunSpec and storage control were not readable (the vendor site answered 403), so no vendor document is cited. Covers a SolarEdge inverter with a battery on its storage block (Home Hub / StorEdge) reached over Modbus TCP on port 1502, unit id 1; Modbus TCP must first be enabled on the inverter in SetApp (or the installer menu), and SolarEdge accepts only one Modbus TCP client at a time, so this direct path cannot run alongside the solaredge_modbus or solaredge_modbus_multi integration, evcc or another Modbus client. Variants not covered: battery 2 and 3 (0xE200 / 0xE400 blocks; only battery 1 at 0xE100 is read), meter 2 and 3, inverters reached as followers behind a leader inverter (other unit ids), Synergy/MMPPT units, Modbus RTU on the RS485 port, and PV-only SolarEdge inverters: the model text (40020) does not tell a battery-capable unit from a PV-only one, so the regex accepts any 'SE' model and a PV-only unit identifies but has no battery block. Entity mode: solaredge_modbus_multi is a known inverter domain, but solaredge_modbus is missing from the core's INVERTER_DOMAINS, so the profile is never suggested for a solaredge_modbus hub (its entity map is reached only by a manual pick of the domain), and a running solaredge_modbus hub is not treated as a conflict although it holds the inverter's only Modbus TCP connection (docs/profiles/engine-gaps.md). Addresses are wire (PDU) addresses as the community integrations send them: the SunSpec marker 'SunS' is at 40000, C_Model at 40020, C_SerialNumber at 40052 (SunSpec tables that number registers from 1 print 40001, 40021, 40053); the storage and battery registers are sent as their hexadecimal numbers, 0xE004 is sent as 57348 and battery 1 power 0xE174 as 57716. Storage and battery values are 32-bit floats with the low word at the lower address (word_order lo_hi); SunSpec values are 16-bit integers with a separate scale factor register that SolarEdge changes dynamically (a 16-bit value at SF -1 cannot exceed 3276.7 W). The core has no dynamic scale factor, so AC power 40083 (SF 40084), DC power 40100 (SF 40101) and meter power 40206 (SF 40210) are read with a fixed scale 0.1 (SF -1, the value in a published example) and the meter energy totals 40226/40234 (SF 40242) with SF 0 (Wh); any other SF gives a value off by a factor of 10 (docs/profiles/engine-gaps.md). PV power is DC power plus battery charging (DC power on a hybrid is PV minus the battery charge, as evcc computes it); load is AC power plus grid import. Signs: battery 0xE174 > 0 = charging (negated to the core's discharge-positive), meter 40206 > 0 = export (negated). Rated power: no cited source shows SunSpec model 120 (WRtg) on SolarEdge (the meter 1 common block follows the inverter model directly at 40121, and evcc asks the user for the maximum AC power), so the schema-required rating register is 40069, the inverter model id (101/102/103), which never reads as 1-30 kW: the rating is always unknown and the onboarding asks for it. The device identity comes from the serial (C_SerialNumber 40052), so the direct path has a fingerprint. Control: only the storage control mode 0xE004 is written, 1 Maximize Self Consumption = neutral and baseline. Remote control (0xE004 = 4 with the command mode 0xE00D, f32 charge/discharge limits 0xE00E/0xE010 and the u32 command timeout 0xE00B), Time of Use (2) and Backup Only (3) are not used (docs/profiles/engine-gaps.md), so every intent falls back to Maximize Self Consumption with power none and every capability is false, including the SoC floor (backup reserve 0xE008 is an f32 percent) and the export limit (0xE000 bitfield with the f32 site limit 0xE002). A live trial must confirm: the scale factor registers 40084, 40101, 40210 and 40242 at low and high power; the C_Model text of Home Hub and StorEdge units; that the battery block reads with the low word first and that power and SoC are valid in every battery status (solaredge_modbus shows battery power as 0 outside battery statuses 3, 4 and 6; status at 0xE186); the meter sign and that meter 1 is the grid meter; that 0xE004 reads back after a function 6 write and whether the inverter stores it in non-volatile memory (assumed: nvm true).",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {
+      "what": "SolarEdge register map as modelled by solaredge_modbus_multi (Apache-2.0): common block C_SunSpec_ID 40000 (uint32 'SunS'), C_Manufacturer 40004, C_Model 40020 (16 registers), C_Version 40044, C_SerialNumber 40052 (16 registers); inverter model id 40069, AC_Power 40083 (int16) with AC_Power_SF 40084, I_DC_Power 40100 with I_DC_Power_SF 40101; meter data AC_Power 40206 with AC_Power_SF 40210, AC_Energy_WH_Exported 40226 and AC_Energy_WH_Imported 40234 (uint32) with AC_Energy_WH_SF 40242; storage control control_mode 57348 (0xE004), ac_charge_policy 57349 (0xE005), ac_charge_limit 57350 (0xE006, float32), backup_reserve 57352 (0xE008, float32 %), default_mode 57354 (0xE00A), command_timeout 57355 (0xE00B, uint32 s), command_mode 57357 (0xE00D), charge_limit 57358 (0xE00E, float32 W), discharge_limit 57360 (0xE010, float32 W), all writable, 32-bit values word_order little; battery data B_Temp_Average 57708 (0xE16C), B_DC_Voltage 57712 (0xE170), B_DC_Current 57714 (0xE172), B_DC_Power 57716 (0xE174), B_SOE 57732 (0xE184), B_Status 57734 (0xE186), float32 word_order little",
+      "ref": "https://github.com/WillCodeForCats/solaredge-modbus-multi/blob/main/custom_components/solaredge_modbus_multi/components.py"
+    },
+    {
+      "what": "Enumerations: storage control mode 0 Disabled, 1 Maximize Self Consumption, 2 Time of Use, 3 Backup Only, 4 Remote Control; AC charge policy 0-3; storage (command) mode 0 Solar Power Only (Off), 1 Charge from Clipped Solar Power, 2 Charge from Solar Power, 3 Charge from Solar Power and Grid, 4 Discharge to Maximize Export, 5 Discharge to Minimize Import, 7 Maximize Self Consumption; battery 1/2/3 base 57600 (0xE100) / 57856 (0xE200) / 58368 (0xE400); meter 1/2/3 base 40121 / 40295 / 40469; SunSpec not-implemented markers int16 0x8000, uint16 0xFFFF, float32 0x7FC00000; default port 1502",
+      "ref": "https://github.com/WillCodeForCats/solaredge-modbus-multi/blob/main/custom_components/solaredge_modbus_multi/const.py"
+    },
+    {
+      "what": "Select entities: unique ids '<uid_base>_storage_control_mode', '_storage_default_mode', '_storage_command_mode'; the default and command mode selects are offered only while the control mode is 4 (Remote Control)",
+      "ref": "https://github.com/WillCodeForCats/solaredge-modbus-multi/blob/main/custom_components/solaredge_modbus_multi/select.py"
+    },
+    {
+      "what": "Sensor unique ids: inverter '<uid_base>_ac_power', '_dc_power'; meter '_ac_power' and '_ac_power_inverted' (negated for the HA energy dashboard), '_exported_kwh' / '_imported_kwh' (native Wh, suggested kWh); battery '_battery_soe', '_dc_power' (raw B_DC_Power) and '_dc_power_inverted', '_avg_temp', '_dc_voltage'",
+      "ref": "https://github.com/WillCodeForCats/solaredge-modbus-multi/blob/main/custom_components/solaredge_modbus_multi/sensor.py"
+    },
+    {
+      "what": "uid_base: inverter '<C_Model>_<C_SerialNumber>', meter '<inverter model>_<inverter serial>_M<n>', battery '<inverter model>_<inverter serial>_B<n>' (DER batteries '_DERB<n>')",
+      "ref": "https://github.com/WillCodeForCats/solaredge-modbus-multi/blob/main/custom_components/solaredge_modbus_multi/hub.py"
+    },
+    {
+      "what": "SolarEdge hybrid template (MIT): only one system may hold a Modbus TCP connection to the inverter at a time; battery control needs StorageConf_CtrlMode 0xE004 = 4 (Remote); port 1502, id 1; grid power is meter 203:W with scale -1 (meter positive = export); PV power = SunSpec DCW + battery 1 instantaneous power 0xE174; battery power 0xE174 float32 (swapped words) with scale -1 (positive = charging), SoC 0xE184 (State of Energy); battery mode normal = 0xE00D = 7 (maximize self-consumption) written with a single-register write plus charge limit 0xE00E and discharge limit 0xE010 as float32 multi-register writes from the battery's max continuous powers 0xE144/0xE146; hold = 0xE00D = 7 and discharge limit 0xE010 = 0; charge = 0xE00D = 3; a watchdog re-sends the mode; export limitation is bit 0 of export control mode 0xE000 (57344) with site limit 0xE002 (57346, float32)",
+      "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/solaredge-hybrid.yaml"
+    },
+    {
+      "what": "evcc reads the nameplate rating from SunSpec 120:WRtg or 702:WMaxRtg when a device has them",
+      "ref": "https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/sunspec.tpl"
+    },
+    {
+      "what": "SunSpec model 1 (common): Md at offset 18 and SN at offset 50 (16 registers each), so 40020 and 40052 with the model starting at 40002",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_1.json"
+    },
+    {
+      "what": "SunSpec model 103 (three-phase inverter, same layout as 101/102): W at offset 14 with W_SF at 15, DCW at 31 with DCW_SF at 32, so 40083/40084 and 40100/40101 with the model starting at 40069",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_103.json"
+    },
+    {
+      "what": "SunSpec model 203 (meter): W at offset 18 with W_SF at 22, TotWhExp at 38, TotWhImp at 46, TotWh_SF at 54, so 40206/40210, 40226, 40234 and 40242 with the model starting at 40188",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_203.json"
+    },
+    {
+      "what": "SunSpec model 120 (nameplate): WRtg at offset 3",
+      "ref": "https://github.com/sunspec/models/blob/master/json/model_120.json"
+    },
+    {
+      "what": "Example SolarEdge readout (MIT): c_model 'SE3500H-RW000BNN4', power_ac 21413 with power_ac_scale -1, power_dc_scale -1; three meters and two batteries exposed through the inverter",
+      "ref": "https://github.com/nmakel/solaredge_modbus/blob/master/README.md"
+    },
+    {
+      "what": "solaredge_modbus integration (no licence file; cited only for its own entity interface, not for register facts): options of its storage control mode select 'Disabled', 'Maximize Self Consumption', 'Time of Use', 'Backup Only', 'Remote Control'; entity keys 'storage_contol_mode' (sic), 'storage_remote_command_mode', 'acpower', 'm1_acpower', 'm1_exported', 'm1_imported' (kWh), 'battery1_state_of_charge', 'battery1_power', 'battery1_temp_avg', 'battery1_voltage'",
+      "ref": "https://github.com/binsentsu/home-assistant-solaredge-modbus/blob/master/custom_components/solaredge_modbus/const.py"
+    },
+    {
+      "what": "solaredge_modbus unique id = '<hub name>_<key>'; meter and battery sensors are added only when reading meter 1 / battery 1 is enabled",
+      "ref": "https://github.com/binsentsu/home-assistant-solaredge-modbus/blob/master/custom_components/solaredge_modbus/sensor.py"
+    },
+    {
+      "what": "solaredge_modbus entity behaviour: its meter and battery power entities keep the inverter's signs (no negation), its battery1_power entity shows 0 unless the battery status is 3, 4 or 6, and its storage selects exist only while a battery is read",
+      "ref": "https://github.com/binsentsu/home-assistant-solaredge-modbus/blob/master/custom_components/solaredge_modbus/__init__.py"
+    }
+  ],
+  "unit_id": 1,
+  "transports": [
+    "modbus_tcp"
+  ],
+  "identify": {
+    "model_register": {
+      "addr": 40020,
+      "type": "ascii",
+      "len": 16
+    },
+    "model_regex": [
+      "^SE[0-9]"
+    ],
+    "registers": {
+      "serial": {
+        "addr": 40052,
+        "type": "ascii",
+        "len": 16
+      },
+      "rated_power_w": {
+        "addr": 40069,
+        "type": "u16"
+      }
+    }
+  },
+  "read": {
+    "soc": {
+      "addr": 57732,
+      "type": "f32",
+      "word_order": "lo_hi"
+    },
+    "battery_temp_c": {
+      "addr": 57708,
+      "type": "f32",
+      "word_order": "lo_hi"
+    },
+    "battery_voltage_v": {
+      "addr": 57712,
+      "type": "f32",
+      "word_order": "lo_hi"
+    },
+    "battery_power_w": {
+      "addr": 57716,
+      "type": "f32",
+      "word_order": "lo_hi",
+      "sign": -1
+    },
+    "active_power_w": {
+      "addr": 40083,
+      "type": "i16",
+      "scale": 0.1
+    },
+    "grid_power_w": {
+      "addr": 40206,
+      "type": "i16",
+      "scale": 0.1,
+      "sign": -1
+    },
+    "pv_power_w": {
+      "sum": [
+        {
+          "addr": 40100,
+          "type": "i16",
+          "scale": 0.1
+        },
+        {
+          "ref": "battery_power_w",
+          "sign": -1
+        }
+      ]
+    },
+    "load_power_w": {
+      "sum": [
+        {
+          "ref": "active_power_w"
+        },
+        {
+          "ref": "grid_power_w"
+        }
+      ]
+    },
+    "grid_export_total_kwh": {
+      "addr": 40226,
+      "type": "u32",
+      "scale": 0.001
+    },
+    "grid_import_total_kwh": {
+      "addr": 40234,
+      "type": "u32",
+      "scale": 0.001
+    },
+    "mode_value": {
+      "addr": 57348,
+      "type": "u16"
+    }
+  },
+  "write": {
+    "mode": {
+      "addr": 57348,
+      "type": "u16",
+      "encode": "mode"
+    }
+  },
+  "modes": {
+    "max_self_consumption": {
+      "value": 1,
+      "direction": "neutral",
+      "ha_option": "Maximize Self Consumption"
+    }
+  },
+  "neutral_mode": "max_self_consumption",
+  "intents": {
+    "charge_grid": {
+      "mode": "max_self_consumption",
+      "power": "none"
+    },
+    "charge_pv": {
+      "mode": "max_self_consumption",
+      "power": "none"
+    },
+    "discharge_forced": {
+      "mode": "max_self_consumption",
+      "power": "none"
+    },
+    "sell": {
+      "mode": "max_self_consumption",
+      "power": "none"
+    },
+    "self_consume": {
+      "mode": "max_self_consumption",
+      "power": "none"
+    },
+    "standby": {
+      "mode": "max_self_consumption",
+      "power": "none"
+    }
+  },
+  "baseline": {
+    "mode": "max_self_consumption"
+  },
+  "write_policy": {
+    "order": [
+      "mode"
+    ],
+    "min_interval_s": 300,
+    "nvm": true,
+    "max_direction_changes_per_hour": 2,
+    "max_state_age_s": 300,
+    "readback_settle_s": 2,
+    "nvm_budget": {
+      "window_h": 24,
+      "per_key": 24,
+      "total": 24
+    }
+  },
+  "limits": {
+    "battery_temp_c": {
+      "min": -10,
+      "max": 55
+    },
+    "rated_power_register": "rated_power_w"
+  },
+  "ha": {
+    "integrations": [
+      {
+        "domain": "solaredge_modbus",
+        "ems": false,
+        "status": "draft",
+        "entities": {
+          "soc": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_battery1_state_of_charge$"
+          },
+          "battery_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_battery1_power$",
+            "transform": "negate"
+          },
+          "battery_temp_c": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_battery1_temp_avg$"
+          },
+          "battery_voltage_v": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_battery1_voltage$"
+          },
+          "grid_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_m1_acpower$",
+            "transform": "negate"
+          },
+          "active_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+(?<!_m[1-3])_acpower$"
+          },
+          "grid_import_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_m1_imported$"
+          },
+          "grid_export_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_m1_exported$"
+          },
+          "mode": {
+            "domain": "select",
+            "unique_id_regex": "^.+_storage_contr?ol_mode$"
+          }
+        }
+      },
+      {
+        "domain": "solaredge_modbus_multi",
+        "ems": false,
+        "status": "draft",
+        "entities": {
+          "soc": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_B1_battery_soe$"
+          },
+          "battery_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_B1_dc_power$",
+            "transform": "negate"
+          },
+          "battery_temp_c": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_B1_avg_temp$"
+          },
+          "battery_voltage_v": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_B1_dc_voltage$"
+          },
+          "grid_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_M1_ac_power$",
+            "transform": "negate"
+          },
+          "active_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+(?<!_M[1-3])_ac_power$"
+          },
+          "grid_import_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_M1_imported_kwh$"
+          },
+          "grid_export_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^.+_M1_exported_kwh$"
+          },
+          "mode": {
+            "domain": "select",
+            "unique_id_regex": "^.+_storage_control_mode$"
+          }
+        }
+      }
+    ]
+  },
+  "capabilities": {
+    "force_charge_from_grid": false,
+    "sell_from_battery": false,
+    "force_discharge": false,
+    "standby": false,
+    "set_power_w": false,
+    "limit_export": false,
+    "set_soc_floor": false,
+    "set_soc_ceiling": false,
+    "time_windows": 0
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Holding registers only (function 3). The single write is the storage control mode at 57348 (0xE004) with function 6, as evcc writes the neighbouring 16-bit storage register 0xE00D; it is read back at the same address, so nothing is echo-only. The safe probe is re-writing 57348 with the value just read (1 when the unit runs Maximize Self Consumption) and reading it back; to restore, write back the value read before the test. Do not probe while the unit is in Remote Control (4): re-writing 4 is harmless, but writing 1 there takes control away from whatever set it (evcc or the integrations' remote command mode). SolarEdge serves one client at a time on Modbus TCP port 1502: stop the solaredge_modbus / solaredge_modbus_multi integration, evcc or any other client before the direct path connects. Unit id 1 is evcc's default (a follower inverter behind a leader has another id). The identification block 40000-40069 is 70 registers; max_read_registers 100 is a stand-in that a live unit must accept. Timeout 3 s matches solaredge_modbus_multi's default request timeout; gap_ms 100 is a stand-in. Entity mode: solaredge_modbus unique ids are '<hub name>_<key>' (its control mode key is spelled 'storage_contol_mode'; the regex also accepts the corrected spelling) and its battery and meter sensors exist only when the user enables reading battery 1 and meter 1; solaredge_modbus_multi unique ids are '<C_Model>_<C_SerialNumber>' plus '_B1_' / '_M1_' for battery and meter, and its storage selects exist only with its storage control option enabled. Neither integration exposes PV power on a hybrid (their DC power includes the battery) or house load, so pv_power_w and load_power_w are not mapped. Battery and meter power are negated to the core's signs; the '_inverted' entities of solaredge_modbus_multi are not used. Neither integration runs its own energy management (ems false).",
+    "write_function": 6,
+    "max_read_registers": 100,
+    "transport_options": {
+      "modbus_tcp": {
+        "port": 1502,
+        "timeout_ms": 3000,
+        "gap_ms": 100
+      }
+    },
+    "identify_reads": [
+      {
+        "addr": 40000,
+        "count": 70
+      }
+    ],
+    "verify_blocks": [
+      {
+        "addr": 57348,
+        "count": 1
+      }
+    ],
+    "probe_keys": [
+      "mode"
+    ]
+  }
+}

@@ -79,3 +79,26 @@ def test_executor_limits_upper_bound_matches_guard():
     assert executor_limits(rated_power_w=MAX_POWER_W) == {"rated_power_w": 30000, "source": "entities"}
     assert executor_limits(rated_power_w=8000.0, max_charge_w=MAX_POWER_W + 1) == {
         "rated_power_w": 8000, "source": "entities"}
+
+
+DRAFT_ENTITY_PROFILES = (("huawei-sun2000", "huawei_solar"), ("foxess-h", "foxess_modbus"),
+                         ("solax-x-hybrid", "solax_modbus"), ("solaredge-storedge", "solaredge_modbus_multi"))
+
+
+@pytest.mark.parametrize("pid,domain", DRAFT_ENTITY_PROFILES)
+def test_draft_integration_entry_is_not_entity_mode_ready(pid, domain):
+    # Wpis `ha.integrations` w stanie draft służy tylko jako podpowiedź mapowania odczytów.
+    choice = ProfileChoice(load_builtin(pid), domain, None)
+    assert entity_mode_ready(choice, ALL) is False
+
+
+def test_verified_profile_with_draft_integration_entry_is_not_ready():
+    from custom_components.volcast.core.profile import PROFILES_DIR, profile_from_dict
+    import json
+    raw = json.loads((PROFILES_DIR / "goodwe-et.json").read_text(encoding="utf-8"))
+    raw["ha"]["integrations"][0]["status"] = "draft"
+    assert entity_mode_ready(ProfileChoice(profile_from_dict(raw), "goodwe", None), ALL) is False
+
+
+def test_goodwe_et_stays_entity_mode_ready():
+    assert entity_mode_ready(ProfileChoice(GW, "goodwe", "GW8KN-ET"), ALL) is True

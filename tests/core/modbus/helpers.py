@@ -14,12 +14,29 @@ def goodwe_image() -> RegisterImage:
                                       for f in frames.values() if f["valid"]})
 
 
+def _golden_doc(profile_id: str) -> dict:
+    return json.loads((GOLDEN / profile_id.replace("-", "_") / "registers.json").read_text())
+
+
+def golden_words(profile_id: str) -> dict[int, int]:
+    """Rejestry holding (FC 3) z `tests/golden/<id>/registers.json`."""
+    return {int(a): w for a, w in _golden_doc(profile_id)["registers"].items()}
+
+
+def _image_from_doc(doc: dict, **over: int) -> RegisterImage:
+    words = {int(a): w for a, w in doc["registers"].items()}
+    words.update({int(a): w for a, w in over.items()})
+    return RegisterImage(words, {int(a): w for a, w in doc.get("input_registers", {}).items()})
+
+
+def golden_image(profile_id: str, **over: int) -> RegisterImage:
+    """Obraz rejestrów profilu; opcjonalny `input_registers` to przestrzeń FC 4. `over` nadpisuje holding."""
+    return _image_from_doc(_golden_doc(profile_id), **over)
+
+
 def deye_words() -> dict[int, int]:
-    doc = json.loads((GOLDEN / "deye_sg" / "registers.json").read_text())
-    return {int(a): w for a, w in doc["registers"].items()}
+    return golden_words("deye-sg")
 
 
 def deye_image(**over: int) -> RegisterImage:
-    words = deye_words()
-    words.update({int(a): w for a, w in over.items()})
-    return RegisterImage(words)
+    return golden_image("deye-sg", **over)

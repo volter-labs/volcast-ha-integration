@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Sequence
 
+from ..modbus.blocks import block_key, read_kwargs
 from ..modbus.client import RegisterClient
 from ..modbus.identity import MIN_SALT_BYTES, device_fingerprint, identity_info
 from ..registers import RegisterImage
@@ -123,15 +124,16 @@ def _note(errors: list[str], name: str) -> None:
 
 async def _read_identify(transport, prof, left: Callable[[], int], errors: list[str]):
     """(obraz, stan): stan ∈ ok | fail (to nie ten profil) | dead (łącze nie działa) | budget."""
-    blocks: dict[int, list[int]] = {}
+    blocks: dict[int | tuple[int, int], list[int]] = {}
     read_tries = getattr(getattr(transport, "cfg", None), "read_tries", 1)
-    for addr, count in prof.modbus.identify_reads:
+    for block in prof.modbus.identify_reads:
         remaining = left()
         if remaining <= 0:
             _note(errors, "budget")
             return None, "budget"
         try:
-            blocks[addr] = await transport.read(addr, count, tries=min(read_tries, remaining))
+            blocks[block_key(block)] = await transport.read(block[0], block[1], tries=min(read_tries, remaining),
+                                                            **read_kwargs(block))
         except (LinkDown, InverterAsleep) as err:
             _note(errors, type(err).__name__)
             return None, "dead"

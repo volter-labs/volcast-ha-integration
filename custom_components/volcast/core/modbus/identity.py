@@ -18,6 +18,7 @@ import re
 from typing import Any, Mapping
 
 from ..registers import RegisterError, RegisterImage, decode
+from .blocks import block_fc
 
 RATED_POWER_RANGE_W = (1000.0, 30000.0)
 MIN_SALT_BYTES = 16
@@ -36,9 +37,9 @@ def _decoded(spec: Mapping[str, Any] | None, image: RegisterImage):
 
 def _identity_words(profile, image: RegisterImage) -> list[int]:
     out: list[int] = []
-    for addr, count in profile.modbus.identify_reads:
+    for block in profile.modbus.identify_reads:
         try:
-            out.extend(image.words(addr, count))
+            out.extend(image.words(block[0], block[1], block_fc(block)))
         except RegisterError:
             pass
     return out

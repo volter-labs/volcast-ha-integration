@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import Sequence
 
 FC_READ = 0x03
+FC_READ_INPUT = 0x04
+READ_FUNCTIONS = (FC_READ, FC_READ_INPUT)     # holding, input — odpowiedź tego samego kształtu
 FC_WRITE_SINGLE = 0x06
 FC_WRITE_MULTIPLE = 0x10
 MAX_READ_REGISTERS = 125
@@ -55,10 +57,16 @@ def _be16(v: int) -> bytes:
 # ── budowanie ─────────────────────────────────────────────────────────────
 
 
-def pdu_read(addr: int, count: int) -> bytes:
+def _read_function(fc: int) -> None:
+    if isinstance(fc, bool) or not isinstance(fc, int) or fc not in READ_FUNCTIONS:
+        raise ValueError(f"funkcja odczytu spoza {list(READ_FUNCTIONS)}: {fc!r}")
+
+
+def pdu_read(addr: int, count: int, fc: int = FC_READ) -> bytes:
+    _read_function(fc)
     _int_in("adres rejestru", addr, 0, 0xFFFF)
     _int_in("liczba rejestrów", count, 1, MAX_READ_REGISTERS)
-    return bytes([FC_READ]) + _be16(addr) + _be16(count)
+    return bytes([fc]) + _be16(addr) + _be16(count)
 
 
 def pdu_write_single(addr: int, value: int) -> bytes:
@@ -85,8 +93,8 @@ def rtu(unit: int, pdu: bytes) -> bytes:
     return _with_crc(bytes([unit]) + pdu)
 
 
-def read_request(unit: int, addr: int, count: int) -> bytes:
-    return rtu(unit, pdu_read(addr, count))
+def read_request(unit: int, addr: int, count: int, fc: int = FC_READ) -> bytes:
+    return rtu(unit, pdu_read(addr, count, fc))
 
 
 def write_single_request(unit: int, addr: int, value: int) -> bytes:
@@ -132,12 +140,13 @@ def _words(data: bytes) -> list[int]:
     return [int.from_bytes(data[i:i + 2], "big") for i in range(0, len(data), 2)]
 
 
-def parse_rtu_read(rtu_frame: bytes, unit: int, count: int) -> list[int]:
+def parse_rtu_read(rtu_frame: bytes, unit: int, count: int, fc: int = FC_READ) -> list[int]:
     # Lustro `mb_parse_read_response` z firmware'u Boxa: kolejność kontroli i traktowanie
     # bajtów za deklarowaną długością (ramka może mieć nadmiarowe wypełnienie) muszą się zgadzać.
-    fc = _rtu_head(rtu_frame, unit)
-    if fc != FC_READ:
-        raise FrameError("function", f"nieoczekiwana funkcja 0x{fc:02x}")
+    # `fc` — funkcja żądania (3 albo 4); odpowiedź innej funkcji odczytu to nie nasza odpowiedź.
+    got = _rtu_head(rtu_frame, unit)
+    if got != fc:
+        raise FrameError("function", f"nieoczekiwana funkcja 0x{got:02x}")
     if len(rtu_frame) < 3:
         raise FrameError("short", "ramka krótsza niż nagłówek odczytu")
     n = rtu_frame[2]
@@ -198,10 +207,10 @@ def _pdu_head(pdu: bytes) -> int:
     return fc
 
 
-def parse_pdu_read(pdu: bytes, count: int) -> list[int]:
-    fc = _pdu_head(pdu)
-    if fc != FC_READ:
-        raise FrameError("function", f"nieoczekiwana funkcja 0x{fc:02x}")
+def parse_pdu_read(pdu: bytes, count: int, fc: int = FC_READ) -> list[int]:
+    got = _pdu_head(pdu)
+    if got != fc:
+        raise FrameError("function", f"nieoczekiwana funkcja 0x{got:02x}")
     if len(pdu) < 2:
         raise FrameError("short", "PDU krótszy niż nagłówek odczytu")
     n = pdu[1]
@@ -236,7 +245,7 @@ def parse_mbap(frame: bytes) -> tuple[int, int, bytes]:
 def rtu_frame_length(prefix: bytes) -> int | None:
     """Pełna długość ramki RTU w strumieniu z jej pierwszych bajtów; None = za mało bajtów.
 
-    Wyjątek: 5, odczyt FC 3: 5 + liczba bajtów danych, potwierdzenie zapisu FC 6/16: 8.
+    Wyjątek: 5, odczyt FC 3/4: 5 + liczba bajtów danych, potwierdzenie zapisu FC 6/16: 8.
     Inna funkcja nie da się odciąć w strumieniu → `FrameError(kind="function")`.
     """
     if len(prefix) < 3:
@@ -244,7 +253,7 @@ def rtu_frame_length(prefix: bytes) -> int | None:
     fc = prefix[1]
     if fc & 0x80:
         return 5
-    if fc == FC_READ:
+    if fc in READ_FUNCTIONS:
         return 5 + prefix[2]
     if fc in (FC_WRITE_SINGLE, FC_WRITE_MULTIPLE):
         return 8

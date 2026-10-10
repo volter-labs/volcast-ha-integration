@@ -93,3 +93,62 @@ def test_unexpected_function_code_without_error_bit():
 def test_read_request_rejects_out_of_range(unit, addr, count):
     with pytest.raises(ValueError):
         read_request(unit, addr, count)
+
+
+# ── odczyt rejestrów input (FC 4) ──
+
+from custom_components.volcast.core.transports import modbus_frames as mf  # noqa: E402
+from tests.sim.device import with_crc  # noqa: E402  (CRC liczone niezależnie, tablicowo)
+
+
+def test_read_request_default_function_is_3():
+    assert mf.pdu_read(13022, 2) == bytes.fromhex("0332de0002")
+    assert mf.read_request(1, 13022, 2) == with_crc(bytes.fromhex("010332de0002"))
+
+
+def test_read_request_input_registers_function_4():
+    assert mf.FC_READ_INPUT == 0x04 and mf.READ_FUNCTIONS == (0x03, 0x04)
+    assert mf.pdu_read(13022, 2, fc=4) == bytes.fromhex("0432de0002")
+    assert mf.read_request(1, 13022, 2, fc=4) == with_crc(bytes.fromhex("010432de0002"))
+
+
+@pytest.mark.parametrize("fc", [0, 2, 5, 6, 16, True, 4.0])
+def test_read_request_rejects_other_functions(fc):
+    with pytest.raises(ValueError):
+        mf.pdu_read(0, 1, fc=fc)
+
+
+def test_parse_pdu_read_input_registers():
+    assert mf.parse_pdu_read(bytes.fromhex("040400371234"), 2, fc=4) == [0x37, 0x1234]
+
+
+@pytest.mark.parametrize("pdu,fc", [("040400371234", 3), ("030400371234", 4)])
+def test_parse_pdu_read_function_must_echo_request(pdu, fc):
+    with pytest.raises(FrameError) as ei:
+        mf.parse_pdu_read(bytes.fromhex(pdu), 2, fc=fc)
+    assert ei.value.kind == "function"
+
+
+def test_parse_pdu_read_default_is_holding():
+    with pytest.raises(FrameError) as ei:
+        mf.parse_pdu_read(bytes.fromhex("040400371234"), 2)
+    assert ei.value.kind == "function"
+
+
+def test_parse_rtu_read_input_registers():
+    frame = with_crc(bytes.fromhex("01040400371234"))
+    assert mf.parse_rtu_read(frame, 1, 2, fc=4) == [0x37, 0x1234]
+    assert mf.rtu_frame_length(frame[:3]) == len(frame) == 9
+
+
+@pytest.mark.parametrize("body,fc", [("01040400371234", 3), ("01030400371234", 4)])
+def test_parse_rtu_read_function_must_echo_request(body, fc):
+    with pytest.raises(FrameError) as ei:
+        mf.parse_rtu_read(with_crc(bytes.fromhex(body)), 1, 2, fc=fc)
+    assert ei.value.kind == "function"
+
+
+def test_parse_rtu_read_input_length_mismatch():
+    with pytest.raises(FrameError) as ei:
+        mf.parse_rtu_read(with_crc(bytes.fromhex("01040400371234")), 1, 3, fc=4)
+    assert ei.value.kind == "length"

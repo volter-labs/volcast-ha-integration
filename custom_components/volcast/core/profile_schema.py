@@ -41,6 +41,8 @@ _HA_TOU_KEY = re.compile(r"^tou_[1-9]_(start|power_w|soc|grid_charge)$")
 # Odczyt włącznika harmonogramu TOU — tylko dostęp bezpośredni, nie encja HA.
 TOU_ENABLED_READ = "tou_enabled"
 WRITE_FUNCTIONS = (6, 16)
+# Kod funkcji odczytu: 3 = rejestry holding (domyślny), 4 = rejestry input (tylko odczyt).
+READ_FUNCTIONS = (3, 4)
 MAX_READ_REGISTERS = 125
 
 _TOP_REQ = ("schema_version", "id", "label", "status", "control_model", "sources", "unit_id",
@@ -124,10 +126,12 @@ class _V:
 
 def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True) -> None:
     r = v.obj(raw, path, ("addr",) + (("type",) if need_type else ()),
-              ("type", "scale", "sign", "undef", "len", "word_order", "expect"))
+              ("type", "scale", "sign", "undef", "len", "word_order", "expect", "fc"))
     if r is None:
         return
     v.int_(r.get("addr"), f"{path}.addr", 0, 65535)
+    if "fc" in r:
+        _read_function(v, r["fc"], f"{path}.fc")
     if "type" in r and v.enum(r["type"], f"{path}.type", REG_TYPES):
         if r["type"] == "ascii" and "len" not in r:
             v.err(f"{path}.len", "ascii wymaga len (liczba rejestrów)")
@@ -148,6 +152,11 @@ def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True) -> None:
         if not isinstance(exp, list) or not exp or not all(
                 isinstance(x, int) and not isinstance(x, bool) for x in exp):
             v.err(f"{path}.expect", "oczekiwano niepustej listy liczb całkowitych")
+
+
+def _read_function(v: _V, fc: Any, path: str) -> None:
+    if isinstance(fc, bool) or not isinstance(fc, int) or fc not in READ_FUNCTIONS:
+        v.err(path, "tylko 3 (holding) albo 4 (input)")
 
 
 def _read(v: _V, raw: Any) -> None:
@@ -311,9 +320,11 @@ def _modbus(v: _V, raw: Any, transports: Any, written: set[str], write_addrs: se
     else:
         for i, r in enumerate(reads):
             rp = f"$.modbus.identify_reads[{i}]"
-            o = v.obj(r, rp, ("addr", "count"))
+            o = v.obj(r, rp, ("addr", "count"), ("fc",))
             if o is None:
                 continue
+            if "fc" in o:
+                _read_function(v, o["fc"], f"{rp}.fc")
             a_ok = v.int_(o.get("addr"), f"{rp}.addr", 0, 65535)
             c_ok = v.int_(o.get("count"), f"{rp}.count", 1, MAX_READ_REGISTERS)
             if a_ok and c_ok and o["addr"] + o["count"] > 65536:
@@ -439,10 +450,17 @@ def _ha(v: _V, raw: Any) -> None:
         return
     for i, integ in enumerate(h["integrations"]):
         p = f"$.ha.integrations[{i}]"
-        it = v.obj(integ, p, ("domain", "ems", "status", "entities"))
+        it = v.obj(integ, p, ("domain", "ems", "status", "entities"), ("model_regex",))
         if it is None:
             continue
         v.str_(it.get("domain"), f"{p}.domain")
+        if "model_regex" in it:
+            # Rozstrzyga między profilami tej samej domeny po tekście „producent model” urządzenia HA.
+            mr = v.str_list(it["model_regex"], f"{p}.model_regex")
+            if mr is not None and not mr:
+                v.err(f"{p}.model_regex", "oczekiwano niepustej listy")
+            for j, r in enumerate(mr or ()):
+                v.regex(r, f"{p}.model_regex[{j}]")
         v.bool_(it.get("ems"), f"{p}.ems")
         v.enum(it.get("status"), f"{p}.status", ("draft", "verified"))
         ents = it.get("entities")

@@ -468,3 +468,46 @@ def test_readback_settle_out_of_range_rejected(value):
     p = ms_profile()
     p["write_policy"]["readback_settle_s"] = value
     assert "$.write_policy.readback_settle_s" in _errs(p)
+
+
+# ── kod funkcji odczytu (`fc`: 3 holding, 4 input) ──
+
+
+def test_read_function_defaults_and_input_registers_are_valid():
+    p = ms_profile()
+    p["read"]["soc"]["fc"] = 4
+    p["read"]["active_power_w"]["fc"] = 3
+    p["read"]["pv_power_w"]["sum"][0]["fc"] = 4
+    p["identify"]["model_register"]["fc"] = 4
+    p["identify"]["registers"]["rated_power_w"]["fc"] = 4
+    p["modbus"]["identify_reads"] = [{"addr": 35000, "count": 33, "fc": 4}, {"addr": 35001, "count": 1, "fc": 3}]
+    assert validate_profile(p) == []
+
+
+@pytest.mark.parametrize("fc", [5, 0, 6, 16, "4", True, 4.0, None])
+def test_read_function_outside_3_and_4_is_rejected(fc):
+    for mutate, needle in (
+            (lambda p: p["read"]["soc"].__setitem__("fc", fc), "$.read.soc.fc"),
+            (lambda p: p["read"]["pv_power_w"]["sum"][0].__setitem__("fc", fc), "$.read.pv_power_w.sum[0].fc"),
+            (lambda p: p["identify"]["model_register"].__setitem__("fc", fc), "$.identify.model_register.fc"),
+            (lambda p: p["modbus"]["identify_reads"][0].__setitem__("fc", fc), "$.modbus.identify_reads[0].fc")):
+        p = ms_profile()
+        mutate(p)
+        assert f"{needle}: tylko 3 (holding) albo 4 (input)" in _errs(p), needle
+
+
+def test_write_registers_take_no_read_function():
+    # Zapis i odczyt zwrotny zawsze w rejestrach holding — `fc` w specyfikacji zapisu to błąd profilu.
+    p = ms_profile()
+    p["write"]["mode"]["fc"] = 4
+    assert "$.write.mode.fc: nieznane pole" in _errs(p)
+
+
+def test_ha_integration_model_regex_is_optional_and_validated():
+    p = ms_profile()
+    p["ha"]["integrations"][0]["model_regex"] = ["(?i)goodwe", "^GW"]
+    assert validate_profile(p) == []
+    for bad, where in (("(?i)goodwe", "model_regex"), ([], "model_regex"), (["(["], "model_regex[0]"),
+                       ([3], "model_regex")):
+        p["ha"]["integrations"][0]["model_regex"] = bad
+        assert f"$.ha.integrations[0].{where}" in _errs(p), bad

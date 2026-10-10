@@ -115,3 +115,15 @@ def test_write_only_key_read_from_its_own_register():
     at = datetime(2026, 9, 1, tzinfo=timezone.utc)
     assert build_reading(gw, RegisterImage({47760: 95}), at_mono=0.0, at_utc=at).device["soc_max"] == 95.0
     assert "soc_max" not in build_reading(gw, RegisterImage({}), at_mono=0.0, at_utc=at).device
+
+
+def test_reading_takes_input_registers_from_their_own_space():
+    # `fc: 4` — odczyt z rejestrów input; ten sam adres w holding to inny rejestr.
+    from custom_components.volcast.core.profile import profile_from_dict
+    from tests.core.profile_fixtures import ms_profile
+    raw = ms_profile()
+    raw["read"]["soc"] = {"addr": 47511, "type": "u16", "fc": 4}
+    p = profile_from_dict(raw)
+    r = _read(p, RegisterImage.from_blocks({47509: [0, 0, 1, 0], (4, 47511): [55]}))
+    assert r.values["soc"] == 55
+    assert _read(p, RegisterImage.from_blocks({47509: [0, 0, 1, 0]})).values["soc"] is None

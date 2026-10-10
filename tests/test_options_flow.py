@@ -379,3 +379,10 @@ def test_same_choice_after_remote_choice_is_not_a_control_change(monkeypatch):
     f = flow(options=entity_mode_options(runtime.choice), runtime=runtime)
     asyncio.run(f.async_step_control_entities())
     assert ex.owned and h.states.get("select.goodwe_ems_mode").state == "sell_power"
+
+
+def test_control_entities_aborts_for_draft_integration_entry():
+    draft = SimpleNamespace(choice=ProfileChoice(load_builtin("huawei-sun2000"), "huawei_solar", "SUN2000-10KTL-M1"),
+                            mapped={k: f"x.{k}" for k in WRITE_KEYS}, executor=None)
+    assert asyncio.run(flow(runtime=draft).async_step_control_entities()) == {
+        "type": "abort", "reason": "entity_mode_unavailable"}

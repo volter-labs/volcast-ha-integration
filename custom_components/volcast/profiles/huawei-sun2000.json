@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "id": "huawei-sun2000",
+  "label": "Huawei SUN2000 L1/M1 hybrid with LUNA2000 battery",
+  "status": "draft",
+  "status_note": "Public register documentation only; nothing verified on hardware. Covers SUN2000-xKTL-L1 (single-phase) and -M1 (three-phase) hybrids, 2-12 kW, with a LUNA2000 battery; MAP0/LC0/M0/M2/USL0 and commercial models, LG RESU batteries, a second battery unit and EMMA/SmartLogger set-ups are not covered. Control is limited to the storage working mode register 47086 (back to 'maximise self consumption'): forced charge/discharge needs prerequisite registers, 32-bit power set-points and scaled SoC targets that the engine cannot write (see docs/profiles/engine-gaps.md); grid charge, forced discharge, sell and standby therefore map to the neutral mode without power and their capabilities are false. Writes over most TCP connections also need the vendor installer login, which the integration does not implement. Live-test checklist: (1) model string at 30000 and rated power at 30073 for the unit; (2) 32-bit values big-endian (high word first) and the scales: SoC 37760 x0.1 %, battery temperature 37022 x0.1 C, bus voltage 37763 x0.1 V; energy totals 37119/37121 may read negative on some firmware, so they are not read; (3) signs: 37765 > 0 while charging and 37113 > 0 while exporting (both negated here), load = 32080 + grid import; (4) unit id 1 through the SDongle or an RS485 gateway; the inverter WLAN access point and 'Local O&M' use unit 0 and port 6607 on newer firmware, not covered by this profile's single unit id; (5) the SDongle answers slowly, wants about 1 s of quiet after a connect and tolerates few simultaneous clients (the FusionSolar app and another Modbus client on it break the session); (6) the safe write is re-writing the current value of 47086 (2 = maximise self consumption) with FC16 and reading it back; restore by writing back the value read before the test; (7) whether 47086 accepts the write without an installer login over the SDongle. Battery temperature limits are the generic defaults of the other profiles, not LUNA2000 data. Not used for control until verified.",
+  "control_model": "mode_setpoint",
+  "sources": [
+    {"what": "register map: model 30000, serial 30015, rated power 30073, PV input power 32064, active power 32080, meter active power 37113, meter energy 37119/37121, battery temperature 37022, SoC 37760, bus voltage 37763, charge/discharge power 37765, working mode 47086, forcible charge/discharge 47100/47101/47246/47247/47249, period 47083, cut-off SoC 47081/47082; register types and gains", "ref": "https://github.com/wlcrs/huawei-solar-lib/blob/develop/src/huawei_solar/registers.py"},
+    {"what": "enum values: working mode 47086 (0 adaptive, 1 fixed charge/discharge, 2 maximise self consumption, 3 TOU LG, 4 fully fed to grid, 5 TOU LUNA2000), forcible 47100 (0 stop, 1 charge, 2 discharge), forcible setting mode 47246 (0 time, 1 SoC)", "ref": "https://github.com/wlcrs/huawei-solar-lib/blob/develop/src/huawei_solar/register_values.py"},
+    {"what": "connection timing: 1 s wait after connect, slow SDongle responses, 64-register read batches; installer login before writes", "ref": "https://github.com/wlcrs/huawei-solar-lib/blob/develop/src/huawei_solar/modbus_client.py"},
+    {"what": "Home Assistant entity unique ids '<inverter serial>_<register name>' and working mode select options (lower-case enum names)", "ref": "https://github.com/wlcrs/huawei_solar/blob/main/select.py"},
+    {"what": "Home Assistant sensor keys (input_power, active_power, power_meter_active_power, storage_state_of_capacity, storage_charge_discharge_power, storage_unit_1_battery_temperature, storage_bus_voltage, grid energy totals)", "ref": "https://github.com/wlcrs/huawei_solar/blob/main/sensor.py"},
+    {"what": "Home Assistant number keys for the charge/discharge cut-off SoC", "ref": "https://github.com/wlcrs/huawei_solar/blob/main/number.py"},
+    {"what": "forced charge/discharge write sequence (power, period or target SoC, setting mode, then 47100)", "ref": "https://github.com/wlcrs/huawei_solar/blob/main/services.py"},
+    {"what": "battery charge/discharge power sign (positive = charging)", "ref": "https://github.com/wlcrs/huawei_solar/wiki/Separate-Battery-charge-&-discharge-sensors"},
+    {"what": "connection paths (SDongle, inverter access point, Local O&M on 6607 or 502, unit id 0 or 1) and installer login for settings over TCP", "ref": "https://github.com/wlcrs/huawei_solar/wiki/Connecting-to-the-inverter"}
+  ],
+  "unit_id": 1,
+  "transports": ["modbus_tcp", "modbus_rtu"],
+  "identify": {
+    "model_register": {"addr": 30000, "type": "ascii", "len": 15},
+    "model_regex": ["^SUN2000-([2-9]|1[0-2])(\\.[0-9]+)?KTL-(L1|M1)"],
+    "registers": {
+      "serial": {"addr": 30015, "type": "ascii", "len": 10},
+      "rated_power_w": {"addr": 30073, "type": "u32"}
+    }
+  },
+  "read": {
+    "soc": {"addr": 37760, "type": "u16", "scale": 0.1},
+    "battery_temp_c": {"addr": 37022, "type": "i16", "scale": 0.1},
+    "battery_voltage_v": {"addr": 37763, "type": "u16", "scale": 0.1},
+    "battery_power_w": {"addr": 37765, "type": "i32", "sign": -1},
+    "pv_power_w": {"addr": 32064, "type": "i32"},
+    "active_power_w": {"addr": 32080, "type": "i32"},
+    "grid_power_w": {"addr": 37113, "type": "i32", "sign": -1},
+    "load_power_w": {"sum": [{"ref": "active_power_w"}, {"ref": "grid_power_w"}]},
+    "mode_value": {"addr": 47086, "type": "u16"}
+  },
+  "write": {
+    "mode": {"addr": 47086, "type": "u16", "encode": "mode"}
+  },
+  "modes": {
+    "maximise_self_consumption": {"value": 2, "direction": "neutral", "ha_option": "maximise_self_consumption"}
+  },
+  "neutral_mode": "maximise_self_consumption",
+  "intents": {
+    "charge_grid": {"mode": "maximise_self_consumption", "power": "none"},
+    "charge_pv": {"mode": "maximise_self_consumption", "power": "none"},
+    "discharge_forced": {"mode": "maximise_self_consumption", "power": "none"},
+    "sell": {"mode": "maximise_self_consumption", "power": "none"},
+    "self_consume": {"mode": "maximise_self_consumption", "power": "none"},
+    "standby": {"mode": "maximise_self_consumption", "power": "none"}
+  },
+  "baseline": {"mode": "maximise_self_consumption"},
+  "write_policy": {
+    "order": ["mode"],
+    "min_interval_s": 300,
+    "nvm": true,
+    "max_direction_changes_per_hour": 2,
+    "max_state_age_s": 300,
+    "readback_settle_s": 2,
+    "nvm_budget": {"window_h": 24, "per_key": 24, "total": 24}
+  },
+  "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
+  "ha": {"integrations": [{
+    "domain": "huawei_solar",
+    "ems": false,
+    "status": "draft",
+    "entities": {
+      "soc": {"domain": "sensor", "unique_id_regex": "^[^_]+_storage_state_of_capacity$"},
+      "battery_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_storage_charge_discharge_power$", "transform": "negate"},
+      "battery_temp_c": {"domain": "sensor", "unique_id_regex": "^[^_]+_storage_unit_1_battery_temperature$"},
+      "battery_voltage_v": {"domain": "sensor", "unique_id_regex": "^[^_]+_storage_bus_voltage$"},
+      "pv_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_input_power$"},
+      "active_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_active_power$"},
+      "grid_power_w": {"domain": "sensor", "unique_id_regex": "^[^_]+_power_meter_active_power$", "transform": "negate"},
+      "grid_export_total_kwh": {"domain": "sensor", "unique_id_regex": "^[^_]+_grid_exported_energy$"},
+      "grid_import_total_kwh": {"domain": "sensor", "unique_id_regex": "^[^_]+_grid_accumulated_energy$"},
+      "mode": {"domain": "select", "unique_id_regex": "^[^_]+_storage_working_mode_settings$"},
+      "soc_min": {"domain": "number", "unique_id_regex": "^[^_]+_storage_discharging_cutoff_capacity$"},
+      "soc_max": {"domain": "number", "unique_id_regex": "^[^_]+_storage_charging_cutoff_capacity$"}
+    }
+  }]},
+  "capabilities": {
+    "force_charge_from_grid": false, "sell_from_battery": false, "force_discharge": false,
+    "standby": false, "set_power_w": false, "limit_export": false, "set_soc_floor": false,
+    "set_soc_ceiling": false, "time_windows": 0
+  },
+  "modbus": {
+    "status": "draft",
+    "status_note": "Community library only. All registers are holding registers (FC3); the reference library writes with FC16 (FC6 acceptance is community-reported, unverified). The SDongle needs about 1 s after connecting before the first request (not expressible here; gap_ms 1000 and a 5 s timeout are a conservative stand-in) and serves few clients at once. The only write is the storage working mode 47086; re-writing its current value is the safe probe. Over TCP the inverter may refuse writes without the installer login; the RS485 path (manual target) does not need it.",
+    "write_function": 16,
+    "max_read_registers": 64,
+    "transport_options": {
+      "modbus_tcp": {"port": 502, "timeout_ms": 5000, "gap_ms": 1000},
+      "modbus_rtu": {"port": 8899, "timeout_ms": 3000, "gap_ms": 200}
+    },
+    "identify_reads": [{"addr": 30000, "count": 15}, {"addr": 30015, "count": 10}, {"addr": 30073, "count": 2}],
+    "verify_blocks": [{"addr": 47086, "count": 1}],
+    "probe_keys": ["mode"]
+  }
+}

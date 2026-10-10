@@ -28,6 +28,9 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from ..registers import FC_HOLDING
+from .blocks import block_fc
+
 Block = tuple[int, int]
 
 # Rodzaje transportu bez korelacji odpowiedzi z żądaniem i z modułem powtarzającym odpowiedzi.
@@ -57,12 +60,20 @@ def pick_view(views: Iterable[Block], prev_count: int | None) -> Block | None:
     return next((v for v in views if v[1] != prev_count), None)
 
 
+def _holding_known(profile) -> tuple[Block, ...]:
+    """Znane bloki (weryfikacyjne, potem identyfikacja) w rejestrach holding. Blok identyfikacji
+    z rejestrów input (FC 4) nie jest kandydatem: wołający czytają rozdzielacz jako `(adres, liczba)`,
+    a odczyt FC 3 pod adresem bloku input to inny rejestr."""
+    return tuple(b for b in (*profile.modbus.verify_blocks, *profile.modbus.identify_reads)
+                 if block_fc(b) == FC_HOLDING)
+
+
 def separator_blocks(profile, addr: int) -> tuple[Block, ...]:
     """Znane bloki (weryfikacyjne, potem identyfikacja) o długości różnej od każdego widoku rejestru
     i nieobejmujące go, w kolejności prób; pusto = profil takiego nie ma. Wołający bierze następny,
     gdy blok nie dał poprawnej odpowiedzi (inny model może nie mieć rejestru bloku)."""
     counts = {n for _, n in key_views(profile, addr)}
-    return tuple(dict.fromkeys(b for b in (*profile.modbus.verify_blocks, *profile.modbus.identify_reads)
+    return tuple(dict.fromkeys(b for b in _holding_known(profile)
                                if b[1] not in counts and not _covers(b, addr)))
 
 
@@ -70,7 +81,7 @@ def separators_for(profile, block: Block) -> tuple[Block, ...]:
     """Znane bloki o długości innej niż `block` i z nim rozłączne — rozdzielenie dwóch odczytów
     tej samej długości w cyklu odpytywania (kolejność prób jak `separator_blocks`)."""
     b0, b1 = block[0], block[0] + block[1]
-    return tuple(dict.fromkeys(b for b in (*profile.modbus.verify_blocks, *profile.modbus.identify_reads)
+    return tuple(dict.fromkeys(b for b in _holding_known(profile)
                                if b[1] != block[1] and (b[0] + b[1] <= b0 or b[0] >= b1)))
 
 
