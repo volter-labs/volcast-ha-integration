@@ -70,6 +70,7 @@
       "single_instance_allowed": "Volcast è già configurato qui e il rilevamento dell'impianto è già in esecuzione al suo interno.",
       "cannot_connect": "Impossibile raggiungere il servizio di abbinamento di Volcast. Controlla la connessione a internet e riprova.",
       "pairing_expired": "La richiesta di abbinamento è scaduta o è stata annullata prima della conferma. Ricomincia e conferma entro 10 minuti.",
+      "client_outdated": "Questa versione dell'integrazione Volcast è troppo vecchia per connettersi al tuo account (minima {min_version}, ultima {latest_version}). Aggiorna Volcast in HACS, riavvia Home Assistant e riprova.",
       "pairing_disabled": "L'abbinamento non è disponibile al momento. Riprova più tardi oppure collegati con una chiave API.",
       "pairing_failed": "L'abbinamento non è stato completato. Ricomincia; se continua a fallire, collegati con una chiave API.",
       "paired_existing": "La tua voce Volcast esistente ora è collegata al tuo account.",
@@ -315,6 +316,10 @@
     "production_tracking_available": {
       "title": "Migliora la precisione delle previsioni con il monitoraggio della produzione",
       "description": "Volcast v1.5.0 ora può monitorare la tua produzione FV reale e usarla per calibrare le previsioni. Vai alle opzioni dell'integrazione e seleziona il sensore di energia o di potenza del tuo inverter per attivare questa funzione."
+    },
+    "update_available": {
+      "title": "È disponibile un aggiornamento di Volcast",
+      "description": "Volcast {latest_version} è disponibile (hai {current_version}). Aggiorna Volcast in HACS e riavvia Home Assistant per ottenere le ultime correzioni."
     },
     "foreign_control": {
       "title": "Controllo dell'inverter da parte di Volcast in pausa",

@@ -70,6 +70,7 @@
       "single_instance_allowed": "Volcast est déjà configuré ici, et la détection de l'installation s'exécute déjà dans ce cadre.",
       "cannot_connect": "Impossible de joindre le service d'appairage Volcast. Vérifiez votre connexion internet et réessayez.",
       "pairing_expired": "La demande d'appairage a expiré ou a été annulée avant d'être confirmée. Recommencez et confirmez dans les 10 minutes.",
+      "client_outdated": "Cette version de l'intégration Volcast est trop ancienne pour se connecter à votre compte (minimum {min_version}, dernière {latest_version}). Mettez à jour Volcast dans HACS, redémarrez Home Assistant et réessayez.",
       "pairing_disabled": "L'appairage n'est pas disponible pour le moment. Réessayez plus tard ou connectez-vous avec une clé API.",
       "pairing_failed": "L'appairage n'a pas abouti. Recommencez ; si cela échoue encore, connectez-vous avec une clé API.",
       "paired_existing": "Votre entrée Volcast existante est maintenant connectée à votre compte.",
@@ -315,6 +316,10 @@
     "production_tracking_available": {
       "title": "Améliorez la précision des prévisions grâce au suivi de la production",
       "description": "Volcast v1.5.0 peut désormais suivre votre production PV réelle et l'utiliser pour étalonner les prévisions. Ouvrez les options de l'intégration et sélectionnez le capteur d'énergie ou de puissance de votre onduleur pour activer cette fonction."
+    },
+    "update_available": {
+      "title": "Une mise à jour de Volcast est disponible",
+      "description": "Volcast {latest_version} est disponible (vous avez {current_version}). Mettez à jour Volcast dans HACS et redémarrez Home Assistant pour bénéficier des derniers correctifs."
     },
     "foreign_control": {
       "title": "Pilotage de l'onduleur par Volcast en pause",

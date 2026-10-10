@@ -70,6 +70,7 @@
       "single_instance_allowed": "Volcast jest tu już skonfigurowany, a wykrywanie instalacji działa już w jego ramach.",
       "cannot_connect": "Nie można połączyć się z usługą parowania Volcast. Sprawdź połączenie z internetem i spróbuj ponownie.",
       "pairing_expired": "Prośba o parowanie wygasła lub została anulowana przed potwierdzeniem. Zacznij od nowa i potwierdź w ciągu 10 minut.",
+      "client_outdated": "Ta wersja integracji Volcast jest za stara, by połączyć się z Twoim kontem (minimalna {min_version}, najnowsza {latest_version}). Zaktualizuj Volcast w HACS, zrestartuj Home Assistant i spróbuj ponownie.",
       "pairing_disabled": "Parowanie jest teraz niedostępne. Spróbuj później albo połącz się za pomocą klucza API.",
       "pairing_failed": "Parowanie nie zostało ukończone. Zacznij od nowa; jeśli problem się powtarza, połącz się za pomocą klucza API.",
       "paired_existing": "Twój istniejący wpis Volcast jest teraz połączony z Twoim kontem.",
@@ -315,6 +316,10 @@
     "production_tracking_available": {
       "title": "Popraw dokładność prognozy dzięki śledzeniu produkcji",
       "description": "Volcast v1.5.0 potrafi teraz śledzić rzeczywistą produkcję PV i używać jej do kalibracji prognoz. Przejdź do opcji integracji i wybierz czujnik energii lub mocy swojego falownika, aby włączyć tę funkcję."
+    },
+    "update_available": {
+      "title": "Dostępna aktualizacja Volcast",
+      "description": "Dostępna jest wersja Volcast {latest_version} (masz {current_version}). Zaktualizuj Volcast w HACS i zrestartuj Home Assistant, aby otrzymać najnowsze poprawki."
     },
     "foreign_control": {
       "title": "Sterowanie falownikiem przez Volcast wstrzymane",

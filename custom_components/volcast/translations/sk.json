@@ -70,6 +70,7 @@
       "single_instance_allowed": "Volcast je tu už nastavený a zisťovanie inštalácie už beží ako jeho súčasť.",
       "cannot_connect": "Službu párovania Volcast sa nepodarilo zastihnúť. Skontrolujte pripojenie na internet a skúste to znova.",
       "pairing_expired": "Žiadosť o párovanie vypršala alebo bola zrušená pred potvrdením. Začnite znova a potvrďte do 10 minút.",
+      "client_outdated": "Táto verzia integrácie Volcast je príliš stará na pripojenie k vášmu účtu (minimálna {min_version}, najnovšia {latest_version}). Aktualizujte Volcast v HACS, reštartujte Home Assistant a skúste to znova.",
       "pairing_disabled": "Párovanie teraz nie je dostupné. Skúste to neskôr alebo sa pripojte pomocou kľúča API.",
       "pairing_failed": "Párovanie sa nedokončilo. Začnite znova; ak to stále zlyháva, pripojte sa pomocou kľúča API.",
       "paired_existing": "Váš existujúci záznam Volcast je teraz pripojený k vášmu účtu.",
@@ -315,6 +316,10 @@
     "production_tracking_available": {
       "title": "Zlepšite presnosť predpovede sledovaním výroby",
       "description": "Volcast v1.5.0 teraz vie sledovať vašu skutočnú výrobu FV a použiť ju na kalibráciu predpovedí. Prejdite do možností integrácie a vyberte senzor energie alebo výkonu svojho striedača, čím túto funkciu zapnete."
+    },
+    "update_available": {
+      "title": "Je k dispozícii aktualizácia Volcast",
+      "description": "Volcast {latest_version} je k dispozícii (máte {current_version}). Aktualizujte Volcast v HACS a reštartujte Home Assistant, aby ste získali najnovšie opravy."
     },
     "foreign_control": {
       "title": "Riadenie striedača cez Volcast je pozastavené",

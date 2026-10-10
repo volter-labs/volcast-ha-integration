@@ -70,6 +70,7 @@
       "single_instance_allowed": "Volcast is hier al ingesteld en de installatiedetectie draait al als onderdeel daarvan.",
       "cannot_connect": "De Volcast-koppelingsservice is niet bereikbaar. Controleer je internetverbinding en probeer het opnieuw.",
       "pairing_expired": "Het koppelingsverzoek is verlopen of geannuleerd voordat het werd bevestigd. Begin opnieuw en bevestig binnen 10 minuten.",
+      "client_outdated": "Deze versie van de Volcast-integratie is te oud om verbinding te maken met je account (minimaal {min_version}, nieuwste {latest_version}). Werk Volcast bij in HACS, herstart Home Assistant en probeer het opnieuw.",
       "pairing_disabled": "Koppelen is op dit moment niet beschikbaar. Probeer het later opnieuw of verbind met een API-sleutel.",
       "pairing_failed": "Koppelen is niet voltooid. Begin opnieuw; als het blijft mislukken, verbind dan met een API-sleutel.",
       "paired_existing": "Je bestaande Volcast-item is nu verbonden met je account.",
@@ -315,6 +316,10 @@
     "production_tracking_available": {
       "title": "Verbeter de voorspellingsnauwkeurigheid met opbrengstregistratie",
       "description": "Volcast v1.5.0 kan nu je werkelijke PV-opbrengst registreren en gebruiken om voorspellingen te kalibreren. Ga naar de opties van de integratie en kies de energie- of vermogenssensor van je omvormer om deze functie in te schakelen."
+    },
+    "update_available": {
+      "title": "Er is een Volcast-update beschikbaar",
+      "description": "Volcast {latest_version} is beschikbaar (je hebt {current_version}). Werk Volcast bij in HACS en herstart Home Assistant om de nieuwste oplossingen te krijgen."
     },
     "foreign_control": {
       "title": "Omvormerbesturing door Volcast gepauzeerd",

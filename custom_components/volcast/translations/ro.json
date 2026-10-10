@@ -70,6 +70,7 @@
       "single_instance_allowed": "Volcast este deja configurat aici, iar detectarea instalației rulează deja ca parte a acestuia.",
       "cannot_connect": "Serviciul de asociere Volcast nu poate fi contactat. Verifică conexiunea la internet și încearcă din nou.",
       "pairing_expired": "Cererea de asociere a expirat sau a fost anulată înainte de confirmare. Începe din nou și confirmă în 10 minute.",
+      "client_outdated": "Această versiune a integrării Volcast este prea veche pentru a te conecta la contul tău (minimă {min_version}, cea mai recentă {latest_version}). Actualizează Volcast în HACS, repornește Home Assistant și încearcă din nou.",
       "pairing_disabled": "Asocierea nu este disponibilă acum. Încearcă mai târziu sau conectează-te cu o cheie API.",
       "pairing_failed": "Asocierea nu s-a finalizat. Începe din nou; dacă continuă să eșueze, conectează-te cu o cheie API.",
       "paired_existing": "Intrarea ta Volcast existentă este acum conectată la contul tău.",
@@ -315,6 +316,10 @@
     "production_tracking_available": {
       "title": "Îmbunătățește precizia prognozei cu urmărirea producției",
       "description": "Volcast v1.5.0 poate urmări acum producția FV reală și o poate folosi pentru calibrarea prognozelor. Mergi la opțiunile integrării și selectează senzorul de energie sau de putere al invertorului tău pentru a activa această funcție."
+    },
+    "update_available": {
+      "title": "Este disponibilă o actualizare Volcast",
+      "description": "Volcast {latest_version} este disponibil (ai {current_version}). Actualizează Volcast în HACS și repornește Home Assistant pentru a primi ultimele corecturi."
     },
     "foreign_control": {
       "title": "Controlul invertorului de către Volcast este în pauză",

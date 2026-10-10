@@ -70,6 +70,7 @@
       "single_instance_allowed": "O Volcast já está configurado aqui e a detecção da instalação já funciona como parte dele.",
       "cannot_connect": "Não é possível contactar o serviço de pareamento do Volcast. Verifique sua conexão à internet e tente novamente.",
       "pairing_expired": "O pedido de pareamento expirou ou foi cancelado antes de ser confirmado. Comece novamente e confirme no prazo de 10 minutos.",
+      "client_outdated": "Esta versão da integração Volcast é antiga demais para se conectar à sua conta (mínima {min_version}, mais recente {latest_version}). Atualize o Volcast no HACS, reinicie o Home Assistant e tente novamente.",
       "pairing_disabled": "O pareamento não está disponível neste momento. Tente mais tarde ou conecte com uma chave API.",
       "pairing_failed": "O pareamento não foi concluído. Comece novamente; se continuar falhando, conecte com uma chave API.",
       "paired_existing": "Sua entrada Volcast existente está agora conectada à sua conta.",
@@ -315,6 +316,10 @@
     "production_tracking_available": {
       "title": "Melhore a precisão da previsão com o acompanhamento da produção",
       "description": "O Volcast v1.5.0 já consegue acompanhar sua produção FV real e usá-la para calibrar as previsões. Acesse as opções da integração e selecione o sensor de energia ou de potência do seu inversor para ativar esta função."
+    },
+    "update_available": {
+      "title": "Há uma atualização do Volcast disponível",
+      "description": "O Volcast {latest_version} está disponível (você tem {current_version}). Atualize o Volcast no HACS e reinicie o Home Assistant para obter as últimas correções."
     },
     "foreign_control": {
       "title": "Controle do inversor pelo Volcast em pausa",
