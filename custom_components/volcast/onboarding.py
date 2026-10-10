@@ -167,6 +167,8 @@ class Onboarding:
         self._inverter_integration = False
         self._offer: dict | None = None        # oferta kroku `control_mode` (gdy w stanie `choice`)
         self._searched = False                 # wyszukiwanie falownika już było (start albo wybór `direct`)
+        self.account_state = None              # ostatni `AccountState` z chmury (None: brak/błąd)
+        self.account_state_at: datetime | None = None
         self._refused: tuple | None = None     # stan wpisów-kolizji przy ostatniej odmowie `direct` (kolizja)
 
     async def async_run(self) -> None:
@@ -381,6 +383,18 @@ class Onboarding:
         # (pole postępu jest tylko wyświetlane), więc nie ma powodu go wysyłać.
         await self._set("inverter", "done", label)
 
+    async def _fetch_account_state(self):
+        """Stan konta z chmury, raz na przejście kreatora; błąd → None (kroki wracają do skanu encji)."""
+        if self.account_state_at is not None:
+            return self.account_state
+        try:
+            state = await self._client.async_account_state(self._session)
+        except Exception as err:  # noqa: BLE001 — konto nigdy nie blokuje onboardingu
+            _LOGGER.debug("Volcast onboarding: account state failed (%s)", type(err).__name__)
+            state = None
+        self.account_state, self.account_state_at = state, self._utcnow()
+        return state
+
     async def _prices_step(self, report: dict) -> None:
         current = self._options().get(OPT_PRICE_BUY)
         if self._usable_price(current):
@@ -388,6 +402,11 @@ class Onboarding:
             return
         if "price_source" in self._applied():
             await self._set("prices", "done")            # zastosowany wcześniej; opcje wygrywają
+            return
+        account = await self._fetch_account_state()
+        if account is not None and account.price_ready and account.price_kind \
+                and _PRICE_SOURCE.fullmatch(account.price_kind):
+            await self._set("prices", "done", f"from your account ({account.price_kind})")
             return
         for cand in report.get("price_entities") or []:
             eid = cand.get("entity_id") if isinstance(cand, dict) else None
@@ -400,6 +419,10 @@ class Onboarding:
         await self._set("prices", "choice", NONE_FOUND)
 
     async def _consumption_step(self, report: dict) -> None:
+        account = await self._fetch_account_state()
+        if account is not None and account.annual_consumption_kwh is not None:
+            await self._account_consumption(report)
+            return
         if not self._options().get(OPT_LOAD_ENERGY):
             candidate = None
             if _AUTO_LOAD not in self._applied():
@@ -426,6 +449,20 @@ class Onboarding:
                      if isinstance(s, dict) and s.get("entity_id") == load), None)
         ok = isinstance(days, int) and not isinstance(days, bool) and days > 0
         await self._set("consumption", "done", f"{days} days of history" if ok else "imported")
+
+    async def _account_consumption(self, report: dict) -> None:
+        """Roczne zużycie z konta wystarcza; licznik domu z HA tylko wzbogaca (bez blokowania)."""
+        if not self._options().get(OPT_LOAD_ENERGY) and _AUTO_LOAD not in self._applied():
+            own = getattr(self._runtime(), "inverter_entities", None) or ()
+            candidate = house_load_candidate(report.get("energy_sensors"), inverter_entities=own)
+            if candidate is not None:
+                self._commit_choices({OPT_LOAD_ENERGY: candidate}, {_AUTO_LOAD: candidate})
+        if self._options().get(OPT_LOAD_ENERGY):
+            try:
+                await self._import_history()
+            except Exception as err:  # noqa: BLE001 — wzbogacenie opcjonalne
+                _LOGGER.debug("Volcast onboarding: history import failed (%s)", type(err).__name__)
+        await self._set("consumption", "done", "from your annual consumption")
 
     async def _request_plan(self) -> None:
         self._plan_retry_at = None

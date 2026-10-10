@@ -233,6 +233,26 @@ class PairingSession:
 
 
 @dataclass(frozen=True)
+class AccountState:
+    """Stan konta dla kreatora (akcja `account_state`); pola nieobecne w odpowiedzi → `None`."""
+    price_kind: str | None
+    price_ready: bool
+    price_reason: str | None
+    annual_consumption_kwh: float | None
+    control_enabled: bool | None
+    readings_fresh: bool | None
+    consumption_days_with_data: int | None
+
+
+def _opt_bool(v: Any) -> bool | None:
+    return v if isinstance(v, bool) else None
+
+
+def _opt_number(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and v >= 0 else None
+
+
+@dataclass(frozen=True)
 class PollResult:
     # "pending" | "confirmed" | "consumed" | "expired" | "gone" | "disabled" | "error"
     status: str
@@ -353,6 +373,29 @@ class PairingClient:
             payload.append(step)
         status, _ = await self._call({**self._auth(s, "progress"), "steps": payload})
         return status == 200
+
+    async def async_account_state(self, s: PairingSession) -> AccountState | None:
+        """Stan konta; każdy błąd (sieć, status, kształt) → `None` — kroki z konta wracają do skanu encji."""
+        try:
+            status, data = await self._call(self._auth(s, "account_state"))
+        except Exception as err:  # noqa: BLE001 — onboarding nie czeka na konto
+            _LOGGER.debug("pairing account_state failed (%s)", type(err).__name__)
+            return None
+        if status != 200 or not isinstance(data, dict):
+            return None
+        src = data.get("price_source")
+        if not isinstance(src, dict) or not isinstance(src.get("ready"), bool):
+            return None
+        kind, reason = src.get("kind"), src.get("reason")
+        days = data.get("consumption_days_with_data")
+        return AccountState(
+            price_kind=kind if isinstance(kind, str) else None,
+            price_ready=src["ready"],
+            price_reason=reason if isinstance(reason, str) else None,
+            annual_consumption_kwh=_opt_number(data.get("annual_consumption_kwh")),
+            control_enabled=_opt_bool(data.get("control_enabled")),
+            readings_fresh=_opt_bool(data.get("readings_fresh")),
+            consumption_days_with_data=days if isinstance(days, int) and not isinstance(days, bool) else None)
 
     async def async_request_plan(self, s: PairingSession) -> dict | None:
         status, data = await self._call(self._auth(s, "request_plan"), _PLAN_TIMEOUT)

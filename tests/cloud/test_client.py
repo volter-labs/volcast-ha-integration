@@ -268,6 +268,29 @@ def test_progress_detail_cleaned_to_cloud_limits():
     assert steps[0]["detail"].startswith("zły\n")        # wejście nietknięte
 
 
+def test_account_state_parsed_and_degrades_to_none():
+    body = {"price_source": {"kind": "pstryk", "ready": True}, "annual_consumption_kwh": 7500,
+            "control_enabled": True, "readings_fresh": False, "consumption_days_with_data": 12}
+    s = FakeSession()
+    s.add("POST", PAIR, 200, body)
+    st = run(PairingClient(s, PAIR).async_account_state(SESSION))
+    assert s.calls[0]["json"] == {"action": "account_state", "session_id": SID, "poll_token": POLL}
+    assert (st.price_kind, st.price_ready, st.price_reason, st.annual_consumption_kwh, st.control_enabled,
+            st.readings_fresh, st.consumption_days_with_data) == ("pstryk", True, None, 7500, True, False, 12)
+    s2 = FakeSession()
+    s2.add("POST", PAIR, 200, {**body, "price_source": {"kind": "ha", "ready": False, "reason": "market_not_ready"},
+                               "annual_consumption_kwh": None})
+    st2 = run(PairingClient(s2, PAIR).async_account_state(SESSION))
+    assert (st2.price_ready, st2.price_reason, st2.annual_consumption_kwh) == (False, "market_not_ready", None)
+    for status in (404, 409, 500, aiohttp.ClientError("x")):
+        s3 = FakeSession()
+        s3.add("POST", PAIR, status, {"error": "x"})
+        assert run(PairingClient(s3, PAIR).async_account_state(SESSION)) is None
+    s4 = FakeSession()
+    s4.add("POST", PAIR, 200, {"price_source": "x"})
+    assert run(PairingClient(s4, PAIR).async_account_state(SESSION)) is None
+
+
 def test_request_plan_cooldown_is_skip_not_error():
     s = FakeSession()
     s.add("POST", PAIR, 429, {"error": "plan_recently_requested"})

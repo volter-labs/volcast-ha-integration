@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from custom_components.volcast import onboarding as ob_mod
-from custom_components.volcast.cloud.client import PairingSession, PollResult
+from custom_components.volcast.cloud.client import AccountState, PairingSession, PollResult
 from custom_components.volcast.control.runtime import ControlRuntime
 from custom_components.volcast.core.control.select import ProfileChoice
 from custom_components.volcast.core.profile import load_builtin
@@ -42,6 +42,13 @@ class States:
 class Client:
     def __init__(self, polls, plan=None):
         self.progress, self.polls, self.plan, self.plan_calls = [], list(polls), plan, 0
+        self.account, self.account_calls = None, 0
+
+    async def async_account_state(self, s):
+        self.account_calls += 1
+        if isinstance(self.account, Exception):
+            raise self.account
+        return self.account
 
     async def async_progress(self, s, steps):
         self.progress.append(steps)
@@ -294,6 +301,55 @@ def test_inverter_not_found_is_error_step_but_continues():
     st = last(client)
     assert st["inverter"]["state"] == "error" and st["first_plan"]["state"] == "done"
     assert st["prices"]["detail"] == "none found"
+
+
+def _acct(**kw):
+    base = dict(price_kind="pstryk", price_ready=True, price_reason=None, annual_consumption_kwh=None,
+                control_enabled=None, readings_fresh=None, consumption_days_with_data=None)
+    return AccountState(**{**base, **kw})
+
+
+def _run_with(account, **kw):
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, **kw)
+    client.account = account
+    asyncio.run(ob.async_run())
+    return ob, client
+
+
+def test_prices_step_done_from_account_provider():
+    ob, client = _run_with(_acct(), prices={})
+    assert last(client)["prices"] == {"key": "prices", "state": "done", "detail": "from your account (pstryk)"}
+    assert ob.account_state.price_kind == "pstryk" and ob.account_state_at is not None
+    assert client.account_calls == 1
+
+
+@pytest.mark.parametrize("account", [
+    None, RuntimeError("boom"), _acct(price_ready=False, price_reason="market_not_ready"),
+    _acct(price_kind="unconfigured", price_ready=False, price_reason="prices_not_configured")])
+def test_prices_step_falls_back_to_entity_scan(account):
+    ob, client = _run_with(account)
+    assert last(client)["prices"]["state"] == "choice"          # kandydat z raportu HA
+    ob2, client2 = _run_with(account, prices={})
+    assert last(client2)["prices"] == {"key": "prices", "state": "choice", "detail": "none found"}
+
+
+def test_consumption_step_done_from_annual_consumption():
+    ob, client = _run_with(_acct(annual_consumption_kwh=7500), options={})
+    assert last(client)["consumption"] == {"key": "consumption", "state": "done",
+                                           "detail": "from your annual consumption"}
+
+
+def test_consumption_annual_survives_failed_import():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    client.account = _acct(annual_consumption_kwh=7500)
+    ob._import_history = lambda: _ret(None)
+    asyncio.run(ob.async_run())
+    assert last(client)["consumption"]["state"] == "done"
+
+
+def test_consumption_without_annual_keeps_existing_path():
+    ob, client = _run_with(_acct(annual_consumption_kwh=None), options={})
+    assert last(client)["consumption"]["state"] == "choice"
 
 
 def test_consumption_without_load_sensor_is_choice():
