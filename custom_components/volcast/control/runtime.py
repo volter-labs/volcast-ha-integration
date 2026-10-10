@@ -40,6 +40,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
@@ -48,9 +49,11 @@ from ..cloud.signal_channel import SignalChannel
 from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
-                     OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP)
+                     OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
+                     SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED)
 from ..core.control.caps import direct_capabilities
 from ..core.control.limits import executor_limits, rated_power_from_model
+from ..core.control.recommend import recommend
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, resolve_entities
@@ -103,6 +106,9 @@ class ControlRuntime:
     channel: object | None = None
     live: object | None = None
     hub: object | None = None
+    # raport rozpoznania (getter runnera) i rekomendacja ścieżki sterowania z niego i z `last_probe`
+    report: Callable[[], dict | None] | None = None
+    recommendation: object | None = None
 
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
@@ -139,7 +145,37 @@ async def async_direct_search(hass, entry, *, manual=None, port: int | None = No
     rt = (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
     if rt is not None:
         rt.last_probe = list(reports)
+        schedule_recommendation(hass, entry, rt)
     return reports
+
+
+async def async_update_recommendation(hass, entry, rt: ControlRuntime, profiles=None):
+    """Rekomendacja ścieżki z ostatniego rozpoznania i wyszukiwania; zapis w runtime, sygnał przy zmianie.
+
+    Nigdy nie rzuca: błąd zostawia poprzednią rekomendację (None = nie policzono).
+    """
+    try:
+        if profiles is None:
+            profiles = await hass.async_add_executor_job(ds.load_profiles)
+        hits = ds.found(rt.last_probe or [])
+        probe = hits[0] if hits else None
+        clash = await ds.async_clash(hass, entry.entry_id, probe.candidate.host) if probe is not None else ()
+        choice = _choice_for(hass, entry, profiles)
+        report = rt.report() if rt.report is not None else None
+        rec = recommend(report, profiles, probe, ds.offer_reason(probe, profiles, clash),
+                        map_entities(hass, choice), None, clash, choice=choice)
+    except Exception as err:  # noqa: BLE001 — rekomendacja nie psuje sterowania ani opcji
+        _LOGGER.warning("Volcast control: path recommendation failed (%s)", type(err).__name__)
+        return None
+    if rec != rt.recommendation:
+        rt.recommendation = rec
+        async_dispatcher_send(hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=entry.entry_id))
+    return rec
+
+
+def schedule_recommendation(hass, entry, rt: ControlRuntime) -> None:
+    """Przeliczenie w tle — sprawdzenie kolizji rozwiązuje nazwy hostów i nie może opóźniać wołającego."""
+    hass.async_create_background_task(async_update_recommendation(hass, entry, rt), "volcast_recommendation")
 
 
 def changed_option_keys(old: Mapping, new: Mapping) -> set[str]:
@@ -506,9 +542,16 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         rt = ControlRuntime(executor, fetcher, telemetry, cloud, choice, mapped, rated,
                             options_at_setup=dict(opts),
                             inverter_entities=inverter_entity_ids(hass, choice, mapped), direct=conn,
-                            channel=channel, live=live, hub=hub)
+                            channel=channel, live=live, hub=hub, report=report)
 
         rt.unsubs.append(async_track_time_interval(hass, _fetch, timedelta(seconds=SCHEDULE_FETCH_INTERVAL_S)))
+
+        @callback
+        def _on_discovery() -> None:
+            schedule_recommendation(hass, entry, rt)
+
+        rt.unsubs.append(async_dispatcher_connect(
+            hass, SIGNAL_DISCOVERY_UPDATED.format(entry_id=entry.entry_id), _on_discovery))
         track_ha_stop(hass, rt)
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").
         hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})["control"] = rt

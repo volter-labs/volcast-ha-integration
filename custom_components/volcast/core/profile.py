@@ -161,6 +161,20 @@ def direct_verified(profile: Profile) -> bool:
     return profile.status == "verified" and profile.modbus.status == "verified"
 
 
+def ha_integration(profile: Profile, domain: str | None) -> Mapping[str, Any] | None:
+    """Wpis `ha.integrations[]` profilu dla domeny integracji HA; None, gdy profil jej nie opisuje."""
+    if not domain:
+        return None
+    return next((i for i in (profile.raw.get("ha") or {}).get("integrations") or ()
+                 if i.get("domain") == domain), None)
+
+
+def integration_ems(profile: Profile, domain: str | None) -> bool:
+    """Czy integracja sama steruje baterią (`ems: true`) — wtedy to drugi sterownik falownika."""
+    integ = ha_integration(profile, domain)
+    return bool(integ is not None and integ.get("ems") is True)
+
+
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
     # Domyślnie `json` bierze ostatnie wystąpienie klucza — w profilu marki to cicha
     # podmiana nastawy, więc powtórzony klucz jest błędem pliku.

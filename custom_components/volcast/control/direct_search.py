@@ -11,6 +11,7 @@ Wspólne dla opcji integracji i onboardingu:
 * `offer_reason` — None, gdy „Bezpośrednio” można zaoferować (tożsamość ∧ próba udana ∧ profil
   i jego sekcja `modbus` zweryfikowane ∧ brak kolizji), inaczej powód.
 * `display_capabilities` — możliwości do pokazania: rejestr jest i da się go odczytać.
+* `recommendation_text` — szczegół kroku `control_mode` z rekomendacją ścieżki (`core/control/recommend`).
 
 Adres falownika nigdy nie trafia do logów ani do postępu onboardingu.
 """
@@ -22,6 +23,7 @@ from typing import Awaitable, Callable, Iterable, Mapping, Sequence
 
 from ..const import DOMAIN
 from ..core.control.conflict import SELF_DOMAIN, static_conflicts
+from ..core.control.recommend import DIRECT, DIRECT_WITH_INTEGRATION_DATA, ENTITIES
 from ..core.discovery.identify import Candidate, candidates_from
 from ..core.discovery.network import probe_udp_48899
 from ..core.discovery.probe import ProbeReport, discover
@@ -36,13 +38,34 @@ DISCOVER_TIMEOUT_S = 60.0
 ALLOW_LOOPBACK = False
 
 NOT_FOUND, CONFLICT, IN_USE, UNVERIFIED = "direct_not_found", "direct_conflict", "direct_in_use", "direct_unverified"
+RECOMMENDED = "control_recommended"
 # Teksty kroku `control_mode` w onboardingu (strona i aplikacja tłumaczą je z jednej tabeli).
 REMOTE_TEXT = {
     UNVERIFIED: "direct control is not available for this inverter yet",
     CONFLICT: "another integration is using this inverter",
     IN_USE: "another integration is using this inverter",
     NOT_FOUND: "inverter not found on the network",
+    RECOMMENDED: "recommended: {path}",
 }
+REMOTE_TEXT_MAX = 200
+
+
+def recommendation_text(rec) -> str:
+    """Szczegół kroku `control_mode` z rekomendacją (≤200 znaków): ścieżka i integracja albo urządzenie.
+
+    Bez adresu i seriala — tylko domena integracji albo marka i model z rekomendacji.
+    """
+    text = REMOTE_TEXT[RECOMMENDED].format(path=rec.path)
+    if rec.path in (ENTITIES, DIRECT_WITH_INTEGRATION_DATA):
+        subject = (rec.integration or {}).get("domain")
+    elif rec.path == DIRECT:
+        subject = " ".join(str(v) for v in ((rec.device or {}).get("manufacturer"),
+                                            (rec.device or {}).get("model")) if v)
+    else:
+        subject = None
+    if subject:
+        text = f"{text} ({subject})"
+    return text if len(text) <= REMOTE_TEXT_MAX else text[:REMOTE_TEXT_MAX - 1] + "…"
 
 
 def load_profiles() -> list:

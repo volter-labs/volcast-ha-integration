@@ -511,3 +511,43 @@ def test_ha_integration_model_regex_is_optional_and_validated():
                        ([3], "model_regex")):
         p["ha"]["integrations"][0]["model_regex"] = bad
         assert f"$.ha.integrations[0].{where}" in _errs(p), bad
+
+
+# ── opcjonalny blok `verification` (parametry drabiny weryfikacji) ─────────
+
+
+@pytest.mark.parametrize("block", [
+    {"trial_hours": 24, "window_minutes": 15, "window_power_w": 500},
+    {"trial_hours": 1, "window_minutes": 5, "window_power_w": 100},
+    {"trial_hours": 72, "window_minutes": 60, "window_power_w": 3000},
+    {"trial_hours": 12},
+])
+def test_verification_block_accepted(block):
+    p = ms_profile()
+    p["verification"] = block
+    assert validate_profile(p) == []
+
+
+@pytest.mark.parametrize("block,needle", [
+    ({"trial_hours": 0}, "$.verification.trial_hours"),
+    ({"trial_hours": 73}, "$.verification.trial_hours"),
+    ({"trial_hours": 24.5}, "$.verification.trial_hours"),
+    ({"trial_hours": True}, "$.verification.trial_hours"),
+    ({"window_minutes": 4}, "$.verification.window_minutes"),
+    ({"window_minutes": 61}, "$.verification.window_minutes"),
+    ({"window_power_w": 99}, "$.verification.window_power_w"),
+    ({"window_power_w": 3001}, "$.verification.window_power_w"),
+    ({"window_power_w": "500"}, "$.verification.window_power_w"),
+    ({"trial_hours": 24, "skip": True}, "$.verification.skip"),
+    ({}, "$.verification"),
+    ([], "$.verification"),
+])
+def test_verification_block_rejected(block, needle):
+    p = ms_profile()
+    p["verification"] = block
+    assert needle in _errs(p)
+
+
+def test_verification_block_is_optional():
+    p = ms_profile()
+    assert "verification" not in p and validate_profile(p) == []

@@ -59,6 +59,8 @@ OPT_PRICE_BUY = "entity_price_buy"
 OPT_PRICE_SELL = "entity_price_sell"
 OPT_PRICE_CURRENCY = "price_currency"
 SIGNAL_CONTROL_UPDATED = "volcast_control_updated_{entry_id}"
+# Zmiana stanu onboardingu sterowania (rekomendacja ścieżki, weryfikacja, konflikty) — blok `driver.control`.
+SIGNAL_CONTROL_STATE_UPDATED = "volcast_control_state_updated_{entry_id}"
 EXECUTOR_INTERVAL_S = 60
 STOP_WRITE_TIMEOUT_S = 10.0
 ERROR_ISSUE_AFTER = 10
