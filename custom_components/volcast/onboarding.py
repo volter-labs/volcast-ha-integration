@@ -31,10 +31,16 @@ Nieudana publikacja postępu jest ponawiana z wycofaniem (5 s, podwajane do 60 s
 Połączenie bezpośrednie: gdy wykrywanie nie znalazło integracji falownika w HA, onboarding szuka
 falownika w sieci (tylko odczyt); znaleziony daje kroki „<Marka> <model> (direct)”, moc i możliwości
 (rejestry, które istnieją i dają się odczytać). Krok `control_mode` w stanie `choice` niesie szczegół
-`options: entities`, `options: direct` albo `options: entities,direct` — `direct` tylko wtedy, gdy
-„Bezpośrednio” da się naprawdę zaoferować (profil i ścieżka rejestrów zweryfikowane, brak kolizji).
-Zdalny wybór `direct` jest stosowany tylko wtedy; inaczej krok `error` z jednym z trzech tekstów.
-Adres falownika nigdy nie trafia do postępu.
+`options: entities`, `options: direct` albo `options: entities,direct` (starsi klienci) oraz ofertę:
+`options` (obie ścieżki z `available` i kodem opisu), `recommended` i `reason` z rekomendacji ścieżki
+(`direct_search.control_offer`). Zdalny wybór `direct` uruchamia wyszukiwanie (gdy go jeszcze nie było —
+także przy integracji falownika w HA: sonda pomija adresy innych integracji bez ramki) i ustawia cel
+bezpośredni; gdy się nie da — krok `error` z jednym z trzech tekstów. Adres falownika nigdy nie trafia
+do postępu.
+
+Jedno zastosowanie (kontrakt sterowania §4): wybór, który kreator zastosował, dostaje w zapisie
+`applied_choices` znacznik (`cloud/control_choice`), a ta sama ścieżka z planu jest wtedy bez działania;
+gdy plan zastosował ścieżkę wcześniej (stan już taki, jak wybrany), wybór z kreatora kończy krok bez wywołań.
 
 Czujnik zużycia domu: gdy opcja jest pusta, a wśród WŁASNYCH encji zmapowanego
 falownika (`ControlRuntime.inverter_entities`) raport wykrywania ma DOKŁADNIE jeden
@@ -53,12 +59,14 @@ from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
 
+from .cloud.control_choice import APPLIED_CHOICES, WIZARD_MARK, wizard_mark
 from .const import (CONF_PAIRING, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
                     OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY)
 from .control import direct_search as ds
 from .control.runtime import readings_missing
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
+from .core.control.recommend import recommend
 from .core.prices import has_usable_prices_now
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,7 +81,8 @@ _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 _PLAN_RETRY_S = 125.0
 _PLAN_ATTEMPTS = 3
 _GONE = ("expired", "gone", "disabled")
-_APPLIED = "applied_choices"
+_APPLIED = APPLIED_CHOICES
+_PLAN_ONLY = "plan_only"
 # Zapis „zastosowano" dla automatycznie wybranego licznika zużycia domu.
 _AUTO_LOAD = "load_energy"
 _REPOST_MIN_S = 5.0
@@ -88,7 +97,8 @@ READ_ONLY_NO_READINGS = "read only, no readings"
 NO_READINGS = "no readings"
 
 
-def progress_payload(steps: Mapping[str, tuple[str, str | None]]) -> list[dict]:
+def progress_payload(steps: Mapping[str, tuple[str, str | None]], offer: Mapping | None = None) -> list[dict]:
+    """Kroki postępu; `offer` (pola `options`/`recommended`/`reason`) tylko przy `control_mode` w stanie `choice`."""
     out: list[dict] = []
     for key in STEP_KEYS:
         if key not in steps:
@@ -97,6 +107,8 @@ def progress_payload(steps: Mapping[str, tuple[str, str | None]]) -> list[dict]:
         item = {"key": key, "state": state if state in _STATES else "error"}
         if detail:
             item["detail"] = str(detail)[:_MAX_DETAIL]
+        if key == "control_mode" and item["state"] == "choice" and offer:
+            item.update(offer)
         out.append(item)
     return out
 
@@ -149,6 +161,8 @@ class Onboarding:
         self._profiles = list(profiles)
         self._direct_report = None             # raport sondy z rozpoznanym falownikiem (bez integracji w HA)
         self._inverter_integration = False
+        self._offer: dict | None = None        # oferta kroku `control_mode` (gdy w stanie `choice`)
+        self._searched = False                 # wyszukiwanie falownika już było (start albo wybór `direct`)
 
     async def async_run(self) -> None:
         try:
@@ -166,7 +180,7 @@ class Onboarding:
         await self._publish()
 
     async def _publish(self) -> None:
-        ok = await self._client.async_progress(self._session, progress_payload(self._steps))
+        ok = await self._client.async_progress(self._session, progress_payload(self._steps, self._offer))
         if ok is True:
             self._dirty, self._repost_at, self._repost_delay = False, None, _REPOST_MIN_S
             return
@@ -202,21 +216,27 @@ class Onboarding:
         choices = rec.get("choices")
         return dict(choices) if isinstance(choices, dict) else {}
 
-    def _commit_choices(self, patch: dict, applied: dict[str, str]) -> None:
-        """Opcje i zapis „zastosowano" w JEDNEJ aktualizacji wpisu (jedno przeładowanie)."""
+    def _commit_choices(self, patch: dict, applied: dict[str, str], marks: Mapping[str, dict] | None = None) -> None:
+        """Opcje i zapis „zastosowano" w JEDNEJ aktualizacji wpisu (jedno przeładowanie). `marks` = znacznik
+        „zastosowano z kreatora” (`cloud/control_choice`) przy wyborze, który kreator naprawdę zastosował."""
         entry = self._entry()
-        if entry is None or not patch:
+        if entry is None or not (patch or applied):
             return
         data = dict(getattr(entry, "data", None) or {})
         pairing = dict(data.get(CONF_PAIRING) or {})
         choices = self._applied()
         at = self._utcnow().isoformat()
-        choices.update({k: {"value": v, "at": at} for k, v in applied.items()})
+        for key, value in applied.items():
+            choices[key] = {"value": value, "at": at}
+            if marks and key in marks:
+                choices[key][WIZARD_MARK] = dict(marks[key])
         pairing[_APPLIED] = {"session_id": self._session.session_id, "choices": choices}
         data[CONF_PAIRING] = pairing
-        options = {**entry.options, **patch}
-        self._hass.config_entries.async_update_entry(
-            entry, data=data, options={k: v for k, v in options.items() if v is not None})
+        update: dict[str, Any] = {"data": data}
+        if patch:
+            options = {**entry.options, **patch}
+            update["options"] = {k: v for k, v in options.items() if v is not None}
+        self._hass.config_entries.async_update_entry(entry, **update)
 
     def _control_ready(self, rt) -> bool:
         """Ta sama reguła co w opcjach (`entity_mode_ready`)."""
@@ -265,6 +285,7 @@ class Onboarding:
         elif "control_mode" in self._applied():
             await self._set("control_mode", "done")      # zastosowany wcześniej; opcje wygrywają
         else:
+            self._offer = await self._control_offer(rt, report)
             await self._set("control_mode", "choice", self._options_token(rt))
         await self._prices_step(report)
         await self._consumption_step(report)
@@ -284,8 +305,35 @@ class Onboarding:
             tokens.append("direct")
         return f"options: {','.join(tokens)}" if tokens else None
 
+    async def _control_offer(self, rt, report: Mapping) -> dict:
+        """Oferta kroku `control_mode`: obie ścieżki z kodem opisu, `recommended` i `reason`.
+
+        Rekomendacja z runtime (`async_update_recommendation`), a gdy jeszcze nie policzona — ta sama funkcja
+        (`recommend`) na tym, co onboarding już wie. Bez sondy (integracja w HA) „bezpośrednio” jest możliwe po
+        wyłączeniu integracji tylko wtedy, gdy trzyma ona falownik pod adresem lokalnym i znamy jego profil."""
+        rep = self._direct_report
+        clash: tuple[str, ...] = ()
+        if rep is not None:
+            clash = await ds.async_clash(self._hass, self._entry_id, rep.candidate.host)
+        choice = getattr(rt, "choice", None)
+        mapped = getattr(rt, "mapped", None) or {}
+        held = any(isinstance(i, Mapping) and isinstance(i.get("host"), str) and i["host"]
+                   for i in report.get("inverters") or ())
+        held_by = choice.profile if rep is None and held and choice is not None else None
+        rec = getattr(rt, "recommendation", None)
+        if rec is None:
+            try:
+                rec = recommend(report, self._profiles, rep, ds.offer_reason(rep, self._profiles, clash), mapped,
+                                clash, choice=choice)
+            except Exception as err:  # noqa: BLE001 — bez rekomendacji oferta i tak wychodzi
+                _LOGGER.debug("Volcast onboarding: recommendation failed (%s)", type(err).__name__)
+        return ds.control_offer(rec, ds.entities_option(choice, mapped),
+                                ds.direct_option(rep, self._profiles, clash, held_by=held_by))
+
     async def _direct_search(self) -> None:
-        """Sonda sieci tylko bez integracji falownika w HA (inaczej to byłby drugi klient)."""
+        """Sonda sieci: na starcie tylko bez integracji falownika w HA (inaczej to byłby drugi klient); po
+        wyborze `direct` także z nią — sonda pomija adresy innych integracji bez wysłania ramki."""
+        self._searched = True
         if self._search is None:
             return
         try:
@@ -422,40 +470,59 @@ class Onboarding:
         clash = await ds.async_clash(self._hass, self._entry_id, rep.candidate.host)
         return ds.offer_reason(rep, self._profiles, clash)
 
+    def _already(self, mode: str, rt) -> bool:
+        """Stan sterowania już taki, jak wybrany — np. plan (`control.path`) zastosował tę ścieżkę po starcie
+        sesji (krok był w stanie `choice`, więc wcześniej jej nie było)."""
+        if mode == _PLAN_ONLY:
+            return getattr(getattr(rt, "executor", None), "plan_only", False) is True
+        return self._options().get(OPT_CONTROL_MODE) == mode
+
+    async def _control_choice(self, mode: str, rt, patch: dict) -> tuple[str, str | None, bool]:
+        """Zastosuj zdalny wybór sposobu sterowania: (stan kroku, szczegół, czy kreator zastosował ścieżkę)."""
+        if self._already(mode, rt):
+            return "done", mode, False            # drugi kanał tej samej decyzji — bez wywołań
+        if mode == CONTROL_MODE_ENTITIES:
+            if not self._control_ready(rt):
+                return "error", NOT_READY, False
+            patch.update(entity_mode_options(rt.choice))
+            return "done", CONTROL_MODE_ENTITIES, True
+        if mode == _PLAN_ONLY:
+            # Własny sterownik: ta sama obsługa co `path: plan_only` z chmury (tryb „tylko plan”, sterowanie wyłączone).
+            if await rt.async_apply_path_choice(_PLAN_ONLY) != "applied":
+                return "error", NOT_READY, False
+            return "done", _PLAN_ONLY, True
+        if self._direct_report is None and not self._searched:
+            await self._direct_search()           # wybór właściciela: wyszukujemy teraz (jeden raz)
+        if self._already(mode, rt):
+            return "done", mode, False            # plan zastosował ją w trakcie wyszukiwania
+        reason = await self._direct_reason()
+        if reason is not None:
+            return "error", ds.REMOTE_TEXT[reason], False
+        patch.update({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT,
+                      OPT_DIRECT_TARGET: ds.target_from_report(self._direct_report), OPT_DIRECT_TRIAL: None})
+        return "done", CONTROL_MODE_DIRECT, True
+
     async def _apply(self, choices: Mapping[str, str]) -> None:
         patch: dict[str, str] = {}
         applied: dict[str, str] = {}
+        marks: dict[str, dict] = {}
         steps: list[tuple[str, str, str | None]] = []
         mode = choices.get("control_mode")
-        if mode == CONTROL_MODE_ENTITIES and self._state("control_mode") == "choice":
+        executor = None
+        if mode in (CONTROL_MODE_ENTITIES, CONTROL_MODE_DIRECT, _PLAN_ONLY) and self._state("control_mode") == "choice":
             rt = self._runtime()
-            if rt is None:
-                pass                              # wpis się przeładowuje — spróbujemy przy następnym odpytaniu
-            elif self._control_ready(rt):
-                patch.update(entity_mode_options(rt.choice))
-                applied["control_mode"] = mode
-                steps.append(("control_mode", "done", "entities"))
-            else:
-                steps.append(("control_mode", "error", NOT_READY))
-        elif mode == "plan_only" and self._state("control_mode") == "choice":
-            # Własny sterownik: ta sama obsługa co `path: plan_only` z chmury (tryb „tylko plan”, sterowanie wyłączone).
-            rt = self._runtime()
-            if rt is not None:                    # wpis się przeładowuje — następne odpytanie
-                if await rt.async_apply_path_choice("plan_only") == "applied":
-                    steps.append(("control_mode", "done", "plan_only"))
-                else:
-                    steps.append(("control_mode", "error", NOT_READY))
-        elif mode == CONTROL_MODE_DIRECT and self._state("control_mode") == "choice":
-            if self._runtime() is not None:        # wpis się przeładowuje — następne odpytanie
-                reason = await self._direct_reason()
-                if reason is None:
-                    patch.update({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT,
-                                  OPT_DIRECT_TARGET: ds.target_from_report(self._direct_report),
-                                  OPT_DIRECT_TRIAL: None})
+            if rt is not None:                    # wpis się przeładowuje — spróbujemy przy następnym odpytaniu
+                state, detail, by_wizard = await self._control_choice(mode, rt, patch)
+                steps.append(("control_mode", state, detail))
+                if state == "done":
                     applied["control_mode"] = mode
-                    steps.append(("control_mode", "done", CONTROL_MODE_DIRECT))
-                else:
-                    steps.append(("control_mode", "error", ds.REMOTE_TEXT[reason]))
+                if by_wizard:
+                    # Znacznik dla planu: ta sama ścieżka z `control.path` będzie bez działania (kontrakt §4).
+                    executor = getattr(self._runtime() or rt, "executor", None)
+                    meta = getattr(executor, "control_meta", None)
+                    marks["control_mode"] = wizard_mark(meta if isinstance(meta, dict) else None)
+                    if isinstance(meta, dict):
+                        meta["path_done"] = mode
         source = choices.get("price_source")
         if isinstance(source, str) and self._state("prices") == "choice":
             if source == "ha":
@@ -468,6 +535,10 @@ class Onboarding:
                     steps.append(("prices", "error", NONE_FOUND))
             elif _PRICE_SOURCE.fullmatch(source):
                 steps.append(("prices", "done", None))   # źródło ustawia aplikacja/chmura
-        self._commit_choices(patch, applied)
+        self._commit_choices(patch, applied, marks)
+        save = getattr(executor, "async_save_control_meta", None) if marks else None
+        if save is not None:
+            # Po zapisie wpisu (znacznik już widoczny dla planu); `path_done` przeżywa przeładowanie.
+            await save()
         for key, state, detail in steps:
             await self._set(key, state, detail)

@@ -87,6 +87,16 @@ class Recommendation:
                 for c in self.conflicts[:MAX_CONFLICTS]]
 
 
+def offer_path(path: str) -> str | None:
+    """Ścieżka rekomendacji zrzutowana na ofertę kroku `control_mode` (`entities` | `direct`);
+    `unsupported` (i nieznana) → None — wtedy krok nie ma pola `recommended`."""
+    if path == ENTITIES:
+        return ENTITIES
+    if path in (DIRECT, DIRECT_WITH_INTEGRATION_DATA):
+        return DIRECT
+    return None
+
+
 def _cut(text: str, limit: int = MAX_TEXT) -> str:
     return str(text)[:limit]
 

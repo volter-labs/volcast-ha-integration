@@ -167,10 +167,8 @@ def test_capabilities_list_mapped_settings_when_one_setting_missing():
     assert "mode" in last(client)["capabilities"]["detail"]
 
 
-def test_remote_direct_choice_is_error_step():
-    ob, client, entry = make([PollResult("consumed", choices={"control_mode": "direct"})], plan=OK_PLAN)
-    asyncio.run(ob.async_run())
-    assert "control_mode" not in entry.options and last(client)["control_mode"]["state"] == "error"
+# Zdalny wybór `direct` (wyszukiwanie i ustawienie celu): tests/test_onboarding_direct.py
+# (`test_remote_direct_choice_starts_direct_search` i sąsiednie).
 
 
 def test_price_choice_ha_uses_first_usable_candidate():

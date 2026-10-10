@@ -12,6 +12,8 @@ Wspólne dla opcji integracji i onboardingu:
   i jego sekcja `modbus` zweryfikowane ∧ brak kolizji), inaczej powód.
 * `display_capabilities` — możliwości do pokazania: rejestr jest i da się go odczytać.
 * `recommendation_text` — szczegół kroku `control_mode` z rekomendacją ścieżki (`core/control/recommend`).
+* `entities_option` / `direct_option` / `control_offer` — oferta kroku `control_mode` (obie opcje z kodem
+  opisu z zamkniętego zbioru, `recommended`, `reason`).
 
 Adres falownika nigdy nie trafia do logów ani do postępu onboardingu.
 """
@@ -22,8 +24,10 @@ import logging
 from typing import Awaitable, Callable, Iterable, Mapping, Sequence
 
 from ..const import DOMAIN
-from ..core.control.conflict import SELF_DOMAIN, static_conflicts
-from ..core.control.recommend import DIRECT, DIRECT_WITH_INTEGRATION_DATA, ENTITIES
+from ..core.control.caps import entity_mode_ready
+from ..core.control.conflict import CONFLICT_DOMAINS, SELF_DOMAIN, static_conflicts
+from ..core.control.recommend import DIRECT, DIRECT_WITH_INTEGRATION_DATA, ENTITIES, REASONS, offer_path
+from ..core.control.select import control_verified
 from ..core.discovery.identify import Candidate, candidates_from
 from ..core.discovery.network import probe_udp_48899
 from ..core.discovery.probe import ProbeReport, discover
@@ -48,6 +52,76 @@ REMOTE_TEXT = {
     RECOMMENDED: "recommended: {path}",
 }
 REMOTE_TEXT_MAX = 200
+
+# Kody opisu opcji w kroku `control_mode` — zbiór zamknięty kontraktu parowania (pkt 14); każdy należy do jednej
+# opcji, chmura odrzuca kod spoza zbioru albo cudzej opcji.
+ENTITIES_OK, ENTITIES_NO_WRITE, ENTITIES_UNVERIFIED = (
+    "entities_ok", "entities_no_write_entities", "entities_profile_unverified")
+DIRECT_OK, DIRECT_REQUIRES_DISABLE, DIRECT_DRAFT_TRIAL, DIRECT_UNAVAILABLE = (
+    "direct_ok", "direct_requires_disable_integration", "direct_profile_draft_trial", "direct_unavailable")
+DESCRIPTION_CODES = (ENTITIES_OK, ENTITIES_NO_WRITE, ENTITIES_UNVERIFIED, DIRECT_OK, DIRECT_REQUIRES_DISABLE,
+                     DIRECT_DRAFT_TRIAL, DIRECT_UNAVAILABLE)
+
+
+def _option(oid: str, available: bool, code: str) -> dict:
+    return {"id": oid, "available": available, "description_code": code}
+
+
+def entities_option(choice, mapped) -> dict:
+    """Opcja „przez encje”: ta sama reguła co w opcjach (`entity_mode_ready`) — tylko profil i wpis integracji
+    `verified` z encją trybu; niezweryfikowany → `entities_profile_unverified`, inaczej brak encji zapisu."""
+    if entity_mode_ready(choice, mapped or {}):
+        return _option(ENTITIES, True, ENTITIES_OK)
+    domain = getattr(choice, "integration_domain", None)
+    if choice is not None and domain and not control_verified(choice.profile, domain):
+        return _option(ENTITIES, False, ENTITIES_UNVERIFIED)
+    return _option(ENTITIES, False, ENTITIES_NO_WRITE)
+
+
+def _foreign_clash(clash: Sequence[str]) -> bool:
+    """Kolizja wyłącznie ze znanymi integracjami (falownika albo `modbus`) — po ich wyłączeniu adres jest wolny."""
+    return bool(clash) and all(d in CONFLICT_DOMAINS for d in clash)
+
+
+def direct_option(report: ProbeReport | None, profiles: Sequence, clash: Sequence[str] = (), *,
+                  held_by=None) -> dict:
+    """Opcja „bezpośrednio”.
+
+    * Sonda rozpoznała falownik i oferta bez odmowy → dostępne: `direct_ok` (profil i sekcja `modbus`
+      zweryfikowane) albo `direct_profile_draft_trial` (profil roboczy — drabina od próby bez zapisu).
+    * Jedyną przeszkodą jest znana integracja na tym adresie (próba bez niej udana) → dostępne z
+      `direct_requires_disable_integration`: po wyłączeniu integracji kolizja znika (wyłączone wpisy są pomijane),
+      a wybór uruchamia wyszukiwanie i ustawia cel.
+    * Bez sondy (`report` None): `held_by` = profil falownika, którego port trzyma integracja w HA (adres
+      lokalny) — sonda tego adresu nie dotyka, więc bezpośrednio da się dopiero po wyłączeniu integracji.
+    * Inaczej (nieustalona kolizja, inny wpis Volcast, nieudana próba, nic w sieci) → `direct_unavailable`."""
+    if report is not None:
+        if offer_reason(report, profiles, clash) is None:
+            profile = _profile(profiles, report.identity.profile_id)
+            return _option(DIRECT, True, DIRECT_OK if direct_verified(profile) else DIRECT_DRAFT_TRIAL)
+        if _foreign_clash(clash) and offer_reason(report, profiles) is None:
+            return _option(DIRECT, True, DIRECT_REQUIRES_DISABLE)
+        return _option(DIRECT, False, DIRECT_UNAVAILABLE)
+    if held_by is not None:
+        return _option(DIRECT, True, DIRECT_REQUIRES_DISABLE)
+    return _option(DIRECT, False, DIRECT_UNAVAILABLE)
+
+
+def control_offer(rec, entities: dict, direct: dict) -> dict:
+    """Pola oferty kroku `control_mode`: `options` (encje, bezpośrednio), `recommended` i `reason`.
+
+    `recommended` = ścieżka rekomendacji zrzutowana na ofertę (`offer_path`), tylko gdy ta opcja jest dostępna
+    (zalecenie nie trafia na kartę, której nie da się wybrać); `reason` = kod rekomendacji z listy zamkniętej
+    (§3.2) — zostaje także bez `recommended`."""
+    out: dict = {"options": [entities, direct]}
+    if rec is None:
+        return out
+    path = offer_path(rec.path)
+    if path is not None and any(o["id"] == path and o["available"] for o in out["options"]):
+        out["recommended"] = path
+    if rec.reason in REASONS:
+        out["reason"] = rec.reason
+    return out
 
 
 def recommendation_text(rec) -> str:

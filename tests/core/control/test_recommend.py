@@ -287,3 +287,11 @@ def test_without_a_configured_target_or_identity_nothing_changes():
     # cel z nieznanym profilem nie udaje rozpoznanego falownika
     rec = recommend({"inverters": []}, [], None, None, {}, target={"profile_id": "nope", "device_fp": "abcd"})
     assert (rec.path, rec.reason) == (UNSUPPORTED, "no_profile")
+
+
+def test_offer_path_maps_recommendation_paths_onto_the_offer():
+    # Oferta kroku `control_mode` zna tylko `entities` | `direct`; `unsupported` = brak zalecenia.
+    from custom_components.volcast.core.control.recommend import offer_path
+    assert offer_path(ENTITIES) == "entities"
+    assert offer_path(DIRECT) == "direct" and offer_path(DIRECT_WITH_INTEGRATION_DATA) == "direct"
+    assert offer_path(UNSUPPORTED) is None and offer_path("bogus") is None

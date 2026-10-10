@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from custom_components.volcast.cloud import control_choice
@@ -181,3 +182,65 @@ def test_box_active_every_pull_and_none_block_noop():
     run(rt, {"box_active": True})
     run(rt, None)
     assert rt.conflicts.calls == [("box", True), ("box", True)]
+
+
+# ── reguła jednego zastosowania: wybór kreatora parowania, potem ta sama ścieżka z planu ──
+NOW = datetime(2026, 10, 10, 8, 0, tzinfo=timezone.utc)
+
+
+def marked_rt(value="direct", *, age_min=5.0, path_at=None):
+    """Runtime po zastosowaniu `value` przez kreator `age_min` minut temu (zapis w danych wpisu)."""
+    rt = real_rt()
+    rt.entry.data = {"pairing": {"session_id": "s1", "applied_choices": {"session_id": "s1", "choices": {
+        "control_mode": {"value": value, "at": (NOW - timedelta(minutes=age_min)).isoformat(),
+                         "mark": {"path_at": path_at}}}}}}
+    rt.wall_clock = lambda: NOW
+    calls = []
+
+    async def spy(path):
+        calls.append(path)
+        return "applied"
+    rt.async_apply_path_choice = spy
+    return rt, calls
+
+
+def test_wizard_mark_makes_the_same_path_a_noop_once():
+    rt, calls = marked_rt()
+    run(rt, {"path": "direct", "path_at": AT2, "at": AT2})
+    meta = rt.executor.control_meta
+    assert calls == []                                        # bez drugiego zastosowania
+    assert meta["path_done"] == "direct" and meta["path_at"] == AT2
+    assert meta["ack"] == {"path": "direct", "at": AT2} and rt.pings == [1]
+    # znacznik zużyty: kolejna powtórka z nowszym `path_at` to prawdziwy ponowny wybór
+    run(rt, {"path": "direct", "path_at": AT3, "at": AT3})
+    assert calls == ["direct"]
+
+
+def test_wizard_mark_does_not_swallow_a_different_path():
+    rt, calls = marked_rt("direct")
+    run(rt, {"path": "entities", "path_at": AT2, "at": AT2})
+    assert calls == ["entities"]
+
+
+def test_wizard_mark_expires_after_the_live_window():
+    rt, calls = marked_rt(age_min=31)
+    run(rt, {"path": "direct", "path_at": AT2, "at": AT2})
+    assert calls == ["direct"]
+    rt, calls = marked_rt(age_min=29)
+    run(rt, {"path": "direct", "path_at": AT2, "at": AT2})
+    assert calls == []
+
+
+def test_wizard_mark_consumed_by_a_decision_resolved_after_it():
+    # Znacznik pamięta `path_at` z chwili kreatora; decyzja z planu rozstrzygnięta później go zużywa.
+    rt, calls = marked_rt(path_at=AT1)
+    rt.executor.control_meta.update(path_done="entities", path_at=AT2)
+    run(rt, {"path": "direct", "path_at": AT3, "at": AT3})
+    assert calls == ["direct"]
+
+
+def test_entry_without_wizard_mark_applies_normally():
+    rt, calls = marked_rt()
+    rt.entry.data["pairing"]["applied_choices"]["choices"]["control_mode"].pop("mark")
+    run(rt, {"path": "direct", "path_at": AT2, "at": AT2})
+    assert calls == ["direct"]
