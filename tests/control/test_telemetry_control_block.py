@@ -110,3 +110,12 @@ def test_sender_survives_control_block_failure():
     s = _sender(Bad())
     assert asyncio.run(s.async_flush()) is True
     assert "control" not in s._cloud.sent[0]["driver"]
+
+
+def test_sender_without_profile_sends_driver_with_only_control():
+    rt = Rt()
+    entry = SimpleNamespace(entry_id="e1", options={})
+    s = TelemetrySender(goodwe_hass(), entry, Cloud(), SimpleNamespace(local_switch=False), choice=None,
+                        profile_map={}, manual_map={}, grid_negate=False, limits=None, utcnow=lambda: NOW)
+    s.control_runtime = rt
+    assert s._driver() == {"control": {"seq": 7, "conflicts": []}}

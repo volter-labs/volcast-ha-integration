@@ -310,12 +310,15 @@ class TelemetrySender:
                                  local_switch=local, limits=self._limits)
         if block is not None:
             block["features"] = list(DRIVER_FEATURES)
-            rt = self.control_runtime
-            if rt is not None:
-                try:
-                    block["control"] = rt.control_block()
-                except Exception as err:  # noqa: BLE001 — stan sterowania nigdy nie zabiera telemetrii
-                    _LOGGER.debug("Volcast control block skipped (%s)", type(err).__name__)
+        rt = self.control_runtime
+        if rt is not None:
+            try:
+                control = rt.control_block()
+            except Exception as err:  # noqa: BLE001 — stan sterowania nigdy nie zabiera telemetrii
+                _LOGGER.debug("Volcast control block skipped (%s)", type(err).__name__)
+            else:
+                # Bez profilu: sam `control` (chmura czyta go niezależnie od `driver.id`).
+                block = {**(block or {}), "control": control}
         return block
 
     def _loads_block(self) -> list | None:
