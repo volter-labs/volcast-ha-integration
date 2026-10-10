@@ -62,7 +62,9 @@ async def test_entity_map_override_wins_over_regex(hass: HomeAssistant, network_
     assert form["type"] is FlowResultType.FORM and form["step_id"] == "entity_map"
     defaults = {k.schema: (k.description or {}).get("suggested_value") for k in form["data_schema"].schema}
     assert defaults["mode"] == auto_mode
-    done = await hass.config_entries.options.async_configure(form["flow_id"], {"mode": "select.my_mode"})
+    preview = await hass.config_entries.options.async_configure(form["flow_id"], {"mode": "select.my_mode"})
+    assert preview["type"] is FlowResultType.FORM and preview["step_id"] == "entity_map_preview"
+    done = await hass.config_entries.options.async_configure(preview["flow_id"], {"confirm": True})
     assert done["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options[OPT_ENTITY_MAP] == {"mode": "select.my_mode"}
     await hass.async_block_till_done()
