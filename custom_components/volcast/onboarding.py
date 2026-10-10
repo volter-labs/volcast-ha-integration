@@ -268,7 +268,11 @@ class Onboarding:
         await self._loop()
 
     def _options_token(self, rt) -> str | None:
-        """Szczegół wyboru: które sposoby sterowania są dostępne (`direct` tylko, gdy da się go zaoferować)."""
+        """Szczegół wyboru: rekomendacja ścieżki, gdy już policzona (`recommended: …`); inaczej które
+        sposoby sterowania są dostępne (`direct` tylko, gdy da się go zaoferować)."""
+        rec = getattr(rt, "recommendation", None)
+        if rec is not None:
+            return ds.recommendation_text(rec)
         tokens = []
         if self._control_ready(rt):
             tokens.append("entities")

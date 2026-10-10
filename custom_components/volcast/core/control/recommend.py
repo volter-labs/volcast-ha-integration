@@ -1,49 +1,58 @@
 """Rekomendacja ścieżki sterowania: system wybiera za użytkownika (czysta logika, bez HA).
 
 Wejście: raport rozpoznania (`inverters`), profile marek, wynik wyszukiwania bezpośredniego
-(`ProbeReport`) z powodem oferty (`offer`, kod z warstwy HA albo None), mapa encji wybranej
-integracji, flaga `ems` integracji (None = z profilu) i kolizje statyczne adresu (domeny).
+(`ProbeReport`) z powodem oferty (`offer`, kod z warstwy HA; None = „Bezpośrednio” dostępne),
+mapa encji wybranej integracji, kolizje statyczne adresu (domeny) i pochodzenie integracji
+(`origins`: domena → `core`|`custom`, ustala warstwa HA).
 
 Reguły (kolejność):
 1. integracja falownika z encją trybu (`mode` w mapie) → `entities`;
-2. falownik rozpoznany sondą: bez integracji → `direct`, z integracją bez zapisu →
-   `direct_with_integration_data`;
-3. brak profilu → `unsupported` (`no_profile`); profil bez żadnej drogi zapisu →
-   `unsupported` (`no_write_path`).
+2. falownik rozpoznany sondą: integracja TEGO falownika bez zapisu → `direct_with_integration_data`,
+   inaczej (brak integracji albo integracja innego urządzenia) → `direct`;
+3. w pozostałych przypadkach → `unsupported` (`no_profile` — jedyny kod kontraktu dla tej ścieżki,
+   także gdy profil jest, ale nie ma ani encji trybu, ani rozpoznanego falownika).
 
 `ladder_start` (pierwszy szczebel weryfikacji): profil i jego droga zapisu zweryfikowane
-(wpis integracji dla encji; sekcja `modbus` i udana próba dla rejestrów) → 3 (zapis
-kontrolny), inaczej 1. Integracja z `ems: true` to od razu konflikt `entry` — sama steruje
-baterią. Kolizja statyczna adresu (inny wpis na tym falowniku) też.
+(wpis integracji dla encji; sekcja `modbus`, udana próba i oferta bez odmowy dla rejestrów) → 3
+(zapis kontrolny), inaczej 1. Odmowa oferty to nie powód rekomendacji: kolizja adresu trafia do
+`conflicts`. Flaga `ems` integracji nie jest konfliktem — konflikt wynika tylko z dowodu.
 
-Ładunek (`to_payload`) to blok `driver.control.recommendation` kontraktu sterowania: bez
-adresów, seriali i tokenów; `entity_map` tylko dla ścieżki encji, ≤24 pozycji, entity_id
-tylko we wzorcu kontraktu.
+Ładunek (`to_payload`) to blok `driver.control.recommendation` kontraktu sterowania: zamknięte
+listy kodów i pochodzenia, bez adresów, seriali i tokenów; `entity_map` tylko dla ścieżki encji,
+≤24 pozycji, klucze i entity_id tylko we wzorcach kontraktu.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from ..discovery.known import INVERTER_DOMAINS
-from ..profile import Profile, direct_verified, integration_ems
+from ..profile import Profile, direct_verified, ha_integration
 from .select import InverterHint, ProfileChoice, control_verified, select_profile
 
 ENTITIES, DIRECT = "entities", "direct"
 DIRECT_WITH_INTEGRATION_DATA, UNSUPPORTED = "direct_with_integration_data", "unsupported"
 PATHS = (ENTITIES, DIRECT, DIRECT_WITH_INTEGRATION_DATA, UNSUPPORTED)
 
-# Kody powodu (≤64 znaki); dla `direct` przy odmowie oferty — kod oferty z warstwy HA.
-INTEGRATION_WRITES, INTEGRATION_READ_ONLY = "integration_writes", "integration_read_only"
-IDENTIFIED, NO_PROFILE, NO_WRITE_PATH = "identified", "no_profile", "no_write_path"
+# Kody powodu — lista zamknięta kontraktu (chmura odrzuca całą rekomendację z kodem spoza niej).
+INTEGRATION_WRITE_ENTITIES = "integration_write_entities"
+NO_INTEGRATION_IDENTIFY_OK = "no_integration_identify_ok"
+INTEGRATION_READ_ONLY = "integration_read_only"
+NO_PROFILE = "no_profile"
+REASONS = (INTEGRATION_WRITE_ENTITIES, NO_INTEGRATION_IDENTIFY_OK, INTEGRATION_READ_ONLY, NO_PROFILE,
+           "profile_draft", "profile_verified")
+ORIGINS = ("core", "custom")
 
 RUNG_IDENTIFY, RUNG_CONTROL_WRITE = 1, 3
 MAX_TEXT, MAX_EVIDENCE, MAX_ENTITY_MAP, MAX_CONFLICTS = 64, 120, 24, 8
 _ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
-# Kolizja nieznanej integracji i inny wpis Volcast mają w `static_conflicts` stałe nazwy.
-_EMS_EVIDENCE = "integration controls the battery itself (ems)"
+_MAP_KEY = re.compile(r"^[a-z0-9_]{1,24}$")
+_DOMAIN = re.compile(r"^[a-z0-9_]{1,32}$")
+# `async_clash` przy błędzie sprawdzenia zwraca `unknown` (fail-closed) — to nie obserwacja wpisu.
+_UNKNOWN = "unknown"
 _CLASH_EVIDENCE = "another entry uses the same inverter address"
+_UNKNOWN_EVIDENCE = "conflict check failed"
 
 
 @dataclass(frozen=True)
@@ -51,7 +60,7 @@ class Recommendation:
     path: str
     reason: str
     ladder_start: int
-    integration: Mapping[str, Any] | None = None     # {domain, name, origin}
+    integration: Mapping[str, Any] | None = None     # {domain, name, origin?}
     device: Mapping[str, Any] | None = None          # {manufacturer, model}
     entity_map: tuple[tuple[str, str], ...] = ()     # (klucz profilu, entity_id)
     conflicts: tuple[Mapping[str, str], ...] = ()    # [{kind, label, evidence}]
@@ -59,13 +68,17 @@ class Recommendation:
     def to_payload(self) -> dict:
         out: dict = {"path": self.path, "reason": _cut(self.reason),
                      "ladder_start": min(max(int(self.ladder_start), RUNG_IDENTIFY), RUNG_CONTROL_WRITE)}
-        for name, block in (("integration", self.integration), ("device", self.device)):
-            clean = {k: _cut(v) for k, v in (block or {}).items() if isinstance(v, str) and v}
-            if clean:
-                out[name] = clean
+        integ = self.integration or {}
+        if isinstance(integ.get("domain"), str) and _DOMAIN.fullmatch(integ["domain"]):
+            out["integration"] = {k: _cut(v) for k, v in integ.items() if isinstance(v, str) and v
+                                  and (k != "origin" or v in ORIGINS)}
+        device = {k: _cut(v) for k, v in (self.device or {}).items() if isinstance(v, str) and v}
+        if device:
+            out["device"] = device
         if self.path == ENTITIES:
             pairs = [{"key": k, "entity_id": e} for k, e in sorted(self.entity_map)
-                     if isinstance(e, str) and len(e) <= MAX_TEXT and _ENTITY_ID.fullmatch(e)]
+                     if isinstance(k, str) and _MAP_KEY.fullmatch(k)
+                     and isinstance(e, str) and len(e) <= MAX_TEXT and _ENTITY_ID.fullmatch(e)]
             if pairs:
                 out["entity_map"] = pairs[:MAX_ENTITY_MAP]
         return out
@@ -79,35 +92,53 @@ def _cut(text: str, limit: int = MAX_TEXT) -> str:
     return str(text)[:limit]
 
 
+def _inverters(report: Mapping | None) -> list[Mapping]:
+    return [i for i in (report or {}).get("inverters") or () if isinstance(i, Mapping)]
+
+
+def _devices(inv: Mapping) -> list[Mapping]:
+    return [d for d in inv.get("devices") or () if isinstance(d, Mapping)]
+
+
 def hints_from_report(report: Mapping | None) -> list[InverterHint]:
     """Wskazówki falownika z raportu rozpoznania (domena + producent/model urządzeń HA)."""
     out: list[InverterHint] = []
-    for inv in (report or {}).get("inverters") or ():
+    for inv in _inverters(report):
         domain = inv.get("domain")
-        if not isinstance(domain, str) or not domain:
-            continue
-        devices = [d for d in inv.get("devices") or () if isinstance(d, Mapping)] or [{}]
-        out.extend(InverterHint(domain, d.get("manufacturer"), d.get("model")) for d in devices)
+        if isinstance(domain, str) and domain:
+            out.extend(InverterHint(domain, d.get("manufacturer"), d.get("model")) for d in _devices(inv) or [{}])
     return out
 
 
-def _report_inverter(report: Mapping | None, domain: str | None) -> Mapping | None:
-    invs = [i for i in (report or {}).get("inverters") or () if isinstance(i, Mapping)]
-    if domain is not None:
-        return next((i for i in invs if i.get("domain") == domain), None)
-    return invs[0] if invs else None
+def _report_inverter(report: Mapping | None, domain: str) -> Mapping | None:
+    return next((i for i in _inverters(report) if i.get("domain") == domain), None)
 
 
-def _integration(inv: Mapping | None, domain: str | None) -> dict | None:
-    domain = domain or (inv.get("domain") if inv else None)
-    if not domain:
-        return None
-    origin = (inv.get("matched_by") if inv else None) or "profile"
-    return {"domain": domain, "name": INVERTER_DOMAINS.get(domain, domain), "origin": origin}
+def _model_ok(profile: Profile, model: Any) -> bool:
+    regexes = (profile.raw.get("identify") or {}).get("model_regex") or ()
+    return isinstance(model, str) and bool(model) and any(re.search(rx, model) for rx in regexes)
+
+
+def _belongs(inv: Mapping, profile: Profile) -> bool:
+    """Integracja z raportu opisuje TEN falownik: profil wśród kandydatów, marka w producencie
+    albo domena z profilu i model zgodny z identyfikacją profilu."""
+    if profile.id in (inv.get("profile_candidates") or ()):
+        return True
+    brand = profile.id.split("-", 1)[0]
+    in_profile = ha_integration(profile, inv.get("domain")) is not None
+    return any(brand in str(d.get("manufacturer") or "").lower()
+               or (in_profile and _model_ok(profile, d.get("model"))) for d in _devices(inv))
+
+
+def _integration(domain: str, origins: Mapping[str, str]) -> dict:
+    out = {"domain": domain, "name": INVERTER_DOMAINS.get(domain, domain)}
+    if origins.get(domain) in ORIGINS:
+        out["origin"] = origins[domain]
+    return out
 
 
 def _report_device(inv: Mapping | None) -> dict | None:
-    dev = next((d for d in (inv or {}).get("devices") or () if isinstance(d, Mapping)), None)
+    dev = next(iter(_devices(inv or {})), None)
     return {"manufacturer": dev.get("manufacturer"), "model": dev.get("model")} if dev else None
 
 
@@ -116,49 +147,52 @@ def _probe_device(probe, profile: Profile) -> dict:
     return {"manufacturer": words[0] if words else None, "model": probe.identity.model}
 
 
-def _conflicts(domain: str | None, ems: bool, clash: Iterable[str]) -> tuple[dict, ...]:
+def _conflicts(clash: Sequence[str]) -> tuple[dict, ...]:
     out: list[dict] = []
-    if ems and domain:
-        out.append({"kind": "entry", "label": domain, "evidence": _EMS_EVIDENCE})
     for d in clash:
         if isinstance(d, str) and d and all(c["label"] != d for c in out):
-            out.append({"kind": "entry", "label": d, "evidence": _CLASH_EVIDENCE})
+            out.append({"kind": "entry", "label": d,
+                        "evidence": _UNKNOWN_EVIDENCE if d == _UNKNOWN else _CLASH_EVIDENCE})
     return tuple(out)
 
 
 def recommend(report: Mapping | None, profiles: Sequence[Profile], probe=None, offer: str | None = None,
-              entity_map: Mapping[str, str] | None = None, ems_flag: bool | None = None,
-              conflicts: Sequence[str] = (), *, choice: ProfileChoice | None = None) -> Recommendation:
+              entity_map: Mapping[str, str] | None = None, conflicts: Sequence[str] = (), *,
+              choice: ProfileChoice | None = None, origins: Mapping[str, str] | None = None) -> Recommendation:
     """Rekomendacja ścieżki; `choice` = wybór profilu, z którego pochodzi `entity_map`
-    (None → wybór z wskazówek raportu, jak `select_profile`)."""
+    (None → wybór ze wskazówek raportu, jak `select_profile`)."""
     if choice is None:
         choice = select_profile(hints_from_report(report), profiles)
     mapped = dict(entity_map or {})
+    origins = origins or {}
+    found = _conflicts(conflicts)
     domain = choice.integration_domain if choice is not None else None
-    inv = _report_inverter(report, domain)
-    integration = _integration(inv, domain)
-    integ_domain = integration["domain"] if integration else None
-    ems = ems_flag if ems_flag is not None else bool(
-        choice is not None and integration_ems(choice.profile, integ_domain))
-    found = _conflicts(integ_domain, ems, conflicts)
-    device = _report_device(inv)
-    if device is None and choice is not None and choice.model:
-        device = {"manufacturer": None, "model": choice.model}
 
     if choice is not None and domain and mapped.get("mode"):
+        inv = _report_inverter(report, domain)
+        device = _report_device(inv) or ({"manufacturer": None, "model": choice.model} if choice.model else None)
         start = RUNG_CONTROL_WRITE if control_verified(choice.profile, domain) else RUNG_IDENTIFY
-        return Recommendation(ENTITIES, INTEGRATION_WRITES, start, integration, device,
-                              tuple(sorted(mapped.items())), found)
+        return Recommendation(ENTITIES, INTEGRATION_WRITE_ENTITIES, start, _integration(domain, origins),
+                              device, tuple(sorted(mapped.items())), found)
 
     ident = getattr(probe, "identity", None)
     probe_profile = next((p for p in profiles if ident is not None and p.id == ident.profile_id), None)
     if probe_profile is not None:
-        start = RUNG_CONTROL_WRITE if direct_verified(probe_profile) and probe.direct_available else RUNG_IDENTIFY
+        ready = offer is None and direct_verified(probe_profile) and bool(probe.direct_available)
+        start = RUNG_CONTROL_WRITE if ready else RUNG_IDENTIFY
         device = _probe_device(probe, probe_profile)
-        if integration is not None:
-            return Recommendation(DIRECT_WITH_INTEGRATION_DATA, INTEGRATION_READ_ONLY, start, integration,
-                                  device, (), found)
-        return Recommendation(DIRECT, offer or IDENTIFIED, start, None, device, (), found)
+        inv = next((i for i in _inverters(report) if isinstance(i.get("domain"), str) and _belongs(i, probe_profile)),
+                   None)
+        if inv is None and choice is not None and domain and choice.profile.id == probe_profile.id:
+            inv = _report_inverter(report, domain) or {"domain": domain}
+        if inv is not None:
+            return Recommendation(DIRECT_WITH_INTEGRATION_DATA, INTEGRATION_READ_ONLY, start,
+                                  _integration(inv["domain"], origins), device, (), found)
+        return Recommendation(DIRECT, NO_INTEGRATION_IDENTIFY_OK, start, None, device, (), found)
 
-    reason = NO_PROFILE if choice is None else NO_WRITE_PATH
-    return Recommendation(UNSUPPORTED, reason, RUNG_IDENTIFY, integration, device, (), found)
+    # Integrację dołączamy tylko, gdy należy do wybranego profilu — nie „pierwszą z brzegu”.
+    integration = device = None
+    if choice is not None and domain:
+        inv = _report_inverter(report, domain)
+        integration, device = _integration(domain, origins), _report_device(inv)
+    return Recommendation(UNSUPPORTED, NO_PROFILE, RUNG_IDENTIFY, integration, device, (), found)

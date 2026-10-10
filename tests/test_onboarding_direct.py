@@ -183,3 +183,18 @@ async def test_search_over_simulator_builds_target(goodwe_udp_sim, monkeypatch):
     assert hits and ds_mod.offer_reason(hits[0], [GW_V]) is None
     t = ds_mod.target_from_report(hits[0])
     assert t["device_fp"] and t["unreadable"] == ["soc_max"] and t["host"] == "127.0.0.1"
+
+
+def test_control_mode_detail_carries_the_recommendation_when_computed():
+    from custom_components.volcast.core.control.recommend import Recommendation
+
+    async def search_with_recommendation():
+        rt = ob._runtime()
+        rt.last_probe = [report()]
+        rt.recommendation = Recommendation("direct", "no_integration_identify_ok", 1,
+                                           device={"manufacturer": "GoodWe", "model": "GW10K-ET"})
+        return [report()]
+    ob, client, _, _ = make([PollResult("consumed", choices={})], search=search_with_recommendation)
+    asyncio.run(ob.async_run())
+    detail = last(client)["control_mode"]["detail"]
+    assert detail == "recommended: direct (GoodWe GW10K-ET)" and len(detail) <= 200

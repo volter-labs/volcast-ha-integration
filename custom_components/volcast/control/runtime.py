@@ -70,6 +70,11 @@ from .signals_hub import SignalsHub
 from .store import ControlStore, async_installation_salt
 from .telemetry import TelemetrySender
 
+try:
+    from homeassistant.loader import async_get_integration
+except ImportError:  # atrapy w testach nie mają loadera
+    async_get_integration = None
+
 _LOGGER = logging.getLogger(__name__)
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
 _ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
@@ -109,6 +114,7 @@ class ControlRuntime:
     # raport rozpoznania (getter runnera) i rekomendacja ścieżki sterowania z niego i z `last_probe`
     report: Callable[[], dict | None] | None = None
     recommendation: object | None = None
+    recommendation_gen: int = 0           # numer ostatniego przeliczenia (starsze wyniki odrzucane)
 
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
@@ -154,19 +160,26 @@ async def async_update_recommendation(hass, entry, rt: ControlRuntime, profiles=
 
     Nigdy nie rzuca: błąd zostawia poprzednią rekomendację (None = nie policzono).
     """
+    rt.recommendation_gen += 1
+    gen = rt.recommendation_gen
     try:
         if profiles is None:
             profiles = await hass.async_add_executor_job(ds.load_profiles)
-        hits = ds.found(rt.last_probe or [])
-        probe = hits[0] if hits else None
+        probe = _recommendation_probe(entry.options, rt.last_probe)
         clash = await ds.async_clash(hass, entry.entry_id, probe.candidate.host) if probe is not None else ()
         choice = _choice_for(hass, entry, profiles)
         report = rt.report() if rt.report is not None else None
+        domains = {i.get("domain") for i in (report or {}).get("inverters") or () if isinstance(i, Mapping)}
+        if choice is not None and choice.integration_domain:
+            domains.add(choice.integration_domain)
         rec = recommend(report, profiles, probe, ds.offer_reason(probe, profiles, clash),
-                        map_entities(hass, choice), None, clash, choice=choice)
+                        map_entities(hass, choice), clash, choice=choice,
+                        origins=await _async_origins(hass, domains))
     except Exception as err:  # noqa: BLE001 — rekomendacja nie psuje sterowania ani opcji
         _LOGGER.warning("Volcast control: path recommendation failed (%s)", type(err).__name__)
         return None
+    if gen != rt.recommendation_gen:
+        return None                       # w międzyczasie ruszyło nowsze przeliczenie — ono zapisze wynik
     if rec != rt.recommendation:
         rt.recommendation = rec
         async_dispatcher_send(hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=entry.entry_id))
@@ -174,8 +187,31 @@ async def async_update_recommendation(hass, entry, rt: ControlRuntime, profiles=
 
 
 def schedule_recommendation(hass, entry, rt: ControlRuntime) -> None:
-    """Przeliczenie w tle — sprawdzenie kolizji rozwiązuje nazwy hostów i nie może opóźniać wołającego."""
-    hass.async_create_background_task(async_update_recommendation(hass, entry, rt), "volcast_recommendation")
+    """Przeliczenie w tle wpisu (unload je anuluje) — sprawdzenie kolizji rozwiązuje nazwy hostów
+    i nie może opóźniać wołającego."""
+    entry.async_create_background_task(hass, async_update_recommendation(hass, entry, rt), "volcast_recommendation")
+
+
+def _recommendation_probe(options: Mapping, reports):
+    """Raport sondy do rekomendacji: urządzenie z celu w opcjach, gdy jest wśród trafień, inaczej pierwsze."""
+    hits = ds.found(reports or [])
+    target = options.get(OPT_DIRECT_TARGET)
+    fp = target.get("device_fp") if isinstance(target, Mapping) else None
+    return next((r for r in hits if fp and r.identity.device_fp == fp), hits[0] if hits else None)
+
+
+async def _async_origins(hass, domains) -> dict[str, str]:
+    """Pochodzenie integracji (`core` = wbudowana w HA, `custom` = doinstalowana); nieznane pomijamy."""
+    out: dict[str, str] = {}
+    if async_get_integration is None:
+        return out
+    for domain in sorted(d for d in domains if isinstance(d, str) and d):
+        try:
+            integration = await async_get_integration(hass, domain)
+        except Exception:  # noqa: BLE001 — brak pochodzenia nie blokuje rekomendacji
+            continue
+        out[domain] = "core" if getattr(integration, "is_built_in", False) else "custom"
+    return out
 
 
 def changed_option_keys(old: Mapping, new: Mapping) -> set[str]:

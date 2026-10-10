@@ -16,8 +16,8 @@ from tests.control.test_runtime import _entry, _patch, _setup_hass
 GOODWE = load_builtin("goodwe-et")
 
 
-def _probe():
-    ident = Identity("goodwe-et", "goodwe_udp", 8899, 247, "GW8KN-ET", 8000.0, device_fp="fp")
+def _probe(fp="fp", model="GW8KN-ET"):
+    ident = Identity("goodwe-et", "goodwe_udp", 8899, 247, model, 8000.0, device_fp=fp)
     return ProbeReport(ident, {"mode": True}, (), True, None, "verified", 3, (),
                        candidate=Candidate(host="inverter.lan", source="udp_48899"))
 
@@ -76,7 +76,7 @@ def test_failure_keeps_the_previous_recommendation_and_never_raises(sent, monkey
     assert rt.recommendation is old and sent == []
 
 
-def test_direct_search_recomputes_the_recommendation(sent, monkeypatch):
+def test_direct_search_recomputes_the_recommendation_in_an_entry_task(sent, monkeypatch):
     scheduled = []
     rt = _rt({"inverters": []})
 
@@ -91,19 +91,80 @@ def test_direct_search_recomputes_the_recommendation(sent, monkeypatch):
         async def async_add_executor_job(self, fn, *a):
             return fn(*a)
 
-        def async_create_background_task(self, coro, name, **_kw):
+    class Entry:
+        entry_id, options = "e1", {}
+
+        def async_create_background_task(self, hass, coro, name, /):
+            # zadanie WPISU (unload je anuluje), nie zadanie hass
             scheduled.append(name)
             return asyncio.get_running_loop().create_task(coro)
 
     async def run():
-        reports = await rt_mod.async_direct_search(Hass(), SimpleNamespace(entry_id="e1", options={}))
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        reports = await rt_mod.async_direct_search(Hass(), Entry())
+        for _ in range(3):
+            await asyncio.sleep(0)
         return reports
 
     reports = asyncio.run(run())
     assert rt.last_probe == reports and scheduled == ["volcast_recommendation"]
     assert rt.recommendation is not None and rt.recommendation.path == DIRECT
+
+
+def test_origin_comes_from_the_ha_loader(sent, monkeypatch):
+    from custom_components.volcast.core.control.select import ProfileChoice
+    choice = ProfileChoice(GOODWE, "goodwe", "GW8KN-ET")
+    monkeypatch.setattr(rt_mod, "_choice_for", lambda hass, entry, profiles: choice)
+    monkeypatch.setattr(rt_mod, "map_entities", lambda hass, choice: {"mode": "select.gw_mode"})
+    built_in = {"goodwe": True}
+
+    async def get_integration(hass, domain):
+        if domain not in built_in:
+            raise LookupError(domain)
+        return SimpleNamespace(is_built_in=built_in[domain])
+    monkeypatch.setattr(rt_mod, "async_get_integration", get_integration)
+    entry = SimpleNamespace(entry_id="e1", options={})
+    rec = asyncio.run(rt_mod.async_update_recommendation(SimpleNamespace(data={}), entry, _rt(None), [GOODWE]))
+    assert rec.to_payload()["integration"]["origin"] == "core"
+    built_in["goodwe"] = False
+    rec = asyncio.run(rt_mod.async_update_recommendation(SimpleNamespace(data={}), entry, _rt(None), [GOODWE]))
+    assert rec.to_payload()["integration"]["origin"] == "custom"
+    built_in.clear()                     # loader nie zna domeny → bez pochodzenia, rekomendacja zostaje
+    rec = asyncio.run(rt_mod.async_update_recommendation(SimpleNamespace(data={}), entry, _rt(None), [GOODWE]))
+    assert "origin" not in rec.to_payload()["integration"] and rec.path == ENTITIES
+
+
+def test_probe_of_the_configured_target_is_preferred(sent):
+    other, mine = _probe(fp="aaaa"), _probe(fp="bbbb", model="GW10K-ET")
+    entry = SimpleNamespace(entry_id="e1", options={"direct_target": {"device_fp": "bbbb"}})
+    rec = asyncio.run(rt_mod.async_update_recommendation(SimpleNamespace(data={}), entry,
+                                                         _rt({"inverters": []}, [other, mine]), [GOODWE]))
+    assert rec.device["model"] == "GW10K-ET"
+
+
+def test_older_overlapping_recompute_does_not_overwrite_a_newer_one(sent, monkeypatch):
+    async def run():
+        release = asyncio.Event()
+        calls = []
+
+        async def slow_clash(hass, entry_id, host, **_kw):
+            calls.append(host)
+            if len(calls) == 1:
+                await release.wait()          # pierwsze przeliczenie utknęło na sprawdzeniu kolizji
+            return ()
+        monkeypatch.setattr(ds, "async_clash", slow_clash)
+        rt = _rt({"inverters": []}, [_probe()])
+        entry = SimpleNamespace(entry_id="e1", options={})
+        first = asyncio.ensure_future(rt_mod.async_update_recommendation(SimpleNamespace(data={}), entry, rt,
+                                                                         [GOODWE]))
+        await asyncio.sleep(0)
+        rt.last_probe = []                    # nowsze dane: brak falownika
+        newer = await rt_mod.async_update_recommendation(SimpleNamespace(data={}), entry, rt, [GOODWE])
+        release.set()
+        assert await first is None            # starszy wynik odrzucony
+        return rt, newer
+
+    rt, newer = asyncio.run(run())
+    assert rt.recommendation is newer and newer.path == UNSUPPORTED
 
 
 @pytest.mark.asyncio
@@ -124,7 +185,7 @@ async def test_setup_recomputes_after_discovery_updates(monkeypatch):
     assert rt.report() is report and signal in connected
     connected[signal]()
     await drain(hass)
-    assert "hass_background:volcast_recommendation" in hass.events
+    assert "background:volcast_recommendation" in hass.events
     assert rt.recommendation is not None and rt.recommendation.path == UNSUPPORTED
     await rt_mod.async_unload_control(hass, rt)
     assert signal not in connected
