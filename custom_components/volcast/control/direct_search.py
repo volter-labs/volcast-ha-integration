@@ -53,7 +53,7 @@ REMOTE_TEXT = {
 }
 REMOTE_TEXT_MAX = 200
 
-# Kody opisu opcji w kroku `control_mode` — zbiór zamknięty kontraktu parowania (pkt 14); każdy należy do jednej
+# Kody opisu opcji w kroku `control_mode` — zbiór zamknięty z protokołu parowania; każdy należy do jednej
 # opcji, chmura odrzuca kod spoza zbioru albo cudzej opcji.
 ENTITIES_OK, ENTITIES_NO_WRITE, ENTITIES_UNVERIFIED = (
     "entities_ok", "entities_no_write_entities", "entities_profile_unverified")
@@ -125,7 +125,7 @@ def control_offer(rec, entities: dict, direct: dict) -> dict:
 
     `recommended` = ścieżka rekomendacji zrzutowana na ofertę (`offer_path`), tylko gdy ta opcja jest dostępna
     (zalecenie nie trafia na kartę, której nie da się wybrać); `reason` = kod rekomendacji z listy zamkniętej
-    (§3.2) — zostaje także bez `recommended`."""
+    — zostaje także bez `recommended`."""
     out: dict = {"options": [entities, direct]}
     if rec is None:
         return out

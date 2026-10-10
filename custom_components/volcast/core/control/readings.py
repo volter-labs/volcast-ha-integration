@@ -4,7 +4,7 @@ Wejście to surowy stan i `unit_of_measurement` — przeliczenie jednostek (°F,
 robimy PRZED guardami i uzgadnianiem. Klucz nieczytelny znika (brak odczytu ≠ zero);
 zły stan jednej encji nie kasuje pozostałych — `normalize_readings_report` mówi, które zniknęły.
 
-Źródło odczytu (`driver.meta.readings_source`, kontrakt sygnałów §6.1.1): jedno na klucz, w kolejności
+Źródło odczytu (`driver.meta.readings_source`, kontrakt telemetrii chmury dla źródeł odczytu): jedno na klucz, w kolejności
 encja HA (profil albo mapa ręczna) → rejestr (tryb bezpośredni) → wartość wpisana ręcznie → `none`.
 Klucze i wartości to zamknięte listy chmury — nigdy nazwa encji.
 """

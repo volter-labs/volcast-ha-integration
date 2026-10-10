@@ -38,7 +38,7 @@ także przy integracji falownika w HA: sonda pomija adresy innych integracji bez
 bezpośredni; gdy się nie da — krok `error` z jednym z trzech tekstów. Adres falownika nigdy nie trafia
 do postępu.
 
-Jedno zastosowanie (kontrakt sterowania §4): wybór, który kreator zastosował, dostaje w zapisie
+Jedno zastosowanie (reguła ścieżki sterowania): wybór, który kreator zastosował, dostaje w zapisie
 `applied_choices` znacznik (`cloud/control_choice`), a ta sama ścieżka z planu jest wtedy bez działania;
 gdy plan zastosował ścieżkę wcześniej (stan już taki, jak wybrany), wybór z kreatora kończy krok bez wywołań.
 
@@ -640,7 +640,7 @@ class Onboarding:
                 if state == "done":
                     applied["control_mode"] = mode
                 if by_wizard:
-                    # Znacznik dla planu: ta sama ścieżka z `control.path` będzie bez działania (kontrakt §4).
+                    # Znacznik dla planu: ta sama ścieżka z `control.path` będzie bez działania (reguła jednego zastosowania).
                     executor = getattr(self._runtime() or rt, "executor", None)
                     meta = getattr(executor, "control_meta", None)
                     marks["control_mode"] = wizard_mark(meta if isinstance(meta, dict) else None)

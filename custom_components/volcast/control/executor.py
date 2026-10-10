@@ -959,7 +959,7 @@ class VolcastExecutor:
 
         Oczekujące wyłączenie właściciela (`mirror_off_pending`) zostaje: plan bez bloku `control` bywa
         chwilowym błędem odczytu po stronie chmury, a wyłączenie musi dojść do chmury. Kończy je tylko 200,
-        zgoda „off” z chmury pod lustrem, trwała odmowa (400/403, np. lustro wyłączone na serwerze) albo
+        zgoda „off” z chmury pod lustrem, trwała odmowa (każda odmowa spoza błędów sieci, 5xx, 429 i 401, w tym 409, np. lustro wyłączone na serwerze) albo
         rozładowanie wpisu."""
         on = on is True
         if on == self._consent_mirror:
@@ -1006,7 +1006,7 @@ class VolcastExecutor:
         self._mirror_off_pending = False
 
     def mirror_off_dropped(self) -> None:
-        """Chmura trwale odmówiła wyłączenia (400/403) — ponawianie nic nie da, koniec oczekiwania."""
+        """Chmura trwale odmówiła wyłączenia (każda odmowa spoza błędów sieci, 5xx, 429 i 401, w tym 409) — ponawianie nic nie da, koniec oczekiwania."""
         self._mirror_off_pending = False
 
     async def async_mirror_switch_on(self) -> None:

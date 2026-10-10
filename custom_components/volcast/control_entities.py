@@ -239,7 +239,7 @@ class VolcastControlSwitch(_ControlEntity, SwitchEntity):
 
     async def _async_send_off(self, gen: int) -> None:
         """Wyłączenie z HA do chmury, best-effort aż do 200. Koniec także, gdy chmura sama zgłosi zgodę off
-        (`mirror_off_pending` gaśnie), gdy odmówi na stałe (400/403 — np. lustro wyłączone na serwerze) albo
+        (`mirror_off_pending` gaśnie), gdy odmówi na stałe (każda odmowa spoza błędów sieci, 5xx, 429 i 401, w tym 409 — np. lustro wyłączone na serwerze) albo
         gdy właściciel wykonał nowszą akcję."""
         ex, cloud = self._rt.executor, self._rt.cloud
         delays = iter(_OFF_RETRY_DELAYS_S)

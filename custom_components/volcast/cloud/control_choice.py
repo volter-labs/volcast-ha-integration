@@ -13,7 +13,7 @@ niepowodzenie (`restore_failed`, wyjątek) → bez zapisu i ponowienie przy kole
 jedna próba na `RETRY_GAP_S`, żeby pingi nie zużywały limitu), najwyżej `MAX_TRIES` prób na (pole, znacznik);
 potem rozstrzygnięte i zgłoszenie dla właściciela. `choice_ack` zawiera wyłącznie zastosowane pola.
 
-Reguła jednego zastosowania (kontrakt sterowania §4): ten sam wybór ścieżki dociera dwoma kanałami — z kreatora
+Reguła jednego zastosowania (reguła ścieżki sterowania): ten sam wybór ścieżki dociera dwoma kanałami — z kreatora
 parowania (`choices.control_mode`) i tu, jako `path` z nowszym `path_at`. Kreator, który ścieżkę zastosował,
 zapisuje w danych wpisu (`pairing.applied_choices`, razem ze zmianą opcji) znacznik: wartość, chwilę wg zegara HA
 i `path_at` ostatnio rozstrzygniętej decyzji z planu. Pierwsza należna `path` z TĄ SAMĄ wartością, póki znacznik

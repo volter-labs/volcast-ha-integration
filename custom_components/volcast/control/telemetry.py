@@ -21,7 +21,7 @@ kanał sygnałów jest dołączony, a blok `signals` z przyjętej odpowiedzi idz
 `build_live_reading` to lekki odczyt na żywo (same wartości + `live: true`, bez cen, `driver`,
 `extra` i ładowarek) — wysyła go `LiveSender`, nie ten nadawca.
 
-Liczniki energii (kontrakt sygnałów §6.3): `extra.counters` w odczycie niesie tylko klucze
+Liczniki energii (kontrakt telemetrii chmury dla liczników energii): `extra.counters` w odczycie niesie tylko klucze
 `COUNTER_KEYS` z ważną wartością (skończona liczba ≥ 0, kWh, poniżej `COUNTER_MAX_KWH`); brak ważnego
 licznika = brak bloku (chmura liczy wtedy ze średniej mocy). `*_total_kwh` rosną przez całe życie
 falownika, `load_energy_day_kwh` zeruje się o północy lokalnej falownika. Liczniki PV i sieci zostają
@@ -71,12 +71,12 @@ TELEMETRY_FIELDS = {
     "pv_energy_total_kwh": "pv_energy_total_kwh", "grid_import_total_kwh": "grid_import_total_kwh",
     "grid_export_total_kwh": "grid_export_total_kwh",
 }
-# Liczniki w `extra.counters` (zamknięty zbiór kontraktu §6.3; podzbiór `EXTRA_KEYS` mapy źródeł).
+# Liczniki w `extra.counters` (zamknięty zbiór z kontraktu telemetrii dla liczników; podzbiór `EXTRA_KEYS` mapy źródeł).
 COUNTER_KEYS = ("load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_total_kwh",
                 "battery_discharge_total_kwh")
 # Sanity HA: 10 GWh to wiele żyć domowego falownika; powyżej = śmieci (np. 0xFFFFFFFF × 0,1 kWh).
 COUNTER_MAX_KWH = 1e7
-# Cechy integracji deklarowane chmurze w bloku `driver` (zamknięty słownik kontraktu sygnałów;
+# Cechy integracji deklarowane chmurze w bloku `driver` (zamknięty słownik kontraktu telemetrii;
 # chmura przyjmuje dowolny jego podzbiór). `signals` w kontrakcie znaczy także obsługę wznowienia
 # (`resume_requested_at`) — deklarujemy ją dopiero razem z tą obsługą, inaczej aplikacja pokazałaby
 # „Wznów”, którego HA nigdy nie wykona.

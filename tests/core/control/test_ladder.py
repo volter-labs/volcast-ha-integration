@@ -17,7 +17,7 @@ P = LadderParams(trial_hours=24, window_minutes=15, window_power_w=500)
 KEY = "3f9a1c0e7b2d4a6f3f9a1c0e7b2d4a6f"
 FIXTURE = Path(__file__).parents[2] / "fixtures" / "control_block.json"
 
-# ── kształt bloku `verification` według kontraktu (§3.1, §3.3) ──
+# ── kształt bloku `verification` według kontraktu ──
 _KEY_RE = re.compile(r"^[a-f0-9]{16,32}$")
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
 _STATES = {"idle", "running", "waiting", "stopped", "verified"}

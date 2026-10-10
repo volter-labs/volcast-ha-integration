@@ -132,7 +132,7 @@ Counters and limits (optional; the same closed list as the cloud's reading-sourc
 | `bms_discharge_current_max_a` | A | discharge current the BMS currently allows |
 | `battery_capacity_kwh` | kWh | battery capacity |
 
-The four energy counters go to the cloud in `extra.counters` of each reading (signals contract §6.3):
+The four energy counters go to the cloud in `extra.counters` of each reading (cloud telemetry contract for energy counters):
 only keys with a valid value (finite, `>= 0`, below 10 GWh), never `0` or `null` in place of a missing
 reading; no valid counter means no block, and the cloud then integrates the power average. The PV and
 grid counters keep their own reading fields. The cloud cross-checks each counter against the power

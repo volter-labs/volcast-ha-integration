@@ -4,7 +4,7 @@ moc ładowania/rozładowania z limitów prądu BMS i pojemność baterii z rejes
 Górna granica mocy to ta sama stała, którą sprawdzają strażnicy (`MAX_POWER_W`) —
 jedno źródło; falownik powyżej niej nie jest obsługiwany.
 
-Limity z BMS (kontrakt sygnałów §6.1, `_shared/executor-limits.ts` w chmurze):
+Limity z BMS (kontrakt telemetrii chmury dla limitów):
 `max_charge_w = bms_charge_current_max_a × battery_voltage_v`, tak samo rozładowanie, przycięte do mocy
 znamionowej i zaokrąglone W DÓŁ do pełnych `BMS_POWER_STEP_W` (napięcie baterii pływa co odczyt — bez
 kroku limit zmieniałby się w każdej telemetrii, a chmura zapisuje go przy każdej zmianie). Wartość
