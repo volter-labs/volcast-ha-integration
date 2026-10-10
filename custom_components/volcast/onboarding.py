@@ -56,6 +56,7 @@ import homeassistant.util.dt as dt_util
 from .const import (CONF_PAIRING, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
                     OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY)
 from .control import direct_search as ds
+from .control.runtime import readings_missing
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.prices import has_usable_prices_now
@@ -83,6 +84,8 @@ PLAN_UNAVAILABLE = "planner unavailable"
 QUEUED = "queued"
 NONE_FOUND = "none found"
 NOT_READY = "inverter control entities not found"
+READ_ONLY_NO_READINGS = "read only, no readings"
+NO_READINGS = "no readings"
 
 
 def progress_payload(steps: Mapping[str, tuple[str, str | None]]) -> list[dict]:
@@ -99,7 +102,8 @@ def progress_payload(steps: Mapping[str, tuple[str, str | None]]) -> list[dict]:
 
 
 def plan_outcome(res: Any) -> str:
-    """Jawny wynik `request_plan`: ok | cooldown | skipped | failed:<kod>."""
+    """Jawny wynik `request_plan`: ok | cooldown | skipped | failed:<kod>
+    (`no_readings` ustawia onboarding sam, bez wołania planera)."""
     if not isinstance(res, dict):
         return "failed:unreachable"
     skipped = res.get("skipped")
@@ -305,6 +309,11 @@ class Onboarding:
         inv = inverters[0]
         dev = (inv.get("devices") or [{}])[0]
         label = " ".join(x for x in (dev.get("manufacturer"), dev.get("model")) if x) or inv.get("domain")
+        rt = self._runtime()
+        if ds.found(getattr(rt, "last_probe", None) or []) and readings_missing(getattr(rt, "telemetry", None)):
+            # Falownik odpowiada w sieci, ale port trzyma integracja rdzeniowa i nic z niej nie wychodzi.
+            await self._set("inverter", "done", READ_ONLY_NO_READINGS)
+            return
         # Adres lokalny falownika zostaje w Home Assistant — chmura go nie odczytuje
         # (pole postępu jest tylko wyświetlane), więc nie ma powodu go wysyłać.
         await self._set("inverter", "done", label)
@@ -358,6 +367,12 @@ class Onboarding:
     async def _request_plan(self) -> None:
         self._plan_attempts += 1
         self._plan_retry_at = None
+        if readings_missing(getattr(self._runtime(), "telemetry", None)):
+            # Planer bez odczytów odmówi — nie palimy próby; ponowienie po pierwszej udanej telemetrii.
+            self.first_plan_outcome = "no_readings"
+            _LOGGER.info("Volcast onboarding: first plan no_readings")
+            await self._set("first_plan", "active", NO_READINGS)
+            return
         if self._state("first_plan") == "pending":
             await self._set("first_plan", "active")
         res = await self._client.async_request_plan(self._session)

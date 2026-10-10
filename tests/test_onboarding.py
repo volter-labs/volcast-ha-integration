@@ -592,3 +592,42 @@ def test_draft_integration_entry_not_offered_in_onboarding():
                              choice=draft)
     asyncio.run(ob.async_run())
     assert "control_mode" not in entry.options and last(client)["control_mode"]["state"] == "error"
+
+
+def _no_readings_rt(ob, *, sources=None, probe=()):
+    rt = ob._runtime()
+    src = {"soc": "none", "pv_power_w": "none", "grid_power_w": "none"} if sources is None else sources
+    rt.telemetry = SimpleNamespace(readings_report=lambda: {"readings_source": src, "readings_dropped": []})
+    rt.last_probe = list(probe)
+    return rt
+
+
+def test_onboarding_skips_plan_when_no_readings():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    _no_readings_rt(ob)
+    asyncio.run(ob.async_run())
+    assert client.plan_calls == 0
+    assert ob.first_plan_outcome == "no_readings"
+    assert last(client)["first_plan"]["state"] == "active"
+
+
+def test_onboarding_requests_plan_when_readings_exist():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    _no_readings_rt(ob, sources={"soc": "entity", "pv_power_w": "none", "grid_power_w": "none"})
+    asyncio.run(ob.async_run())
+    assert client.plan_calls == 1 and ob.first_plan_outcome == "ok"
+
+
+def test_inverter_step_read_only_when_direct_found_but_core_holds_the_port(monkeypatch):
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    _no_readings_rt(ob, probe=[object()])
+    monkeypatch.setattr(ob_mod.ds, "found", lambda reports: list(reports))
+    asyncio.run(ob.async_run())
+    assert last(client)["inverter"] == {"key": "inverter", "state": "done", "detail": "read only, no readings"}
+
+
+def test_inverter_step_keeps_label_without_a_direct_hit():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    _no_readings_rt(ob)
+    asyncio.run(ob.async_run())
+    assert last(client)["inverter"]["detail"] == "GoodWe GW8KN-ET"

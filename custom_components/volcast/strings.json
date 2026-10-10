@@ -348,6 +348,10 @@
       "title": "Volcast cannot control the inverter",
       "description": "Volcast inverter control stopped working (repeated write errors or saved control state that could not be read). The inverter may still use the last settings Volcast applied. Check the inverter settings and the Home Assistant logs."
     },
+    "no_readings": {
+      "title": "Volcast cannot read your inverter",
+      "description": "Volcast receives no battery charge, PV power or grid power readings, so it cannot plan or control. Check that the inverter integration is loaded and its entities are available, or choose the readings manually in the Volcast options, then check the Home Assistant logs."
+    },
     "control_choice_failed": {
       "title": "Volcast could not apply your control choice",
       "description": "A control choice made in the Volcast app could not be applied after several attempts. Check the control settings in the Volcast options and the Home Assistant logs, then choose again in the app."

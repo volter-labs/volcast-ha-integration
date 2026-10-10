@@ -870,3 +870,55 @@ def test_freeze_control_without_hub_still_freezes_executor():
                                mapped={}, rated_power_w=None)
     rt_mod.freeze_control(rt)
     assert calls == ["executor"]
+
+
+# ── zgłoszenie „brak odczytów” ────────────────────────────────────────────
+
+class _Report:
+    def __init__(self, **sources):
+        self.sources = {"soc": "none", "pv_power_w": "none", "grid_power_w": "none", **sources}
+
+    def readings_report(self):
+        return {"readings_source": dict(self.sources), "readings_dropped": []}
+
+
+def _issues(monkeypatch):
+    created, deleted = [], []
+    monkeypatch.setattr(rt_mod.ir, "async_create_issue", lambda hass, dom, iid, **kw: created.append((iid, kw)))
+    monkeypatch.setattr(rt_mod.ir, "async_delete_issue", lambda hass, dom, iid: deleted.append(iid))
+    return created, deleted
+
+
+def test_no_readings_issue_created_when_required_keys_missing(monkeypatch):
+    created, deleted = _issues(monkeypatch)
+    entry = SimpleNamespace(entry_id="e1")
+    # odczyt spoza wymaganych (soc, pv_power_w, grid_power_w) nie liczy się
+    rt_mod.sync_readings_issue(object(), entry, _Report(battery_temp_c="entity"))
+    assert [c[0] for c in created] == ["no_readings_e1"]
+    assert created[0][1]["is_fixable"] is False and created[0][1]["translation_key"] == "no_readings"
+    assert deleted == []
+
+
+def test_no_readings_issue_deleted_when_readings_appear(monkeypatch):
+    created, deleted = _issues(monkeypatch)
+    rt_mod.sync_readings_issue(object(), SimpleNamespace(entry_id="e1"), _Report(soc="entity"))
+    assert created == [] and deleted == ["no_readings_e1"]
+
+
+def test_no_readings_unknown_report_never_raises_an_issue(monkeypatch):
+    created, deleted = _issues(monkeypatch)
+    rt_mod.sync_readings_issue(object(), SimpleNamespace(entry_id="e1"), object())
+    assert created == []
+
+
+@pytest.mark.asyncio
+async def test_setup_checks_readings_after_each_telemetry_cycle(monkeypatch):
+    from tests.setup_harness import drain
+    _patch(monkeypatch)
+    created, deleted = _issues(monkeypatch)
+    hass, entry = _setup_hass(), _entry()
+    rt = await rt_mod.async_setup_control(hass, entry, report=lambda: None)
+    await drain(hass)
+    await rt.telemetry.async_flush()
+    assert any(c[0] == f"no_readings_{entry.entry_id}" for c in created)
+    await rt_mod.async_unload_control(hass, rt)

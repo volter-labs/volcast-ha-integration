@@ -157,6 +157,33 @@ class FlushLimiter:
         self._pending = False
 
 
+# Odczyty, bez których nie ma czego planować ani pokazać (SOC, produkcja PV, sieć).
+REQUIRED_READINGS = ("soc", "pv_power_w", "grid_power_w")
+
+
+def readings_missing(telemetry) -> bool:
+    """True, gdy żaden z wymaganych odczytów nie ma źródła (`none`). Brak raportu = nie wiadomo, więc False."""
+    try:
+        sources = telemetry.readings_report()["readings_source"]
+    except Exception:  # noqa: BLE001 — raport nigdy nie psuje wołającego
+        return False
+    if not isinstance(sources, dict):
+        return False
+    return all(sources.get(k, "none") == "none" for k in REQUIRED_READINGS)
+
+
+def sync_readings_issue(hass, entry, telemetry) -> None:
+    """Zgłoszenie `no_readings_<entry_id>` istnieje dokładnie wtedy, gdy po cyklu telemetrii nie ma żadnego
+    wymaganego odczytu; pojawienie się odczytów je kasuje."""
+    issue_id = f"no_readings_{entry.entry_id}"
+    if readings_missing(telemetry):
+        ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False,
+                              severity=getattr(getattr(ir, "IssueSeverity", None), "ERROR", "error"),
+                              translation_key="no_readings")
+    else:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
 @dataclass
 class ControlRuntime:
     executor: object
@@ -847,6 +874,14 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                                     grid_negate=bool(opts.get(OPT_GRID_NEGATE)), limits=limits, direct=conn,
                                     direct_capabilities=direct_caps_for(opts, choice.profile) if conn else None,
                                     on_signals=_apply, signal_connected=lambda: channel.connected)
+        _flush = telemetry.async_flush
+
+        async def _flush_and_check() -> bool:
+            result = await _flush()
+            sync_readings_issue(hass, entry, telemetry)      # po każdym cyklu, także nieudanej wysyłce
+            return result
+
+        telemetry.async_flush = _flush_and_check
         live = LiveSender(cloud=cloud, telemetry=telemetry, on_signals=_apply, task_factory=_task)
         hub = SignalsHub(base_url=backend.base_url, channel=channel, live=live, refresh=_fetch, task_factory=_task)
         fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
