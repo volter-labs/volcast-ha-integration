@@ -43,9 +43,12 @@ The status only sets the rung where the per-device verification ladder starts:
 An optional top-level `verification` block sets the ladder's parameters. Every key is optional and
 must lie within its range:
 
-* `trial_hours` — 1 to 72, the length of the read-only trial.
-* `window_minutes` — 5 to 60, the length of the short test window.
-* `window_power_w` — 100 to 3000, the power of the test window.
+All three values are whole numbers (integers; the validator rejects fractions and booleans), inclusive
+at both ends:
+
+* `trial_hours` — integer 1 to 72, the length of the read-only trial in hours.
+* `window_minutes` — integer 5 to 60, the length of the short test window in minutes.
+* `window_power_w` — integer 100 to 3000, the power of the test window in watts.
 
 Vendor features the schema cannot express yet are listed in `engine-gaps.md`. For a profile that
 depends on one of them, the ladder ends at the control write instead of the test window. Two rows were
