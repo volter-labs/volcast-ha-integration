@@ -3,7 +3,7 @@
 Bez lustra zgody przełącznik zmienia wyłącznie lokalne wł./wył. sterowania — zgoda konta przychodzi
 tylko z chmury (aplikacja Volcast) i tu nie da się jej nadać.
 
-Lustro zgody (ADR-051, `control.consent_mirror` z planu): wyłączenie = lokalnie od razu (powrót do
+Lustro zgody konta (`control.consent_mirror` z planu): wyłączenie = lokalnie od razu (powrót do
 trybu bazowego), potem w tle `set-controller {kind:'none'}` z ponawianiem aż do 200; włączenie =
 NAJPIERW `set-controller {kind:'ha'}` (serwer przywraca tylko zgodę zgaszoną wcześniej przełącznikiem
 HA), lokalnie dopiero po 200; odmowa = przełącznik zostaje wyłączony + zgłoszenie w Naprawach.
@@ -151,6 +151,10 @@ class VolcastControlSwitch(_ControlEntity, SwitchEntity):
         super().__init__(entry, rt, "switch")
         self._gen = 0                    # numer ostatniej akcji właściciela (późny wynik starszej odrzucany)
         self._off_task = None
+        self._off_calling = False        # nadawca wyłączenia czeka właśnie na odpowiedź chmury
+        # Jedno wywołanie `set-controller` naraz: chmura dostaje prośby w kolejności akcji właściciela
+        # (inaczej „off” wysłane w trakcie „on” mogłoby dojść pierwsze i zostać nadpisane nadaniem).
+        self._call_lock = asyncio.Lock()
         self._sleep = asyncio.sleep
 
     @property
@@ -164,8 +168,10 @@ class VolcastControlSwitch(_ControlEntity, SwitchEntity):
                 "control_mode": self._entry.options.get(OPT_CONTROL_MODE), "reason": d.reason if d else None}
 
     def _mirror(self) -> bool:
-        """Lustro zgody tylko przy fladze z planu i kliencie chmury; inaczej przełącznik jak dotąd."""
-        return (getattr(self._rt.executor, "consent_mirror", False) is True
+        """Lustro zgody przy fladze z planu (albo dopóki wyłączenie właściciela czeka na doręczenie) i kliencie
+        chmury; inaczej przełącznik jak dotąd."""
+        ex = self._rt.executor
+        return ((getattr(ex, "consent_mirror", False) is True or getattr(ex, "mirror_off_pending", False) is True)
                 and getattr(self._rt, "cloud", None) is not None)
 
     async def async_turn_on(self, **_kw) -> None:
@@ -180,14 +186,21 @@ class VolcastControlSwitch(_ControlEntity, SwitchEntity):
         if ex.local_switch:
             await ex.async_tick()                    # już włączony — nic do przywrócenia
             return
-        result = await self._rt.cloud.async_set_controller("ha")
+        async with self._call_lock:
+            if gen != self._gen:
+                return                               # w międzyczasie nowsza akcja właściciela
+            result = await self._rt.cloud.async_set_controller("ha")
         if gen != self._gen:
-            return                                   # w międzyczasie inna akcja właściciela (np. wyłączenie)
+            # Nowsza akcja (wyłączenie) w trakcie: nadanie mogło dojść do chmury — wyłączenie musi pójść za nim.
+            if result.ok:
+                self._ensure_off_sender()
+            return
         if result.ok:
             await ex.async_mirror_switch_on()
         else:
             key = ex.note_consent_refused(result.outcome)
             _LOGGER.warning("Volcast control switch stays off: the cloud refused to turn control on (%s)", key)
+            self._ensure_off_sender()                # wcześniejsze wyłączenie nadal niedoręczone
         await ex.async_tick()
 
     async def async_turn_off(self, **_kw) -> None:
@@ -200,11 +213,21 @@ class VolcastControlSwitch(_ControlEntity, SwitchEntity):
         self._cancel_off()
         await ex.async_mirror_switch_off()           # lokalnie od razu, przed chmurą
         await ex.async_tick()                        # istniejący powrót do trybu bazowego
-        self._off_task = self._spawn(self._async_send_off(), "volcast_consent_off")
+        self._ensure_off_sender()
+
+    def _ensure_off_sender(self) -> None:
+        """Nadawca wyłączenia dla bieżącej akcji, o ile wyłączenie czeka, a żywego nadawcy nie ma."""
+        if not self._rt.executor.mirror_off_pending:
+            return
+        if self._off_task is not None and not self._off_task.done():
+            return
+        self._off_task = self._spawn(self._async_send_off(self._gen), "volcast_consent_off")
 
     def _cancel_off(self) -> None:
+        """Koniec nadawcy wyłączenia. W trakcie wywołania nie przerywamy (prośba mogła już dojść) — nadawca
+        sam kończy po odpowiedzi, bo jego akcja nie jest już bieżąca."""
         task, self._off_task = self._off_task, None
-        if task is not None and not task.done():
+        if task is not None and not task.done() and not self._off_calling:
             task.cancel()
 
     def _spawn(self, coro, name: str):
@@ -214,24 +237,33 @@ class VolcastControlSwitch(_ControlEntity, SwitchEntity):
         create = getattr(self.hass, "async_create_background_task", None)
         return create(coro, name) if create is not None else self.hass.async_create_task(coro)
 
-    async def _async_send_off(self) -> None:
-        """Wyłączenie z HA do chmury, best-effort aż do 200; koniec także, gdy chmura sama zgłosi zgodę off
-        (`mirror_off_pending` gaśnie) albo odmówi na stałe (400/403 — np. lustro wyłączone na serwerze)."""
+    async def _async_send_off(self, gen: int) -> None:
+        """Wyłączenie z HA do chmury, best-effort aż do 200. Koniec także, gdy chmura sama zgłosi zgodę off
+        (`mirror_off_pending` gaśnie), gdy odmówi na stałe (400/403 — np. lustro wyłączone na serwerze) albo
+        gdy właściciel wykonał nowszą akcję."""
         ex, cloud = self._rt.executor, self._rt.cloud
         delays = iter(_OFF_RETRY_DELAYS_S)
         warned = False
-        while ex.mirror_off_pending:
+        while True:
             delay = next(delays, _OFF_RETRY_EVERY_S)
             if delay:
                 await self._sleep(delay)
-                if not ex.mirror_off_pending:
+            async with self._call_lock:
+                if gen != self._gen or not ex.mirror_off_pending:
                     return
-            result = await cloud.async_set_controller("none")
+                self._off_calling = True
+                try:
+                    result = await cloud.async_set_controller("none")
+                finally:
+                    self._off_calling = False
             if result.ok:
-                ex.mirror_off_delivered()
+                if gen == self._gen:
+                    ex.mirror_off_delivered()
                 return
             if not (result.retriable or result.outcome == "unauthorized"):
                 _LOGGER.warning("Volcast control switch off was not accepted by the cloud (%s)", result.outcome)
+                if gen == self._gen:
+                    ex.mirror_off_dropped()
                 return
             if not warned:
                 warned = True

@@ -185,7 +185,7 @@ class TelemetryResult:
 
 _SET_CONTROLLER_KINDS = frozenset({"ha", "none"})
 _SET_CONTROLLER_ORIGINS = frozenset({"app", "ha_switch"})
-# Kody odmowy z kontraktu lustra zgody (control-contract §7.3) — inne ciało = "unknown"/"forbidden".
+# Kody odmowy lustra zgody konta (odpowiedzi `set-controller`) — inne ciało = "unknown"/"forbidden".
 _REFUSALS_409 = frozenset({"no_readings", "revoked_by_other", "other_controller_active"})
 _REFUSALS_403 = frozenset({"tier_required", "mirror_disabled", "forbidden"})
 _RETRY_AFTER_MAX_S = 24 * 3600

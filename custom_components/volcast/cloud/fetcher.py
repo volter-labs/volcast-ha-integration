@@ -60,7 +60,7 @@ class ScheduleFetcher:
         self._on_signals = on_signals
         self._on_control = on_control
         self._on_consent_mirror = on_consent_mirror
-        # `control.consent_mirror` z ostatniej odpowiedzi (lustro zgody, ADR-051); brak/nie-`true` = wył.
+        # `control.consent_mirror` z ostatniej odpowiedzi (lustro zgody konta); brak/nie-`true` = wył.
         self.consent_mirror = False
         self._auth_failures = 0
         self._last_signature: str | None = None

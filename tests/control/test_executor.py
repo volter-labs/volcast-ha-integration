@@ -1951,7 +1951,7 @@ def test_restore_to_baseline_forgets_the_written_setpoint(monkeypatch):
     assert not ex.owned and ex._memory.live_export.written_for is None
 
 
-# ── lustro zgody (ADR-051): zgoda konta z chmury ↔ lokalny przełącznik ────────
+# ── lustro zgody konta: zgoda konta z chmury ↔ lokalny przełącznik ────────
 
 async def _mirrored(ex, *, consent=True, local=True):
     await ready(ex, consent=consent, local=local)
@@ -2153,19 +2153,42 @@ def test_late_cloud_on_after_owner_on_then_off_does_not_turn_switch_on(monkeypat
     assert ex.local_switch is False
 
 
-def test_mirror_flag_off_drops_pending_state(monkeypatch):
+def test_mirror_flag_off_drops_pending_cloud_on(monkeypatch):
     _, ex = make(monkeypatch=monkeypatch)
 
     async def go():
         await _mirrored(ex, consent=False, local=False)
         ex._memory.paused_until = ex._clock() + 1800
-        await ex.async_set_consent(True)
-        await ex.async_mirror_switch_off()
+        await ex.async_set_consent(True)              # czeka na koniec pauzy
         ex.set_consent_mirror(False)
         ex._clock.t += 1801
         await ex.async_tick()
     asyncio.run(go())
-    assert ex.local_switch is False and ex.mirror_off_pending is False and ex.consent_mirror is False
+    assert ex.local_switch is False and ex.consent_mirror is False
+
+
+def test_transient_missing_mirror_flag_keeps_pending_owner_off(monkeypatch):
+    # Plan bez bloku `control` (chwilowy błąd odczytu w chmurze) nie porzuca wyłączenia właściciela.
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex)
+        await ex.async_mirror_switch_off()
+        ex.set_consent_mirror(False)
+        await ex.async_set_consent(False)              # zgoda off, ale bez flagi lustra w odpowiedzi
+    asyncio.run(go())
+    assert ex.mirror_off_pending is True and ex.local_switch is False
+
+
+def test_mirror_off_dropped_ends_pending(monkeypatch):
+    _, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await _mirrored(ex)
+        await ex.async_mirror_switch_off()
+        ex.mirror_off_dropped()
+    asyncio.run(go())
+    assert ex.mirror_off_pending is False
 
 
 def test_mirrored_switch_state_is_saved(monkeypatch):

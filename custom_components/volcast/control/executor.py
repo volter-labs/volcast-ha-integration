@@ -112,7 +112,7 @@ wyłączonym sterowaniu (zero zapisów planu i drabiny; przy własności — pow
 pauzy i zgłoszeń o obcej zmianie ani kolizji na łączu. Konflikty sterowników liczy `control/conflicts.py`
 (encje zapisu: `write_entity_ids`, potwierdzone konflikty: `conflict_ack`).
 
-Lustro zgody (ADR-051, tylko przy `control.consent_mirror: true` z ostatniego planu — `set_consent_mirror`):
+Lustro zgody konta (tylko przy `control.consent_mirror: true` z ostatniego planu — `set_consent_mirror`):
 zgoda konta z chmury „off” gasi też lokalny przełącznik (istniejące przywracanie stanu bazowego); zgoda
 „on” zapala przełącznik tylko na zboczu off → on widzianym z chmury w tym przebiegu i tylko przy otwartych
 bramkach HA (bez pauzy po obcej zmianie, bez trybu spoza profilu) — inaczej czeka do ich otwarcia.
@@ -120,6 +120,13 @@ Zgoda cofnięta lokalnie (401) nie jest zgodą z chmury i nie rusza przełączni
 w HA niedoręczone jeszcze do chmury (`mirror_off_pending`) blokuje zapalenie z chmury. Bez lustra —
 dwa niezależne zamki, jak dotąd. Wykonawca nigdy sam nie woła `set-controller` (robi to tylko akcja
 właściciela na przełączniku).
+
+Ryzyko przyjęte świadomie: zbocze „on” z chmury nie mówi, KTO przywrócił zgodę. Posiadacz klucza API konta
+(np. wyciekły klucz, druga instancja HA, skrypt) może przywrócić zgodę, którą właściciel nadał w aplikacji i
+ostatnio wyłączył przełącznikiem HA — a wtedy ten przełącznik włącza się przez chmurę i sterowanie
+falownikiem wraca. Chmura ogranicza to do przywrócenia (pierwsze nadanie i nadanie po wyłączeniu w
+aplikacji tylko z aplikacji), limituje próby, zapisuje audyt i powiadamia właściciela; wyłączenie w
+aplikacji zamyka tę możliwość.
 """
 from __future__ import annotations
 
@@ -311,7 +318,7 @@ class VolcastExecutor:
         self.verification = None
         self._window: Schedule | None = None           # okno próbne drabiny: plan zastępczy
         self._verify_restore = False                   # powrót po oknie/stopie drabiny w toku
-        # lustro zgody (ADR-051): flaga z ostatniego planu i stan w pamięci (nie przeżywa przeładowania)
+        # lustro zgody konta: flaga z ostatniego planu i stan w pamięci (nie przeżywa przeładowania)
         self._consent_mirror = False
         self._cloud_consent: bool | None = None        # ostatnia zgoda z chmury w tym przebiegu
         self._mirror_on_pending = False                # zgoda „on” z chmury czeka na bramki HA
@@ -938,7 +945,7 @@ class VolcastExecutor:
         if count >= 2:
             await self.async_set_consent(False, from_cloud=False)
 
-    # ── lustro zgody (ADR-051) ────────────────────────────────────────────
+    # ── lustro zgody konta ────────────────────────────────────────────────
     @property
     def consent_mirror(self) -> bool:
         return self._consent_mirror
@@ -948,13 +955,18 @@ class VolcastExecutor:
         return self._mirror_off_pending
 
     def set_consent_mirror(self, on: bool) -> None:
-        """Flaga `control.consent_mirror` z ostatniego planu; jej zgaszenie porzuca stan lustra."""
+        """Flaga `control.consent_mirror` z ostatniego planu; jej zgaszenie porzuca oczekujące włączenie.
+
+        Oczekujące wyłączenie właściciela (`mirror_off_pending`) zostaje: plan bez bloku `control` bywa
+        chwilowym błędem odczytu po stronie chmury, a wyłączenie musi dojść do chmury. Kończy je tylko 200,
+        zgoda „off” z chmury pod lustrem, trwała odmowa (400/403, np. lustro wyłączone na serwerze) albo
+        rozładowanie wpisu."""
         on = on is True
         if on == self._consent_mirror:
             return
         self._consent_mirror = on
         if not on:
-            self._mirror_on_pending = self._mirror_off_pending = False
+            self._mirror_on_pending = False
         _LOGGER.info("Volcast consent mirror %s", "on" if on else "off")
 
     def _mirror_gates_open(self) -> bool:
@@ -991,6 +1003,10 @@ class VolcastExecutor:
 
     def mirror_off_delivered(self) -> None:
         """Chmura przyjęła wyłączenie z HA (200)."""
+        self._mirror_off_pending = False
+
+    def mirror_off_dropped(self) -> None:
+        """Chmura trwale odmówiła wyłączenia (400/403) — ponawianie nic nie da, koniec oczekiwania."""
         self._mirror_off_pending = False
 
     async def async_mirror_switch_on(self) -> None:

@@ -99,7 +99,7 @@ def test_status_sensor_reports_decision_and_foreign_changes():
     assert s._unrecorded_attributes == frozenset({"notes"})
 
 
-# ── lustro zgody (ADR-051): przełącznik ↔ zgoda konta przez `set-controller` ──
+# ── lustro zgody konta: przełącznik ↔ zgoda konta przez `set-controller` ──
 
 import pytest  # noqa: E402
 
@@ -202,6 +202,50 @@ def test_switch_off_retry_stops_on_permanent_refusal(monkeypatch):
         await _drain(sw)
     asyncio.run(go())
     assert cloud.calls == [("none", "ha_switch")] and sleeps == [] and ex.local_switch is False
+    assert ex.mirror_off_pending is False
+
+
+def test_transient_missing_mirror_flag_keeps_off_retry(monkeypatch):
+    # Odpowiedź planu bez `consent_mirror` w trakcie ponawiania: wyłączenie i tak dochodzi do chmury.
+    holder = {}
+
+    async def on_call(_kind):
+        if len(cloud.calls) == 1:
+            holder["ex"].set_consent_mirror(False)
+            await holder["ex"].async_set_consent(True)
+    cloud = _Cloud("network", "server_error", "ok", on_call=on_call)
+    _, ex, sw, _, setup = _mirror_switch(monkeypatch, cloud)
+    holder["ex"] = ex
+
+    async def go():
+        await setup()
+        await sw.async_turn_off()
+        await _drain(sw)
+    asyncio.run(go())
+    assert cloud.calls == [("none", "ha_switch")] * 3 and ex.mirror_off_pending is False
+    assert ex.local_switch is False
+
+
+def test_switch_stays_mirrored_while_owner_off_pending(monkeypatch):
+    # Flaga chwilowo zniknęła, wyłączenie czeka: włączenie nadal idzie przez chmurę (nie lokalnie).
+    cloud = _Cloud("network", "revoked_by_other", "network")
+    _, ex, sw, sleeps, setup = _mirror_switch(monkeypatch, cloud)
+
+    async def go():
+        await setup()
+        gate = asyncio.Event()
+
+        async def blocked_sleep(_s):
+            await gate.wait()
+        sw._sleep = blocked_sleep
+        await sw.async_turn_off()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        ex.set_consent_mirror(False)
+        await sw.async_turn_on()
+        return list(cloud.calls)
+    calls = asyncio.run(go())
+    assert calls == [("none", "ha_switch"), ("ha", "ha_switch")] and ex.local_switch is False
 
 
 def test_switch_off_retry_stops_when_cloud_reports_consent_off(monkeypatch):
@@ -397,3 +441,105 @@ def test_restore_state_does_not_call_set_controller(monkeypatch):
 
 
 test_state_restore_does_not_call_set_controller = test_restore_state_does_not_call_set_controller
+
+
+class _Server:
+    """Atrapa chmury z kolejnością zastosowania: `ha` czeka na `release` (bramki serwera), `none` od razu.
+    Stan zgody po stronie serwera zmienia się w chwili ZAKOŃCZENIA prośby — jak przy równoległych żądaniach."""
+
+    def __init__(self, consent=False):
+        self.consent = consent
+        self.calls: list[str] = []
+        self.applied: list[str] = []
+        self.release = asyncio.Event()
+
+    async def async_set_controller(self, kind, origin="ha_switch"):
+        self.calls.append(kind)
+        if kind == "ha":
+            await self.release.wait()
+        self.consent = kind == "ha"
+        self.applied.append(kind)
+        return SetControllerResult(200, "ok")
+
+
+def _race_switch(monkeypatch, server):
+    from tests.control.test_executor import make, ready
+    h, ex = make(monkeypatch=monkeypatch)
+    sw = VolcastControlSwitch(SimpleNamespace(entry_id="e1", options={}), SimpleNamespace(executor=ex, cloud=server))
+    sw.hass = h
+
+    async def no_sleep(_s):
+        pass
+    sw._sleep = no_sleep
+
+    async def setup():
+        await ready(ex, consent=False, local=False)
+        ex.set_consent_mirror(True)
+    return ex, sw, setup
+
+
+async def _yield(n=5):
+    for _ in range(n):
+        await asyncio.sleep(0)
+
+
+def test_on_then_off_race_server_ends_off(monkeypatch):
+    # Właściciel włącza, a zaraz wyłącza: „off” nie może dojść przed nadaniem i zostać nadpisane.
+    server = _Server()
+    ex, sw, setup = _race_switch(monkeypatch, server)
+
+    async def go():
+        await setup()
+        on = asyncio.get_running_loop().create_task(sw.async_turn_on())
+        await _yield()
+        await sw.async_turn_off()
+        await _yield()
+        assert server.applied == []                    # „off” czeka na odpowiedź „on”
+        server.release.set()
+        await on
+        await _drain(sw)
+    asyncio.run(go())
+    assert server.calls == ["ha", "none"] and server.applied == ["ha", "none"]
+    assert server.consent is False and ex.local_switch is False and ex.mirror_off_pending is False
+
+
+def test_on_200_after_off_triggers_follow_up_none(monkeypatch):
+    # Nadawca wyłączenia zniknął (np. anulowany), a spóźnione 200 nadania przychodzi po wyłączeniu.
+    server = _Server()
+    ex, sw, setup = _race_switch(monkeypatch, server)
+
+    async def go():
+        await setup()
+        on = asyncio.get_running_loop().create_task(sw.async_turn_on())
+        await _yield()
+        await sw.async_turn_off()
+        sw._off_task.cancel()
+        await _yield()
+        server.release.set()
+        await on
+        await _drain(sw)
+    asyncio.run(go())
+    assert server.calls.count("ha") == 1 and server.applied[-1] == "none"
+    assert server.consent is False and ex.local_switch is False
+
+
+def test_failed_on_rearms_pending_off(monkeypatch):
+    # Wyłączenie niedoręczone, włączenie odrzucone: wyłączenie nadal idzie do chmury.
+    cloud = _Cloud("network")
+    _, ex, sw, _, setup = _mirror_switch(monkeypatch, cloud)
+
+    async def go():
+        await setup()
+        gate = asyncio.Event()
+
+        async def blocked_sleep(_s):
+            await gate.wait()
+        sw._sleep = blocked_sleep
+        await sw.async_turn_off()
+        await _yield()
+        cloud.outcomes = ["revoked_by_other", "ok"]
+        await sw.async_turn_on()
+        await _drain(sw)
+    asyncio.run(go())
+    assert cloud.calls == [("none", "ha_switch"), ("ha", "ha_switch"), ("none", "ha_switch")]
+    assert ex.mirror_off_pending is False and ex.local_switch is False
