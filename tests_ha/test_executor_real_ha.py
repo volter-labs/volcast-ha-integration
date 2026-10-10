@@ -20,13 +20,25 @@ import homeassistant.util.dt as dt_util
 
 from custom_components.volcast.const import DOMAIN
 from custom_components.volcast.control.store import ControlStore
+from custom_components.volcast.core.control.ladder import VERIFIED, Ladder, LadderParams, device_key
 from custom_components.volcast.core.entity_map import EntityWrite
 from custom_components.volcast.core.write_sequence import OK
 
-from .conftest import ENTITY_OPTIONS, control_of, make_entry, setup_entry, store_state
+from .conftest import SALT, ENTITY_OPTIONS, control_of, make_entry, seed_salt, setup_entry, store_state
 from .inverter import async_setup_inverter
 
 GATES = {"consent": True, "local_switch": True}
+
+
+def _verified_device(hass, hass_storage) -> dict:
+    """Rekord drabiny: falownik z atrapy już zweryfikowany — testy bramek wykonawcy bez zapisu
+    kontrolnego i okna próbnego drabiny."""
+    from homeassistant.helpers import entity_registry as er
+    seed_salt(hass_storage)
+    uid = er.async_get(hass).async_get("select.goodwe_ems_mode").unique_id
+    lad = Ladder(4, LadderParams(24, 15, 500), device_key=device_key(SALT, f"entities|goodwe-et|goodwe|{uid}"))
+    lad.state.state, lad.state.since = VERIFIED, dt_util.utcnow()
+    return lad.to_record()
 
 
 async def _paired_with_inverter(hass, hass_storage, state=None):
@@ -190,7 +202,8 @@ async def test_live_cycle_writes_through_real_entities_and_echo_is_ours(
     # Dom: PV 1000 W, pobór 600 W — nastawa eksportu = bateria 2000 + PV 1000 - pobór 600 = 2400 W.
     hass.states.async_set("sensor.goodwe_pv_power", "1000", {"unit_of_measurement": "W"})
     hass.states.async_set("sensor.goodwe_house_consumption", "600", {"unit_of_measurement": "W"})
-    store_state(hass_storage, "paired01", {**GATES, "plan_raw": plan})
+    store_state(hass_storage, "paired01", {**GATES, "plan_raw": plan,
+                                           "verification": _verified_device(hass, hass_storage)})
     entry = make_entry(hass, options={**ENTITY_OPTIONS, "rated_power_w": 8000})
     await setup_entry(hass, entry)
     rt = control_of(hass, entry)
@@ -257,7 +270,8 @@ async def test_no_write_without_consent_or_with_switch_off_first_write_when_all_
     inv = await async_setup_inverter(hass)
     hass.states.async_set("sensor.goodwe_pv_power", "1000", {"unit_of_measurement": "W"})
     hass.states.async_set("sensor.goodwe_house_consumption", "600", {"unit_of_measurement": "W"})
-    store_state(hass_storage, "paired01", {"consent": False, "local_switch": True, "plan_raw": plan})
+    store_state(hass_storage, "paired01", {"consent": False, "local_switch": True, "plan_raw": plan,
+                                           "verification": _verified_device(hass, hass_storage)})
     entry = make_entry(hass, options={**ENTITY_OPTIONS, "rated_power_w": 8000})
     await setup_entry(hass, entry)
     ex = control_of(hass, entry).executor

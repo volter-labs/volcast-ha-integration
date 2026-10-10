@@ -129,7 +129,8 @@
         "menu_options": {
           "control_entities": "Przez integrację falownika (encje)",
           "control_direct": "Bezpośrednio w sieci lokalnej",
-          "control_off": "Wyłączone — tylko prognoza i monitoring"
+          "control_off": "Wyłączone — tylko prognoza i monitoring",
+          "entity_map": "Wskaż encje falownika ręcznie"
         }
       },
       "details": {
@@ -215,6 +216,71 @@
           "power": "Moc",
           "energy": "Energia"
         }
+      },
+      "control_integration_write_entities": {
+        "title": "Sterowanie falownikiem",
+        "description": "Zalecane: integracja falownika potrafi zapisywać jego ustawienia, więc Volcast używa jej encji. Przez integrację falownika — Volcast zapisuje encje trybu i mocy falownika. Bezpośrednio — Volcast komunikuje się z falownikiem w sieci lokalnej; dostępne tylko dla falowników ze zweryfikowanym sterowaniem bezpośrednim i gdy żadna inna integracja nie korzysta z falownika (najpierw wyszukaj go w Szczegółach instalacji). Sterowanie wymaga też przełącznika w Home Assistant i Twojej zgody w aplikacji Volcast.",
+        "menu_options": {
+          "control_entities": "Przez integrację falownika (encje) (zalecane)",
+          "control_direct": "Bezpośrednio w sieci lokalnej",
+          "control_off": "Wyłączone — tylko prognoza i monitoring",
+          "entity_map": "Wskaż encje falownika ręcznie"
+        }
+      },
+      "control_no_integration_identify_ok": {
+        "title": "Sterowanie falownikiem",
+        "description": "Zalecane: falownik został rozpoznany i Volcast dotrze do niego bezpośrednio, a żadna integracja nie oferuje zapisu. Przez integrację falownika — Volcast zapisuje encje trybu i mocy falownika. Bezpośrednio — Volcast komunikuje się z falownikiem w sieci lokalnej; dostępne tylko dla falowników ze zweryfikowanym sterowaniem bezpośrednim i gdy żadna inna integracja nie korzysta z falownika (najpierw wyszukaj go w Szczegółach instalacji). Sterowanie wymaga też przełącznika w Home Assistant i Twojej zgody w aplikacji Volcast.",
+        "menu_options": {
+          "control_entities": "Przez integrację falownika (encje)",
+          "control_direct": "Bezpośrednio w sieci lokalnej (zalecane)",
+          "control_off": "Wyłączone — tylko prognoza i monitoring",
+          "entity_map": "Wskaż encje falownika ręcznie"
+        }
+      },
+      "control_integration_read_only": {
+        "title": "Sterowanie falownikiem",
+        "description": "Zalecane: integracja falownika tylko odczytuje dane, więc Volcast steruje falownikiem bezpośrednio. Przez integrację falownika — Volcast zapisuje encje trybu i mocy falownika. Bezpośrednio — Volcast komunikuje się z falownikiem w sieci lokalnej; dostępne tylko dla falowników ze zweryfikowanym sterowaniem bezpośrednim i gdy żadna inna integracja nie korzysta z falownika (najpierw wyszukaj go w Szczegółach instalacji). Sterowanie wymaga też przełącznika w Home Assistant i Twojej zgody w aplikacji Volcast.",
+        "menu_options": {
+          "control_entities": "Przez integrację falownika (encje)",
+          "control_direct": "Bezpośrednio w sieci lokalnej (zalecane)",
+          "control_off": "Wyłączone — tylko prognoza i monitoring",
+          "entity_map": "Wskaż encje falownika ręcznie"
+        }
+      },
+      "control_unsupported": {
+        "title": "Sterowanie falownikiem",
+        "description": "Nie znaleziono automatycznie bezpiecznej drogi sterowania tym falownikiem, więc nic nie jest zalecane. Przez integrację falownika — Volcast zapisuje encje trybu i mocy falownika. Bezpośrednio — Volcast komunikuje się z falownikiem w sieci lokalnej; dostępne tylko dla falowników ze zweryfikowanym sterowaniem bezpośrednim i gdy żadna inna integracja nie korzysta z falownika (najpierw wyszukaj go w Szczegółach instalacji). Sterowanie wymaga też przełącznika w Home Assistant i Twojej zgody w aplikacji Volcast.",
+        "menu_options": {
+          "control_entities": "Przez integrację falownika (encje)",
+          "control_direct": "Bezpośrednio w sieci lokalnej",
+          "control_off": "Wyłączone — tylko prognoza i monitoring",
+          "entity_map": "Wskaż encje falownika ręcznie"
+        }
+      },
+      "entity_map": {
+        "title": "Encje falownika",
+        "description": "Wybierz encję, której Volcast używa dla każdego ustawienia falownika. Pole zostaw bez zmian, aby zachować dopasowanie automatyczne.",
+        "data": {
+          "mode": "Tryb pracy",
+          "mode_value": "Wartość trybu pracy",
+          "power_w": "Limit mocy ładowania/rozładowania",
+          "soc": "Stan naładowania baterii",
+          "soc_min": "Minimalny stan naładowania",
+          "soc_max": "Maksymalny stan naładowania",
+          "export_limit_enabled": "Przełącznik limitu eksportu",
+          "export_limit_w": "Limit eksportu",
+          "active_power_w": "Moc czynna falownika",
+          "battery_current_a": "Prąd baterii",
+          "battery_power_w": "Moc baterii",
+          "battery_temp_c": "Temperatura baterii",
+          "battery_voltage_v": "Napięcie baterii",
+          "grid_export_total_kwh": "Łączny eksport do sieci",
+          "grid_import_total_kwh": "Łączny import z sieci",
+          "grid_power_w": "Moc sieci",
+          "load_power_w": "Zużycie domu",
+          "pv_energy_total_kwh": "Łączna energia PV",
+          "pv_power_w": "Moc PV"
+        }
       }
     },
     "abort": {
@@ -273,6 +339,10 @@
       "title": "Volcast nie może sterować falownikiem",
       "description": "Sterowanie falownikiem przez Volcast przestało działać (powtarzające się błędy zapisu albo zapisany stan sterowania, którego nie udało się odczytać). Falownik może nadal używać ostatnich ustawień zastosowanych przez Volcast. Sprawdź ustawienia falownika i logi Home Assistanta."
     },
+    "control_choice_failed": {
+      "title": "Volcast nie mógł zastosować Twojego wyboru sterowania",
+      "description": "Wybór sterowania zrobiony w aplikacji Volcast nie został zastosowany mimo kilku prób. Sprawdź ustawienia sterowania w opcjach Volcast i logi Home Assistant, a potem wybierz ponownie w aplikacji."
+    },
     "foreign_control_direct": {
       "title": "Sterowanie falownikiem przez Volcast wstrzymane",
       "description": "Ustawienie falownika {setting} zostało zmienione poza Volcast. Sterowanie jest wstrzymane na 30 minut, a Volcast zachowuje ustawioną przez Ciebie wartość, dopóki jego plan dla tego ustawienia się nie zmieni. Aby zatrzymać sterowanie, wyłącz przełącznik sterowania Volcast."
@@ -304,6 +374,38 @@
     "unsupported_setting": {
       "title": "Część ustawień falownika jest niedostępna dla Volcast",
       "description": "Volcast nie może używać tych ustawień falownika, ponieważ ich encje są brakujące, wyłączone lub niedostępne: {entities}. Sterowanie działa dalej bez nich, a plan Volcast już na nich nie polega. Gdy encje znów będą dostępne, Volcast użyje ich automatycznie."
+    },
+    "controller_conflict": {
+      "title": "Falownikiem steruje inny sterownik",
+      "description": "Inny sterownik ({kind}: {label}) zapisuje te same ustawienia falownika co Volcast. Wybierz Napraw, aby zdecydować, kto steruje falownikiem: Volcast albo Twój własny sterownik (Volcast tylko planuje).",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Kto steruje falownikiem?",
+            "description": "Gdy zapisuje inny sterownik, Volcast wstrzymuje weryfikację. Wybierz, który z nich steruje falownikiem.",
+            "menu_options": {
+              "volcast": "Falownikiem steruje Volcast",
+              "own_ems": "Mój własny sterownik (Volcast tylko planuje)"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "Sterowanie Volcast nie działa. Załaduj integrację ponownie i spróbuj jeszcze raz.",
+          "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień bazowych, więc nic nie zmieniono. Spróbuj ponownie, gdy falownik będzie osiągalny."
+        }
+      }
+    },
+    "verification_stopped": {
+      "title": "Weryfikacja urządzenia Volcast zatrzymana",
+      "description": "Weryfikacja falownika zatrzymała się ({reason}). Volcast nie steruje falownikiem, dopóki nie zostanie zweryfikowany. Wybierz Napraw, aby spróbować ponownie.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Ponów weryfikację",
+            "description": "Volcast wznawia weryfikację falownika od kroku, na którym się zatrzymała."
+          }
+        }
+      }
     }
   },
   "services": {
@@ -418,6 +520,9 @@
       },
       "control_direct_link_quality": {
         "name": "Przekroczenia czasu łącza falownika"
+      },
+      "verification": {
+        "name": "Weryfikacja urządzenia"
       }
     },
     "binary_sensor": {

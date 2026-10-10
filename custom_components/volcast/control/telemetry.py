@@ -23,6 +23,8 @@ kanał sygnałów jest dołączony, a blok `signals` z przyjętej odpowiedzi idz
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 from datetime import datetime, timedelta
@@ -90,6 +92,24 @@ def direct_driver_block(*, profile, access: str, capabilities: Mapping[str, bool
     return block
 
 
+
+
+def control_block(payload: Mapping, ack: Mapping | None, meta: dict, now_s: float) -> dict:
+    """Blok `driver.control` z `seq` wg kontraktu: `max(now, poprzedni + 1)` TYLKO przy zmianie treści
+    (poza samym `seq`), inaczej ten sam `seq`. `meta` (`seq`, `fp`) zmieniane w miejscu — trwały zapis
+    robi wołający, żeby restart nie cofnął licznika."""
+    body = dict(payload)
+    if ack:
+        body["choice_ack"] = dict(ack)
+    fp = hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
+    prev = meta.get("seq")
+    prev = prev if isinstance(prev, int) and not isinstance(prev, bool) and prev >= 0 else -1
+    if meta.get("fp") != fp:
+        meta["seq"] = max(int(now_s), prev + 1)
+        meta["fp"] = fp
+    elif prev < 0:
+        meta["seq"] = max(int(now_s), 0)
+    return {"seq": meta["seq"], **body}
 
 
 def _number(v) -> float | None:
@@ -166,6 +186,8 @@ class TelemetrySender:
         self._busy = False
         self._loads = LoadsReader(hass, entry)
         self._loads_warned = False
+        # Runtime sterowania (`control_block()` + `async_persist_control_meta()`) — ustawiany po jego złożeniu.
+        self.control_runtime = None
 
     async def async_start(self) -> None:
         if self._unsub is None:
@@ -289,6 +311,15 @@ class TelemetrySender:
                                  local_switch=local, limits=self._limits)
         if block is not None:
             block["features"] = list(DRIVER_FEATURES)
+        rt = self.control_runtime
+        if rt is not None:
+            try:
+                control = rt.control_block()
+            except Exception as err:  # noqa: BLE001 — stan sterowania nigdy nie zabiera telemetrii
+                _LOGGER.debug("Volcast control block skipped (%s)", type(err).__name__)
+            else:
+                # Bez profilu: sam `control` (chmura czyta go niezależnie od `driver.id`).
+                block = {**(block or {}), "control": control}
         return block
 
     def _loads_block(self) -> list | None:
@@ -352,6 +383,12 @@ class TelemetrySender:
             return False
         result = await self._cloud.async_post_telemetry(reading)
         ok = result.ok is True
+        rt = self.control_runtime
+        if ok and rt is not None:
+            try:
+                await rt.async_persist_control_meta()
+            except Exception as err:  # noqa: BLE001 — zapis licznika nie psuje przyjętej telemetrii
+                _LOGGER.debug("Volcast control meta save failed (%s)", type(err).__name__)
         if ok and priced:
             self._prices_fp, self._prices_at = priced[1], now
         if ok and self._on_signals is not None:

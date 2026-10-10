@@ -125,11 +125,12 @@
       },
       "control": {
         "title": "Riadenie striedača",
-        "description": "Cez integráciu striedača — Volcast zapisuje entity režimu a výkonu striedača. Priamo — Volcast komunikuje so striedačom cez miestnu sieť; dostupné len pre striedače s overeným priamym riadením a keď striedač nepoužíva žiadna iná integrácia (najprv ho vyhľadajte v Podrobnostiach o inštalácii). Riadenie vyžaduje aj prepínač v Home Assistant a váš súhlas v aplikácii Volcast.",
+        "description": "Cez integráciu striedača — Volcast zapisuje entity režimu a výkonu striedača. Priamo — Volcast komunikuje so striedačom cez lokálnu sieť; dostupné len pre striedače, ktorých priame riadenie je overené, a keď striedač nepoužíva iná integrácia (najprv ho vyhľadajte v Podrobnostiach inštalácie). Riadenie vyžaduje aj prepínač v Home Assistant a váš súhlas v aplikácii Volcast.",
         "menu_options": {
           "control_entities": "Cez integráciu striedača (entity)",
-          "control_direct": "Priamo cez miestnu sieť",
-          "control_off": "Vypnuté — iba predpoveď a monitorovanie"
+          "control_direct": "Priamo cez lokálnu sieť",
+          "control_off": "Vypnuté — iba predpoveď a sledovanie",
+          "entity_map": "Ručne vybrať entity striedača"
         }
       },
       "details": {
@@ -215,6 +216,71 @@
           "power": "Výkon",
           "energy": "Energia"
         }
+      },
+      "control_integration_write_entities": {
+        "title": "Riadenie striedača",
+        "description": "Odporúčané: vaša integrácia striedača môže zapisovať nastavenia striedača, preto Volcast používa jej entity. Cez integráciu striedača — Volcast zapisuje entity režimu a výkonu striedača. Priamo — Volcast komunikuje so striedačom cez lokálnu sieť; dostupné len pre striedače, ktorých priame riadenie je overené, a keď striedač nepoužíva iná integrácia (najprv ho vyhľadajte v Podrobnostiach inštalácie). Riadenie vyžaduje aj prepínač v Home Assistant a váš súhlas v aplikácii Volcast.",
+        "menu_options": {
+          "control_entities": "Cez integráciu striedača (entity) (odporúčané)",
+          "control_direct": "Priamo cez lokálnu sieť",
+          "control_off": "Vypnuté — iba predpoveď a sledovanie",
+          "entity_map": "Ručne vybrať entity striedača"
+        }
+      },
+      "control_no_integration_identify_ok": {
+        "title": "Riadenie striedača",
+        "description": "Odporúčané: striedač bol rozpoznaný a Volcast sa k nemu dostane priamo, ale žiadna integrácia neponúka zápis. Cez integráciu striedača — Volcast zapisuje entity režimu a výkonu striedača. Priamo — Volcast komunikuje so striedačom cez lokálnu sieť; dostupné len pre striedače, ktorých priame riadenie je overené, a keď striedač nepoužíva iná integrácia (najprv ho vyhľadajte v Podrobnostiach inštalácie). Riadenie vyžaduje aj prepínač v Home Assistant a váš súhlas v aplikácii Volcast.",
+        "menu_options": {
+          "control_entities": "Cez integráciu striedača (entity)",
+          "control_direct": "Priamo cez lokálnu sieť (odporúčané)",
+          "control_off": "Vypnuté — iba predpoveď a sledovanie",
+          "entity_map": "Ručne vybrať entity striedača"
+        }
+      },
+      "control_integration_read_only": {
+        "title": "Riadenie striedača",
+        "description": "Odporúčané: vaša integrácia striedača len číta údaje, preto Volcast striedač riadi priamo. Cez integráciu striedača — Volcast zapisuje entity režimu a výkonu striedača. Priamo — Volcast komunikuje so striedačom cez lokálnu sieť; dostupné len pre striedače, ktorých priame riadenie je overené, a keď striedač nepoužíva iná integrácia (najprv ho vyhľadajte v Podrobnostiach inštalácie). Riadenie vyžaduje aj prepínač v Home Assistant a váš súhlas v aplikácii Volcast.",
+        "menu_options": {
+          "control_entities": "Cez integráciu striedača (entity)",
+          "control_direct": "Priamo cez lokálnu sieť (odporúčané)",
+          "control_off": "Vypnuté — iba predpoveď a sledovanie",
+          "entity_map": "Ručne vybrať entity striedača"
+        }
+      },
+      "control_unsupported": {
+        "title": "Riadenie striedača",
+        "description": "Pre tento striedač sa automaticky nenašla žiadna bezpečná cesta riadenia, preto sa nič neodporúča. Cez integráciu striedača — Volcast zapisuje entity režimu a výkonu striedača. Priamo — Volcast komunikuje so striedačom cez lokálnu sieť; dostupné len pre striedače, ktorých priame riadenie je overené, a keď striedač nepoužíva iná integrácia (najprv ho vyhľadajte v Podrobnostiach inštalácie). Riadenie vyžaduje aj prepínač v Home Assistant a váš súhlas v aplikácii Volcast.",
+        "menu_options": {
+          "control_entities": "Cez integráciu striedača (entity)",
+          "control_direct": "Priamo cez lokálnu sieť",
+          "control_off": "Vypnuté — iba predpoveď a sledovanie",
+          "entity_map": "Ručne vybrať entity striedača"
+        }
+      },
+      "entity_map": {
+        "title": "Entity striedača",
+        "description": "Vyberte entitu, ktorú Volcast použije pre každé nastavenie striedača. Ponechajte pole tak, ako je navrhnuté, aby sa zachovalo automatické párovanie.",
+        "data": {
+          "mode": "Prevádzkový režim",
+          "mode_value": "Hodnota prevádzkového režimu",
+          "power_w": "Limit výkonu nabíjania/vybíjania",
+          "soc": "Stav nabitia batérie",
+          "soc_min": "Minimálny stav nabitia",
+          "soc_max": "Maximálny stav nabitia",
+          "export_limit_enabled": "Prepínač limitu pretoku",
+          "export_limit_w": "Limit pretoku",
+          "active_power_w": "Činný výkon striedača",
+          "battery_current_a": "Prúd batérie",
+          "battery_power_w": "Výkon batérie",
+          "battery_temp_c": "Teplota batérie",
+          "battery_voltage_v": "Napätie batérie",
+          "grid_export_total_kwh": "Celkový pretok do siete",
+          "grid_import_total_kwh": "Celkový odber zo siete",
+          "grid_power_w": "Výkon siete",
+          "load_power_w": "Spotreba domu",
+          "pv_energy_total_kwh": "Celková energia FV",
+          "pv_power_w": "Výkon FV"
+        }
       }
     },
     "abort": {
@@ -273,6 +339,10 @@
       "title": "Volcast nemôže riadiť striedač",
       "description": "Riadenie striedača cez Volcast prestalo fungovať (opakované chyby zápisu alebo uložený stav riadenia, ktorý sa nedal prečítať). Striedač môže stále používať posledné nastavenia použité Volcastom. Skontrolujte nastavenia striedača a protokoly Home Assistanta."
     },
+    "control_choice_failed": {
+      "title": "Volcast nemohol uplatniť vašu voľbu riadenia",
+      "description": "Voľba riadenia vykonaná v aplikácii Volcast sa po viacerých pokusoch nepodarilo uplatniť. Skontrolujte nastavenia riadenia v možnostiach Volcast a v protokoloch Home Assistant a potom voľbu v aplikácii zopakujte."
+    },
     "foreign_control_direct": {
       "title": "Riadenie striedača cez Volcast je pozastavené",
       "description": "Nastavenie striedača {setting} bolo zmenené mimo Volcast. Riadenie je pozastavené na 30 minút a Volcast ponecháva vami nastavenú hodnotu, kým sa jeho plán pre dané nastavenie nezmení. Ak chcete riadenie zastaviť, vypnite prepínač riadenia Volcast."
@@ -304,6 +374,38 @@
     "unsupported_setting": {
       "title": "Niektoré nastavenia striedača nie sú pre Volcast dostupné",
       "description": "Volcast nemôže tieto nastavenia striedača používať, pretože ich entity chýbajú, sú vypnuté alebo nedostupné: {entities}. Riadenie pokračuje bez nich a plán Volcast sa na ne už nespolieha. Keď budú entity opäť dostupné, Volcast ich použije automaticky."
+    },
+    "controller_conflict": {
+      "title": "Iný regulátor riadi váš striedač",
+      "description": "Iný regulátor ({kind}: {label}) zapisuje do rovnakých nastavení striedača ako Volcast. Vyberte Opraviť a rozhodnite, kto striedač riadi: Volcast, alebo váš vlastný regulátor (Volcast potom iba plánuje).",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Kto riadi striedač?",
+            "description": "Kým iný regulátor zapisuje, Volcast overovanie pozastavuje. Vyberte, ktorý z nich striedač riadi.",
+            "menu_options": {
+              "volcast": "Striedač riadi Volcast",
+              "own_ems": "Môj vlastný regulátor (Volcast iba plánuje)"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "Riadenie Volcast nebeží. Znova načítajte integráciu a skúste to znova.",
+          "restore_failed": "Volcast nemohol vrátiť striedač do pôvodného stavu, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný."
+        }
+      }
+    },
+    "verification_stopped": {
+      "title": "Overovanie zariadenia Volcast sa zastavilo",
+      "description": "Overovanie striedača sa zastavilo ({reason}). Volcast striedač neriadi, kým nie je overený. Vyberte Opraviť a skúste to znova.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Zopakovať overovanie",
+            "description": "Volcast reštartuje overovanie striedača od kroku, v ktorom sa zastavilo."
+          }
+        }
+      }
     }
   },
   "services": {
@@ -418,6 +520,9 @@
       },
       "control_direct_link_quality": {
         "name": "Vypršania časových limitov spojenia so striedačom"
+      },
+      "verification": {
+        "name": "Overovanie zariadenia"
       }
     },
     "binary_sensor": {

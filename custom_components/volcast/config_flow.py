@@ -33,7 +33,7 @@ except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w for
 
 from .cloud.client import Backend, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control import direct_search as ds
-from .control.runtime import async_control_change_allowed, async_direct_search
+from .control.runtime import async_control_change_allowed, async_direct_search, map_entities, mapped_with_overrides
 from .control.telemetry import TELEMETRY_FIELDS
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
@@ -78,6 +78,7 @@ from .const import (
     OPT_TELEMETRY_MAP,
     OPT_DIRECT_POLL_S,
     OPT_DIRECT_TARGET,
+    OPT_ENTITY_MAP,
     OPT_DIRECT_TRIAL,
 )
 
@@ -491,6 +492,14 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
 _FORECAST_KEYS = (CONF_UPDATE_INTERVAL, CONF_PEAK_THRESHOLD, CONF_PV_ENERGY_ENTITY, CONF_PV_POWER_ENTITY,
                   CONF_BATTERY_SOC_ENTITY, CONF_BATTERY_CHARGE_POWER_ENTITY)
 _EMPTY = (None, "", {})
+# Krok menu sterowania wg powodu rekomendacji (teksty kroku: oznaczona pozycja i jedno zdanie uzasadnienia).
+_CONTROL_STEPS = {
+    "integration_write_entities": "control_integration_write_entities",
+    "no_integration_identify_ok": "control_no_integration_identify_ok",
+    "integration_read_only": "control_integration_read_only",
+    "no_profile": "control_unsupported",
+    "no_write_path": "control_unsupported",
+}
 
 
 def _pairing_url_from(user_input: dict[str, Any]) -> str:
@@ -531,18 +540,25 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return (data.get(DOMAIN, {}).get(self.config_entry.entry_id) or {}).get("control")
 
     async def _finish(self, options: dict[str, Any], *,
-                      retry_form: Callable[[dict[str, str]], ConfigFlowResult] | None = None) -> ConfigFlowResult:
+                      retry_form: Callable[[dict[str, str]], ConfigFlowResult] | None = None,
+                      leave_plan_only: bool = False) -> ConfigFlowResult:
         """Zapis opcji; zmiana sterowania najpierw oddaje falownik przez obecnego wykonawcę.
 
         Nieudany powrót blokuje zapis (nic nie zapisane: błąd formularza `retry_form` albo przerwanie),
         gdy wykonawca po przeładowaniu nie przejąłby własności — inny sposób sterowania, cel albo
         mapowanie. Przy tym samym powiązaniu (np. wyłączenie sterowania przez encje) zapis idzie, a nowy
         wykonawca ponawia powrót co cykl, dopóki sterowanie jest wyłączone.
+
+        `leave_plan_only` (wybór sterowania: encje, bezpośrednio): tryb „tylko plan” kończy się i jest zapisany
+        w magazynie, zanim przeładowanie złoży nowego wykonawcę.
         """
         if not await async_control_change_allowed(self._runtime(), self.config_entry.options, options):
             if retry_form is not None:
                 return retry_form({"base": RESTORE_FAILED})
             return self.async_abort(reason=RESTORE_FAILED)
+        rt = self._runtime()
+        if leave_plan_only and rt is not None and hasattr(rt, "async_leave_plan_only"):
+            await rt.async_leave_plan_only()
         return self.async_create_entry(data=options)
 
     def _forecast_options(self, user_input: dict[str, Any]) -> dict[str, Any]:
@@ -568,9 +584,47 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return self.async_show_form(step_id="forecast", data_schema=self._forecast_schema())
 
     async def async_step_control(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        # Trzy pozycje, żadnej domyślnej; „Bezpośrednio” sprawdza dostępność dopiero po wyborze.
-        return self.async_show_menu(step_id="control",
-                                    menu_options=["control_entities", "control_direct", "control_off"])
+        # Żadnej pozycji nie wybieramy za użytkownika; rekomendowana jest tylko oznaczona (tekst kroku zależy od
+        # powodu rekomendacji). „Bezpośrednio” sprawdza dostępność dopiero po wyborze.
+        rt = self._runtime()
+        step_id = _CONTROL_STEPS.get(getattr(getattr(rt, "recommendation", None), "reason", None), "control")
+        options = ["control_entities", "control_direct", "control_off"]
+        if getattr(getattr(rt, "choice", None), "integration_domain", None):
+            options.append("entity_map")
+        return self.async_show_menu(step_id=step_id, menu_options=options)
+
+    # HA wymaga metody dla każdego `step_id` menu; warianty tekstu rekomendacji pokazują to samo menu.
+    async def async_step_control_integration_write_entities(self, user_input=None) -> ConfigFlowResult:
+        return await self.async_step_control(user_input)
+
+    async def async_step_control_no_integration_identify_ok(self, user_input=None) -> ConfigFlowResult:
+        return await self.async_step_control(user_input)
+
+    async def async_step_control_integration_read_only(self, user_input=None) -> ConfigFlowResult:
+        return await self.async_step_control(user_input)
+
+    async def async_step_control_unsupported(self, user_input=None) -> ConfigFlowResult:
+        return await self.async_step_control(user_input)
+
+    async def async_step_entity_map(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Ręczne wskazanie encji falownika dla kluczy profilu; zapisujemy tylko to, co różni się od dopasowania
+        po wzorcach (reszta dalej idzie automatem)."""
+        choice = getattr(self._runtime(), "choice", None)
+        if choice is None or not choice.integration_domain:
+            return self.async_abort(reason="entity_mode_unavailable")
+        specs = next((i["entities"] for i in choice.profile.raw["ha"]["integrations"]
+                      if i["domain"] == choice.integration_domain), {})
+        if user_input is not None:
+            auto = map_entities(self.hass, choice)
+            chosen = {k: v for k in specs if (v := (user_input.get(k) or "").strip())}
+            return await self._finish(self._merged({OPT_ENTITY_MAP: {
+                k: v for k, v in chosen.items() if auto.get(k) != v}}))
+        current = mapped_with_overrides(self.hass, choice, self.config_entry.options)
+        fields: dict[Any, Any] = {}
+        for key, spec in specs.items():
+            sel = selector.EntitySelector(selector.EntitySelectorConfig(domain=[spec["domain"]]))
+            fields[vol.Optional(key, description={"suggested_value": current.get(key)})] = sel
+        return self.async_show_form(step_id="entity_map", data_schema=vol.Schema(fields))
 
     async def async_step_control_direct(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """„Bezpośrednio”: tylko z ostatniego wyszukiwania — falownik rozpoznany, próba udana, profil i jego
@@ -592,14 +646,14 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return self.async_abort(reason=reason)
         target = ds.target_from_report(report)
         return await self._finish(self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
-                                                OPT_DIRECT_TRIAL: None}))
+                                                OPT_DIRECT_TRIAL: None}), leave_plan_only=True)
 
     async def async_step_control_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         rt = self._runtime()
         choice = getattr(rt, "choice", None)
         if not entity_mode_ready(choice, getattr(rt, "mapped", None) or {}):
             return self.async_abort(reason="entity_mode_unavailable")
-        return await self._finish(self._merged(entity_mode_options(choice)))
+        return await self._finish(self._merged(entity_mode_options(choice)), leave_plan_only=True)
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._finish(self._merged({OPT_CONTROL_MODE: None}))

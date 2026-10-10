@@ -268,7 +268,11 @@ class Onboarding:
         await self._loop()
 
     def _options_token(self, rt) -> str | None:
-        """Szczegół wyboru: które sposoby sterowania są dostępne (`direct` tylko, gdy da się go zaoferować)."""
+        """Szczegół wyboru: rekomendacja ścieżki, gdy już policzona (`recommended: …`); inaczej które
+        sposoby sterowania są dostępne (`direct` tylko, gdy da się go zaoferować)."""
+        rec = getattr(rt, "recommendation", None)
+        if rec is not None:
+            return ds.recommendation_text(rec)
         tokens = []
         if self._control_ready(rt):
             tokens.append("entities")
@@ -418,6 +422,14 @@ class Onboarding:
                 steps.append(("control_mode", "done", "entities"))
             else:
                 steps.append(("control_mode", "error", NOT_READY))
+        elif mode == "plan_only" and self._state("control_mode") == "choice":
+            # Własny sterownik: ta sama obsługa co `path: plan_only` z chmury (tryb „tylko plan”, sterowanie wyłączone).
+            rt = self._runtime()
+            if rt is not None:                    # wpis się przeładowuje — następne odpytanie
+                if await rt.async_apply_path_choice("plan_only") == "applied":
+                    steps.append(("control_mode", "done", "plan_only"))
+                else:
+                    steps.append(("control_mode", "error", NOT_READY))
         elif mode == CONTROL_MODE_DIRECT and self._state("control_mode") == "choice":
             if self._runtime() is not None:        # wpis się przeładowuje — następne odpytanie
                 reason = await self._direct_reason()

@@ -48,7 +48,9 @@ MAX_READ_REGISTERS = 125
 _TOP_REQ = ("schema_version", "id", "label", "status", "control_model", "sources", "unit_id",
             "transports", "identify", "read", "write", "intents", "baseline", "write_policy",
             "limits", "ha", "capabilities", "modbus")
-_TOP_OPT = ("modes", "neutral_mode", "tou", "status_note")
+_TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification")
+# Nadpisania parametrów drabiny weryfikacji urządzenia (próbne godziny, okno próbne): pole → zakres.
+VERIFICATION_RANGES = {"trial_hours": (1, 72), "window_minutes": (5, 60), "window_power_w": (100, 3000)}
 
 
 class _V:
@@ -484,6 +486,19 @@ def _ha(v: _V, raw: Any) -> None:
                 v.enum(s["transform"], f"{ep}.transform", ("invert_percent", "negate"))
 
 
+def _verification(v: _V, raw: Any) -> None:
+    """Opcjonalne nadpisania stałych drabiny; każde pole osobno, pusty blok to błąd pliku."""
+    path = "$.verification"
+    b = v.obj(raw, path, (), tuple(VERIFICATION_RANGES))
+    if b is None:
+        return
+    if not b:
+        v.err(path, "oczekiwano co najmniej jednego pola")
+    for key, (lo, hi) in VERIFICATION_RANGES.items():
+        if key in b:
+            v.int_(b[key], f"{path}.{key}", lo, hi)
+
+
 def validate_profile(raw: object) -> list[str]:
     v = _V()
     top = v.obj(raw, "$", _TOP_REQ, _TOP_OPT)
@@ -660,6 +675,8 @@ def validate_profile(raw: object) -> list[str]:
             v.err("$.limits.rated_power_register", "musi wskazywać identify.registers")
 
     _ha(v, top.get("ha"))
+    if "verification" in top:
+        _verification(v, top["verification"])
 
     caps = v.obj(top.get("capabilities"), "$.capabilities", CAPABILITY_KEYS + ("time_windows",))
     if caps is not None:

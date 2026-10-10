@@ -24,11 +24,22 @@ dostaje `DirectIO` na połączeniu `DirectConnection` (start w tle: kolizje i to
 Kolejność zatrzymania: wykonawca (z powrotem przy wyłączeniu/usunięciu wpisu) → połączenie
 (zwolnienie hosta w `direct_hosts`). Zmiana celu albo trybu próbnego to zmiana sterowania — powrót
 idzie przez STARE połączenie przed przeładowaniem.
+
+Drugi sterownik (`conflicts.ConflictMonitor`, `ControlRuntime.conflicts`): lista `conflicts` obok
+`recommendation` i `verification` (`control_state_payload`); dowody adresu z rekomendacji i połączenia
+bezpośredniego, klient na łączu z połączenia, Box z planu (`async_set_box_active`). Wybór właściciela
+z chmury (`async_apply_controller_choice`): `volcast` — koniec trybu „tylko plan”, obecne konflikty
+potwierdzone (nie zatrzymują już drabiny; naprawa trwa do końca dowodu), drabina po trybie „tylko plan”
+rusza od szczebla startowego, a zatrzymana konfliktem — ponownie od szczebla stopu; pauza przejęcia się
+kończy; `own_ems` — tryb „tylko plan” w magazynie, drabina odstawiona po cichu (`idle`), powrót do trybu
+bazowego i opcja sterowania wyłączona (ta sama droga co `control_off` w opcjach: powrót przez obecnego
+wykonawcę, potem przeładowanie), bez zgłoszeń o konflikcie.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Callable, Mapping
@@ -40,17 +51,22 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 
+from ..cloud import control_choice
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
 from ..cloud.signal_channel import SignalChannel
 from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
-                     OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
-                     OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP)
-from ..core.control.caps import direct_capabilities
+                     OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
+                     OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
+                     SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED)
+from ..core.control.caps import direct_capabilities, entity_mode_options, entity_mode_ready
 from ..core.control.limits import executor_limits, rated_power_from_model
+from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
+from ..core.control.recommend import recommend
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, resolve_entities
@@ -59,13 +75,20 @@ from ..registry_compat import all_devices
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
 from .direct import DirectConnection
+from .conflicts import ConflictMonitor
 from .executor import VolcastExecutor
 from .ha_writer import EntityServiceWriter
 from .history_import import async_import_history_once
 from .live import LiveSender
 from .signals_hub import SignalsHub
 from .store import ControlStore, async_installation_salt
-from .telemetry import TelemetrySender
+from .telemetry import TelemetrySender, control_block
+from .verification import VerificationRunner, default_params, start_rung_for
+
+try:
+    from homeassistant.loader import async_get_integration
+except ImportError:  # atrapy w testach nie mają loadera
+    async_get_integration = None
 
 _LOGGER = logging.getLogger(__name__)
 # W prawdziwym HA stała z rejestru zgłoszeń; atrapa testowa jej nie ma.
@@ -75,10 +98,63 @@ ONBOARDING_KEY = "volcast_onboarding"
 _LOCKS_KEY = "volcast_control_locks"
 
 # Opcje, od których zależą: czy sterujemy i przez które encje.
-CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL)
+CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL,
+                       OPT_ENTITY_MAP)
 _POLL_RANGE_S = (5.0, 60.0)
 # Opcje, których zmiana nie wymaga przeładowania wpisu (wystarczy import historii).
 RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY})
+# Wybór sterownika z chmury (`control_choice.controller`).
+CONTROLLER_VOLCAST, CONTROLLER_OWN_EMS = "volcast", "own_ems"
+
+
+URGENT_FLUSH_INTERVAL_S = 10.0
+
+
+class FlushLimiter:
+    """Natychmiastowa telemetria po zmianie stanu sterowania: najwyżej jedna na `interval_s`; zmiany w oknie
+    zlewają się w jedną wysyłkę po jego końcu (najnowszy stan)."""
+
+    def __init__(self, hass, flush, *, interval_s: float = URGENT_FLUSH_INTERVAL_S, clock=None, entry=None) -> None:
+        self._hass, self._flush, self._interval = hass, flush, interval_s
+        self._entry = entry                  # wysyłka jako zadanie wpisu — rozładunek ją anuluje
+        self._task = None
+        self._clock = clock or time.monotonic
+        self._last: float | None = None
+        self._pending = False
+        self._timer = None
+
+    @callback
+    def request(self) -> None:
+        if self._pending:
+            return
+        self._pending = True
+        wait = 0.0 if self._last is None else max(0.0, self._last + self._interval - self._clock())
+        if wait <= 0:
+            self._start()
+        else:
+            self._timer = self._hass.loop.call_later(wait, self._start)
+
+    def _start(self) -> None:
+        self._timer = None
+        if self._entry is not None:
+            self._task = self._entry.async_create_background_task(self._hass, self._run(),
+                                                                  "volcast_control_telemetry")
+        else:
+            self._task = self._hass.async_create_background_task(self._run(), "volcast_control_telemetry")
+
+    async def _run(self) -> None:
+        self._pending = False
+        self._last = self._clock()
+        await self._flush()
+
+    def cancel(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if self._task is not None and not self._task.done():
+            self._task.cancel()              # rozpoczęta wysyłka też (rozładunek wpisu)
+        self._task = None
+        self._pending = False
 
 
 @dataclass
@@ -103,10 +179,188 @@ class ControlRuntime:
     channel: object | None = None
     live: object | None = None
     hub: object | None = None
+    # raport rozpoznania (getter runnera) i rekomendacja ścieżki sterowania z niego i z `last_probe`
+    report: Callable[[], dict | None] | None = None
+    recommendation: object | None = None
+    recommendation_gen: int = 0           # numer ostatniego przeliczenia (starsze wyniki odrzucane)
+    # drabina weryfikacji urządzenia (`VerificationRunner`); blok `verification` = `verification.payload()`
+    verification: object | None = None
+    # drugi sterownik (`ConflictMonitor`); blok `conflicts` = `conflicts.conflicts()`
+    conflicts: object | None = None
+    hass: object | None = None
+    entry: object | None = None
+    _meta_dirty: bool = False
+
+    def control_state_payload(self) -> dict:
+        """Stan sterowania dla chmury: `recommendation`, `verification` (gdy są) i `conflicts` (zawsze)."""
+        out: dict = {}
+        if self.recommendation is not None:
+            out["recommendation"] = self.recommendation.to_payload()
+        ver = self.verification.payload() if self.verification is not None else None
+        if ver is not None:
+            out["verification"] = ver
+        if self.conflicts is not None:
+            out["conflicts"] = self.conflicts.conflicts()
+        else:
+            out["conflicts"] = self.recommendation.conflicts_payload() if self.recommendation is not None else []
+        return out
+
+    def control_block(self) -> dict:
+        """Blok `driver.control` (z `seq`) dla telemetrii; `seq` rośnie tylko przy zmianie treści."""
+        meta = self.executor.control_meta
+        before = dict(meta)
+        block = control_block(self.control_state_payload(), meta.get("ack"), meta, dt_util.utcnow().timestamp())
+        self._meta_dirty = self._meta_dirty or meta != before
+        return block
+
+    async def async_persist_control_meta(self) -> None:
+        """Trwały zapis licznika po przyjętej telemetrii (restart nie cofa `seq`)."""
+        if self._meta_dirty:
+            self._meta_dirty = False
+            await self.executor.async_save_control_meta()
+
+    def notify_control_state(self) -> None:
+        """Zmiana stanu sterowania → natychmiastowa telemetria (przez limit)."""
+        if self.hass is not None and self.entry is not None:
+            async_dispatcher_send(self.hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=self.entry.entry_id))
+
+    async def async_apply_path_choice(self, path: str) -> str:
+        """Ścieżka sterowania wybrana zdalnie (chmura albo sesja parowania): "applied"; "ignored" (nie da się
+        jej teraz zastosować); "restore_failed" (zmiana opcji odmówiona, bo powrót do trybu bazowego się nie udał; jak w `async_apply_controller_choice`). `plan_only` = własny
+        sterownik: tryb „tylko plan” i sterowanie wyłączone."""
+        if path == "plan_only":
+            return await self.async_apply_controller_choice(CONTROLLER_OWN_EMS)
+        entry, ex = self.entry, self.executor
+        if path == CONTROL_MODE_ENTITIES:
+            if not entity_mode_ready(self.choice, self.mapped):
+                return "ignored"
+            patch = entity_mode_options(self.choice)
+        elif path == CONTROL_MODE_DIRECT:
+            hits = ds.found(self.last_probe)
+            if not hits:
+                return "ignored"
+            profiles = await self.hass.async_add_executor_job(ds.load_profiles)
+            clash = await ds.async_clash(self.hass, entry.entry_id, hits[0].candidate.host)
+            if ds.offer_reason(hits[0], profiles, clash) is not None:
+                return "ignored"
+            patch = {OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: ds.target_from_report(hits[0]),
+                     OPT_DIRECT_TRIAL: None}
+        else:
+            return "ignored"
+        old = dict(entry.options)
+        new = {k: v for k, v in {**old, **patch}.items() if v is not None}
+        changed = control_options_changed(old, new)
+        if changed and not await async_control_change_allowed(self, old, new):
+            _LOGGER.debug("Volcast control: path %s refused (the return to the baseline failed)", path)
+            return "restore_failed"
+        if ex.plan_only:
+            await ex.async_set_plan_only(False)
+        if changed:
+            self.hass.config_entries.async_update_entry(entry, options=new)
+        _LOGGER.info("Volcast control: path %s chosen", path)
+        self.clear_choice_error()
+        return "applied"
+
+    def report_choice_error(self) -> None:
+        """Decyzja z chmury nie dała się zastosować mimo ponowień — to samo zgłoszenie co błąd sterowania."""
+        ir.async_create_issue(self.hass, DOMAIN, f"control_choice_failed_{self.entry.entry_id}", is_fixable=False,
+                              severity=getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning"), translation_key="control_choice_failed")
+
+    def clear_choice_error(self) -> None:
+        """Późniejszy wybór (sterownika albo ścieżki) się zastosował — zgłoszenie o nieudanym wyborze znika."""
+        ir.async_delete_issue(self.hass, DOMAIN, f"control_choice_failed_{self.entry.entry_id}")
+
+    async def async_set_box_active(self, active: bool) -> None:
+        """`box_active` z planu → konflikt `box`."""
+        if self.conflicts is not None:
+            await self.conflicts.async_set_box_active(active)
+
+    async def async_leave_plan_only(self) -> bool:
+        """Właściciel wybrał w opcjach HA sterowanie (encje albo bezpośrednio) po trybie „tylko plan”: ten
+        tryb znika i jest zapisany (jak wybór `volcast`), drabina od szczebla startowego, zgłoszenia o
+        konflikcie znowu dozwolone. True, gdy tryb był włączony."""
+        ex = self.executor
+        if not ex.plan_only:
+            return False
+        await ex.async_set_plan_only(False)
+        if self.verification is not None:
+            await self.verification.async_restart()
+        if self.conflicts is not None:
+            await self.conflicts.async_refresh()
+        _LOGGER.info("Volcast control: control chosen in the options — plan-only mode ended")
+        return True
+
+    async def async_apply_controller_choice(self, controller: str) -> str:
+        """Wybór sterownika: "applied"; "ignored" (nieznana wartość); "restore_failed" (`own_ems`: tryb
+        „tylko plan” włączony, ale powrót do trybu bazowego się nie udał — opcje bez zmian, każdy cykl
+        go ponawia)."""
+        ex = self.executor
+        if controller == CONTROLLER_OWN_EMS:
+            await ex.async_set_plan_only(True)
+            if self.verification is not None:
+                await self.verification.async_park()            # po cichu: bez stopu i bez pusha
+            if self.conflicts is not None:
+                await self.conflicts.async_refresh()            # zgłoszenie o konflikcie znika
+            entry = self.entry
+            old = dict(entry.options)
+            new = {k: v for k, v in old.items() if k != OPT_CONTROL_MODE}
+            if control_options_changed(old, new):
+                if not await async_control_change_allowed(self, old, new):
+                    _LOGGER.warning("Volcast control: own controller chosen, but the return to the baseline "
+                                    "failed — retrying every cycle")
+                    return "restore_failed"
+                self.hass.config_entries.async_update_entry(entry, options=new)
+            elif getattr(ex, "owned", False):
+                await ex.async_restore_now()
+            _LOGGER.info("Volcast control: own controller chosen — plan only, no writes")
+            self.clear_choice_error()
+            return "applied"
+        if controller == CONTROLLER_VOLCAST:
+            was_plan_only = ex.plan_only
+            if was_plan_only:
+                await ex.async_set_plan_only(False)
+            if self.conflicts is not None:
+                await self.conflicts.async_acknowledge()
+            lad = getattr(self.verification, "ladder", None)
+            if was_plan_only and self.verification is not None:
+                await self.verification.async_restart()          # od szczebla startowego
+            elif lad is not None and lad.state.state == STOPPED and lad.state.stop_reason == CONTROLLER_CONFLICT:
+                await self.verification.async_retry()
+            if ex.paused:
+                await ex.async_resume_control()
+            _LOGGER.info("Volcast control: Volcast chosen as the controller")
+            self.clear_choice_error()
+            return "applied"
+        return "ignored"
 
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
 _TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp")
+
+
+def address_clashes(rt: ControlRuntime) -> tuple[str, ...]:
+    """Domeny wpisów kolidujących z falownikiem: z rekomendacji i z połączenia bezpośredniego."""
+    out = [c.get("label") for c in getattr(rt.recommendation, "conflicts", None) or ()
+           if isinstance(c, Mapping) and c.get("kind") == "entry"]
+    conn = rt.direct
+    if conn is not None:
+        out.extend(conn.static_conflicts)
+        refused = conn.refused()
+        if isinstance(refused, str) and refused.startswith(ds.CONFLICT + ":"):
+            out.append(refused.split(":", 1)[1])
+    return tuple(d for d in out if isinstance(d, str) and d)
+
+
+def lan_client_seen(conn) -> str | None:
+    """Inny klient na łączu: zajęte połączenie albo sygnały `ContentionMonitor` (kod powodu)."""
+    if conn is None:
+        return None
+    if conn.refused() == ds.IN_USE:
+        return "in_use"
+    monitor = getattr(conn, "monitor", None)
+    if getattr(monitor, "state", None) == "conflict":
+        return monitor.reason or "bus"
+    return None
 
 
 def _target_identity(target) -> tuple | None:
@@ -139,7 +393,81 @@ async def async_direct_search(hass, entry, *, manual=None, port: int | None = No
     rt = (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
     if rt is not None:
         rt.last_probe = list(reports)
+        schedule_recommendation(hass, entry, rt)
     return reports
+
+
+async def async_update_recommendation(hass, entry, rt: ControlRuntime, profiles=None):
+    """Rekomendacja ścieżki z ostatniego rozpoznania i wyszukiwania; zapis w runtime, sygnał przy zmianie.
+
+    Nigdy nie rzuca: błąd zostawia poprzednią rekomendację (None = nie policzono).
+    """
+    rt.recommendation_gen += 1
+    gen = rt.recommendation_gen
+    try:
+        if profiles is None:
+            profiles = await hass.async_add_executor_job(ds.load_profiles)
+        probe = _recommendation_probe(entry.options, rt.last_probe)
+        target = _configured_target(entry.options, rt.direct)
+        host = target.get("host") if target is not None else (probe.candidate.host if probe is not None else None)
+        clash = await ds.async_clash(hass, entry.entry_id, host) if host else ()
+        choice = _choice_for(hass, entry, profiles)
+        report = rt.report() if rt.report is not None else None
+        domains = {i.get("domain") for i in (report or {}).get("inverters") or () if isinstance(i, Mapping)}
+        if choice is not None and choice.integration_domain:
+            domains.add(choice.integration_domain)
+        rec = recommend(report, profiles, probe, ds.offer_reason(probe, profiles, clash),
+                        mapped_with_overrides(hass, choice, entry.options), clash, choice=choice,
+                        origins=await _async_origins(hass, domains), target=target)
+    except Exception as err:  # noqa: BLE001 — rekomendacja nie psuje sterowania ani opcji
+        _LOGGER.warning("Volcast control: path recommendation failed (%s)", type(err).__name__)
+        return None
+    if gen != rt.recommendation_gen:
+        return None                       # w międzyczasie ruszyło nowsze przeliczenie — ono zapisze wynik
+    if rec != rt.recommendation:
+        rt.recommendation = rec
+        async_dispatcher_send(hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=entry.entry_id))
+    return rec
+
+
+def schedule_recommendation(hass, entry, rt: ControlRuntime) -> None:
+    """Przeliczenie w tle wpisu (unload je anuluje) — sprawdzenie kolizji rozwiązuje nazwy hostów
+    i nie może opóźniać wołającego."""
+    entry.async_create_background_task(hass, async_update_recommendation(hass, entry, rt), "volcast_recommendation")
+
+
+def _configured_target(options: Mapping, conn) -> dict | None:
+    """Cel bezpośredni wpisu (tryb bezpośredni albo próba) ze znaną tożsamością — rekomendacja nie czeka
+    na sondę. Połączenie, które stwierdziło inne urządzenie pod adresem (`mismatch`), celu nie potwierdza."""
+    found = _direct_target(options)
+    if found is None or getattr(conn, "identity", None) == "mismatch":
+        return None
+    target = found[0]
+    if not target.get("profile_id") or not target.get("device_fp"):
+        return None
+    return {"profile_id": target["profile_id"], "device_fp": target["device_fp"], "host": target.get("host")}
+
+
+def _recommendation_probe(options: Mapping, reports):
+    """Raport sondy do rekomendacji: urządzenie z celu w opcjach, gdy jest wśród trafień, inaczej pierwsze."""
+    hits = ds.found(reports or [])
+    target = options.get(OPT_DIRECT_TARGET)
+    fp = target.get("device_fp") if isinstance(target, Mapping) else None
+    return next((r for r in hits if fp and r.identity.device_fp == fp), hits[0] if hits else None)
+
+
+async def _async_origins(hass, domains) -> dict[str, str]:
+    """Pochodzenie integracji (`core` = wbudowana w HA, `custom` = doinstalowana); nieznane pomijamy."""
+    out: dict[str, str] = {}
+    if async_get_integration is None:
+        return out
+    for domain in sorted(d for d in domains if isinstance(d, str) and d):
+        try:
+            integration = await async_get_integration(hass, domain)
+        except Exception:  # noqa: BLE001 — brak pochodzenia nie blokuje rekomendacji
+            continue
+        out[domain] = "core" if getattr(integration, "is_built_in", False) else "custom"
+    return out
 
 
 def changed_option_keys(old: Mapping, new: Mapping) -> set[str]:
@@ -250,6 +578,22 @@ def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
         unit = (st.attributes.get("unit_of_measurement") if st else None) or getattr(e, "unit_of_measurement", None)
         cands.append(EntityCandidate(e.entity_id, e.platform, e.unique_id or "", unit))
     return dict(resolve_entities(choice.profile, choice.integration_domain, cands).mapped)
+
+
+def mapped_with_overrides(hass, choice: ProfileChoice | None, options: Mapping) -> dict[str, str]:
+    """Mapa encji z dopasowania po wzorcach plus ręczne poprawki z opcji (`OPT_ENTITY_MAP`): poprawka wygrywa,
+    ale tylko dla klucza, który profil tej integracji opisuje, i dla encji, która istnieje."""
+    mapped = map_entities(hass, choice)
+    overrides = options.get(OPT_ENTITY_MAP)
+    if choice is None or not choice.integration_domain or not isinstance(overrides, Mapping):
+        return mapped
+    known = next((i["entities"] for i in choice.profile.raw["ha"]["integrations"]
+                  if i["domain"] == choice.integration_domain), {})
+    for key, eid in overrides.items():
+        if key in known and isinstance(eid, str) and (hass.states.get(eid) is not None
+                                                      or er.async_get(hass).async_get(eid) is not None):
+            mapped[key] = eid
+    return mapped
 
 
 def mode_unique_id(hass, mapped: Mapping[str, str]) -> str | None:
@@ -401,7 +745,7 @@ def _compose_return(hass, entry, profiles, record: Mapping, salt: bytes | None) 
     if profile is None or not isinstance(domain, str) or not domain:
         return None
     choice = ProfileChoice(profile, domain, None)
-    mapped = map_entities(hass, choice)
+    mapped = mapped_with_overrides(hass, choice, entry.options)
     if not _entity_owner_matches(hass, choice, mapped, record):
         return None
     return _Composed(choice, mapped, None, None, returning=True)
@@ -425,7 +769,7 @@ async def _async_compose(hass, entry, profiles, store: ControlStore) -> _Compose
         matches = record is None or io.owner_matches(record)
     else:
         choice = _choice_for(hass, entry, profiles)
-        out = _Composed(choice, map_entities(hass, choice), None, None)
+        out = _Composed(choice, mapped_with_overrides(hass, choice, entry.options), None, None)
         matches = record is None or _entity_owner_matches(hass, choice, out.mapped, record)
     if matches:
         return out
@@ -459,6 +803,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     await executor.async_start()
     telemetry = None
     rt = None
+    verification = None
     channel = live = hub = None
     try:
         def _task(coro, name):
@@ -482,6 +827,10 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         async def _apply(raw) -> None:
             await hub.apply(raw)
 
+        async def _control(block) -> None:
+            if rt is not None:
+                await control_choice.apply(block, rt)
+
         async def _fetch(_now=None) -> None:
             # Odświeżenie planu (i zgody) — zaraz po nim cykl: cofnięta zgoda działa od razu.
             await fetcher.async_refresh()
@@ -501,14 +850,39 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         live = LiveSender(cloud=cloud, telemetry=telemetry, on_signals=_apply, task_factory=_task)
         hub = SignalsHub(base_url=backend.base_url, channel=channel, live=live, refresh=_fetch, task_factory=_task)
         fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
-                                  on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply)
+                                  on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply,
+                                  on_control=_control)
         await telemetry.async_start()
+        if choice is not None and not composed.returning:
+            # Przed pierwszym cyklem: w trybie bezpośrednim plan czeka na zweryfikowane urządzenie.
+            verification = VerificationRunner(
+                hass, entry, executor, params=default_params(choice.profile),
+                start_rung=start_rung_for(choice.profile, choice.integration_domain, direct=conn is not None),
+                salt=await async_installation_salt(hass), on_urgent=telemetry.async_flush)
+            await verification.async_start()
         rt = ControlRuntime(executor, fetcher, telemetry, cloud, choice, mapped, rated,
                             options_at_setup=dict(opts),
                             inverter_entities=inverter_entity_ids(hass, choice, mapped), direct=conn,
-                            channel=channel, live=live, hub=hub)
+                            channel=channel, live=live, hub=hub, report=report, verification=verification,
+                            hass=hass, entry=entry)
 
+        telemetry.control_runtime = rt
+        limiter = FlushLimiter(hass, telemetry.async_flush, entry=entry)
+        rt.unsubs.append(limiter.cancel)
+        rt.unsubs.append(async_dispatcher_connect(
+            hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=entry.entry_id), limiter.request))
         rt.unsubs.append(async_track_time_interval(hass, _fetch, timedelta(seconds=SCHEDULE_FETCH_INTERVAL_S)))
+        rt.conflicts = ConflictMonitor(hass, entry, executor, verification=verification,
+                                       clashes=lambda: address_clashes(rt), lan_client=lambda: lan_client_seen(conn))
+        rt.unsubs.append(rt.conflicts.stop)
+        await rt.conflicts.async_start()
+
+        @callback
+        def _on_discovery() -> None:
+            schedule_recommendation(hass, entry, rt)
+
+        rt.unsubs.append(async_dispatcher_connect(
+            hass, SIGNAL_DISCOVERY_UPDATED.format(entry_id=entry.entry_id), _on_discovery))
         track_ha_stop(hass, rt)
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").
         hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})["control"] = rt
@@ -516,6 +890,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     except BaseException:
         # Nieudane złożenie nie zostawia żywego wykonawcy (bez encji wyłącznika nikt by go
         # nie zatrzymał, a każde przeładowanie dokładałoby kolejnego).
+        if verification is not None:
+            await verification.async_stop()
         await _async_abort_setup(hass, entry, executor, telemetry, rt, signals=(hub, live, channel))
         if conn is not None:
             await conn.async_stop()
@@ -525,7 +901,9 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     hass.async_create_background_task(executor.async_tick(), "volcast_first_tick")
     hass.async_create_background_task(_fetch(), "volcast_first_fetch")
     if conn is not None:
-        entry.async_create_background_task(hass, _async_start_direct(conn, executor), "volcast_direct_start")
+        entry.async_create_background_task(
+            hass, _async_start_direct(conn, executor, on_started=lambda: schedule_recommendation(hass, entry, rt)),
+            "volcast_direct_start")
     entry.async_create_background_task(
         hass, async_import_history_once(hass, cloud, executor, load_entity=opts.get(OPT_LOAD_ENERGY),
                                         pv_entity=opts.get(CONF_PV_ENERGY_ENTITY) or None,
@@ -534,8 +912,9 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     return rt
 
 
-async def _async_start_direct(conn, executor) -> None:
-    """Start połączenia w tle (kolizje, tożsamość), pierwszy odczyt i od razu cykl."""
+async def _async_start_direct(conn, executor, on_started: Callable[[], None] | None = None) -> None:
+    """Start połączenia w tle (kolizje, tożsamość), pierwszy odczyt i od razu cykl; potem `on_started`
+    (przeliczenie rekomendacji — po starcie `last_probe` jest pusty, a cel i tożsamość już znane)."""
     try:
         # Własność z wcześniejszej sesji: kolizja statyczna nie odcina powrotu do trybu bazowego.
         conn.allow_conflicted_restore = bool(getattr(executor, "owned", False))
@@ -545,6 +924,12 @@ async def _async_start_direct(conn, executor) -> None:
             await executor.async_tick()
     except Exception as err:  # noqa: BLE001 — połączenie nie psuje prognozy ani wpisu
         _LOGGER.warning("Volcast direct connection start failed (%s)", type(err).__name__)
+    if on_started is not None:
+        try:
+            on_started()
+        except Exception as err:  # noqa: BLE001 — rekomendacja nie psuje startu połączenia
+            _LOGGER.warning("Volcast control: recommendation after the direct start failed (%s)",
+                            type(err).__name__)
 
 
 async def _async_stop_signals(parts) -> None:
@@ -686,6 +1071,8 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
     for unsub in rt.unsubs:
         unsub()
     rt.unsubs.clear()
+    if rt.verification is not None:
+        await rt.verification.async_stop()
     # Sygnały przed powrotem: cykl z pingu po powrocie do trybu bazowego zapisałby plan z powrotem.
     await _async_stop_signals((rt.hub, rt.live, rt.channel))
     if restore:

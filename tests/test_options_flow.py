@@ -280,7 +280,7 @@ def test_strings_have_new_steps_and_errors():
         opts = json.loads((root / name).read_text(encoding="utf-8"))["options"]
         assert {"init", "forecast", "control", "details", "prices"} <= set(opts["step"])
         assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices", "ev_charger"}
-        assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_direct", "control_off"}
+        assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_direct", "control_off", "entity_map"}
         assert "entity_mode_unavailable" in opts["abort"] and "prices_not_usable" in opts["error"]
         assert "currency_invalid" in opts["error"]
         assert "verified" in opts["step"]["control"]["description"]

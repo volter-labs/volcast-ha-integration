@@ -108,11 +108,33 @@ def test_control_menu_has_three_items_no_default():
     assert "default" not in r
 
 
-def test_control_direct_unverified_aborts(monkeypatch):
-    f = flow(runtime=rt(reports=[report()]), profiles=(GW, DEYE), monkeypatch=monkeypatch)   # both draft
-    assert asyncio.run(f.async_step_control_direct()) == {"type": "abort", "reason": "direct_unverified"}
+def test_control_direct_without_a_usable_register_path_aborts(monkeypatch):
     f = flow(runtime=rt(reports=[report(available=False)]), monkeypatch=monkeypatch)
     assert asyncio.run(f.async_step_control_direct())["reason"] == "direct_unverified"
+    f = flow(runtime=rt(reports=[report(profile_id="missing-profile")]), monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct())["reason"] == "direct_unverified"
+
+
+def test_control_direct_draft_profile_is_offered_for_the_verification_ladder(monkeypatch):
+    # Profil roboczy z rozpoznanym falownikiem: „Bezpośrednio” dostępne — drabina rusza od 1 (próba bez
+    # zapisu), zapisy dopiero po zgodzie na szczeblach 4–5.
+    from custom_components.volcast.core.control.recommend import DIRECT, recommend
+    assert ds_mod.offer_reason(report(), [GW, DEYE], ()) is None
+    rec = recommend(None, [GW, DEYE], report(), None)
+    assert (rec.path, rec.ladder_start) == (DIRECT, 1)
+    f = flow(runtime=rt(reports=[report()]), profiles=(GW, DEYE), monkeypatch=monkeypatch)
+    done = asyncio.run(f.async_step_control_direct())
+    assert done["type"] == "create_entry" and done["data"]["control_mode"] == "direct"
+    assert ds_mod.offer_reason(report(identity=False), [GW, DEYE], ()) == "direct_not_found"
+
+
+def test_entity_mode_stays_verified_only():
+    from custom_components.volcast.core.control.caps import entity_mode_ready
+    from custom_components.volcast.core.control.select import ProfileChoice
+    fox = load_builtin("foxess-h")                   # profil roboczy, wpis integracji roboczy
+    domain = fox.raw["ha"]["integrations"][0]["domain"]
+    mapped = {k: f"select.{k}" for k in fox.raw["write"]}
+    assert entity_mode_ready(ProfileChoice(fox, domain, None), mapped) is False
 
 
 def test_control_direct_not_found_aborts(monkeypatch):

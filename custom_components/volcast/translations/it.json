@@ -125,11 +125,12 @@
       },
       "control": {
         "title": "Controllo dell'inverter",
-        "description": "Tramite l'integrazione dell'inverter: Volcast scrive le entità di modalità e potenza dell'inverter. Direttamente: Volcast comunica con l'inverter sulla rete locale; disponibile solo per inverter con controllo diretto verificato e quando nessun'altra integrazione usa l'inverter (cercalo prima in Dettagli dell'impianto). Il controllo richiede anche l'interruttore in Home Assistant e il tuo consenso nell'app Volcast.",
+        "description": "Tramite l'integrazione dell'inverter — Volcast scrive le entità di modalità e potenza dell'inverter. Direttamente — Volcast comunica con l'inverter tramite la rete locale; disponibile solo per gli inverter il cui controllo diretto è verificato e quando nessun'altra integrazione usa l'inverter (cercalo prima in Dettagli installazione). Il controllo richiede anche l'interruttore in Home Assistant e il tuo consenso nell'app Volcast.",
         "menu_options": {
           "control_entities": "Tramite l'integrazione dell'inverter (entità)",
-          "control_direct": "Direttamente sulla rete locale",
-          "control_off": "Disattivato: solo previsione e monitoraggio"
+          "control_direct": "Direttamente tramite la rete locale",
+          "control_off": "Disattivato — solo previsione e monitoraggio",
+          "entity_map": "Scegli manualmente le entità dell'inverter"
         }
       },
       "details": {
@@ -215,6 +216,71 @@
           "power": "Potenza",
           "energy": "Energia"
         }
+      },
+      "control_integration_write_entities": {
+        "title": "Controllo dell'inverter",
+        "description": "Consigliato: l'integrazione del tuo inverter può scrivere le impostazioni dell'inverter, quindi Volcast usa le sue entità. Tramite l'integrazione dell'inverter — Volcast scrive le entità di modalità e potenza dell'inverter. Direttamente — Volcast comunica con l'inverter tramite la rete locale; disponibile solo per gli inverter il cui controllo diretto è verificato e quando nessun'altra integrazione usa l'inverter (cercalo prima in Dettagli installazione). Il controllo richiede anche l'interruttore in Home Assistant e il tuo consenso nell'app Volcast.",
+        "menu_options": {
+          "control_entities": "Tramite l'integrazione dell'inverter (entità) (consigliato)",
+          "control_direct": "Direttamente tramite la rete locale",
+          "control_off": "Disattivato — solo previsione e monitoraggio",
+          "entity_map": "Scegli manualmente le entità dell'inverter"
+        }
+      },
+      "control_no_integration_identify_ok": {
+        "title": "Controllo dell'inverter",
+        "description": "Consigliato: l'inverter è stato identificato e Volcast può raggiungerlo direttamente, ma nessuna integrazione offre la scrittura. Tramite l'integrazione dell'inverter — Volcast scrive le entità di modalità e potenza dell'inverter. Direttamente — Volcast comunica con l'inverter tramite la rete locale; disponibile solo per gli inverter il cui controllo diretto è verificato e quando nessun'altra integrazione usa l'inverter (cercalo prima in Dettagli installazione). Il controllo richiede anche l'interruttore in Home Assistant e il tuo consenso nell'app Volcast.",
+        "menu_options": {
+          "control_entities": "Tramite l'integrazione dell'inverter (entità)",
+          "control_direct": "Direttamente tramite la rete locale (consigliato)",
+          "control_off": "Disattivato — solo previsione e monitoraggio",
+          "entity_map": "Scegli manualmente le entità dell'inverter"
+        }
+      },
+      "control_integration_read_only": {
+        "title": "Controllo dell'inverter",
+        "description": "Consigliato: l'integrazione del tuo inverter legge solo i dati, quindi Volcast controlla direttamente l'inverter. Tramite l'integrazione dell'inverter — Volcast scrive le entità di modalità e potenza dell'inverter. Direttamente — Volcast comunica con l'inverter tramite la rete locale; disponibile solo per gli inverter il cui controllo diretto è verificato e quando nessun'altra integrazione usa l'inverter (cercalo prima in Dettagli installazione). Il controllo richiede anche l'interruttore in Home Assistant e il tuo consenso nell'app Volcast.",
+        "menu_options": {
+          "control_entities": "Tramite l'integrazione dell'inverter (entità)",
+          "control_direct": "Direttamente tramite la rete locale (consigliato)",
+          "control_off": "Disattivato — solo previsione e monitoraggio",
+          "entity_map": "Scegli manualmente le entità dell'inverter"
+        }
+      },
+      "control_unsupported": {
+        "title": "Controllo dell'inverter",
+        "description": "Per questo inverter non è stato trovato automaticamente un percorso di controllo sicuro, quindi non viene consigliato nulla. Tramite l'integrazione dell'inverter — Volcast scrive le entità di modalità e potenza dell'inverter. Direttamente — Volcast comunica con l'inverter tramite la rete locale; disponibile solo per gli inverter il cui controllo diretto è verificato e quando nessun'altra integrazione usa l'inverter (cercalo prima in Dettagli installazione). Il controllo richiede anche l'interruttore in Home Assistant e il tuo consenso nell'app Volcast.",
+        "menu_options": {
+          "control_entities": "Tramite l'integrazione dell'inverter (entità)",
+          "control_direct": "Direttamente tramite la rete locale",
+          "control_off": "Disattivato — solo previsione e monitoraggio",
+          "entity_map": "Scegli manualmente le entità dell'inverter"
+        }
+      },
+      "entity_map": {
+        "title": "Entità dell'inverter",
+        "description": "Scegli l'entità che Volcast usa per ogni impostazione dell'inverter. Lascia un campo come suggerito per mantenere l'abbinamento automatico.",
+        "data": {
+          "mode": "Modalità di funzionamento",
+          "mode_value": "Valore della modalità di funzionamento",
+          "power_w": "Limite di potenza di carica/scarica",
+          "soc": "Stato di carica della batteria",
+          "soc_min": "Stato di carica minimo",
+          "soc_max": "Stato di carica massimo",
+          "export_limit_enabled": "Interruttore del limite di immissione",
+          "export_limit_w": "Limite di immissione",
+          "active_power_w": "Potenza attiva dell'inverter",
+          "battery_current_a": "Corrente della batteria",
+          "battery_power_w": "Potenza della batteria",
+          "battery_temp_c": "Temperatura della batteria",
+          "battery_voltage_v": "Tensione della batteria",
+          "grid_export_total_kwh": "Immissione totale in rete",
+          "grid_import_total_kwh": "Prelievo totale dalla rete",
+          "grid_power_w": "Potenza di rete",
+          "load_power_w": "Consumo della casa",
+          "pv_energy_total_kwh": "Energia FV totale",
+          "pv_power_w": "Potenza FV"
+        }
       }
     },
     "abort": {
@@ -273,6 +339,10 @@
       "title": "Volcast non riesce a controllare l'inverter",
       "description": "Il controllo dell'inverter da parte di Volcast ha smesso di funzionare (errori di scrittura ripetuti o uno stato di controllo salvato che non è stato possibile leggere). L'inverter potrebbe usare ancora le ultime impostazioni applicate da Volcast. Controlla le impostazioni dell'inverter e i log di Home Assistant."
     },
+    "control_choice_failed": {
+      "title": "Volcast non è riuscito ad applicare la tua scelta di controllo",
+      "description": "Una scelta di controllo fatta nell'app Volcast non è stata applicata dopo più tentativi. Controlla le impostazioni di controllo nelle opzioni di Volcast e nei log di Home Assistant, poi scegli di nuovo nell'app."
+    },
     "foreign_control_direct": {
       "title": "Controllo dell'inverter da parte di Volcast in pausa",
       "description": "L'impostazione {setting} dell'inverter è stata modificata al di fuori di Volcast. Il controllo è in pausa per 30 minuti e Volcast mantiene il valore che hai impostato finché il suo piano per quell'impostazione non cambia. Per fermare il controllo, spegni l'interruttore di controllo di Volcast."
@@ -304,6 +374,38 @@
     "unsupported_setting": {
       "title": "Alcune impostazioni dell'inverter non sono disponibili per Volcast",
       "description": "Volcast non può usare queste impostazioni dell'inverter perché le relative entità sono mancanti, disattivate o non disponibili: {entities}. Il controllo prosegue senza di esse e il piano di Volcast non fa più affidamento su di esse. Quando le entità tornano disponibili, Volcast le usa automaticamente."
+    },
+    "controller_conflict": {
+      "title": "Un altro controllore sta controllando il tuo inverter",
+      "description": "Un altro controllore ({kind}: {label}) scrive sulle stesse impostazioni dell'inverter di Volcast. Seleziona Correggi per scegliere chi controlla l'inverter: Volcast, o il tuo controllore (in tal caso Volcast si limita a pianificare).",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Chi controlla l'inverter?",
+            "description": "Mentre un altro controllore scrive, Volcast sospende la verifica. Scegli quale controlla l'inverter.",
+            "menu_options": {
+              "volcast": "Volcast controlla l'inverter",
+              "own_ems": "Il mio controllore (Volcast solo pianifica)"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "Il controllo di Volcast non è in esecuzione. Ricarica l'integrazione e riprova.",
+          "restore_failed": "Volcast non è riuscito a riportare l'inverter alla configurazione iniziale, quindi non è stato modificato nulla. Riprova quando l'inverter è raggiungibile."
+        }
+      }
+    },
+    "verification_stopped": {
+      "title": "Verifica del dispositivo Volcast interrotta",
+      "description": "La verifica dell'inverter si è interrotta ({reason}). Volcast non controlla l'inverter finché non è verificato. Seleziona Correggi per riprovare.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Riprova la verifica",
+            "description": "Volcast riavvia la verifica dell'inverter dal passaggio in cui si era interrotta."
+          }
+        }
+      }
     }
   },
   "services": {
@@ -418,6 +520,9 @@
       },
       "control_direct_link_quality": {
         "name": "Timeout del collegamento con l'inverter"
+      },
+      "verification": {
+        "name": "Verifica del dispositivo"
       }
     },
     "binary_sensor": {

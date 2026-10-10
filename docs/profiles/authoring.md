@@ -20,16 +20,44 @@ file in `profiles/` automatically.
 ## 2. Draft and verified
 
 * `status: "draft"` — the profile is used for identification, reading, the Home Assistant entity
-  mapping and a **read-only test connection** that shows what would be written. It never writes
-  to the inverter.
-* `status: "verified"` — writes are allowed. A profile becomes verified only after a live trial on
-  a real unit, and the top-level `status` and `modbus.status` are switched together.
+  mapping and a **read-only test connection** that shows what would be written. On the direct path a
+  draft profile is offered once the inverter is identified and the register probe succeeds: the
+  per-device verification ladder then starts with a read-only trial, and nothing is written until the
+  owner allows control (the control write and the test window, below). The plan follows a draft
+  profile only on a device the ladder has verified.
+* `status: "verified"` — the ladder starts at the control write. A profile becomes verified only after
+  a live trial on a real unit, and the top-level `status` and `modbus.status` are switched together.
 * Every integration entry under `ha.integrations` carries its own `status` with the same meaning.
   Entity mode is offered only when both the profile and the integration entry are `verified`; a
   `draft` entry is only a hint for mapping readings, and the cloud is told that no setting can be
   controlled.
 
 New profiles are always `draft` with a `status_note` (section 8).
+
+### Where the verification ladder starts
+
+The status only sets the rung where the per-device verification ladder starts:
+
+* `draft` — the ladder starts at identification and reading and runs through the read-only trial
+  (it counts the writes it would have made; nothing reaches the inverter during the trial). Entity mode
+  stays closed to a `draft` profile or integration entry.
+* `verified` — the ladder starts at the control write (the current value is re-written and confirmed
+  by read-back).
+
+An optional top-level `verification` block sets the ladder's parameters. Every key is optional and
+must lie within its range:
+
+All three values are whole numbers (integers; the validator rejects fractions and booleans), inclusive
+at both ends:
+
+* `trial_hours` — integer 1 to 72, the length of the read-only trial in hours.
+* `window_minutes` — integer 5 to 60, the length of the short test window in minutes.
+* `window_power_w` — integer 100 to 3000, the power of the test window in watts.
+
+Vendor features the schema cannot express yet are listed in `engine-gaps.md`. For a profile that
+depends on one of them, the ladder ends at the control write instead of the test window. Two rows were
+added for this: "Test window without a guarded forced grid charge" and "Test window for time-window
+profiles".
 
 ## 3. Top-level keys
 

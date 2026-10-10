@@ -18,6 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.volcast.const import DOMAIN
 from custom_components.volcast.control import direct_search as ds
 from custom_components.volcast.control import runtime as rt_mod
+from custom_components.volcast.core.control.ladder import VERIFIED, Ladder, LadderParams, device_key
 from custom_components.volcast.core.modbus.identity import device_fingerprint
 from custom_components.volcast.core.profile import load_builtin, profile_from_dict
 from custom_components.volcast.core.registers import RegisterImage
@@ -83,9 +84,21 @@ async def _settle(hass, rt) -> None:
                          f"decision={d and (d.status, d.reason)}")
 
 
+def _verified_device(target: dict) -> dict:
+    """Rekord drabiny: urządzenie z celu już zweryfikowane (plan steruje nim od pierwszego cyklu)."""
+    lad = Ladder(4, LadderParams(24, 15, 500),
+                 device_key=device_key(SALT, f"direct|{target['profile_id']}|{target['device_fp']}"))
+    lad.state.state, lad.state.since = VERIFIED, dt_util.utcnow()
+    return lad.to_record()
+
+
 async def _setup(hass, hass_storage, options, *, state=None, profiles=None, monkeypatch=None):
     seed_salt(hass_storage)
-    store_state(hass_storage, "paired01", state or {"consent": True, "local_switch": True, "plan_raw": _plan()})
+    if state is None:
+        state = {"consent": True, "local_switch": True, "plan_raw": _plan()}
+        if options.get("control_mode") == "direct":
+            state["verification"] = _verified_device(options["direct_target"])
+    store_state(hass_storage, "paired01", state)
     if profiles is not None:
         monkeypatch.setattr(rt_mod.ds, "load_profiles", lambda: list(profiles))
     entry = make_entry(hass, options=options)
@@ -153,6 +166,26 @@ async def test_real_ha_direct_write_restore_reload_unload(hass: HomeAssistant, n
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=5))
     await hass.async_block_till_done()
     assert goodwe_sim.requests == before
+
+
+async def test_real_ha_upgrade_keeps_control_of_a_device_controlled_before(hass: HomeAssistant, network_down,
+                                                                       hass_storage, goodwe_sim, monkeypatch):
+    # Magazyn sprzed drabiny: własność tego urządzenia, bez rekordu weryfikacji — sterowanie nie staje.
+    from custom_components.volcast.control.direct import target_fingerprint
+    gw = _verified_goodwe()
+    target = _target(goodwe_sim, gw)
+    owner = {"profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(target, SALT),
+             "device": target["device_fp"]}
+    state = {"consent": True, "local_switch": True, "plan_raw": _plan(), "owned": True, "owner": owner,
+             "snapshot": {"mode": "auto"}, "restore_keys": ["mode"]}
+    entry, rt = await _setup(hass, hass_storage, {"control_mode": "direct", "direct_target": target},
+                             state=state, profiles=[gw], monkeypatch=monkeypatch)
+    await _settle(hass, rt)
+    ladder = rt.verification.ladder
+    assert ladder.verified and ladder.migrated and rt.verification.payload()["migrated"] is True
+    assert rt.executor.last_decision.status == "write" and goodwe_sim.bank.read(MODE, 1) == [10]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_real_ha_stop_event_sets_neutral_mode_and_keeps_ownership(hass: HomeAssistant, network_down,

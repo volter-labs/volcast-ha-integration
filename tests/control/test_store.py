@@ -118,3 +118,33 @@ def test_installation_salt_is_stable_and_outside_the_control_record():
     assert "salt" not in ControlState.__dataclass_fields__
     other = asyncio.run(async_installation_salt(SimpleNamespace(data={})))
     assert other != salt                                                     # losowa na instalację
+
+
+def _ladder_record():
+    from datetime import datetime, timezone
+
+    from custom_components.volcast.core.control.ladder import Ladder, LadderParams
+
+    lad = Ladder(4, LadderParams(24, 15, 500), device_key="3f9a1c0e7b2d4a6f")
+    lad.tick(datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc))
+    return lad.to_record()
+
+
+def test_verification_and_plan_only_round_trip_and_default():
+    st = ControlStore(object(), "e1")
+    loaded = asyncio.run(st.async_load())
+    assert loaded.verification == {} and loaded.plan_only is False
+    s = ControlState(verification=_ladder_record(), plan_only=True)
+    asyncio.run(st.async_save(s))
+    back = asyncio.run(st.async_load())
+    assert back.verification == s.verification and back.plan_only is True
+
+
+def test_malformed_verification_record_is_dropped_with_a_warning(caplog):
+    st = ControlStore(object(), "e1")
+    for bad in ({"v": 1, "device_key": "123"}, ["x"], "verified"):
+        asyncio.run(st._store.async_save({"verification": bad, "plan_only": "yes"}))
+        caplog.clear()
+        loaded = asyncio.run(st.async_load())
+        assert loaded.verification == {} and loaded.plan_only is False
+        assert "verification" in caplog.text

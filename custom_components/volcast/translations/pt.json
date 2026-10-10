@@ -125,11 +125,12 @@
       },
       "control": {
         "title": "Controlo do inversor",
-        "description": "Através da integração do inversor — o Volcast escreve as entidades de modo e potência do inversor. Diretamente — o Volcast comunica com o inversor pela rede local; disponível apenas para inversores com controlo direto verificado e quando nenhuma outra integração usa o inversor (procure-o primeiro em Detalhes da instalação). O controlo também precisa do interruptor no Home Assistant e do seu consentimento na aplicação Volcast.",
+        "description": "Pela integração do inversor — o Volcast escreve as entidades de modo e potência do inversor. Diretamente — o Volcast comunica com o inversor pela rede local; disponível apenas para inversores cujo controlo direto está verificado e quando nenhuma outra integração usa o inversor (procure-o primeiro em Detalhes da instalação). O controlo requer também o interruptor no Home Assistant e o seu consentimento na app Volcast.",
         "menu_options": {
-          "control_entities": "Através da integração do inversor (entidades)",
+          "control_entities": "Pela integração do inversor (entidades)",
           "control_direct": "Diretamente pela rede local",
-          "control_off": "Desligado — apenas previsão e monitorização"
+          "control_off": "Desligado — apenas previsão e monitorização",
+          "entity_map": "Escolher manualmente as entidades do inversor"
         }
       },
       "details": {
@@ -215,6 +216,71 @@
           "power": "Potência",
           "energy": "Energia"
         }
+      },
+      "control_integration_write_entities": {
+        "title": "Controlo do inversor",
+        "description": "Recomendado: a sua integração do inversor pode escrever as definições do inversor, por isso o Volcast usa as suas entidades. Pela integração do inversor — o Volcast escreve as entidades de modo e potência do inversor. Diretamente — o Volcast comunica com o inversor pela rede local; disponível apenas para inversores cujo controlo direto está verificado e quando nenhuma outra integração usa o inversor (procure-o primeiro em Detalhes da instalação). O controlo requer também o interruptor no Home Assistant e o seu consentimento na app Volcast.",
+        "menu_options": {
+          "control_entities": "Pela integração do inversor (entidades) (recomendado)",
+          "control_direct": "Diretamente pela rede local",
+          "control_off": "Desligado — apenas previsão e monitorização",
+          "entity_map": "Escolher manualmente as entidades do inversor"
+        }
+      },
+      "control_no_integration_identify_ok": {
+        "title": "Controlo do inversor",
+        "description": "Recomendado: o inversor foi identificado e o Volcast consegue aceder-lhe diretamente, mas nenhuma integração oferece escrita. Pela integração do inversor — o Volcast escreve as entidades de modo e potência do inversor. Diretamente — o Volcast comunica com o inversor pela rede local; disponível apenas para inversores cujo controlo direto está verificado e quando nenhuma outra integração usa o inversor (procure-o primeiro em Detalhes da instalação). O controlo requer também o interruptor no Home Assistant e o seu consentimento na app Volcast.",
+        "menu_options": {
+          "control_entities": "Pela integração do inversor (entidades)",
+          "control_direct": "Diretamente pela rede local (recomendado)",
+          "control_off": "Desligado — apenas previsão e monitorização",
+          "entity_map": "Escolher manualmente as entidades do inversor"
+        }
+      },
+      "control_integration_read_only": {
+        "title": "Controlo do inversor",
+        "description": "Recomendado: a sua integração do inversor apenas lê dados, por isso o Volcast controla o inversor diretamente. Pela integração do inversor — o Volcast escreve as entidades de modo e potência do inversor. Diretamente — o Volcast comunica com o inversor pela rede local; disponível apenas para inversores cujo controlo direto está verificado e quando nenhuma outra integração usa o inversor (procure-o primeiro em Detalhes da instalação). O controlo requer também o interruptor no Home Assistant e o seu consentimento na app Volcast.",
+        "menu_options": {
+          "control_entities": "Pela integração do inversor (entidades)",
+          "control_direct": "Diretamente pela rede local (recomendado)",
+          "control_off": "Desligado — apenas previsão e monitorização",
+          "entity_map": "Escolher manualmente as entidades do inversor"
+        }
+      },
+      "control_unsupported": {
+        "title": "Controlo do inversor",
+        "description": "Não foi encontrado automaticamente nenhum caminho de controlo seguro para este inversor, por isso nada é recomendado. Pela integração do inversor — o Volcast escreve as entidades de modo e potência do inversor. Diretamente — o Volcast comunica com o inversor pela rede local; disponível apenas para inversores cujo controlo direto está verificado e quando nenhuma outra integração usa o inversor (procure-o primeiro em Detalhes da instalação). O controlo requer também o interruptor no Home Assistant e o seu consentimento na app Volcast.",
+        "menu_options": {
+          "control_entities": "Pela integração do inversor (entidades)",
+          "control_direct": "Diretamente pela rede local",
+          "control_off": "Desligado — apenas previsão e monitorização",
+          "entity_map": "Escolher manualmente as entidades do inversor"
+        }
+      },
+      "entity_map": {
+        "title": "Entidades do inversor",
+        "description": "Escolha a entidade que o Volcast usa para cada definição do inversor. Deixe um campo como sugerido para manter a correspondência automática.",
+        "data": {
+          "mode": "Modo de funcionamento",
+          "mode_value": "Valor do modo de funcionamento",
+          "power_w": "Limite de potência de carga/descarga",
+          "soc": "Estado de carga da bateria",
+          "soc_min": "Estado de carga mínimo",
+          "soc_max": "Estado de carga máximo",
+          "export_limit_enabled": "Interruptor do limite de exportação",
+          "export_limit_w": "Limite de exportação",
+          "active_power_w": "Potência ativa do inversor",
+          "battery_current_a": "Corrente da bateria",
+          "battery_power_w": "Potência da bateria",
+          "battery_temp_c": "Temperatura da bateria",
+          "battery_voltage_v": "Tensão da bateria",
+          "grid_export_total_kwh": "Exportação total para a rede",
+          "grid_import_total_kwh": "Importação total da rede",
+          "grid_power_w": "Potência da rede",
+          "load_power_w": "Consumo da casa",
+          "pv_energy_total_kwh": "Energia FV total",
+          "pv_power_w": "Potência FV"
+        }
       }
     },
     "abort": {
@@ -273,6 +339,10 @@
       "title": "O Volcast não consegue controlar o inversor",
       "description": "O controlo do inversor pelo Volcast deixou de funcionar (erros de escrita repetidos ou um estado de controlo guardado que não foi possível ler). O inversor pode ainda usar as últimas definições aplicadas pelo Volcast. Verifique as definições do inversor e os registos do Home Assistant."
     },
+    "control_choice_failed": {
+      "title": "O Volcast não conseguiu aplicar a sua escolha de controlo",
+      "description": "Uma escolha de controlo feita na app Volcast não pôde ser aplicada após várias tentativas. Verifique as definições de controlo nas opções do Volcast e nos registos do Home Assistant e escolha de novo na app."
+    },
     "foreign_control_direct": {
       "title": "Controlo do inversor pelo Volcast em pausa",
       "description": "A definição {setting} do inversor foi alterada fora do Volcast. O controlo está em pausa durante 30 minutos e o Volcast mantém o valor que definiu até o seu plano para essa definição mudar. Para parar o controlo, desligue o interruptor de controlo do Volcast."
@@ -304,6 +374,38 @@
     "unsupported_setting": {
       "title": "Algumas definições do inversor não estão disponíveis para o Volcast",
       "description": "O Volcast não pode utilizar estas definições do inversor porque as respetivas entidades estão em falta, desativadas ou indisponíveis: {entities}. O controlo continua sem elas e o plano do Volcast deixa de depender delas. Quando as entidades voltarem a estar disponíveis, o Volcast utiliza-as automaticamente."
+    },
+    "controller_conflict": {
+      "title": "Outro controlador está a controlar o seu inversor",
+      "description": "Outro controlador ({kind}: {label}) escreve nas mesmas definições do inversor que o Volcast. Selecione Corrigir para escolher quem controla o inversor: o Volcast ou o seu próprio controlador (nesse caso, o Volcast apenas planeia).",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Quem controla o inversor?",
+            "description": "Enquanto outro controlador escreve, o Volcast pausa a verificação. Escolha qual controla o inversor.",
+            "menu_options": {
+              "volcast": "O Volcast controla o inversor",
+              "own_ems": "O meu próprio controlador (o Volcast apenas planeia)"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "O controlo do Volcast não está em execução. Recarregue a integração e tente novamente.",
+          "restore_failed": "O Volcast não conseguiu repor o inversor na configuração inicial, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível."
+        }
+      }
+    },
+    "verification_stopped": {
+      "title": "Verificação do dispositivo Volcast interrompida",
+      "description": "A verificação do inversor foi interrompida ({reason}). O Volcast não controla o inversor até estar verificado. Selecione Corrigir para tentar novamente.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Repetir a verificação",
+            "description": "O Volcast reinicia a verificação do inversor a partir do passo em que parou."
+          }
+        }
+      }
     }
   },
   "services": {
@@ -418,6 +520,9 @@
       },
       "control_direct_link_quality": {
         "name": "Tempos limite da ligação ao inversor"
+      },
+      "verification": {
+        "name": "Verificação do dispositivo"
       }
     },
     "binary_sensor": {

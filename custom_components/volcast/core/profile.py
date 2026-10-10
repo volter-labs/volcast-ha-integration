@@ -161,6 +161,14 @@ def direct_verified(profile: Profile) -> bool:
     return profile.status == "verified" and profile.modbus.status == "verified"
 
 
+def ha_integration(profile: Profile, domain: str | None) -> Mapping[str, Any] | None:
+    """Wpis `ha.integrations[]` profilu dla domeny integracji HA; None, gdy profil jej nie opisuje."""
+    if not domain:
+        return None
+    return next((i for i in (profile.raw.get("ha") or {}).get("integrations") or ()
+                 if i.get("domain") == domain), None)
+
+
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
     # Domyślnie `json` bierze ostatnie wystąpienie klucza — w profilu marki to cicha
     # podmiana nastawy, więc powtórzony klucz jest błędem pliku.

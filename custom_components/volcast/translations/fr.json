@@ -125,11 +125,12 @@
       },
       "control": {
         "title": "Pilotage de l'onduleur",
-        "description": "Via l'intégration de votre onduleur — Volcast écrit les entités de mode et de puissance de l'onduleur. Directement — Volcast communique avec l'onduleur sur le réseau local ; disponible uniquement pour les onduleurs dont le pilotage direct est vérifié et lorsqu'aucune autre intégration n'utilise l'onduleur (recherchez-le d'abord dans Détails de l'installation). Le pilotage nécessite aussi l'interrupteur dans Home Assistant et votre accord dans l'application Volcast.",
+        "description": "Via l'intégration de l'onduleur — Volcast écrit les entités de mode et de puissance de l'onduleur. Directement — Volcast communique avec l'onduleur via le réseau local ; disponible uniquement pour les onduleurs dont le pilotage direct est vérifié et lorsqu'aucune autre intégration n'utilise l'onduleur (recherchez-le d'abord dans Détails de l'installation). Le pilotage nécessite aussi l'interrupteur dans Home Assistant et votre consentement dans l'application Volcast.",
         "menu_options": {
           "control_entities": "Via l'intégration de l'onduleur (entités)",
-          "control_direct": "Directement sur le réseau local",
-          "control_off": "Désactivé — prévision et surveillance uniquement"
+          "control_direct": "Directement via le réseau local",
+          "control_off": "Désactivé — prévision et suivi uniquement",
+          "entity_map": "Choisir manuellement les entités de l'onduleur"
         }
       },
       "details": {
@@ -215,6 +216,71 @@
           "power": "Puissance",
           "energy": "Énergie"
         }
+      },
+      "control_integration_write_entities": {
+        "title": "Pilotage de l'onduleur",
+        "description": "Recommandé : votre intégration d'onduleur peut écrire les réglages de l'onduleur, donc Volcast utilise ses entités. Via l'intégration de l'onduleur — Volcast écrit les entités de mode et de puissance de l'onduleur. Directement — Volcast communique avec l'onduleur via le réseau local ; disponible uniquement pour les onduleurs dont le pilotage direct est vérifié et lorsqu'aucune autre intégration n'utilise l'onduleur (recherchez-le d'abord dans Détails de l'installation). Le pilotage nécessite aussi l'interrupteur dans Home Assistant et votre consentement dans l'application Volcast.",
+        "menu_options": {
+          "control_entities": "Via l'intégration de l'onduleur (entités) (recommandé)",
+          "control_direct": "Directement via le réseau local",
+          "control_off": "Désactivé — prévision et suivi uniquement",
+          "entity_map": "Choisir manuellement les entités de l'onduleur"
+        }
+      },
+      "control_no_integration_identify_ok": {
+        "title": "Pilotage de l'onduleur",
+        "description": "Recommandé : votre onduleur a été identifié et Volcast peut l'atteindre directement, mais aucune intégration ne propose l'écriture. Via l'intégration de l'onduleur — Volcast écrit les entités de mode et de puissance de l'onduleur. Directement — Volcast communique avec l'onduleur via le réseau local ; disponible uniquement pour les onduleurs dont le pilotage direct est vérifié et lorsqu'aucune autre intégration n'utilise l'onduleur (recherchez-le d'abord dans Détails de l'installation). Le pilotage nécessite aussi l'interrupteur dans Home Assistant et votre consentement dans l'application Volcast.",
+        "menu_options": {
+          "control_entities": "Via l'intégration de l'onduleur (entités)",
+          "control_direct": "Directement via le réseau local (recommandé)",
+          "control_off": "Désactivé — prévision et suivi uniquement",
+          "entity_map": "Choisir manuellement les entités de l'onduleur"
+        }
+      },
+      "control_integration_read_only": {
+        "title": "Pilotage de l'onduleur",
+        "description": "Recommandé : votre intégration d'onduleur ne fait que lire les données, donc Volcast pilote l'onduleur directement. Via l'intégration de l'onduleur — Volcast écrit les entités de mode et de puissance de l'onduleur. Directement — Volcast communique avec l'onduleur via le réseau local ; disponible uniquement pour les onduleurs dont le pilotage direct est vérifié et lorsqu'aucune autre intégration n'utilise l'onduleur (recherchez-le d'abord dans Détails de l'installation). Le pilotage nécessite aussi l'interrupteur dans Home Assistant et votre consentement dans l'application Volcast.",
+        "menu_options": {
+          "control_entities": "Via l'intégration de l'onduleur (entités)",
+          "control_direct": "Directement via le réseau local (recommandé)",
+          "control_off": "Désactivé — prévision et suivi uniquement",
+          "entity_map": "Choisir manuellement les entités de l'onduleur"
+        }
+      },
+      "control_unsupported": {
+        "title": "Pilotage de l'onduleur",
+        "description": "Aucune méthode de pilotage sûre n'a été trouvée automatiquement pour cet onduleur, donc rien n'est recommandé. Via l'intégration de l'onduleur — Volcast écrit les entités de mode et de puissance de l'onduleur. Directement — Volcast communique avec l'onduleur via le réseau local ; disponible uniquement pour les onduleurs dont le pilotage direct est vérifié et lorsqu'aucune autre intégration n'utilise l'onduleur (recherchez-le d'abord dans Détails de l'installation). Le pilotage nécessite aussi l'interrupteur dans Home Assistant et votre consentement dans l'application Volcast.",
+        "menu_options": {
+          "control_entities": "Via l'intégration de l'onduleur (entités)",
+          "control_direct": "Directement via le réseau local",
+          "control_off": "Désactivé — prévision et suivi uniquement",
+          "entity_map": "Choisir manuellement les entités de l'onduleur"
+        }
+      },
+      "entity_map": {
+        "title": "Entités de l'onduleur",
+        "description": "Choisissez l'entité que Volcast utilise pour chaque réglage de l'onduleur. Laissez un champ tel que suggéré pour conserver la correspondance automatique.",
+        "data": {
+          "mode": "Mode de fonctionnement",
+          "mode_value": "Valeur du mode de fonctionnement",
+          "power_w": "Limite de puissance de charge/décharge",
+          "soc": "État de charge de la batterie",
+          "soc_min": "État de charge minimal",
+          "soc_max": "État de charge maximal",
+          "export_limit_enabled": "Interrupteur de limite d'injection",
+          "export_limit_w": "Limite d'injection",
+          "active_power_w": "Puissance active de l'onduleur",
+          "battery_current_a": "Courant de batterie",
+          "battery_power_w": "Puissance de batterie",
+          "battery_temp_c": "Température de la batterie",
+          "battery_voltage_v": "Tension de la batterie",
+          "grid_export_total_kwh": "Énergie totale injectée au réseau",
+          "grid_import_total_kwh": "Énergie totale soutirée du réseau",
+          "grid_power_w": "Puissance du réseau",
+          "load_power_w": "Consommation de la maison",
+          "pv_energy_total_kwh": "Énergie PV totale",
+          "pv_power_w": "Puissance PV"
+        }
       }
     },
     "abort": {
@@ -273,6 +339,10 @@
       "title": "Volcast ne peut pas piloter l'onduleur",
       "description": "Le pilotage de l'onduleur par Volcast a cessé de fonctionner (erreurs d'écriture répétées ou état de pilotage enregistré illisible). L'onduleur utilise peut-être encore les derniers réglages appliqués par Volcast. Vérifiez les réglages de l'onduleur et les journaux de Home Assistant."
     },
+    "control_choice_failed": {
+      "title": "Volcast n'a pas pu appliquer votre choix de pilotage",
+      "description": "Un choix de pilotage fait dans l'application Volcast n'a pas pu être appliqué après plusieurs tentatives. Vérifiez les réglages de pilotage dans les options de Volcast et les journaux de Home Assistant, puis choisissez à nouveau dans l'application."
+    },
     "foreign_control_direct": {
       "title": "Pilotage de l'onduleur par Volcast en pause",
       "description": "Le réglage {setting} de l'onduleur a été modifié en dehors de Volcast. Le pilotage est en pause pendant 30 minutes et Volcast conserve la valeur que vous avez définie jusqu'à ce que son plan pour ce réglage change. Pour arrêter le pilotage, désactivez l'interrupteur de pilotage Volcast."
@@ -304,6 +374,38 @@
     "unsupported_setting": {
       "title": "Certains réglages de l'onduleur ne sont pas disponibles pour Volcast",
       "description": "Volcast ne peut pas utiliser ces réglages de l'onduleur, car leurs entités sont manquantes, désactivées ou indisponibles : {entities}. Le pilotage continue sans eux et le plan Volcast ne s'appuie plus dessus. Lorsque les entités redeviennent disponibles, Volcast les utilise automatiquement."
+    },
+    "controller_conflict": {
+      "title": "Un autre contrôleur pilote votre onduleur",
+      "description": "Un autre contrôleur ({kind} : {label}) écrit dans les mêmes réglages d'onduleur que Volcast. Sélectionnez Corriger pour choisir qui pilote l'onduleur : Volcast, ou votre propre contrôleur (Volcast ne fera alors que planifier).",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Qui pilote l'onduleur ?",
+            "description": "Tant qu'un autre contrôleur écrit, Volcast suspend la vérification. Choisissez celui qui pilote l'onduleur.",
+            "menu_options": {
+              "volcast": "Volcast pilote l'onduleur",
+              "own_ems": "Mon propre contrôleur (Volcast planifie seulement)"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "Le pilotage Volcast n'est pas actif. Rechargez l'intégration et réessayez.",
+          "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans son état initial, donc rien n'a été modifié. Réessayez lorsque l'onduleur sera accessible."
+        }
+      }
+    },
+    "verification_stopped": {
+      "title": "Vérification de l'appareil Volcast arrêtée",
+      "description": "La vérification de l'onduleur s'est arrêtée ({reason}). Volcast ne pilote pas l'onduleur tant qu'il n'est pas vérifié. Sélectionnez Corriger pour réessayer.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Relancer la vérification",
+            "description": "Volcast relance la vérification de l'onduleur à partir de l'étape où elle s'est arrêtée."
+          }
+        }
+      }
     }
   },
   "services": {
@@ -418,6 +520,9 @@
       },
       "control_direct_link_quality": {
         "name": "Délais dépassés de la liaison onduleur"
+      },
+      "verification": {
+        "name": "Vérification de l'appareil"
       }
     },
     "binary_sensor": {
