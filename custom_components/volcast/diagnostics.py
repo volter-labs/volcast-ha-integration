@@ -13,6 +13,9 @@ odcisku), klucze bez odczytu zwrotnego, budżet NVM (ramki na klucz w oknie, tra
 harmonogramu w stronę bezpieczną) i ostatnia decyzja. Nigdy adres, port, numer loggera, numer
 seryjny, odcisk urządzenia ani celu, ani sól. Ramki (`frames`) tylko w połączeniu próbnym —
 rejestry seryjne wyzerowane z przeliczonymi sumami, numer loggera wyzerowany.
+
+Źródła odczytów (`control.readings_source`, `control.readings_dropped`): klucz → `entity|register|
+manual|none` — to samo, co telemetria wysyła w `driver.meta` — i klucze, których encja nic nie dała.
 """
 from __future__ import annotations
 
@@ -85,6 +88,12 @@ def _control(hass: HomeAssistant, rt: Any) -> dict | None:
            "integration_domain": getattr(rt.choice, "integration_domain", None),
            "mapped": dict(rt.mapped or {}), "exec": ex.exec_summary(),
            "tou_preview": ex.tou_preview, "foreign_changes": list(ex.foreign_changes)}
+    telemetry = getattr(rt, "telemetry", None)
+    if telemetry is not None:
+        try:
+            raw.update(telemetry.readings_report())
+        except Exception as err:  # noqa: BLE001 — źródła odczytów nie zabierają reszty sekcji
+            raw["readings_source"] = {"error": type(err).__name__}
     conn = getattr(rt, "direct", None)
     if conn is not None:
         raw["direct"] = _direct(rt, conn)

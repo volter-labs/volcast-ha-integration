@@ -20,6 +20,11 @@ Sygnały: blok `driver` deklaruje cechy (`features`), `extra.volcast.signal_conn
 kanał sygnałów jest dołączony, a blok `signals` z przyjętej odpowiedzi idzie do `on_signals`.
 `build_live_reading` to lekki odczyt na żywo (same wartości + `live: true`, bez cen, `driver`,
 `extra` i ładowarek) — wysyła go `LiveSender`, nie ten nadawca.
+
+Źródła odczytów: blok `driver` w KAŻDYM odczycie (oba tryby) niesie pełną mapę
+`meta.readings_source` (klucz → `entity|register|manual|none`, `core/control/readings.py`) — chmura
+czyści brakującą mapę w trybie bezpośrednim, a w trybie encji trzymałaby nieaktualną. Inne pola
+`meta` nie idą (sufit chmury 1500 B).
 """
 from __future__ import annotations
 
@@ -37,7 +42,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from ..const import (CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_CURRENCY,
                      OPT_PRICE_SELL)
 from ..core.control.caps import capabilities_for
-from ..core.control.readings import RawState, manual_reading, normalize_readings
+from ..core.control.readings import RawState, manual_reading, normalize_readings_report, readings_sources
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
 from .loads_reader import LoadsReader
@@ -62,8 +67,15 @@ TELEMETRY_FIELDS = {
 DRIVER_FEATURES = ("live",)
 
 
+def _with_sources(block: dict, readings_source: Mapping[str, str] | None) -> dict:
+    if readings_source:
+        block["meta"] = {"readings_source": dict(readings_source)}
+    return block
+
+
 def driver_block(*, choice: ProfileChoice | None, control_mode: str | None, mapped_keys: Iterable[str],
-                 local_switch: bool, limits: dict | None) -> dict | None:
+                 local_switch: bool, limits: dict | None,
+                 readings_source: Mapping[str, str] | None = None) -> dict | None:
     """Deklaracja wykonawcy; możliwości tylko w trybie encji z integracją i modelem `mode_setpoint`."""
     if choice is None:
         return None
@@ -77,11 +89,11 @@ def driver_block(*, choice: ProfileChoice | None, control_mode: str | None, mapp
         block["capabilities"] = caps
     if limits is not None:
         block["limits"] = limits
-    return block
+    return _with_sources(block, readings_source)
 
 
 def direct_driver_block(*, profile, access: str, capabilities: Mapping[str, bool] | None, local_switch: bool,
-                        limits: dict | None) -> dict:
+                        limits: dict | None, readings_source: Mapping[str, str] | None = None) -> dict:
     """Deklaracja wykonawcy w trybie bezpośrednim — bez seriala i adresu."""
     block: dict = {"id": profile.id, "model": profile.control_model, "local_switch_enabled": bool(local_switch),
                    "access": access}
@@ -89,7 +101,19 @@ def direct_driver_block(*, profile, access: str, capabilities: Mapping[str, bool
         block["capabilities"] = dict(capabilities)
     if limits is not None:
         block["limits"] = limits
-    return block
+    return _with_sources(block, readings_source)
+
+
+def _declared_keys(choice: ProfileChoice | None, manual_keys: Iterable[str]) -> frozenset[str]:
+    """Klucze, które profil (rejestry, encje wybranej integracji) albo mapa ręczna w ogóle opisują."""
+    if choice is None:
+        return frozenset(manual_keys)
+    raw = getattr(choice.profile, "raw", None) or {}
+    keys = set(raw.get("read") or ())
+    for integ in (raw.get("ha") or {}).get("integrations") or ():
+        if integ.get("domain") == choice.integration_domain:
+            keys.update(integ.get("entities") or ())
+    return frozenset(keys | set(manual_keys))
 
 
 
@@ -175,6 +199,10 @@ class TelemetrySender:
         self._manual_map = dict(manual_map)
         self._negate = grid_negate
         self._limits = limits
+        # Źródło każdego odczytu i klucze z encją bez odczytu — z ostatniego `_current()`.
+        self._declared = _declared_keys(choice, self._manual_map)
+        self._sources: dict[str, str] = {}
+        self._dropped: tuple[str, ...] = ()
         self._utcnow = utcnow
         self._direct = direct
         self._direct_caps = dict(direct_capabilities) if direct_capabilities is not None else None
@@ -287,8 +315,7 @@ class TelemetrySender:
             return "conflict"
         return "ok" if self._direct_fresh() is not None else "link_down"
 
-    def _direct_readings(self) -> dict:
-        r = self._direct_fresh()
+    def _direct_readings(self, r) -> dict:
         if r is None:
             return {}
         out = {k: v for k, v in r.values.items() if k in TELEMETRY_FIELDS}
@@ -303,12 +330,12 @@ class TelemetrySender:
         if self._direct is not None:
             block = direct_driver_block(profile=self._choice.profile, access="direct",
                                         capabilities=None if self._direct.trial else self._direct_caps,
-                                        local_switch=local, limits=self._limits)
+                                        local_switch=local, limits=self._limits, readings_source=self._sources)
         else:
             unsupported = self._unsupported()
             block = driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
                                  mapped_keys=[k for k in self._profile_map if k not in unsupported],
-                                 local_switch=local, limits=self._limits)
+                                 local_switch=local, limits=self._limits, readings_source=self._sources)
         if block is not None:
             block["features"] = list(DRIVER_FEATURES)
         rt = self.control_runtime
@@ -347,17 +374,46 @@ class TelemetrySender:
             self._busy = False
 
     def _current(self) -> tuple[dict, dict[str, float | None]]:
-        """Bieżące odczyty profilu (albo rejestrów) i encji wskazanych ręcznie."""
+        """Bieżące odczyty profilu (albo rejestrów) i encji wskazanych ręcznie.
+
+        Przy okazji odświeża źródło każdego odczytu (`self._sources`) i klucze z encją, z której nic
+        nie wyszło (`self._dropped`) — z tych samych wartości, które idą w telemetrii."""
         domain = self._choice.integration_domain if self._choice else None
+        register: Mapping = {}
+        dropped: set[str] = set()
         if self._direct is not None:
-            prof = self._direct_readings()
+            fresh = self._direct_fresh()
+            prof = self._direct_readings(fresh)
+            register = fresh.values if fresh is not None else {}
+            entity: dict = {}
         else:
             raw = {k: r for k, e in self._profile_map.items() if (r := self._raw(e)) is not None}
-            prof = normalize_readings(raw, self._choice.profile, domain) if domain else {}
+            if domain:
+                prof, lost = normalize_readings_report(raw, self._choice.profile, domain)
+                dropped.update(lost)
+                dropped.update(k for k in self._profile_map if k not in raw)      # encji nie ma w HA
+            else:
+                prof = {}
+            entity = dict(prof)
         manual: dict[str, float | None] = {}
         for key, eid in self._manual_map.items():
             manual[key] = self._manual(key, eid)
+        # Encja ręczna wygrywa także nieczytelna (jak w `_values`) — wtedy klucz nie ma źródła.
+        entity.update(manual)
+        dropped.difference_update(k for k, v in manual.items() if v is not None)
+        dropped.update(k for k, v in manual.items() if v is None)
+        typed = {"battery_capacity_kwh": self._limits.get("battery_capacity_kwh")} \
+            if isinstance(self._limits, Mapping) else {}
+        self._sources = readings_sources(entity=entity,
+                                         register={k: v for k, v in register.items() if k not in manual},
+                                         manual=typed, declared=self._declared)
+        self._dropped = tuple(sorted(dropped))
         return prof, manual
+
+    def readings_report(self) -> dict:
+        """Diagnostyka: bieżące źródło każdego odczytu i klucze z encją bez odczytu (bez `entity_id`)."""
+        self._current()
+        return {"readings_source": dict(self._sources), "readings_dropped": list(self._dropped)}
 
     def build_live_reading(self) -> dict | None:
         """Lekki odczyt na żywo (bez cen, `driver`, `extra`, ładowarek); None = nic do wysłania.

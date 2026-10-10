@@ -61,6 +61,46 @@ def test_driver_block_carries_limits():
                  "limits": {"rated_power_w": 8000, "source": "entities"}}
 
 
+def test_driver_block_carries_readings_source():
+    src = {"soc": "entity", "pv_power_w": "none"}
+    b = driver_block(choice=GW, control_mode=None, mapped_keys=ALL, local_switch=False, limits=None,
+                     readings_source=src)
+    assert b["meta"] == {"readings_source": src}
+    src["soc"] = "none"                                    # blok trzyma własną kopię
+    assert b["meta"]["readings_source"]["soc"] == "entity"
+    # Bez mapy nie ma `meta` (stary kształt bloku bez zmian).
+    assert "meta" not in driver_block(choice=GW, control_mode=None, mapped_keys=ALL, local_switch=False,
+                                      limits=None)
+
+
+def test_entity_mode_readings_source_in_every_post():
+    h, cloud = goodwe_hass(), Cloud()
+    h.states.set("sensor.pv", "1.2", {"unit_of_measurement": "kW"})
+    s = sender(h, cloud, options={"control_mode": "entities"},
+               manual={"pv_power_w": "sensor.pv", "load_power_w": "sensor.nope"},
+               limits={"rated_power_w": 8000, "battery_capacity_kwh": 10.0, "source": "user"})
+    asyncio.run(s.async_flush())
+    asyncio.run(s.async_flush())
+    for sent in cloud.sent:                                # pełna mapa w KAŻDYM odczycie
+        src = sent["driver"]["meta"]["readings_source"]
+        assert src["soc"] == "entity" and src["battery_temp_c"] == "entity"     # encje profilu
+        assert src["pv_power_w"] == "entity"                                     # encja ręczna
+        assert src["load_power_w"] == "none"                                     # ręczna, nieczytelna
+        assert src["grid_power_w"] == "none" and src["battery_voltage_v"] == "none"
+        assert src["battery_capacity_kwh"] == "manual"
+        assert "load_energy_total_kwh" not in src                                # profil go nie zna
+        assert "sensor." not in json.dumps(src)
+    assert set(cloud.sent[0]["driver"]["meta"]) == {"readings_source"}
+
+
+def test_unreadable_manual_entity_masks_profile_entity_in_source():
+    # Encja ręczna wygrywa także, gdy nieczytelna — tak jak wartość, której wtedy nie wysyłamy.
+    h, cloud = goodwe_hass(), Cloud()
+    asyncio.run(sender(h, cloud, manual={"soc": "sensor.nope"}).async_flush())
+    assert "battery_soc" not in cloud.sent[0]
+    assert cloud.sent[0]["driver"]["meta"]["readings_source"]["soc"] == "none"
+
+
 def test_driver_block_capabilities_only_in_entity_mode():
     b = driver_block(choice=GW, control_mode="entities", mapped_keys=ALL, local_switch=True, limits=None)
     assert all(b["capabilities"].values()) and b["capabilities"]["set_soc_ceiling"] is True

@@ -58,3 +58,31 @@ async def test_diagnostics_without_loaded_entry_is_pending():
                              "backend_host": None, "options_keys": []},
                    "discovery": {"status": "pending"}, "control": None}
     assert API_KEY not in str(out)
+
+
+def _control_hass(telemetry):
+    ex = SimpleNamespace(exec_summary=lambda: {}, tou_preview=None, foreign_changes=[])
+    rt = SimpleNamespace(executor=ex, choice=SimpleNamespace(profile=SimpleNamespace(id="goodwe-et"),
+                                                             integration_domain="goodwe"),
+                         mapped={}, telemetry=telemetry)
+    entry = SimpleNamespace(entry_id="e1", version=1, data={"api_key": API_KEY}, options={})
+    hass = SimpleNamespace(data={DOMAIN: {"e1": {"control": rt, "discovery": None}},
+                                 "device_registry": SimpleNamespace(devices={})})
+    return hass, entry
+
+
+async def test_diagnostics_control_carries_readings_source():
+    report = {"readings_source": {"soc": "entity", "pv_power_w": "none"}, "readings_dropped": ["pv_power_w"]}
+    hass, entry = _control_hass(SimpleNamespace(readings_report=lambda: report))
+    out = await async_get_config_entry_diagnostics(hass, entry)
+    assert out["control"]["readings_source"] == {"soc": "entity", "pv_power_w": "none"}
+    assert out["control"]["readings_dropped"] == ["pv_power_w"]
+
+
+async def test_diagnostics_readings_report_error_keeps_control_section():
+    def broken():
+        raise RuntimeError("boom")
+    hass, entry = _control_hass(SimpleNamespace(readings_report=broken))
+    out = await async_get_config_entry_diagnostics(hass, entry)
+    assert out["control"]["profile"] == "goodwe-et"
+    assert out["control"]["readings_source"] == {"error": "RuntimeError"}

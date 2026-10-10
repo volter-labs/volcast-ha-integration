@@ -112,6 +112,47 @@ def test_status_conflict_and_trial():
     assert r["extra"]["volcast"]["direct"]["status"] == "trial" and "capabilities" not in r["driver"]
 
 
+def _hass_with(states):
+    def get(eid):
+        if eid not in states:
+            return None
+        value, unit = states[eid]
+        return SimpleNamespace(state=value, attributes={"unit_of_measurement": unit})
+    return SimpleNamespace(states=SimpleNamespace(get=get),
+                           config=SimpleNamespace(time_zone="Europe/Warsaw", country="PL"))
+
+
+def test_readings_source_prefers_entity_over_register():
+    from custom_components.volcast.core.control.readings import MEASURED_KEYS
+    conn = FakeConn(GW)
+    entry = SimpleNamespace(entry_id="e1", options={"control_mode": "direct"})
+    cloud = Cloud()
+    sender = TelemetrySender(_hass_with({"sensor.grid": ("1.5", "kW")}), entry, cloud, Executor(),
+                             choice=ProfileChoice(GW, None, None), profile_map={},
+                             manual_map={"grid_power_w": "sensor.grid", "load_power_w": "sensor.nope"},
+                             grid_negate=False, limits=executor_limits(rated_power_w=10000.0, source="registers"),
+                             utcnow=lambda: NOW, direct=conn)
+    regs = conn.reading.values
+    assert "grid_power_w" in regs and "load_power_w" in regs     # rejestr też ma te odczyty
+    for _ in range(2):                                           # pełna mapa w każdym odczycie
+        r = _flush(sender, cloud)
+        src = r["driver"]["meta"]["readings_source"]
+        assert src["grid_power_w"] == "entity" and r["grid_power_w"] == 1500.0
+        assert src["load_power_w"] == "none" and "load_power_w" not in r   # ręczna nieczytelna wygrywa
+        for key in MEASURED_KEYS:
+            if key not in ("grid_power_w", "load_power_w"):
+                assert src[key] == ("register" if key in regs else "none"), key
+        assert "battery_capacity_kwh" not in src                  # nikt jej nie podał
+        assert r["driver"]["access"] == "direct"
+
+
+def test_stale_direct_reading_reports_none_sources():
+    conn = FakeConn(GW, age=31.0)
+    sender, _ = _sender(conn)
+    sender._current()
+    assert set(sender.readings_report()["readings_source"].values()) == {"none"}
+
+
 def test_direct_driver_limits_source_registers():
     limits = executor_limits(rated_power_w=10000.0, source="registers")
     b = direct_driver_block(profile=GW, access="direct", capabilities={"sell_from_battery": True},
