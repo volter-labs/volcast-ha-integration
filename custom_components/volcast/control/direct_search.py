@@ -78,6 +78,19 @@ def entities_option(choice, mapped) -> dict:
     return _option(ENTITIES, False, ENTITIES_NO_WRITE)
 
 
+def holders_state(hass) -> tuple:
+    """Stan wpisów, które mogą trzymać falownik (integracje falowników, `modbus`, inne wpisy Volcast): para
+    (id wpisu, wyłączony?). Zmiana (wyłączenie, usunięcie, dodanie) = warto ponowić odrzucony start
+    bezpośredni; bez zmiany — nie. Tylko pamięć HA (bez rozwiązywania nazw); błąd → `()`."""
+    try:
+        entries = hass.config_entries.async_entries()
+    except Exception:  # noqa: BLE001 — brak listy wpisów = brak wiedzy o zmianie
+        return ()
+    return tuple(sorted((str(getattr(e, "entry_id", "")), getattr(e, "disabled_by", None) is not None)
+                        for e in entries if getattr(e, "domain", None) in CONFLICT_DOMAINS
+                        or getattr(e, "domain", None) == SELF_DOMAIN))
+
+
 def _foreign_clash(clash: Sequence[str]) -> bool:
     """Kolizja wyłącznie ze znanymi integracjami (falownika albo `modbus`) — po ich wyłączeniu adres jest wolny."""
     return bool(clash) and all(d in CONFLICT_DOMAINS for d in clash)

@@ -138,11 +138,11 @@ def test_remote_direct_applied_when_available():
     assert entry.data["pairing"]["applied_choices"]["choices"]["control_mode"]["value"] == "direct"
 
 
-@pytest.mark.parametrize("case,text", [
-    ("unverified", "direct control is not available for this inverter yet"),
-    ("conflict", "another integration is using this inverter"),
-    ("not_found", "inverter not found on the network")])
-def test_remote_direct_rejected_with_reason_text(case, text):
+@pytest.mark.parametrize("case,text,state", [
+    ("unverified", "direct control is not available for this inverter yet", "error"),
+    ("conflict", "another integration is using this inverter", "choice"),      # odmowa bez zamknięcia kroku
+    ("not_found", "inverter not found on the network", "error")])
+def test_remote_direct_rejected_with_reason_text(case, text, state):
     kw = {}
     if case == "unverified":
         kw = {"reports": [report(available=False)]}
@@ -151,8 +151,9 @@ def test_remote_direct_rejected_with_reason_text(case, text):
         kw = {"reports": [report()], "entries": [goodwe]}
     ob, client, entry, _ = make([PollResult("consumed", choices={"control_mode": "direct"})], **kw)
     asyncio.run(ob.async_run())
-    assert "control_mode" not in entry.options
-    assert last(client)["control_mode"] == {"key": "control_mode", "state": "error", "detail": text}
+    assert "control_mode" not in entry.options and "direct_target" not in entry.options
+    st = last(client)["control_mode"]
+    assert (st["state"], st["detail"]) == (state, text)
 
 
 def test_capabilities_list_hides_unreadable_keys():
@@ -300,14 +301,104 @@ def test_remote_direct_choice_starts_direct_search():
     assert last(client)["control_mode"] == {"key": "control_mode", "state": "done", "detail": "direct"}
 
 
-def test_remote_direct_choice_with_the_integration_still_enabled_reports_the_conflict():
+CONFLICT_TEXT = "another integration is using this inverter"
+
+
+def test_remote_direct_choice_with_the_integration_still_enabled_keeps_the_step_open():
+    # Odmowa z powodu kolizji nie kończy kroku: ta sama oferta, szczegół z tekstem odmowy; powtarzane
+    # odpytania z tym samym wyborem nie ponawiają sondy, dopóki stan wpisów się nie zmieni.
     ob, client, entry, calls = make([PollResult("consumed", choices={"control_mode": "direct"})], report_=REPORT,
                                     reports=[report(identity=False, errors=("conflict",))],
-                                    entries=[_goodwe_entry()])
+                                    entries=[_goodwe_entry()], mapped=WRITE_KEYS)
     asyncio.run(ob.async_run())
-    assert calls == [1] and "control_mode" not in entry.options
-    assert last(client)["control_mode"] == {"key": "control_mode", "state": "error",
-                                            "detail": "another integration is using this inverter"}
+    assert calls == [1]
+    assert not {"control_mode", "direct_target", "direct_trial"} & set(entry.options)
+    st = last(client)["control_mode"]
+    assert (st["state"], st["detail"]) == ("choice", CONFLICT_TEXT)
+    assert {o["id"]: o["description_code"] for o in st["options"]}["direct"] == "direct_requires_disable_integration"
+    assert "control_mode" not in entry.data["pairing"].get("applied_choices", {}).get("choices", {})
+    assert "path_done" not in ob._runtime().executor.control_meta                # znacznik nietknięty
+
+
+def test_refused_direct_then_entities_chosen_applies_entities():
+    polls = [PollResult("consumed", choices={"control_mode": "direct"})] * 3 + [
+        PollResult("consumed", choices={"control_mode": "entities"})]
+    ob, client, entry, calls = make(polls, report_=REPORT, reports=[report(identity=False, errors=("conflict",))],
+                                    entries=[_goodwe_entry()], mapped=WRITE_KEYS)
+    asyncio.run(ob.async_run())
+    assert calls == [1] and entry.options["control_mode"] == "entities" and "direct_target" not in entry.options
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "done", "detail": "entities"}
+    assert any(s["key"] == "control_mode" and s["state"] == "choice" and s.get("detail") == CONFLICT_TEXT
+               for p in client.progress for s in p)
+
+
+def test_refused_direct_then_integration_disabled_applies_direct_once():
+    goodwe = _goodwe_entry()
+    searches = []
+    polls_seen = []
+
+    async def search():
+        searches.append(1)
+        return [report()] if goodwe.disabled_by else [report(identity=False, errors=("conflict",))]
+
+    class Owner(Client):
+        async def async_poll(self, s):
+            polls_seen.append(1)
+            if len(polls_seen) == 3:
+                goodwe.disabled_by = "user"        # właściciel wyłącza integrację i zostaje przy „Bezpośrednio”
+            return await super().async_poll(s)
+    client = Owner([PollResult("consumed", choices={"control_mode": "direct"})], OK_PLAN)
+    ob, _, entry, _ = make([], report_=REPORT, entries=[goodwe], search=search, client=client)
+    asyncio.run(ob.async_run())
+    assert searches == [1, 1]                      # odmowa, potem jedno wyszukiwanie po zmianie
+    assert entry.options["control_mode"] == "direct" and entry.options["direct_target"]["device_fp"] == FP
+    assert len(_direct_option_writes(ob)) == 1
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "done", "detail": "direct"}
+    assert entry.data["pairing"]["applied_choices"]["choices"]["control_mode"]["value"] == "direct"
+
+
+# ── wybór z kreatora a tryb „tylko plan” (prawdziwy runtime sterowania) ──
+def _real_runtime(ob, entry, *, plan_only=False, mapped=(), choice=None):
+    from tests.cloud.test_control_choice import real_rt
+    rt = real_rt()
+    rt.entry, rt.hass = entry, ob._hass
+    rt.executor.plan_only = plan_only
+    rt.choice, rt.mapped = choice, {k: f"x.{k}" for k in mapped}
+    ob._runtime = lambda: rt
+    return rt
+
+
+def test_wizard_direct_choice_leaves_plan_only_mode():
+    ob, client, entry, searches = make([PollResult("consumed", choices={"control_mode": "direct"})],
+                                       reports=[report()])
+    rt = _real_runtime(ob, entry, plan_only=True)
+    asyncio.run(ob.async_run())
+    assert entry.options["control_mode"] == "direct"
+    assert rt.executor.plan_only is False and rt.verification.calls == ["restart"]    # drabina od startu
+    # ta sama decyzja z planu: znacznik nadal pomija drugie zastosowanie (bez drugiego wyszukiwania)
+    plan_calls, rt.async_apply_path_choice = _path_spy(entry)
+    rt.wall_clock = lambda: NOW + timedelta(minutes=10)
+    asyncio.run(control_choice.apply({"path": "direct", "path_at": AT, "at": AT}, rt))
+    assert plan_calls == [] and searches == [1] and len(_direct_option_writes(ob)) == 1
+    assert rt.executor.control_meta["ack"]["path"] == "direct" and rt.executor.plan_only is False
+
+
+def test_wizard_entities_choice_leaves_plan_only_mode():
+    ob, client, entry, _ = make([PollResult("consumed", choices={"control_mode": "entities"})], report_=REPORT,
+                                mapped=WRITE_KEYS)
+    rt = _real_runtime(ob, entry, plan_only=True, mapped=WRITE_KEYS, choice=ProfileChoice(GW_V, "goodwe", None))
+    asyncio.run(ob.async_run())
+    assert entry.options["control_mode"] == "entities" and rt.executor.plan_only is False
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "done", "detail": "entities"}
+
+
+def test_wizard_plan_only_choice_turns_plan_only_on():
+    ob, client, entry, _ = make([PollResult("consumed", choices={"control_mode": "plan_only"})], reports=[report()])
+    rt = _real_runtime(ob, entry)
+    asyncio.run(ob.async_run())
+    assert rt.executor.plan_only is True and "park" in rt.verification.calls
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "done", "detail": "plan_only"}
+    assert entry.data["pairing"]["applied_choices"]["choices"]["control_mode"]["value"] == "plan_only"
 
 
 # ── reguła jednego zastosowania (kreator i plan niosą tę samą decyzję) ──

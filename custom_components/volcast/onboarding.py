@@ -132,6 +132,10 @@ def plan_outcome(res: Any) -> str:
     return "ok"
 
 
+def _plan_only(rt) -> bool:
+    return getattr(getattr(rt, "executor", None), "plan_only", False) is True
+
+
 def _kw(watts: float | None) -> str | None:
     if not watts:
         return None
@@ -163,6 +167,7 @@ class Onboarding:
         self._inverter_integration = False
         self._offer: dict | None = None        # oferta kroku `control_mode` (gdy w stanie `choice`)
         self._searched = False                 # wyszukiwanie falownika już było (start albo wybór `direct`)
+        self._refused: tuple | None = None     # stan wpisów-kolizji przy ostatniej odmowie `direct` (kolizja)
 
     async def async_run(self) -> None:
         try:
@@ -305,21 +310,31 @@ class Onboarding:
             tokens.append("direct")
         return f"options: {','.join(tokens)}" if tokens else None
 
-    async def _control_offer(self, rt, report: Mapping) -> dict:
+    async def _control_offer(self, rt, report: Mapping) -> dict | None:
         """Oferta kroku `control_mode`: obie ścieżki z kodem opisu, `recommended` i `reason`.
 
         Rekomendacja z runtime (`async_update_recommendation`), a gdy jeszcze nie policzona — ta sama funkcja
         (`recommend`) na tym, co onboarding już wie. Bez sondy (integracja w HA) „bezpośrednio” jest możliwe po
-        wyłączeniu integracji tylko wtedy, gdy trzyma ona falownik pod adresem lokalnym i znamy jego profil."""
+        wyłączeniu integracji tylko wtedy, gdy TA integracja (wybranego profilu) trzyma falownik pod adresem
+        lokalnym. Błąd liczenia oferty → bez oferty (zostaje sam szczegół kroku), onboarding biegnie dalej."""
+        try:
+            return await self._compute_offer(rt, report)
+        except Exception as err:  # noqa: BLE001 — oferta nie psuje onboardingu
+            _LOGGER.debug("Volcast onboarding: control offer failed (%s)", type(err).__name__)
+            return None
+
+    async def _compute_offer(self, rt, report: Mapping) -> dict:
         rep = self._direct_report
         clash: tuple[str, ...] = ()
         if rep is not None:
             clash = await ds.async_clash(self._hass, self._entry_id, rep.candidate.host)
         choice = getattr(rt, "choice", None)
         mapped = getattr(rt, "mapped", None) or {}
-        held = any(isinstance(i, Mapping) and isinstance(i.get("host"), str) and i["host"]
-                   for i in report.get("inverters") or ())
-        held_by = choice.profile if rep is None and held and choice is not None else None
+        domain = getattr(choice, "integration_domain", None)
+        held = bool(domain) and any(isinstance(i, Mapping) and i.get("domain") == domain
+                                    and isinstance(i.get("host"), str) and i["host"]
+                                    for i in report.get("inverters") or ())
+        held_by = choice.profile if rep is None and held else None
         rec = getattr(rt, "recommendation", None)
         if rec is None:
             try:
@@ -473,34 +488,58 @@ class Onboarding:
     def _already(self, mode: str, rt) -> bool:
         """Stan sterowania już taki, jak wybrany — np. plan (`control.path`) zastosował tę ścieżkę po starcie
         sesji (krok był w stanie `choice`, więc wcześniej jej nie było)."""
+        plan_only = _plan_only(rt)
         if mode == _PLAN_ONLY:
-            return getattr(getattr(rt, "executor", None), "plan_only", False) is True
-        return self._options().get(OPT_CONTROL_MODE) == mode
+            return plan_only
+        return self._options().get(OPT_CONTROL_MODE) == mode and not plan_only
 
-    async def _control_choice(self, mode: str, rt, patch: dict) -> tuple[str, str | None, bool]:
-        """Zastosuj zdalny wybór sposobu sterowania: (stan kroku, szczegół, czy kreator zastosował ścieżkę)."""
+    async def _control_choice(self, mode: str, rt, patch: dict) -> tuple[str, str | None, bool] | None:
+        """Zastosuj zdalny wybór sposobu sterowania: (stan kroku, szczegół, czy kreator zastosował ścieżkę);
+        None = bez zmiany (odmowa `direct` z powodu kolizji, a stan kolizji się nie zmienił)."""
         if self._already(mode, rt):
+            self._refused = None
             return "done", mode, False            # drugi kanał tej samej decyzji — bez wywołań
         if mode == CONTROL_MODE_ENTITIES:
             if not self._control_ready(rt):
                 return "error", NOT_READY, False
             patch.update(entity_mode_options(rt.choice))
+            await self._leave_plan_only(rt)
             return "done", CONTROL_MODE_ENTITIES, True
         if mode == _PLAN_ONLY:
             # Własny sterownik: ta sama obsługa co `path: plan_only` z chmury (tryb „tylko plan”, sterowanie wyłączone).
             if await rt.async_apply_path_choice(_PLAN_ONLY) != "applied":
                 return "error", NOT_READY, False
             return "done", _PLAN_ONLY, True
+        if self._refused is not None:
+            if ds.holders_state(self._hass) == self._refused:
+                return None                       # nic się nie zmieniło — bez ponownej sondy i publikacji
+            self._refused = None
+            if self._direct_report is None:
+                self._searched = False            # integracja wyłączona/usunięta: wyszukujemy jeszcze raz
         if self._direct_report is None and not self._searched:
-            await self._direct_search()           # wybór właściciela: wyszukujemy teraz (jeden raz)
+            await self._direct_search()           # wybór właściciela: wyszukujemy teraz (raz na stan kolizji)
         if self._already(mode, rt):
             return "done", mode, False            # plan zastosował ją w trakcie wyszukiwania
         reason = await self._direct_reason()
+        if reason in (ds.CONFLICT, ds.IN_USE):
+            # Falownik trzyma inna integracja: wybór zostaje otwarty (ta sama oferta), właściciel może wyłączyć
+            # integrację i wybrać ponownie albo wybrać inną ścieżkę. Bez zmiany opcji i bez znacznika.
+            self._refused = ds.holders_state(self._hass)
+            return "choice", ds.REMOTE_TEXT[reason], False
         if reason is not None:
             return "error", ds.REMOTE_TEXT[reason], False
         patch.update({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT,
                       OPT_DIRECT_TARGET: ds.target_from_report(self._direct_report), OPT_DIRECT_TRIAL: None})
+        await self._leave_plan_only(rt)
         return "done", CONTROL_MODE_DIRECT, True
+
+    @staticmethod
+    async def _leave_plan_only(rt) -> None:
+        """Wybór sterowania (encje / bezpośrednio) kończy tryb „tylko plan” — ta sama ścieżka co wybór w opcjach
+        (`async_leave_plan_only`: tryb wyłączony i zapisany, drabina od szczebla startowego). Kanał planu tego nie
+        zrobi: jego kopię tej samej decyzji znacznik kreatora pomija."""
+        if _plan_only(rt):
+            await rt.async_leave_plan_only()
 
     async def _apply(self, choices: Mapping[str, str]) -> None:
         patch: dict[str, str] = {}
@@ -511,8 +550,9 @@ class Onboarding:
         executor = None
         if mode in (CONTROL_MODE_ENTITIES, CONTROL_MODE_DIRECT, _PLAN_ONLY) and self._state("control_mode") == "choice":
             rt = self._runtime()
-            if rt is not None:                    # wpis się przeładowuje — spróbujemy przy następnym odpytaniu
-                state, detail, by_wizard = await self._control_choice(mode, rt, patch)
+            outcome = await self._control_choice(mode, rt, patch) if rt is not None else None
+            if outcome is not None:               # None: wpis się przeładowuje albo odmowa bez zmian — następne odpytanie
+                state, detail, by_wizard = outcome
                 steps.append(("control_mode", state, detail))
                 if state == "done":
                     applied["control_mode"] = mode
