@@ -54,7 +54,8 @@ Zasady wykonania:
   i trafia do logu.
 
 Tryb bezpośredni (`DirectIO`, rejestry falownika):
-* bramka weryfikacji = profil i jego sekcja `modbus` zweryfikowane i nie próba; próba liczy decyzję
+* bramka weryfikacji = profil i jego sekcja `modbus` zweryfikowane i nie próba (przy podpiętej drabinie
+  zamiast statusu profilu: urządzenie zweryfikowane drabiną); próba liczy decyzję
   na sucho własną ścieżką (bramki decyzji z `control_mode` = tryb bezpośredni, zawsze bez zapisu),
   a przy własności z wcześniejszej sesji nie liczy nic (`trial_while_owned`);
 * każda decyzja, zapis i powrót wymagają potwierdzonej tożsamości urządzenia pod adresem (inaczej
@@ -341,12 +342,13 @@ class VolcastExecutor:
         """Okno próbne: do `async_verification_restore` cykl wykonuje ten plan zamiast planu z chmury."""
         self._window = schedule
 
-    async def async_verification_restore(self) -> None:
+    async def async_verification_restore(self, *, force: bool = False) -> None:
         """Koniec okna albo stop drabiny: powrót do trybu bazowego (przy własności), ponawiany co cykl,
-        aż dojdzie. W trybie encji bez okna nic — plan steruje tam niezależnie od drabiny."""
+        aż dojdzie. W trybie encji bez okna nic — plan steruje tam niezależnie od drabiny. `force` — okno
+        przerwane restartem (rekord drabiny): powrót w obu trybach, także bez okna w pamięci."""
         had_window = self._window is not None
         self._window = None
-        if had_window or (self._direct is not None and self.verification is not None):
+        if force or had_window or (self._direct is not None and self.verification is not None):
             self._verify_restore = True
         await self.async_tick()
 
@@ -1700,10 +1702,12 @@ class VolcastExecutor:
         if self._window is not None:
             # Okno próbne drabiny weryfikuje urządzenie — także z profilem roboczym (zgoda i strażnicy dalej).
             verified = direct is None or not direct.trial
+        elif direct is not None and self._plan_gated():
+            # Drabina zastępuje weryfikację profilu: zweryfikowane urządzenie otwiera plan także przy profilu
+            # roboczym (status profilu wyznacza tylko szczebel startowy drabiny).
+            verified = not direct.trial and self.verification.plan_allowed()
         elif direct is not None:
             verified = direct_verified(self._profile) and not direct.trial
-            if self._plan_gated():
-                verified = verified and self.verification.plan_allowed()
         else:
             verified = control_verified(self._profile, self._domain)
         return Gates(consent=self._state.consent, local_switch=self._state.local_switch,

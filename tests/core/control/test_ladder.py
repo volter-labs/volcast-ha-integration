@@ -414,11 +414,11 @@ def test_record_round_trip_keeps_the_ladder():
     assert back.to_payload() == lad.to_payload()
 
 
-def test_record_with_a_running_window_comes_back_waiting_for_a_new_window():
+def test_record_with_a_running_window_comes_back_waiting_before_the_control_write():
     lad = started(1)
     to_window(lad)
     back = Ladder.from_record(lad.to_record(), P)
-    assert (back.state.rung, back.state.state, back.state.next_at) == (5, WAITING, None)
+    assert (back.state.rung, back.state.state, back.state.next_at) == (4, WAITING, None)
 
 
 @pytest.mark.parametrize("bad", [

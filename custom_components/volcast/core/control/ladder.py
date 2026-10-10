@@ -10,7 +10,8 @@ Profil bez okna próbnego (`window=False`, model okien czasowych) kończy na zap
 Szczeble 4–5 tylko przy zgodzie (`consent(True)`); bez niej drabina czeka PRZED zapisem kontrolnym:
 `rung 4, waiting` (`rung` = następny szczebel do wykonania) — po próbie profilu roboczego i od razu
 przy profilu zweryfikowanym. Okno (5) rusza dopiero na sygnał wołającego (`window_open`), który zna
-warunki dobrego okna (SoC poniżej sufitu, świeży odczyt).
+warunki dobrego okna (u wołającego: SoC poniżej sufitu, świeży odczyt). Profil bez bezpiecznego
+wymuszonego ładowania z sieci z nastawą mocy (`window=False`) kończy na zapisie kontrolnym.
 
 Stany: `idle` (nic się nie dzieje — nowa drabina albo nowe urządzenie), `running`, `waiting`,
 `stopped` (z `stop_reason` z listy zamkniętej), `verified`. `retry` wraca na szczebel stopu
@@ -342,8 +343,8 @@ class Ladder:
 
     @classmethod
     def from_record(cls, raw: Any, params: LadderParams) -> "Ladder | None":
-        """Drabina z magazynu; zły kształt → None. Okno przerwane restartem czeka na nowe okno
-        (próbki nie przeżywają restartu)."""
+        """Drabina z magazynu; zły kształt → None. Okno przerwane restartem wraca przed zapis kontrolny
+        (`rung 4, waiting`; próbki nie przeżywają restartu, wołający oddaje falownik do trybu bazowego)."""
         if not isinstance(raw, Mapping) or raw.get("v") != RECORD_VERSION:
             return None
         key, start, rung, state = raw.get("device_key"), raw.get("start"), raw.get("rung"), raw.get("state")
@@ -376,7 +377,7 @@ class Ladder:
         dev = raw.get("deviation_pct")
         s.deviation_pct = float(dev) if _finite(dev) else None
         if rung == RUNG_WINDOW and state == RUNNING:
-            s.state, s.next_at = WAITING, None          # okno przerwane — nowe okno, nowe próbki
+            s.rung, s.state, s.next_at = RUNG_CONTROL_WRITE, WAITING, None   # okno przerwane — od zapisu kontrolnego
         if s.state == RUNNING and rung == RUNG_TRIAL and s.next_at is None:
             return None                                  # próba bez końca nie ruszy dalej
         return lad

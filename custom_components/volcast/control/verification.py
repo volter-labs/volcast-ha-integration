@@ -38,8 +38,8 @@ from homeassistant.core import callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 
-from ..const import (DOMAIN, ISSUE_VERIFICATION_STOPPED, SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_CONTROL_UPDATED,
-                     VERIFY_TRIAL_HOURS, VERIFY_WINDOW_MAX_SOC, VERIFY_WINDOW_MIN, VERIFY_WINDOW_POWER_W)
+from ..const import (DIRECT_POLL_S, DOMAIN, EXECUTOR_INTERVAL_S, ISSUE_VERIFICATION_STOPPED,
+                     SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_CONTROL_UPDATED, VERIFY_TRIAL_HOURS, VERIFY_WINDOW_MAX_SOC, VERIFY_WINDOW_MIN, VERIFY_WINDOW_POWER_W)
 from ..core.control.cycle import DRY_RUN, WRITE
 from ..core.control.ladder import (RUNG_CONTROL_WRITE, RUNG_IDENTIFY, RUNG_READ, RUNG_TRIAL, RUNG_WINDOW,
                                    RUNNING, STOPPED, VERIFIED, WAITING, Ladder, LadderParams, device_key)
@@ -57,7 +57,7 @@ SIGNAL_EVERY = timedelta(hours=1)
 def default_params(profile) -> LadderParams:
     """Stałe drabiny z `const.py`, nadpisane opcjonalnym blokiem `verification` profilu."""
     base = LadderParams(VERIFY_TRIAL_HOURS, VERIFY_WINDOW_MIN, VERIFY_WINDOW_POWER_W,
-                        window=getattr(profile, "control_model", None) != "time_window")
+                        window=window_capable(profile))
     raw = getattr(profile, "raw", None) or {}
     return base.with_overrides(raw.get("verification"))
 
@@ -69,18 +69,24 @@ def start_rung_for(profile, domain: str | None, *, direct: bool) -> int:
 
 
 def writing_supported(profile, kind: str) -> bool:
-    """Czy drabina ma czym pisać: okna czasowe — zapis kontrolny włącznika (tylko tryb bezpośredni; okna
-    próbnego dla nich nie ma), tryb i nastawa — zapis kontrolny trybu i okno ładowania z sieci."""
+    """Czy drabina ma czym zrobić zapis kontrolny (szczebel 4): tryb i nastawa — zapisywalny klucz `mode`;
+    okna czasowe — słowo SoC programu (tylko tryb bezpośredni). Okno próbne to osobny warunek
+    (`window_capable`, parametr `window` drabiny)."""
     if profile is None:
         return False
+    write = profile.raw.get("write") or {}
     if profile.control_model == "time_window":
-        return kind == "direct"
-    return window_capable(profile)
+        return kind == "direct" and bool(((write.get("tou_program") or {}).get("soc") or {}).get("addr"))
+    return "mode" in write
 
 
 def window_capable(profile) -> bool:
-    """Okno próbne potrzebuje modelu trybu i nastawy z intencją ładowania z sieci z mocą ze slotu."""
+    """Okno próbne (szczebel 5): model trybu i nastawy z bezpiecznym wymuszonym ładowaniem z sieci
+    (możliwość `force_charge_from_grid`) i nastawą mocy ze slotu. Bez tego drabina kończy na zapisie
+    kontrolnym."""
     if profile is None or profile.control_model != "mode_setpoint":
+        return False
+    if (profile.raw.get("capabilities") or {}).get("force_charge_from_grid") is not True:
         return False
     try:
         return profile.intent("charge_grid")["power"] in SLOT_POWER_KINDS
@@ -160,8 +166,9 @@ class VerificationRunner:
         if record:
             self.ladder = Ladder.from_record(record, self._params)
             if self.ladder is not None and record.get("rung") == RUNG_WINDOW and record.get("state") == RUNNING:
-                # Okno przerwane restartem (drabina czeka na nowe): powrót, gdyby została własność z okna.
-                await self._ex.async_verification_restore()
+                # Okno przerwane restartem (drabina wraca przed zapis kontrolny): powrót do trybu bazowego
+                # w obu trybach — wymuszone ładowanie z okna nie może zostać na falowniku.
+                await self._ex.async_verification_restore(force=True)
         if self.ladder is None and key is not None:
             self.ladder = Ladder(self._start, self._params, device_key=key)
             if not record and self._start == RUNG_CONTROL_WRITE and self._ex.verification_migration_ok():
@@ -319,8 +326,18 @@ class VerificationRunner:
         self._seen, self._seen_write_end = seen, write_end
 
     def _window_ok(self, rd) -> bool:
+        """Dobre okno: zgoda, SoC ≤ sufitu i świeży odczyt (młodszy niż dwa interwały odpytywania).
+        Okno zastępuje plan chmury na swój czas zaraz po zgodzie — świadomie (weryfikacja przed sterowaniem)."""
         soc = _number(rd.readings.get("soc"))
-        return self._can_write() and soc is not None and soc <= VERIFY_WINDOW_MAX_SOC
+        age = _number(getattr(rd, "soc_age_s", None))
+        return (self._can_write() and self._params.window and soc is not None and soc <= VERIFY_WINDOW_MAX_SOC
+                and age is not None and age <= self._fresh_limit_s())
+
+    def _fresh_limit_s(self) -> float:
+        if self._ex.io.kind == "direct":
+            poll = _number(getattr(getattr(self._ex.io, "conn", None), "poll_s", None))
+            return 2.0 * (poll if poll is not None else DIRECT_POLL_S)
+        return 2.0 * EXECUTOR_INTERVAL_S
 
     def _charge_w(self, rd) -> float | None:
         """Moc ładowania baterii (dodatnia = ładuje): odwrócony znak odczytu rdzenia (rozładowanie dodatnie)."""

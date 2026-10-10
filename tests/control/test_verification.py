@@ -177,6 +177,7 @@ class FakeIO:
         self._identity = identity
         self.readings = {"mode": "general", "soc": 50.0, "battery_power_w": 0.0}
         self.raw_mode = "general"
+        self.soc_age = 1.0
         self.writer = SimpleNamespace(is_ours=lambda cid: cid == "ours")
         self.foreign_cb = None
         self.identity_ok = True
@@ -185,7 +186,7 @@ class FakeIO:
         return self._identity
 
     def read(self, now):
-        return Reading(dict(self.readings), self.raw_mode, {}, {}, 1.0)
+        return Reading(dict(self.readings), self.raw_mode, {}, {}, self.soc_age)
 
     def identity_confirmed(self):
         return self.identity_ok
@@ -211,6 +212,7 @@ class FakeExecutor:
         self.control_result = True
         self.saved = []
         self.migration_ok = False
+        self.forced = []
 
     def verification_migration_ok(self):
         return self.migration_ok
@@ -230,9 +232,10 @@ class FakeExecutor:
     def start_verification_window(self, schedule):
         self.window = schedule
 
-    async def async_verification_restore(self):
+    async def async_verification_restore(self, *, force=False):
         self.window = None
         self.restores += 1
+        self.forced.append(force)
 
 
 class Clock:
@@ -639,3 +642,122 @@ async def test_runner_signals_trial_progress_at_most_hourly(monkeypatch):
     assert len(env.changes) == n + 1
     await env.runner.async_retry()
     assert len(env.changes) == n + 2
+
+
+# ── poprawki po przeglądzie: zapis kontrolny bez okna, bramka urządzenia, świeży odczyt, restart w oknie ──
+
+FOXESS = __import__("custom_components.volcast.core.profile", fromlist=["load_builtin"]).load_builtin("foxess-h")
+DEYE_DRAFT = __import__("custom_components.volcast.core.profile", fromlist=["load_builtin"]).load_builtin("deye-sg")
+
+
+def test_window_needs_a_guarded_forced_grid_charge_with_power():
+    assert ver_mod.window_capable(GW_V) is True
+    assert ver_mod.window_capable(FOXESS) is False                # ładowanie z sieci bez mocy, bez możliwości
+    assert ver_mod.default_params(FOXESS).window is False
+    assert ver_mod.writing_supported(FOXESS, "entities") and ver_mod.writing_supported(FOXESS, "direct")
+    assert ver_mod.writing_supported(DEYE_DRAFT, "direct") and not ver_mod.writing_supported(DEYE_DRAFT, "entities")
+
+
+@pytest.mark.asyncio
+async def test_runner_draft_profile_without_a_test_window_is_verified_by_the_control_write(monkeypatch):
+    ex = FakeExecutor(FakeIO(identity="entities|foxess-h|foxess_modbus|uid"), profile=FOXESS)
+    env = Env(monkeypatch, ex)
+    env.runner = VerificationRunner(SimpleNamespace(data={}), SimpleNamespace(entry_id="e1", options={}), ex,
+                                    params=ver_mod.default_params(FOXESS), start_rung=1, salt=SALT,
+                                    utcnow=env.clock, track_point=lambda hass, action, when: (lambda: None))
+    await env.runner.async_start()
+    assert env.state == (3, RUNNING)
+    await env.step(hours=24)
+    assert env.state == (4, VERIFIED) and ex.control_writes == [1] and ex.window is None
+    assert env.runner.plan_allowed() is True
+
+
+@pytest.mark.asyncio
+async def test_runner_window_waits_for_a_fresh_reading(monkeypatch):
+    env = Env(monkeypatch)
+    env.ex.io.soc_age = 600.0                                      # odczyt sprzed 10 min
+    await env.runner.async_start()
+    await env.step(hours=24)
+    assert env.state == (5, WAITING) and env.ex.window is None
+    env.ex.io.soc_age = 5.0
+    await env.step(minutes=1)
+    assert env.state == (5, RUNNING) and env.ex.window is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["entities", "direct"])
+async def test_runner_restart_mid_window_restores_in_both_modes(monkeypatch, kind):
+    identity = f"{kind}|goodwe-et|fp"
+    lad = Ladder(4, P, device_key=device_key(SALT, identity))
+    lad.consent(True, GW_NOW)
+    lad.tick(GW_NOW)
+    lad.write_result(True, GW_NOW)
+    lad.window_open(GW_NOW)
+    assert lad.window_running
+    io = FakeIO(kind=kind, identity=identity)
+    io.conn = SimpleNamespace(conflict=False)
+    ex = FakeExecutor(io, can_write=False, record=lad.to_record())
+    env = Env(monkeypatch, ex, start=4)
+    await env.runner.async_start()
+    assert ex.restores == 1 and ex.forced == [True]
+    assert env.state == (4, WAITING)
+
+
+@pytest.mark.asyncio
+async def test_draft_direct_profile_follows_the_plan_once_the_device_is_verified(
+        make_hass, rtu_tcp_sim, deye_bank, issues):
+    from tests.control.test_executor_direct import TOU_NOW, deye_target
+    h = await Harness(make_hass, DEYE_DRAFT, deye_target(rtu_tcp_sim), utc=lambda: TOU_NOW,
+                      rated=10000.0).start(raw=TOU_RAW)
+    try:
+        h.ex.verification = Gate(False)
+        await h.ex.async_tick()
+        assert deye_bank.writes == [] and h.ex.last_decision.status != WRITE
+        h.ex.verification.allowed = True
+        await h.cycle()
+        assert h.ex.last_decision.status == WRITE and h.ex.owned
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_draft_direct_profile_without_a_ladder_stays_dry(make_hass, rtu_tcp_sim, deye_bank, issues):
+    from tests.control.test_executor_direct import TOU_NOW, deye_target
+    h = await Harness(make_hass, DEYE_DRAFT, deye_target(rtu_tcp_sim), utc=lambda: TOU_NOW,
+                      rated=10000.0).start(raw=TOU_RAW)
+    try:
+        await h.ex.async_tick()
+        assert deye_bank.writes == [] and h.ex.last_decision.status != WRITE
+    finally:
+        await h.close()
+
+
+def test_entity_executor_plain_verification_restore_keeps_plan_control(monkeypatch):
+    import asyncio
+
+    from tests.control.test_executor import E, make, ready
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        assert ex.owned and h.states.get(E["mode"]).state == "sell_power"
+        await ex.async_verification_restore()                     # tryb encji bez okna: nic
+        assert ex.owned
+    asyncio.run(go())
+
+
+def test_entity_executor_restore_after_an_interrupted_window(monkeypatch):
+    import asyncio
+
+    from tests.control.test_executor import E, make, ready
+    h, ex = make(monkeypatch=monkeypatch)
+
+    async def go():
+        await ready(ex)
+        await ex.async_tick()
+        assert ex.owned
+        ex.schedule = None                                         # restart bez planu w magazynie
+        await ex.async_verification_restore(force=True)
+        assert not ex.owned and h.states.get(E["mode"]).state != "sell_power"
+    asyncio.run(go())
