@@ -761,3 +761,8 @@ def test_entity_executor_restore_after_an_interrupted_window(monkeypatch):
         await ex.async_verification_restore(force=True)
         assert not ex.owned and h.states.get(E["mode"]).state != "sell_power"
     asyncio.run(go())
+
+
+def test_writing_supported_accepts_register_address_zero():
+    tou0 = SimpleNamespace(control_model="time_window", raw={"write": {"tou_program": {"soc": {"addr": 0}}}})
+    assert ver_mod.writing_supported(tou0, "direct") is True

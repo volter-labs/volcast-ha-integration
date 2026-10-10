@@ -76,7 +76,7 @@ def writing_supported(profile, kind: str) -> bool:
         return False
     write = profile.raw.get("write") or {}
     if profile.control_model == "time_window":
-        return kind == "direct" and bool(((write.get("tou_program") or {}).get("soc") or {}).get("addr"))
+        return kind == "direct" and ((write.get("tou_program") or {}).get("soc") or {}).get("addr") is not None
     return "mode" in write
 
 
