@@ -127,3 +127,13 @@ def test_uncapped_export_leaves_limiter_alone_when_asked():
     assert (ban.export_limit_enabled, ban.export_limit_w) == (True, 0.0)
     # Bez flagi — jak mapper referencyjny (złote wektory).
     assert map_slot(s, GW, 8000).params.export_limit_enabled is False
+
+
+def test_hold_without_power_maps_to_battery_standby_zero_on_goodwe():
+    # slot `hold` z pustymi nastawami (blokada magazynu na czas ładowania EV)
+    s = _slot(action=Action.HOLD, power_w=None, soc_target=None)
+    assert slot_intent(s) == ("standby", NOTE_OK)
+    got = map_slot(s, GW, 8000)
+    assert got.params.mode == "battery_standby"
+    assert got.params.power_w == 0.0
+    assert got.note == NOTE_OK
