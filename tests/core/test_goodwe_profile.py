@@ -76,16 +76,17 @@ def test_goodwe_modbus_is_verified_with_fc6():
 
 
 # Liczniki i limity BMS — wartości z ramek nagranych na GW8KN-ET (tests/golden/goodwe_et/frames.json).
-_NEW_READS = ("load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_total_kwh",
+_NEW_READS = ("load_energy_total_kwh", "battery_charge_total_kwh",
               "battery_discharge_total_kwh", "bms_charge_current_max_a", "bms_discharge_current_max_a")
-# Sprawdzone na urządzeniu wszystkie poza dziennym zużyciem (brak bilansu dziennego) — ten zostaje `verify: true`.
-_UNVERIFIED = ("load_energy_day_kwh",)
+# Wszystkie sprawdzone na urządzeniu. Licznika dobowego zużycia profil nie czyta: licznik całkowity ma
+# pierwszeństwo w chmurze, więc dobowy byłby martwym odczytem (klucz zostaje w schemacie dla encji i innych marek).
+_UNVERIFIED = ()
 
 
 def test_goodwe_et_counters_and_bms_reads_from_recorded_frames(image):
     v = read_values(load_builtin("goodwe-et").raw["read"], image)
     assert v["load_energy_total_kwh"] == pytest.approx(4315.5)
-    assert v["load_energy_day_kwh"] == pytest.approx(39.8)
+    assert "load_energy_day_kwh" not in v
     assert v["battery_charge_total_kwh"] == pytest.approx(2495.1)
     assert v["battery_discharge_total_kwh"] == pytest.approx(1987.9)
     assert (v["bms_charge_current_max_a"], v["bms_discharge_current_max_a"]) == (9, 22)

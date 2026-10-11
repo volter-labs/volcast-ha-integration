@@ -153,8 +153,7 @@ def test_stale_direct_reading_reports_none_sources():
     assert set(sender.readings_report()["readings_source"].values()) == {"none"}
 
 
-_COUNTERS = {"load_energy_total_kwh": 4315.5, "load_energy_day_kwh": 39.8,
-             "battery_charge_total_kwh": 2495.1, "battery_discharge_total_kwh": 1987.9}
+_COUNTERS = {"load_energy_total_kwh": 4315.5, "battery_charge_total_kwh": 2495.1, "battery_discharge_total_kwh": 1987.9}
 
 
 def _gw_conn(**words):
@@ -225,11 +224,11 @@ def test_direct_counters_in_extra_and_sources():
 
 
 def test_direct_counters_only_valid_keys():
-    # 0xFFFFFFFF ×0,1 kWh = śmieci; licznik dobowy 0 kWh tuż po północy jest prawdziwą wartością
-    conn = _gw_conn(**{"35203": 0xFFFF, "35204": 0xFFFF, "35205": 0})
+    # 0xFFFFFFFF ×0,1 kWh = śmieci; licznika dobowego profil nie czyta
+    conn = _gw_conn(**{"35203": 0xFFFF, "35204": 0xFFFF})
     sender, cloud = _sender(conn)
     counters = _flush(sender, cloud)["extra"]["counters"]
-    assert "load_energy_total_kwh" not in counters and counters["load_energy_day_kwh"] == 0.0
+    assert "load_energy_total_kwh" not in counters and "load_energy_day_kwh" not in counters
     assert counters["battery_charge_total_kwh"] == pytest.approx(2495.1)
 
 
