@@ -76,8 +76,10 @@ def test_goodwe_modbus_is_verified_with_fc6():
 
 
 # Liczniki i limity BMS — wartości z ramek nagranych na GW8KN-ET (tests/golden/goodwe_et/frames.json).
-_UNVERIFIED = ("load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_total_kwh",
-               "battery_discharge_total_kwh", "bms_charge_current_max_a", "bms_discharge_current_max_a")
+_NEW_READS = ("load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_total_kwh",
+              "battery_discharge_total_kwh", "bms_charge_current_max_a", "bms_discharge_current_max_a")
+# Sprawdzone na urządzeniu wszystkie poza dziennym zużyciem (brak bilansu dziennego) — ten zostaje `verify: true`.
+_UNVERIFIED = ("load_energy_day_kwh",)
 
 
 def test_goodwe_et_counters_and_bms_reads_from_recorded_frames(image):
@@ -90,7 +92,7 @@ def test_goodwe_et_counters_and_bms_reads_from_recorded_frames(image):
     assert "battery_capacity_kwh" not in v              # mapa ET nie ma rejestru pojemności
 
 
-def test_goodwe_et_unverified_reads_are_marked_and_never_written():
+def test_goodwe_et_new_reads_are_marked_and_never_written():
     from custom_components.volcast.control.device_io import LIVE_KEYS
     from custom_components.volcast.core.modbus.blocks import spec_addresses
     from custom_components.volcast.core.profile_schema import profile_warnings
@@ -99,13 +101,15 @@ def test_goodwe_et_unverified_reads_are_marked_and_never_written():
     for key in _UNVERIFIED:
         assert read[key]["verify"] is True and read[key]["note"], key
     assert {k for k, s in read.items() if s.get("verify")} == set(_UNVERIFIED)
-    # rejestry do weryfikacji: poza zapisem, odczytem zwrotnym, SoC/temperaturą i odczytami nastawy sprzedaży
+    for key in set(_NEW_READS) - set(_UNVERIFIED):
+        assert "verify" not in read[key] and read[key]["note"], key
+    # nowe rejestry (liczniki, limity BMS): poza zapisem, odczytem zwrotnym, SoC/temperaturą i odczytami nastawy sprzedaży
     written = {a for s in p.raw["write"].values() for a in spec_addresses(s)}
-    unverified = {a for k in _UNVERIFIED for a in spec_addresses(read[k])}
+    unverified = {a for k in _NEW_READS for a in spec_addresses(read[k])}
     assert not unverified & written
     write_path = {"soc", "battery_temp_c", *LIVE_KEYS, *p.raw["write"], *p.modbus.probe_keys,
                   "mode_value", "battery_power_w", "active_power_w"}
-    assert not write_path & set(_UNVERIFIED)
+    assert not write_path & set(_NEW_READS)
     for key in write_path & set(read):
         addrs = set(spec_addresses(read[key]))
         for term in read[key].get("sum", ()):
