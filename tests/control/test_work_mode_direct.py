@@ -109,6 +109,57 @@ async def test_dropped_read_keeps_state(make_hass, goodwe_udp_sim, goodwe_bank):
 
 
 @pytest.mark.asyncio
+async def test_work_mode_stops_reading_after_three_failed_reads(make_hass, goodwe_udp_sim, goodwe_bank):
+    h, _spy = await _start(make_hass, goodwe_udp_sim)
+    reqs = lambda: sum(1 for e in goodwe_udp_sim.log if (e[1], e[2]) == (WM_ADDR, 1))  # żądania 47000 w logu
+    try:
+        await h.conn.async_poll()
+        assert h.conn.work_mode.state == "general"
+        goodwe_bank.unsupported.add(WM_ADDR)                               # rejestr nieobsługiwany (wyjątek Modbus)
+        for _ in range(3):
+            h.clock.advance(WM_POLL_S + 1)
+            await h.conn.async_poll()
+        backed_off = reqs()
+        goodwe_bank.unsupported.discard(WM_ADDR)                           # rejestr znów by odpowiadał
+        for _ in range(3):
+            h.clock.advance(WM_POLL_S + 1)
+            await h.conn.async_poll()
+        assert reqs() == backed_off                                       # zero kolejnych żądań 47000
+        assert h.conn.work_mode.state == "general"                        # stan nie zmieniony
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_work_mode_failure_counter_resets_on_success(make_hass, goodwe_udp_sim, goodwe_bank):
+    h, _spy = await _start(make_hass, goodwe_udp_sim)
+    reqs = lambda: sum(1 for e in goodwe_udp_sim.log if (e[1], e[2]) == (WM_ADDR, 1))
+    try:
+        await h.conn.async_poll()                                         # ok
+        goodwe_bank.unsupported.add(WM_ADDR)
+        for _ in range(2):                                                # dwa błędy z rzędu
+            h.clock.advance(WM_POLL_S + 1)
+            await h.conn.async_poll()
+        goodwe_bank.unsupported.discard(WM_ADDR)
+        before = reqs()
+        h.clock.advance(WM_POLL_S + 1)                                    # sukces zeruje licznik
+        await h.conn.async_poll()
+        assert reqs() > before and h.conn.work_mode.state == "general"
+        goodwe_bank.unsupported.add(WM_ADDR)
+        for _ in range(2):                                                # kolejne dwa błędy
+            h.clock.advance(WM_POLL_S + 1)
+            await h.conn.async_poll()
+        goodwe_bank.unsupported.discard(WM_ADDR)
+        before = reqs()
+        goodwe_bank.poke(WM_ADDR, 3)
+        h.clock.advance(WM_POLL_S + 1)                                    # nadal czytamy: nie wyłączone
+        await h.conn.async_poll()
+        assert reqs() > before and h.conn.work_mode.state == "other:3"
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
 async def test_no_read_while_conflict(make_hass, goodwe_udp_sim, goodwe_bank):
     h, spy = await _start(make_hass, goodwe_udp_sim)
     try:

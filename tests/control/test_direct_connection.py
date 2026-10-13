@@ -238,6 +238,25 @@ async def test_identity_rechecked_after_timeout_streak(hass, goodwe_udp_sim, sim
 
 
 @pytest.mark.asyncio
+async def test_identity_recheck_with_shipped_profile_fires_on_second_poll(hass, goodwe_udp_sim, sim_faults):
+    # goodwe-et z blokiem work_mode: odczyt 47000 leży w tym samym cyklu co timeouty, więc streak
+    # dochodzi do progu już w drugim cyklu i ponowne sprawdzenie tożsamości przychodzi wcześniej
+    clock = FakeClock()
+    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    try:
+        await conn.async_start()
+        seen = len(goodwe_udp_sim.log)
+        sim_faults.drop_next = 4
+        for _ in range(2):
+            clock.advance(10.0)
+            await conn.async_poll()
+        assert (3, 47000, 1) in goodwe_udp_sim.log[seen:]
+        assert (3, 35000, 33) in goodwe_udp_sim.log[seen:] and conn.identity == "confirmed"
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
 async def test_identity_check_due_hourly_on_udp(hass, goodwe_udp_sim):
     clock = FakeClock()
     conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)

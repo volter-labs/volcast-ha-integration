@@ -48,6 +48,8 @@ from ..core.transports.factory import make_transport
 from .work_mode import WorkModeTracker, classify_direct
 
 _LOGGER = logging.getLogger(__name__)
+# Kolejne nieudane odczyty trybu pracy, po których rejestr nie jest czytany do końca połączenia.
+WORK_MODE_FAIL_LIMIT = 3
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
 STATIC_CHECK_S = 600.0              # kolizja statyczna sprawdzana znowu co 10 min
@@ -194,6 +196,8 @@ class DirectConnection:
         # tryb pracy falownika; runtime podmienia na wspólny `rt.work_mode` (ten sam tracker co odczyt z encji)
         self.work_mode = WorkModeTracker()
         self._work_mode_at: float | None = None
+        self._work_mode_fails = 0
+        self._work_mode_off = False
         self._poll_task: asyncio.Task | None = None
         self._timer_task: asyncio.Task | None = None
         self._last_poll: float | None = None
@@ -548,7 +552,7 @@ class DirectConnection:
         blok rozdzielający o innej długości, gdy poprzedni odczyt miał tę samą). Nie przy kolizji; błąd nie zmienia stanu i nie
         rusza wykonawcy ani zgody; bez zapisów i bez budżetu NVM."""
         wm = getattr(self.profile, "work_mode", None)
-        if wm is None or self.conflict or self.client is None:
+        if wm is None or self.conflict or self.client is None or self._work_mode_off:
             return
         if self._work_mode_at is not None and now - self._work_mode_at < wm.poll_s:
             return
@@ -569,6 +573,14 @@ class DirectConnection:
             _LOGGER.debug("Volcast direct work mode read failed: %s", type(err).__name__)
         except (IndexError, TypeError, ValueError):
             value = None
+        if value is None:
+            self._work_mode_fails += 1
+            if self._work_mode_fails >= WORK_MODE_FAIL_LIMIT and not self._work_mode_off:
+                self._work_mode_off = True
+                _LOGGER.info("Volcast direct: operation mode register %d gives no usable reply; "
+                             "not reading it again on this connection", wm.read_addr)
+        else:
+            self._work_mode_fails = 0
         self.work_mode.update(classify_direct(value, wm.neutral_values))
 
     def _tick_monitor(self, now: float) -> None:
