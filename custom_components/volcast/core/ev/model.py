@@ -46,6 +46,10 @@ class LoadsMeta:
     max: float | None = None
     step: float | None = None
     plan_generated_at: datetime | None = None
+    # Zgoda chmury na ładowanie awaryjne z sieci (False przy pauzie użytkownika i „tylko PV”).
+    # Tylko jawne `true` otwiera: koperta z `loads_meta` bez tego pola pochodzi z serwera, który
+    # już zna pauzy i „tylko PV”, ale nie umie ich przekazać — wtedy reguła awaryjna nie działa.
+    fallback_allowed: bool = False
 
 
 def _ts(raw: Any) -> datetime | None:
@@ -122,6 +126,7 @@ def _parse_meta(raw: Any) -> LoadsMeta | None:
         max=_number(raw.get("max")),
         step=_number(raw.get("step")),
         plan_generated_at=_ts(raw.get("plan_generated_at")),
+        fallback_allowed=raw.get("fallback_allowed") is True,
     )
 
 

@@ -715,9 +715,16 @@ OLD_GEN = NOW - timedelta(hours=8)
 
 def _fb_meta(**kw):
     # 11,04 kWh przy 11 040 W = 1 h; termin za 1 h 15 min → okno awaryjne trwa od 15 min
-    base = dict(gen=OLD_GEN, remaining_kwh=11.04, ready_by=NOW + timedelta(minutes=75))
+    base = dict(gen=OLD_GEN, remaining_kwh=11.04, ready_by=NOW + timedelta(minutes=75), fallback_allowed=True)
     base.update(kw)
     return _meta(**base)
+
+
+def _stale(ex):
+    """Brak odpowiedzi chmury od startu, a okres łaski po starcie minął: wiek = od wygenerowania planu."""
+    from custom_components.volcast.control.loads_executor import STARTUP_GRACE_S
+    ex._confirmed_mono = None
+    ex._started_mono -= STARTUP_GRACE_S
 
 
 def test_fallback_forces_full_power_when_plan_is_stale():
@@ -726,7 +733,7 @@ def test_fallback_forces_full_power_when_plan_is_stale():
         ex, _ = await _started(h)
         await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60), meta=_fb_meta()))
         assert _calls(h) == []         # plan właśnie przyszedł: świeży, slot off
-        ex._confirmed_mono = None      # brak potwierdzenia od startu: wiek liczony od wygenerowania planu
+        _stale(ex)      # brak potwierdzenia od startu: wiek liczony od wygenerowania planu
         await ex.async_tick()
         assert _calls(h) == [
             ("number", "set_value", {"entity_id": CURRENT, "value": 16.0}),
@@ -761,7 +768,7 @@ def test_fallback_without_any_slot_still_forces():
         h = _hass()
         ex, _ = await _started(h)
         await ex.async_on_plan(_schedule(meta=_fb_meta()))           # plan bez slotów (np. po terminie)
-        ex._confirmed_mono = None
+        _stale(ex)
         await ex.async_tick()
         assert [c[1] for c in _calls(h)] == ["set_value", "select_option"]
         await ex.async_stop()
@@ -776,7 +783,7 @@ def test_fallback_respects_every_gate(gate):
                                plan_only=gate == "plan_only")
         await ex.async_on_plan(_schedule(_slot(mode="off", power=None), meta=_fb_meta(
             control=gate != "control_enabled")))
-        ex._confirmed_mono = None
+        _stale(ex)
         await ex.async_tick()
         assert _calls(h) == [] and ex.state.fallback_since is None
         await ex.async_stop()
@@ -788,7 +795,7 @@ def test_fallback_never_stops_charging_and_ends_with_fresh_plan():
         h = _hass()
         ex, clock = await _started(h)
         await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60), meta=_fb_meta()))
-        ex._confirmed_mono = None
+        _stale(ex)
         await ex.async_tick()          # awaryjnie: nastawa + start
         h.states.set(STATUS, "Charging")
         h.services.calls.clear()
@@ -800,7 +807,61 @@ def test_fallback_never_stops_charging_and_ends_with_fresh_plan():
         clock.advance(61)
         await ex.async_on_plan(_schedule(_slot(mode="forced", start=clock.utc, minutes=60),
                                          meta=_fb_meta(gen=clock.utc - timedelta(seconds=1))))
-        assert ex.state.fallback_since is None and ex.report_for("dev1")["fallback"] is False
+        assert ex.state.fallback_since is None
+        report = ex.report_for("dev1")
+        assert report["fallback"] is True           # zatrzask: chmura musi zobaczyć, że tryb awaryjny był
+        await ex.async_ack_report(report)
+        assert ex.report_for("dev1")["fallback"] is False
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_fallback_latch_survives_until_an_accepted_report():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(meta=_fb_meta()))
+        stale = ex.report_for("dev1")               # paczka zebrana PRZED trybem awaryjnym
+        _stale(ex)
+        await ex.async_tick()
+        ex.note_plan_confirmed()                    # łączność wraca, zanim poszła telemetria
+        await ex.async_tick()
+        assert ex.state.fallback_since is None
+        await ex.async_ack_report(stale)            # stara paczka nie kasuje zatrzasku
+        assert ex.report_for("dev1")["fallback"] is True
+        await ex.async_ack_report(ex.report_for("dev1"))
+        assert ex.report_for("dev1")["fallback"] is False
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_fallback_needs_cloud_permission():
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        # pauza użytkownika albo „tylko PV”: chmura daje fallback_allowed=False
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None), meta=_fb_meta(fallback_allowed=False)))
+        _stale(ex)
+        await ex.async_tick()
+        assert _calls(h) == [] and ex.state.fallback_since is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_no_fallback_right_after_restart_before_the_cloud_answers():
+    async def body():
+        from custom_components.volcast.control.loads_executor import STARTUP_GRACE_S
+        h = _hass()
+        ex, clock = _make(h)
+        await ex.async_start(_schedule(_slot(mode="off", power=None, minutes=60), meta=_fb_meta()))
+        await ex.async_tick()                       # plan z magazynu, sieć jeszcze nie wstała
+        assert _calls(h) == []
+        clock.advance(STARTUP_GRACE_S - 1)
+        await ex.async_tick()
+        assert _calls(h) == []
+        clock.advance(2)                            # okres łaski minął, chmura dalej milczy
+        await ex.async_tick()
+        assert [c[1] for c in _calls(h)] == ["set_value", "select_option"]
         await ex.async_stop()
     asyncio.run(body())
 
@@ -818,11 +879,13 @@ def test_fallback_flag_cleared_when_a_gate_closes():
                            clock=lambda: clock.mono, utcnow=lambda: clock.utc, readback_s=0)
         await ex.async_start()
         await ex.async_on_plan(_schedule(meta=_fb_meta()))
-        ex._confirmed_mono = None
+        _stale(ex)
         await ex.async_tick()
         assert ex.report_for("dev1")["fallback"] is True
         consent["v"] = False
         await ex.async_tick()
+        assert ex.state.fallback_since is None
+        await ex.async_ack_report(ex.report_for("dev1"))
         assert ex.report_for("dev1")["fallback"] is False
         await ex.async_stop()
     asyncio.run(body())
@@ -833,7 +896,7 @@ def test_fallback_with_zero_power_meta_is_not_forced():
         h = _hass()
         ex, _ = await _started(h)
         await ex.async_on_plan(_schedule(_slot(mode="off", power=None), meta=_fb_meta(max_power_w=0.0, step=0.0)))
-        ex._confirmed_mono = None
+        _stale(ex)
         await ex.async_tick()
         assert _calls(h) == [] and ex.state.fallback_since is None
         await ex.async_stop()
@@ -953,6 +1016,37 @@ def test_manual_event_during_cycle_blocks_the_rest_of_it():
     asyncio.run(body())
 
 
+def test_long_manual_hold_warns_once_and_keeps_holding(caplog):
+    async def body():
+        caplog.set_level(logging.WARNING, logger="custom_components.volcast.control.loads_executor")
+        h = _hass()
+        ex, clock = await _charging_forced(h)
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        h.states.set(STATUS, "Available")
+        clock.advance(6 * 3600 - 60)
+        await ex.async_tick()
+        assert "no new plan" not in caplog.text
+        for _ in range(3):
+            clock.advance(61)
+            await ex.async_tick()
+        assert caplog.text.count("no new plan") == 1
+        assert _calls(h) == []                     # bez samoczynnego wznowienia zapisów
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_any_user_change_during_hold_updates_the_event():
+    async def body():
+        h = _hass()
+        ex, clock = await _charging_forced(h)
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        clock.advance(10)                          # zmiana zdania przed nowym planem (slot dalej forced)
+        ex.on_state_event(_event(START_STOP, "Stop charging", "Start charging"))
+        assert ex.state.manual_event == "start" and ex.state.manual_at == clock.utc.isoformat()
+        await ex.async_stop()
+    asyncio.run(body())
+
+
 def test_manual_hold_beats_fallback():
     async def body():
         h = _hass()
@@ -962,7 +1056,7 @@ def test_manual_hold_beats_fallback():
         h.services.calls.clear()
         ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
         h.states.set(STATUS, "Available")
-        ex._confirmed_mono = None
+        _stale(ex)
         clock.advance(2 * 3600)        # plan stary, termin blisko — ręczny stop i tak wygrywa
         await ex.async_tick()
         assert _calls(h) == [] and ex.state.fallback_since is None

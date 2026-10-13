@@ -162,6 +162,14 @@ def test_start_stop_role_state_and_options():
     assert missing["start_stop_state"] is None and missing["start_stop_options"] is None
 
 
+def test_start_stop_options_are_capped():
+    s = _states()
+    s.set("select.wb_start_stop", "x" * 300, {"options": [f"opt{i}" + "y" * 100 for i in range(40)]})
+    e = _one(s, roles={**ROLES, "start_stop": "select.wb_start_stop"})
+    assert len(e["start_stop_options"]) == 16 and all(len(o) == 64 for o in e["start_stop_options"])
+    assert len(e["start_stop_state"]) == 64
+
+
 def test_without_start_stop_role_keys_are_absent():
     e = _one(_states())
     assert "start_stop_state" not in e and "start_stop_options" not in e and "executor" not in e

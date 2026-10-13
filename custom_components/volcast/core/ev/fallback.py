@@ -1,7 +1,8 @@
 """Reguła awaryjna ładowarki: bez świeżego planu z chmury, a z terminem blisko — ładuj pełną mocą.
 
 `should_force` = plan starszy niż `FALLBACK_PLAN_AGE_S` ∧ teraz ≥ `ready_by` − czas potrzebny na
-`remaining_kwh` przy `max_power_w` − `FALLBACK_MARGIN_S` ∧ zostało coś do naładowania. Reguła może
+`remaining_kwh` przy `max_power_w` − `FALLBACK_MARGIN_S` ∧ zostało coś do naładowania ∧ chmura
+jawnie pozwala (`loads_meta.fallback_allowed`; nie przy pauzie użytkownika ani „tylko PV”). Reguła może
 tylko WŁĄCZYĆ ładowanie (nigdy nie zatrzymuje) i działa wyłącznie w bramkach wykonawcy (zgoda,
 przełącznik, nie „tylko plan”, sterowanie ładowarką włączone) — tu jest tylko warunek czasu.
 
@@ -37,6 +38,8 @@ def should_force(now: datetime, meta, plan_age_s: Any, status: Any) -> bool:
     """Czy wymusić ładowanie pełną mocą (plan stary, termin blisko, cel nieosiągnięty)."""
     if meta is None or getattr(meta, "control_enabled", None) is not True:
         return False
+    if getattr(meta, "fallback_allowed", None) is not True:
+        return False                         # chmura nie pozwala (pauza, „tylko PV”) albo nie umie powiedzieć
     if not isinstance(status, str) or not status or status in _UNREADABLE:
         return False
     age = _positive(plan_age_s)

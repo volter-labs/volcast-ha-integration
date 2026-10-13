@@ -28,9 +28,11 @@ zapis na plan i slot; potem start idzie tylko, gdy odczyt jest NIŻSZY niż plan
 nastawa mogłaby przekroczyć limit przyłącza).
 
 Reguła awaryjna (`core/ev/fallback.py`): wiek planu = czas od ostatniej odpowiedzi chmury
-(`note_plan_confirmed`, nowy plan) — przed pierwszą odpowiedzią od startu: od wygenerowania planu.
+(`note_plan_confirmed`, nowy plan) — przed pierwszą odpowiedzią od startu: od wygenerowania planu,
+po `STARTUP_GRACE_S`. Tylko przy `loads_meta.fallback_allowed` (chmura: nie przy pauzie i „tylko PV”).
 Gdy reguła działa: pełna moc i start jak w slocie `forced` (także bez slotu), nigdy stop;
-`fallback_since` w magazynie i `fallback: true` w raporcie, do świeżego planu.
+`fallback_since` w magazynie; `fallback: true` w raporcie do świeżego planu i zatrzaśnięte do
+przyjęcia raportu (`async_ack_report`), żeby chmura zobaczyła także epizod zakończony przed wysyłką.
 
 Ręczna ingerencja: obserwacja encji `status` i `start_stop` ładowarki. Zmiana z aktorem
 (użytkownik albo automatyzacja w HA — `is_foreign_change`), nie z naszego zapisu: „stop” (status
@@ -39,7 +41,9 @@ Ręczna ingerencja: obserwacja encji `status` i `start_stop` ładowarki. Zmiana 
 w obsłudze zdarzenia (przed następnym odczytem telemetrii) z `manual_at` = czas obsługi, telemetria
 wysyła je raz (`async_ack_manual` po przyjęciu), a wykonawca nie pisze do ładowarki, dopóki nie
 przyjdzie plan wygenerowany PO zdarzeniu (`plan_generated_at` > `manual_at`; także reguła awaryjna
-czeka). Wszystko tylko przy otwartych bramkach.
+czeka). W trakcie wstrzymania każda zmiana z aktorem (start albo stop) nadpisuje zdarzenie — wygrywa
+ostatnia decyzja. Wstrzymanie dłuższe niż `HOLD_WARN_S` bez nowego planu: jedno ostrzeżenie, bez
+samoczynnego wznowienia. Wszystko tylko przy otwartych bramkach.
 
 Status „ładuje” = słowo z jawnej listy (`charging`) w stanie encji statusu i żadne słowo z listy
 wykluczeń (przeczenia, pauza, koniec, błąd, oczekiwanie). Stany w innych językach albo CamelCase
@@ -83,6 +87,10 @@ _NOT_CHARGING_WORDS = frozenset({
     "complete", "completed", "done", "end", "ended", "error", "fault", "failed", "interrupted", "wait",
     "waiting", "scheduled", "ready", "idle", "standby"})
 _SETPOINT_UNITS = ("A", "W")
+# Po starcie bez odpowiedzi chmury: przez ten czas wiek planu jest nieznany (sieć często wstaje po HA).
+STARTUP_GRACE_S = 300
+# Wstrzymanie po ręcznej ingerencji bez nowego planu dłużej niż to — jedno ostrzeżenie (bez wznowienia).
+HOLD_WARN_S = 6 * 3600
 _START_STOP_DOMAINS = ("select", "switch")
 
 
@@ -195,6 +203,9 @@ class LoadsExecutor:
         self._readback: asyncio.Task | None = None
         self._slot_mode: str | None = None            # tryb slotu z ostatniego cyklu (tylko w pamięci)
         self._confirmed_mono: float | None = None     # ostatnia odpowiedź chmury z planem (zegar monotoniczny)
+        self._started_mono: float | None = None
+        self._fallback_latched = False                # tryb awaryjny był, a raport z nim jeszcze nie przyjęty
+        self._hold_warned: str | None = None          # `manual_at` z ostrzeżeniem o długim wstrzymaniu
         self._rewrite_key: tuple | None = None        # (plan, slot) zużytego ponownego zapisu nastawy
         self._rewrite_warned: tuple | None = None
         self._watched: tuple[str, ...] = ()           # encje obserwowane pod kątem ręcznej ingerencji
@@ -218,7 +229,17 @@ class LoadsExecutor:
         event = s.manual_event
         return {"last_write_at": s.last_write_at, "last_action": s.last_action, "manual_event": event,
                 "manual_at": s.manual_at if event is not None else None,
-                "fallback": s.fallback_since is not None}
+                # zatrzask: tryb awaryjny zakończony przed wysyłką i tak trafia do chmury
+                "fallback": s.fallback_since is not None or self._fallback_latched}
+
+    async def async_ack_report(self, report: Any) -> None:
+        """Telemetria z tym raportem przyjęta: zdarzenie ręczne i zatrzask trybu awaryjnego wysłane."""
+        if not isinstance(report, dict):
+            return
+        if report.get("fallback") is True:
+            self._fallback_latched = False
+        if report.get("manual_event") is not None:
+            await self.async_ack_manual(report.get("manual_at"))
 
     async def async_ack_manual(self, manual_at: str | None) -> None:
         """Telemetria ze zdarzeniem `manual_at` przyjęta — zdarzenie wysłane raz. Nowsze zostaje.
@@ -235,6 +256,7 @@ class LoadsExecutor:
         if self._started:
             return
         self._started = True
+        self._started_mono = self._clock()
         try:
             self._state = await self._store.async_load()
         except Exception as err:  # noqa: BLE001 — zły magazyn: zaczynamy od zera, bez blokady
@@ -311,15 +333,29 @@ class LoadsExecutor:
         gen = getattr(self._meta, "plan_generated_at", None)
         return gen is None or gen <= at
 
+    def _warn_long_hold(self) -> None:
+        """Bezpiecznik: chmura przelicza plan po każdym przyjętym zdarzeniu, więc wstrzymanie dłuższe niż
+        `HOLD_WARN_S` znaczy, że plan nie dotarł — jedno ostrzeżenie, zapisy NIE wracają same."""
+        at = _when(self._state.manual_at)
+        if at is None or self._hold_warned == self._state.manual_at:
+            return
+        if (self._utcnow() - at).total_seconds() > HOLD_WARN_S:
+            self._hold_warned = self._state.manual_at
+            _LOGGER.warning("Volcast EV charger: commands paused after a manual change for over 6 h and "
+                            "no new plan has arrived; the charger stays under manual control")
+
     def _current_slot(self, meta, now: datetime):
         mine = [s for s in self._loads if s.device_id == meta.load_key
                 and s.session_id == meta.session_id]
         return slot_for(now, mine)
 
     def _plan_age_s(self, now: datetime) -> float | None:
-        """Czas od ostatniej odpowiedzi chmury; przed pierwszą od startu — od wygenerowania planu."""
+        """Czas od ostatniej odpowiedzi chmury; przed pierwszą od startu — od wygenerowania planu, ale
+        dopiero po `STARTUP_GRACE_S` (wcześniej nieznany: bez zbędnego start/stop, gdy sieć wstaje po HA)."""
         if self._confirmed_mono is not None:
             return max(0.0, self._clock() - self._confirmed_mono)
+        if self._started_mono is None or self._clock() - self._started_mono < STARTUP_GRACE_S:
+            return None
         gen = getattr(self._meta, "plan_generated_at", None)
         return (now - gen).total_seconds() if gen is not None else None
 
@@ -334,6 +370,7 @@ class LoadsExecutor:
             return
         self._state.fallback_since = now.isoformat() if now is not None else None
         if now is not None:
+            self._fallback_latched = True
             _LOGGER.warning("Volcast EV charger: no fresh plan from the cloud and the deadline is near — "
                             "charging at full power until a fresh plan arrives")
         else:
@@ -347,6 +384,8 @@ class LoadsExecutor:
         status = self._hass.states.get(charger.status) if charger is not None else None
         if status is None or status.state in _UNAVAILABLE or self._held():
             # bramka zamknięta, ładowarka nieczytelna albo ręczna ingerencja: bez zapisów i bez trybu awaryjnego
+            if self._held():
+                self._warn_long_hold()
             await self._async_set_fallback(None)
             return
         now = self._utcnow()
@@ -429,6 +468,8 @@ class LoadsExecutor:
                                  has_actor=bool(getattr(ctx, "user_id", None) or getattr(ctx, "parent_id", None)),
                                  new_value=new_v, expected=old_v):
             return None
+        if self._held():
+            return new_v                         # zmiana zdania przed nowym planem: wygrywa ostatnia decyzja
         if self._state.fallback_since is not None:
             mode = "forced"                      # tryb awaryjny działa jak slot `forced`
         else:

@@ -829,7 +829,13 @@ def plan_fan_out(executor, loads_executor):
 
 async def refresh_and_tick(fetcher, executor, loads_executor) -> None:
     """Odświeżenie planu, potem cykle obu wykonawców. Odpowiedź chmury z planem (nowym albo bez
-    zmian) odmładza plan ładowarki — reguła awaryjna liczy wiek od ostatniej odpowiedzi."""
+    zmian) odmładza plan ładowarki — reguła awaryjna liczy wiek od ostatniej odpowiedzi.
+
+    Dlaczego nie od `plan_generated_at`: chmura przelicza plan raz na dobę i przy zdarzeniach, więc
+    plan starszy niż 90 min to w nocy norma przy działającej łączności. Wiek liczony od wygenerowania
+    włączałby pełną moc w ostatnim oknie przed terminem każdej nocy (wbrew tańszemu planowi). Reguła
+    awaryjna chroni przed utratą łączności z chmurą, nie przed brakiem przeliczenia; odpowiedź
+    `rejected` (plan nieparsowalny) nie odmładza — jak brak planu."""
     result = await fetcher.async_refresh()
     if loads_executor is not None and result in ("accepted", "unchanged"):
         loads_executor.note_plan_confirmed()

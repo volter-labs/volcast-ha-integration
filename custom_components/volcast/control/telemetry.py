@@ -426,14 +426,14 @@ class TelemetrySender:
         return lx.report_for(key) if lx is not None else None
 
     async def _async_ack_manual(self, reading: dict) -> None:
-        """Przyjęta telemetria: zdarzenia ręczne z tego odczytu są wysłane (każde raz)."""
+        """Przyjęta telemetria: zdarzenia ręczne i zatrzask trybu awaryjnego z tego odczytu są wysłane."""
         lx = self._loads_executor()
         if lx is None:
             return
         for load in reading.get("loads") or ():
             report = load.get("executor") if isinstance(load, dict) else None
-            if isinstance(report, dict) and report.get("manual_event") is not None:
-                await lx.async_ack_manual(report.get("manual_at"))
+            if isinstance(report, dict):
+                await lx.async_ack_report(report)
 
     async def async_flush(self) -> bool:
         """Jeden odczyt do chmury; True = przyjęty. Nigdy nie rzuca."""

@@ -15,7 +15,7 @@ OLD = FALLBACK_PLAN_AGE_S + 1
 
 def _meta(**kw):
     # 11 kWh przy 11 kW = 1 h ładowania; termin 06:00 → okno awaryjne od 04:30
-    base = dict(session_id="s1", load_key="dev1", control_enabled=True, remaining_kwh=11.0,
+    base = dict(session_id="s1", load_key="dev1", control_enabled=True, fallback_allowed=True, remaining_kwh=11.0,
                 max_power_w=11000.0, ready_by=NOW + timedelta(hours=2), plan_generated_at=NOW - timedelta(hours=8))
     base.update(kw)
     return LoadsMeta(**base)
@@ -69,6 +69,25 @@ def test_no_meta_or_naive_now_never_forces():
 def test_absurd_need_is_already_in_window():
     # 10^6 kWh przy 1 W: przelicznik bez przepełnienia daty, okno trwa
     assert should_force(NOW, _meta(remaining_kwh=1e6, max_power_w=1.0), OLD, "Available") is True
+
+
+def test_fallback_not_allowed_by_the_cloud_never_forces():
+    # pauza użytkownika albo „tylko PV”: chmura zabrania ładowania awaryjnego z sieci
+    assert should_force(NOW + timedelta(hours=1), _meta(fallback_allowed=False), OLD, "Available") is False
+    bare = LoadsMeta(session_id="s1", load_key="dev1", control_enabled=True, remaining_kwh=11.0,
+                     max_power_w=11000.0, ready_by=NOW)
+    assert bare.fallback_allowed is False                  # domyślnie zamknięte
+    assert should_force(NOW + timedelta(hours=1), bare, OLD, "Available") is False
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ({"fallback_allowed": True}, True), ({"fallback_allowed": False}, False), ({}, False),
+    ({"fallback_allowed": "true"}, False), ({"fallback_allowed": 1}, False), ({"fallback_allowed": None}, False),
+])
+def test_parse_fallback_allowed_is_strict(raw, expected):
+    from custom_components.volcast.core.ev.model import parse_loads
+    _, meta = parse_loads({"loads": [], "loads_meta": {"session_id": "s1", "load_key": "dev1", **raw}})
+    assert meta.fallback_allowed is expected
 
 
 def test_window_scales_with_power():

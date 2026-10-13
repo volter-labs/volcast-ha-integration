@@ -18,6 +18,9 @@ _LOGGER = logging.getLogger(__name__)
 
 _UNAVAILABLE = ("unavailable", "unknown")
 _MAX_LOADS = 4
+# Sufit opcji i długości tekstu encji start/stop (chmura ich nie interpretuje; obca integracja może mieć dużo).
+_MAX_OPTIONS = 16
+_MAX_TEXT = 64
 # Jednostki dokładnie w zapisie HA (wielkość liter ma znaczenie: `mW` to nie `MW`). Wszystko poza
 # tą listą, także `mW` i `mWh`, jest jednostką nieznaną: pole pominięte albo null, bez zgadywania.
 _POWER_TO_W = {"W": 1.0, "kW": 1e3, "MW": 1e6, "GW": 1e9, "TW": 1e12}
@@ -101,8 +104,8 @@ class LoadsReader:
             # stan i opcje encji start/stop dosłownie (jak status) — tylko gdy rola jest przypisana
             sw = self._state(roles, "start_stop")
             sw_options = sw.attributes.get("options") if sw is not None else None
-            entry["start_stop_state"] = sw.state if sw is not None else None
-            entry["start_stop_options"] = [str(o) for o in sw_options] \
+            entry["start_stop_state"] = str(sw.state)[:_MAX_TEXT] if sw is not None else None
+            entry["start_stop_options"] = [str(o)[:_MAX_TEXT] for o in list(sw_options)[:_MAX_OPTIONS]] \
                 if isinstance(sw_options, (list, tuple)) else None
         report = self._report(key)
         if report is not None:
