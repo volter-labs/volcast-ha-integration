@@ -110,8 +110,10 @@ class RegisterClient:
         cfg = getattr(self.transport, "cfg", None)
         return getattr(cfg, "timeout_s", _DEFAULT_TIMEOUT_S), getattr(cfg, "read_tries", 1)
 
-    async def _timed_read(self, block, lost: list[float]) -> list[int]:
+    async def _timed_read(self, block, lost: list[float], *, tries: int | None = None) -> list[int]:
         """Odczyt bloku z liczbą prób przyciętą do limitu czasu straconego w tym cyklu.
+
+        `tries` — dodatkowy, twardszy limit prób (None = bez zmian; nigdy więcej niż wynika z budżetu).
 
         `lost[0]` — czas dotąd stracony na przekroczenia czasu (aktualizowany tutaj).
         """
@@ -120,12 +122,14 @@ class RegisterClient:
         remaining = budget - lost[0]
         if remaining < timeout:
             raise _OutOfTime("read cycle out of time")
-        tries = max(1, min(read_tries, math.floor(remaining / timeout)))
+        n = max(1, min(read_tries, math.floor(remaining / timeout)))
+        if tries is not None:
+            n = max(1, min(n, int(tries)))
         stats = getattr(self.transport, "stats", None)
         before = getattr(stats, "timeouts", 0)
         t0 = self._clock()
         try:
-            out = await self.read_block(*block, tries=tries)
+            out = await self.read_block(*block, tries=n)
         except RequestTimeout:
             lost[0] += max(max(0.0, self._clock() - t0), self._timed_out(stats, before) * timeout)
             raise
@@ -213,19 +217,24 @@ class RegisterClient:
             self._known.update(zip(range(block[0], block[0] + block[1]), words))
         return words
 
-    async def _separated(self, block, lost: list[float]) -> list[int]:
+    async def _separated(self, block, lost: list[float], *, tries: int | None = None) -> list[int]:
         """Odczyt bloku o długości innej niż poprzednie żądanie odczytu na łączu; gdy równa — najpierw
-        blok rozdzielający (znany, innej długości; wyjątek na nim → następny kandydat)."""
+        blok rozdzielający (znany, innej długości; wyjątek na nim → następny kandydat).
+
+        `tries` ogranicza próby transportu ZARÓWNO bloku, jak i rozdzielającego: odpowiedź złej długości
+        na rozdzielający też jest ramką obcą, więc bez limitu łączna liczba ramek obcych przekroczyłaby
+        budżet wołającego. Rozdzielający zwraca albo słowa, albo wyjątek Modbus (kolejny kandydat, bez
+        ramki obcej), albo przerywa odczyt — blok nie jest wtedy czytany, więc suma ramek obcych ≤ `tries`."""
         if prev_read_count(self.transport, None) == block[1]:
             for sep in separators_for(self.profile, block):
                 try:
-                    await self._timed_read(sep, lost)
+                    await self._timed_read(sep, lost, tries=tries)
                     break
                 except ModbusException:
                     continue
             else:
                 raise TransportError("no separator block answered")
-        return await self._timed_read(block, lost)
+        return await self._timed_read(block, lost, tries=tries)
 
     async def _recover_block(self, block, blocks, frames, lost) -> TransportError | None:
         """Wyjątek 2 bloku na łączu bez korelacji: wyjątek nie ma długości, więc jedna ramka to nie

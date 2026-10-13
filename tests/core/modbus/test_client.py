@@ -347,3 +347,49 @@ async def test_time_lost_before_a_successful_retry_counts_toward_budget(goodwe_p
     await client.read_state()
     # Limit 6 s: pierwszy blok traci 4 s na dwóch próbach, więc kolejne mają już tylko jedną.
     assert fake.tries_seen[0] == 3 and set(fake.tries_seen[1:]) == {1}
+
+
+class _CountFake:
+    """Transport z licznikiem prób: każdy odczyt z `tries` zużywa `tries` prób i kończy się niepowodzeniem."""
+
+    def __init__(self):
+        from custom_components.volcast.core.transports.base import TransportConfig
+        self.cfg = TransportConfig(kind="goodwe_udp", host="127.0.0.1", port=8899, unit=247,
+                                   timeout_s=0.1, read_tries=3)
+        self.tries_seen = []
+        self.last_read_count = None
+
+    async def read(self, addr, count, *, tries=None, fc=3):
+        self.tries_seen.append(tries)
+        raise RequestTimeout(silent=False)
+
+
+@pytest.mark.asyncio
+async def test_timed_read_tries_limit_and_default(goodwe_profile):
+    client = RegisterClient(_CountFake(), goodwe_profile)
+    for kw, expected in (({}, 3), ({"tries": 1}, 1), ({"tries": 2}, 2), ({"tries": 9}, 3)):
+        client.transport.tries_seen.clear()
+        with pytest.raises(RequestTimeout):
+            await client._timed_read((47000, 1, 3), [0.0], **kw)
+        assert client.transport.tries_seen == [expected]
+
+
+@pytest.mark.asyncio
+async def test_separated_tries_apply_to_block_and_default_unchanged(goodwe_profile):
+    client = RegisterClient(_CountFake(), goodwe_profile)
+    with pytest.raises(RequestTimeout):
+        await client._separated((47000, 1, 3), [0.0])                    # domyślnie: pełne próby
+    assert client.transport.tries_seen == [3]
+    client.transport.tries_seen.clear()
+    with pytest.raises(RequestTimeout):
+        await client._separated((47000, 1, 3), [0.0], tries=1)
+    assert client.transport.tries_seen == [1]
+
+
+@pytest.mark.asyncio
+async def test_separated_tries_apply_to_separator_too(goodwe_profile):
+    client = RegisterClient(_CountFake(), goodwe_profile)
+    client.transport.last_read_count = 1                                 # poprzedni odczyt tej samej długości
+    with pytest.raises(RequestTimeout):
+        await client._separated((47000, 1, 3), [0.0], tries=1)
+    assert client.transport.tries_seen == [1]                            # separator: jedna próba, blok nietknięty

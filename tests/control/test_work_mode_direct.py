@@ -1,11 +1,14 @@
 """Tryb pracy falownika w trybie bezpośrednim: jeden rejestr, tylko odczyt, ten sam `WorkModeTracker`."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from custom_components.volcast.control.work_mode import classify_direct
 from custom_components.volcast.core.profile import profile_from_dict
 from custom_components.volcast.core.transports.base import RequestTimeout
+from custom_components.volcast.core.transports.factory import make_transport
 from tests.control.test_executor_direct import GW_V, Harness, gw_target
 
 WM_ADDR = 47000
@@ -118,11 +121,11 @@ def _silent_timeouts_on_wm(conn, state: dict) -> None:
     do symulatora; liczy próby w `state["calls"]`."""
     orig_sep, orig_rb = conn.client._separated, conn.client.read_block
 
-    async def sep(block, lost):
+    async def sep(block, lost, **kw):
         if block[0] == WM_ADDR and state["timeout"]:
             state["calls"] += 1
             raise RequestTimeout(silent=True)
-        return await orig_sep(block, lost)
+        return await orig_sep(block, lost, **kw)
 
     async def rb(addr, count, fc=3, *, tries=None):
         if addr == WM_ADDR and state["timeout"]:
@@ -154,9 +157,21 @@ async def test_work_mode_stops_after_one_exception_reply(make_hass, goodwe_udp_s
         await h.close()
 
 
+def _production_read_tries(conn):
+    """Transport jak w produkcji: `read_tries` zostaje przy domyślnym (3), a nie 2 z fabryki testów."""
+    def make(cfg, **kw):
+        kw.pop("clock", None)
+        return make_transport(replace(cfg, timeout_s=1.0, gap_s=0.0, backoff_min_s=0.01, backoff_max_s=0.02), **kw)
+
+    conn._factory = make
+
+
 @pytest.mark.asyncio
 async def test_work_mode_stops_after_one_garbage_reply_without_conflict(make_hass, goodwe_udp_sim, goodwe_bank):
-    h, _spy = await _start(make_hass, goodwe_udp_sim)
+    h = Harness(make_hass, _wm_profile(), gw_target(goodwe_udp_sim))
+    _production_read_tries(h.conn)
+    await h.conn.async_start()
+    assert h.conn.client.transport.cfg.read_tries == 3                    # konfiguracja produkcyjna
     try:
         await h.conn.async_poll()
         stray0 = h.conn.stats.stray
@@ -169,10 +184,9 @@ async def test_work_mode_stops_after_one_garbage_reply_without_conflict(make_has
             h.clock.advance(WM_POLL_S + 1)
             await h.conn.async_poll()
         assert _sim_reqs(goodwe_udp_sim) == stopped_at                    # zero kolejnych żądań 47000
-        # jedna nieudana próba odczytu rozdzielanego = co najwyżej dwie ramki obce (po jednej na próbę
-        # transportu); ograniczenie do jednej wymagałoby parametru `tries` w core/modbus/client.py
-        assert h.conn.stats.stray - stray0 <= 2
-        assert h.conn.monitor.state != "conflict"                         # brak fałszywego konfliktu
+        assert h.conn.stats.stray - stray0 <= 1                           # jedna ramka obca, nie STRAY_LIMIT
+        assert h.conn.conflict is False                                   # brak fałszywego konfliktu
+        assert h.conn.monitor.state != "conflict"
     finally:
         await h.close()
 

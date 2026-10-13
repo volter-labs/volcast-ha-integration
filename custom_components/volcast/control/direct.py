@@ -564,7 +564,7 @@ class DirectConnection:
             if self.client._disambiguate:
                 block = make_block(wm.read_addr, 1, 3)
                 async with self.client._session():
-                    word = (await self.client._separated(block, [0.0]))[0]
+                    word = (await self.client._separated(block, [0.0], tries=1))[0]
             else:
                 word = (await self.client.read_block(wm.read_addr, 1, 3, tries=1))[0]
             if wm.read_type == "u16":
