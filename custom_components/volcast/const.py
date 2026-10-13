@@ -64,6 +64,11 @@ SIGNAL_CONTROL_UPDATED = "volcast_control_updated_{entry_id}"
 # Zmiana stanu onboardingu sterowania (rekomendacja ścieżki, weryfikacja, konflikty) — blok `driver.control`.
 SIGNAL_CONTROL_STATE_UPDATED = "volcast_control_state_updated_{entry_id}"
 EXECUTOR_INTERVAL_S = 60
+# Wykonawca ładowarki EV (`control/loads_executor.py`): cykl, minimalny odstęp zapisów do jednej
+# encji ładowarki i odczyt kontrolny po zapisie.
+LOADS_EXECUTOR_INTERVAL_S = 60
+LOADS_MIN_WRITE_INTERVAL_S = 60
+LOADS_READBACK_S = 20
 # Drabina weryfikacji urządzenia (`core/control/ladder.py`); profil może nadpisać blokiem `verification`.
 VERIFY_TRIAL_HOURS = 24
 VERIFY_WINDOW_MIN = 15

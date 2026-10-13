@@ -88,6 +88,9 @@ class FakeHass:
         self.tasks.append(t)
         return t
 
+    def async_create_background_task(self, coro, name=None, *_a, **_k):
+        return self.async_create_task(coro)
+
     async def async_add_executor_job(self, fn, *args):
         return fn(*args)
 

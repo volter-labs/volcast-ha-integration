@@ -80,6 +80,8 @@ from .executor import VolcastExecutor
 from .ha_writer import EntityServiceWriter
 from .history_import import async_import_history_once
 from .live import LiveSender
+from .loads_executor import LoadsExecutor, charger_roles
+from .loads_store import LoadsStore
 from .signals_hub import SignalsHub
 from .store import ControlStore, async_installation_salt
 from .telemetry import TelemetrySender, control_block
@@ -217,6 +219,8 @@ class ControlRuntime:
     conflicts: object | None = None
     hass: object | None = None
     entry: object | None = None
+    # wykonawca slotów ładowarki EV (`LoadsExecutor`), obok wykonawcy falownika
+    loads_executor: object | None = None
     _meta_dirty: bool = False
 
     def control_state_payload(self) -> dict:
@@ -809,6 +813,32 @@ async def _async_compose(hass, entry, profiles, store: ControlStore) -> _Compose
     return back
 
 
+def plan_fan_out(executor, loads_executor):
+    """`on_plan` fetchera do obu wykonawców. Błąd ładowarki nie cofa przyjęcia planu baterii
+    (fetcher po wyjątku podałby plan jeszcze raz — falownikowi bez potrzeby)."""
+    async def on_plan(raw: dict, schedule) -> None:
+        await executor.async_on_plan(raw, schedule)
+        if loads_executor is None:
+            return
+        try:
+            await loads_executor.async_on_plan(schedule)
+        except Exception as err:  # noqa: BLE001 — plan ładowarki jest dodatkiem do planu baterii
+            _LOGGER.warning("Volcast EV charger plan could not be applied (%s)", type(err).__name__)
+    return on_plan
+
+
+def _build_loads_executor(hass, entry, executor, inverter_entities: frozenset, mapped: Mapping[str, str]):
+    """Wykonawca ładowarki: bramki z wykonawcy falownika (zgoda konta, przełącznik w HA), zakaz
+    zapisu każdej encji falownika."""
+    return LoadsExecutor(
+        hass, entry, writer=EntityServiceWriter(hass),
+        roles_provider=lambda key: charger_roles(entry.options, key),
+        store=LoadsStore(hass, entry.entry_id),
+        consent_getter=lambda: getattr(executor, "consent", None),
+        local_switch_getter=lambda: getattr(executor, "local_switch", False),
+        forbidden_entities=frozenset(inverter_entities) | {v for v in mapped.values() if isinstance(v, str)})
+
+
 async def async_setup_control(hass, entry, *, report: Callable[[], dict | None]) -> ControlRuntime | None:
     backend = Backend.from_dict(entry.data.get(CONF_BACKEND))
     if backend is None:
@@ -833,6 +863,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     rt = None
     verification = None
     channel = live = hub = None
+    loads_executor = None
     try:
         def _task(coro, name):
             # Zadania sygnałów należą do HA — zatrzymuje je teardown, nie anulowanie wpisu w pół kroku.
@@ -863,6 +894,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
             # Odświeżenie planu (i zgody) — zaraz po nim cykl: cofnięta zgoda działa od razu.
             await fetcher.async_refresh()
             await executor.async_tick()
+            if loads_executor is not None:
+                await loads_executor.async_tick()
 
         channel = SignalChannel(async_get_clientsession(hass), on_wake=_wake, task_factory=_task)
         if conn is not None:
@@ -888,7 +921,12 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         telemetry.async_flush = _flush_and_check
         live = LiveSender(cloud=cloud, telemetry=telemetry, on_signals=_apply, task_factory=_task)
         hub = SignalsHub(base_url=backend.base_url, channel=channel, live=live, refresh=_fetch, task_factory=_task)
-        fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
+        inverter_entities = inverter_entity_ids(hass, choice, mapped)
+        loads_executor = _build_loads_executor(hass, entry, executor, inverter_entities, mapped)
+        # Plan z magazynu wykonawcy falownika niesie też sloty ładowarki (praca bez łącza).
+        await loads_executor.async_start(getattr(executor, "schedule", None))
+        fetcher = ScheduleFetcher(cloud, on_plan=plan_fan_out(executor, loads_executor),
+                                  on_consent=executor.async_set_consent,
                                   on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply,
                                   on_control=_control, on_consent_mirror=executor.set_consent_mirror, hass=hass)
         await telemetry.async_start()
@@ -901,9 +939,9 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
             await verification.async_start()
         rt = ControlRuntime(executor, fetcher, telemetry, cloud, choice, mapped, rated,
                             options_at_setup=dict(opts),
-                            inverter_entities=inverter_entity_ids(hass, choice, mapped), direct=conn,
+                            inverter_entities=inverter_entities, direct=conn,
                             channel=channel, live=live, hub=hub, report=report, verification=verification,
-                            hass=hass, entry=entry)
+                            hass=hass, entry=entry, loads_executor=loads_executor)
 
         telemetry.control_runtime = rt
 
@@ -938,6 +976,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         # nie zatrzymał, a każde przeładowanie dokładałoby kolejnego).
         if verification is not None:
             await verification.async_stop()
+        if loads_executor is not None:
+            await loads_executor.async_stop()
         await _async_abort_setup(hass, entry, executor, telemetry, rt, signals=(hub, live, channel))
         if conn is not None:
             await conn.async_stop()
@@ -1133,6 +1173,9 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
     rt.unsubs.clear()
     if rt.verification is not None:
         await rt.verification.async_stop()
+    if rt.loads_executor is not None:
+        # Ładowarka zostaje w stanie, w jakim jest — rozładunek niczego do niej nie zapisuje.
+        await rt.loads_executor.async_stop()
     # Sygnały przed powrotem: cykl z pingu po powrocie do trybu bazowego zapisałby plan z powrotem.
     await _async_stop_signals((rt.hub, rt.live, rt.channel))
     if restore:
@@ -1209,6 +1252,10 @@ async def async_remove_control(hass, entry) -> None:
         if conn is not None:
             await conn.async_stop(forget=True)
     await store.async_remove()
+    try:
+        await LoadsStore(hass, entry.entry_id).async_remove()
+    except Exception as err:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić
+        _LOGGER.debug("Volcast EV charger state removal failed (%s)", type(err).__name__)
     hass.data.get(_LOCKS_KEY, {}).pop(entry.entry_id, None)
     try:
         ir.async_delete_issue(hass, DOMAIN, f"control_record_dropped_{entry.entry_id}")
