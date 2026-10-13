@@ -83,3 +83,13 @@ async def test_consecutive_attempts_are_spaced_by_gap(goodwe_udp_sim, sim_faults
                                            timeout_s=0.5, tries=3, clock=lambda: 0.0, sleep=fake_sleep)
     assert entry["valid"] is True
     assert waits and all(w >= rr.GAP_S for w in waits) and rr.GAP_S >= 0.3
+
+
+@pytest.mark.asyncio
+async def test_work_mode_register_47000_is_general_in_golden_bank(goodwe_udp_sim, capsys):
+    """47000 = tryb pracy (0 General), zmierzone na GW8KN-ET; jawnie w danych, nie tylko domyślne 0 symulatora."""
+    from tests.sim.fixtures import goodwe_words
+    assert goodwe_words().get(47000) == 0
+    assert await rr.amain(_argv(goodwe_udp_sim, 47000, 1, "--timeout", "1")) == 0
+    out = capsys.readouterr().out
+    assert _words(json.loads(out[out.index("{"):])) == [0]

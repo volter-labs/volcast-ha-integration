@@ -54,5 +54,12 @@
   "request": "f703b9b900022424",
   "response": "aa55f7030400010055fdc3",
   "valid": true
+ },
+ "work_mode_47000": {
+  "offset": 47000,
+  "count": 1,
+  "request": "f703b798000136c7",
+  "response": "aa55f7030200007051",
+  "valid": true
  }
 }
