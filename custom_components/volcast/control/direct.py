@@ -43,7 +43,8 @@ from ..core.discovery.known import HOST_KEYS
 from ..core.modbus.blocks import make_block
 from ..core.modbus.client import RegisterClient
 from ..core.modbus.reading import DirectReading
-from ..core.transports.base import TransportConfig, TransportError, TransportStats, check_target, validate_config
+from ..core.transports.base import (
+    ModbusException, RequestTimeout, TransportConfig, TransportError, TransportStats, check_target, validate_config)
 from ..core.transports.factory import make_transport
 from .work_mode import WorkModeTracker, classify_direct
 
@@ -558,6 +559,7 @@ class DirectConnection:
             return
         self._work_mode_at = now
         value = None
+        unusable = False                 # odpowiedź nieużyteczna (nie cisza): nie ponawiać tego rejestru
         try:
             if self.client._disambiguate:
                 block = make_block(wm.read_addr, 1, 3)
@@ -569,12 +571,21 @@ class DirectConnection:
                 value = int(word)
             elif wm.read_type == "i16":
                 value = int(word) - 0x10000 if word >= 0x8000 else int(word)
+        except RequestTimeout as err:
+            # cisza = przekroczenie czasu (liczone do progu); ramka złej długości = nieużyteczna odpowiedź
+            unusable = not err.silent
+            _LOGGER.debug("Volcast direct work mode read failed: %s", type(err).__name__)
+        except ModbusException:
+            unusable = True              # wyjątek Modbus: rejestr nieobsługiwany
         except TransportError as err:
             _LOGGER.debug("Volcast direct work mode read failed: %s", type(err).__name__)
         except (IndexError, TypeError, ValueError):
             value = None
+            unusable = True
         if value is None:
-            self._work_mode_fails += 1
+            # nieużyteczna odpowiedź wyłącza odczyt od razu (jeden błąd może dać ramkę obcą do liczników
+            # transportu); przekroczenia czasu — dopiero po WORK_MODE_FAIL_LIMIT z rzędu
+            self._work_mode_fails = WORK_MODE_FAIL_LIMIT if unusable else self._work_mode_fails + 1
             if self._work_mode_fails >= WORK_MODE_FAIL_LIMIT and not self._work_mode_off:
                 self._work_mode_off = True
                 _LOGGER.info("Volcast direct: operation mode register %d gives no usable reply; "
