@@ -982,6 +982,7 @@ def test_manual_stop_in_forced_slot_is_reported_and_holds_writes(monkeypatch):
             clock.advance(61)
             await ex.async_tick()
         assert _calls(h) == []
+        await ex.async_ack_manual(ex.state.manual_at)                  # chmura przyjęła zdarzenie
         clock.advance(61)              # nowy plan, policzony PO zdarzeniu: wykonanie wraca
         await ex.async_on_plan(_schedule(_slot(start=NOW, minutes=60),
                                          meta=_meta(gen=clock.utc - timedelta(seconds=5))))
@@ -1251,8 +1252,52 @@ def test_charger_app_stop_shown_as_charged_holds_through_replans_until_a_newer_p
         clock.advance(20 * 60)         # następny slot tego samego planu: wstrzymanie trwa
         await ex.async_tick()
         assert _calls(h) == []
+        await ex.async_ack_report(ex.report_for("dev1"))               # chmura przyjęła zdarzenie
         clock.advance(61)              # plan policzony PO wstrzymaniu, slot dalej forced („Wznów” w aplikacji)
         await ex.async_on_plan(_schedule(moved, meta=_meta(gen=clock.utc, remaining_kwh=8.0)))
+        assert ex.state.held_since is None
+        assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_newer_plan_ends_the_hold_only_after_the_cloud_accepted_the_event():
+    async def body():
+        h = _hass()
+        ex, clock = await _started_by_us(h, remaining=8.0)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "charged"))      # Stop z aplikacji ładowarki
+        h.states.set(STATUS, "charged")
+        held = datetime.fromisoformat(ex.state.held_since)
+        clock.advance(61)              # plan policzony PO wstrzymaniu, ale zanim serwer przyjął zdarzenie
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=held + timedelta(seconds=2),
+                                                                        remaining_kwh=8.0)))
+        assert ex.state.held_since is not None and _calls(h) == []
+        report = ex.report_for("dev1")
+        assert report["manual_event"] == "stop"
+        await ex.async_ack_report(report)                              # telemetria ze zdarzeniem przyjęta
+        clock.advance(61)              # ten sam plan jeszcze raz (sprzed przyjęcia): wstrzymanie trwa
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=held + timedelta(seconds=2),
+                                                                        remaining_kwh=8.0)))
+        assert ex.state.held_since is not None and _calls(h) == []
+        clock.advance(61)              # KOLEJNY plan, po przyjęciu zdarzenia, dalej forced: start
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=clock.utc, remaining_kwh=8.0)))
+        assert ex.state.held_since is None
+        assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_hold_without_event_ends_with_the_first_newer_plan():
+    async def body():
+        h = _hass()
+        ex, clock = await _started_by_us(h, remaining=8.0)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Fault"))        # samo wstrzymanie, bez zdarzenia
+        h.states.set(STATUS, "Available")
+        held = datetime.fromisoformat(ex.state.held_since)
+        assert ex.state.manual_event is None
+        clock.advance(61)
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=held + timedelta(seconds=2),
+                                                                        remaining_kwh=8.0)))
         assert ex.state.held_since is None
         assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
         await ex.async_stop()
@@ -1639,13 +1684,17 @@ def test_held_since_absent_without_hold_and_stale_plan_keeps_it():
         clock.advance(61)              # plan wygenerowany PRZED zdarzeniem: wstrzymanie trwa
         await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=NOW - timedelta(seconds=1))))
         assert ex.report_for("dev1")["held_since"] == at
-        clock.advance(61)              # nowszy plan przed potwierdzeniem wysyłki: zdarzenie zostaje, wstrzymanie nie
+        clock.advance(61)              # nowszy plan przed potwierdzeniem wysyłki: zdarzenie i wstrzymanie zostają
         ex.on_state_event(_event(STATUS, "Charging", "Available"))
         later = ex.state.manual_at
         clock.advance(61)
         await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=clock.utc)))
         report = ex.report_for("dev1")
         assert report["manual_event"] == "stop" and report["manual_at"] == later
-        assert report["held_since"] is None
+        assert report["held_since"] == later
+        await ex.async_ack_report(report)
+        clock.advance(61)              # kolejny plan po przyjęciu zdarzenia: koniec wstrzymania
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=clock.utc)))
+        assert ex.report_for("dev1")["held_since"] is None
         await ex.async_stop()
     asyncio.run(body())

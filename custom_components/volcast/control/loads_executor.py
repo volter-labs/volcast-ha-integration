@@ -51,9 +51,9 @@ Zaczyna je:
 Encja `start_stop` bez aktora NIE jest sygnałem: bywa impulsowa (po każdej zmianie wraca do „No
 operation”) i urządzenie samo ją przestawia (np. „Stop charging” w chwili, gdy ładowanie rusza,
 „Start charging” przy odłączeniu kabla). Nasz zapis (kontekst pisarza) nigdy nie jest ręczny.
-Zdjęcie wstrzymania: tylko plan nowszy niż `held_since` (wtedy slot `forced` = nastawa i start —
-„Wznów” w aplikacji i start po przesunięciu slotu przez serwer) albo nowa sesja (inne
-`session_id`). Zmiana slotu i przeliczenie sprzed wstrzymania go nie zdejmują. Zdarzenie trafia do
+Zdjęcie wstrzymania: tylko nowy plan wygenerowany po `held_since` — przy zdarzeniu ręcznym dopiero
+plan przyjęty PO potwierdzeniu zdarzenia przez chmurę (wtedy slot `forced` = nastawa i start — „Wznów”
+w aplikacji i start po przesunięciu slotu przez serwer) — albo nowa sesja (inne `session_id`). Zmiana slotu i przeliczenie sprzed wstrzymania go nie zdejmują. Zdarzenie trafia do
 stanu od razu w obsłudze zdarzenia, telemetria wysyła je raz (`async_ack_manual` po przyjęciu);
 `held_since` idzie w KAŻDEJ paczce, dopóki wstrzymanie trwa — chmura przelicza plan po nim.
 Wstrzymanie dłuższe niż `HOLD_WARN_S`: jedno ostrzeżenie, bez samoczynnego wznowienia. Wszystko tylko
@@ -359,27 +359,29 @@ class LoadsExecutor:
             self._watch(meta.load_key)
         if meta is None or meta.plan_generated_at is None:
             return False                         # bez znacznika planu cykl i tak nic nie zapisze
-        released = self._release_hold(meta)
         gen = meta.plan_generated_at.isoformat()
         if gen == self._state.plan_generated_at:
-            return released
+            return self._release_hold(meta, new_plan=False)
         self._state.plan_generated_at = gen
         self._state.last_action = None          # nowy plan może znowu wystartować/zatrzymać
+        self._release_hold(meta, new_plan=True)
         return True
 
-    def _release_hold(self, meta) -> bool:
-        """Koniec wstrzymania: plan wygenerowany PO `held_since` albo nowa sesja ładowania. True = zdjęte."""
+    def _release_hold(self, meta, *, new_plan: bool) -> bool:
+        """Koniec wstrzymania: nowa sesja ładowania albo NOWY plan wygenerowany PO `held_since` — przy zdarzeniu
+        ręcznym dopiero, gdy chmura je przyjęła (`manual_event` None). Plan policzony między zdarzeniem a jego
+        przyjęciem go nie zna; jest zużyty, więc zdejmuje dopiero KOLEJNY. True = zdjęte."""
         s = self._state
-        at = _when(s.held_since)
         if s.held_since is None:
             return False
-        newer = at is None or meta.plan_generated_at > at
+        at = _when(s.held_since)
+        newer = new_plan and s.manual_event is None and (at is None or meta.plan_generated_at > at)
         new_session = s.held_session is not None and meta.session_id != s.held_session
         if not (newer or new_session):
             return False
         s.held_since = s.held_session = None
         _LOGGER.info("Volcast EV charger: %s — commands resumed",
-                     "new plan after the pause" if newer else "new charging session")
+                     "new charging session" if new_session else "new plan after the pause")
         return True
 
     async def async_tick(self) -> None:
