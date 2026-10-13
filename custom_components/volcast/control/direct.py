@@ -44,6 +44,7 @@ from ..core.modbus.client import RegisterClient
 from ..core.modbus.reading import DirectReading
 from ..core.transports.base import TransportConfig, TransportError, TransportStats, check_target, validate_config
 from ..core.transports.factory import make_transport
+from .work_mode import WorkModeTracker, classify_direct
 
 _LOGGER = logging.getLogger(__name__)
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
@@ -189,6 +190,9 @@ class DirectConnection:
         self._stopped = False
         self._started = False
         self._poll_lock = asyncio.Lock()
+        # tryb pracy falownika; runtime podmienia na wspólny `rt.work_mode` (ten sam tracker co odczyt z encji)
+        self.work_mode = WorkModeTracker()
+        self._work_mode_at: float | None = None
         self._poll_task: asyncio.Task | None = None
         self._timer_task: asyncio.Task | None = None
         self._last_poll: float | None = None
@@ -531,7 +535,34 @@ class DirectConnection:
         if reading is not None:
             self.reading = reading
         self._tick_monitor(now)
+        if self.identity == "confirmed":
+            await self._read_work_mode(now)
         return self.reading if self.identity != "mismatch" else None
+
+    async def _read_work_mode(self, now: float) -> None:
+        """Tryb pracy falownika: JEDEN rejestr (FC3), tylko odczyt, co `work_mode.poll_s`. Idzie na tym samym
+        kliencie i pod tym samym `_poll_lock` co bloki (jedno gniazdo — moduł Wi-Fi GoodWe toleruje jednego
+        klienta i odpowiada poprzednią odpowiedzią na ramki o tej samej długości; odczyt 1 rejestru ma
+        niepowtarzalną długość wśród bloków 125/45/24/4/4). Nie przy kolizji; błąd nie zmienia stanu i nie
+        rusza wykonawcy ani zgody; bez zapisów i bez budżetu NVM."""
+        wm = getattr(self.profile, "work_mode", None)
+        if wm is None or self.conflict or self.client is None:
+            return
+        if self._work_mode_at is not None and now - self._work_mode_at < wm.poll_s:
+            return
+        self._work_mode_at = now
+        value = None
+        try:
+            word = (await self.client.read_block(wm.read_addr, 1, 3, tries=1))[0]
+            if wm.read_type == "u16":
+                value = int(word)
+            elif wm.read_type == "i16":
+                value = int(word) - 0x10000 if word >= 0x8000 else int(word)
+        except TransportError as err:
+            _LOGGER.debug("Volcast direct work mode read failed: %s", type(err).__name__)
+        except (IndexError, TypeError, ValueError):
+            value = None
+        self.work_mode.update(classify_direct(value, wm.neutral_values))
 
     def _tick_monitor(self, now: float) -> None:
         stats = self.stats

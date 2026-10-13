@@ -33,6 +33,13 @@ def classify_entity(option, neutral_options: Iterable[str]) -> str | None:
     return GENERAL if code in neutral else f"other:{code}"
 
 
+def classify_direct(value, neutral_values: Iterable[int]) -> str | None:
+    """Odczyt rejestru: `general` | `other:<liczba dziesiętna>` | None (odczyt nieudany / nie liczba: stan bez zmian)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return GENERAL if value in tuple(neutral_values) else f"other:{value}"
+
+
 class WorkModeTracker:
     """Ostatni udany odczyt; `unknown` tylko do pierwszego udanego."""
 
