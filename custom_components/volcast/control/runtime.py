@@ -650,9 +650,35 @@ def wire_work_mode(hass, rt, conn) -> None:
         conn.work_mode = rt.work_mode
 
 
+def _start_work_mode_refresh(hass, rt, entity_id: str, poll_s: int) -> None:
+    """Select trybu pracy w integracji GoodWe nie odpytuje się sam (`should_poll=False`): bez wymuszenia
+    jego stan zostaje taki, jak przy starcie tamtej integracji. Co `poll_s` (i raz od razu) prosimy HA
+    o odświeżenie tej jednej encji — to odczyt przez połączenie integracji falownika, nic nie zapisuje."""
+
+    async def _update() -> None:
+        try:
+            await hass.services.async_call("homeassistant", "update_entity", {"entity_id": entity_id},
+                                           blocking=False)
+        except Exception as err:  # noqa: BLE001 — odświeżenie nigdy nie psuje sterowania
+            _LOGGER.debug("Volcast work mode refresh skipped (%s)", type(err).__name__)
+
+    @callback
+    def _refresh(_now=None) -> None:
+        try:
+            create = hass.async_create_background_task
+        except AttributeError as err:
+            _LOGGER.debug("Volcast work mode refresh skipped (%s)", type(err).__name__)
+            return
+        create(_update(), "volcast_work_mode_refresh")
+
+    rt.unsubs.append(async_track_time_interval(hass, _refresh, timedelta(seconds=poll_s)))
+    _refresh()
+
+
 def start_work_mode_watch(hass, choice: ProfileChoice | None, rt) -> None:
     """Tryb pracy falownika z encji select (tylko odczyt): zasila `rt.work_mode`; brak encji = `unknown`.
-    Encji może jeszcze nie być (start tuż po restarcie HA) — wtedy ponawiamy co minutę, aż się pojawi."""
+    Encji może jeszcze nie być (start tuż po restarcie HA) — wtedy ponawiamy co minutę, aż się pojawi.
+    W trybie encji (bez połączenia bezpośredniego) stan encji jest dodatkowo odświeżany co `poll_s`."""
     if choice is None or not choice.integration_domain or getattr(choice.profile, "work_mode", None) is None:
         return
 
@@ -664,6 +690,8 @@ def start_work_mode_watch(hass, choice: ProfileChoice | None, rt) -> None:
         watcher = WorkModeWatcher(eid, choice.profile.work_mode.ha_neutral_options, tracker=rt.work_mode)
         watcher.prime(hass.states.get(eid))
         rt.unsubs.append(async_track_state_change_event(hass, [eid], callback(watcher.on_event)))
+        if getattr(rt, "direct", None) is None:        # w trybie bezpośrednim tracker karmi odczyt rejestru
+            _start_work_mode_refresh(hass, rt, eid, choice.profile.work_mode.poll_s)
         return True
 
     if _resolve():

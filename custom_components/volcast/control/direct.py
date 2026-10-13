@@ -49,8 +49,9 @@ from ..core.transports.factory import make_transport
 from .work_mode import WorkModeTracker, classify_direct
 
 _LOGGER = logging.getLogger(__name__)
-# Kolejne nieudane odczyty trybu pracy, po których rejestr nie jest czytany do końca połączenia.
+# Kolejne ciche przekroczenia czasu odczytu trybu pracy, po których odstęp odczytów rośnie (x2, x4, ...).
 WORK_MODE_FAIL_LIMIT = 3
+WORK_MODE_BACKOFF_MAX_S = 86400.0   # przerwa między odczytami trybu pracy nie rośnie ponad dobę
 _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
 STATIC_CHECK_S = 600.0              # kolizja statyczna sprawdzana znowu co 10 min
@@ -197,8 +198,8 @@ class DirectConnection:
         # tryb pracy falownika; runtime podmienia na wspólny `rt.work_mode` (ten sam tracker co odczyt z encji)
         self.work_mode = WorkModeTracker()
         self._work_mode_at: float | None = None
-        self._work_mode_fails = 0
-        self._work_mode_off = False
+        self._work_mode_fails = 0       # ciche przekroczenia czasu z rzędu
+        self._work_mode_off = False     # nieużyteczna odpowiedź: rejestru nie czytamy do końca połączenia
         self._poll_task: asyncio.Task | None = None
         self._timer_task: asyncio.Task | None = None
         self._last_poll: float | None = None
@@ -555,7 +556,7 @@ class DirectConnection:
         wm = getattr(self.profile, "work_mode", None)
         if wm is None or self.conflict or self.client is None or self._work_mode_off:
             return
-        if self._work_mode_at is not None and now - self._work_mode_at < wm.poll_s:
+        if self._work_mode_at is not None and now - self._work_mode_at < self._work_mode_interval(wm.poll_s):
             return
         self._work_mode_at = now
         value = None
@@ -582,17 +583,35 @@ class DirectConnection:
         except (IndexError, TypeError, ValueError):
             value = None
             unusable = True
-        if value is None:
-            # nieużyteczna odpowiedź wyłącza odczyt od razu (jeden błąd może dać ramkę obcą do liczników
-            # transportu); przekroczenia czasu — dopiero po WORK_MODE_FAIL_LIMIT z rzędu
-            self._work_mode_fails = WORK_MODE_FAIL_LIMIT if unusable else self._work_mode_fails + 1
-            if self._work_mode_fails >= WORK_MODE_FAIL_LIMIT and not self._work_mode_off:
+        if unusable:
+            # nieużyteczna odpowiedź (wyjątek Modbus, ramka złej długości) wyłącza odczyt od razu i na stałe:
+            # na modelu bez tego rejestru każda próba dawałaby ramki obce do liczników transportu
+            # (fałszywa kolizja)
+            if not self._work_mode_off:
                 self._work_mode_off = True
                 _LOGGER.info("Volcast direct: operation mode register %d gives no usable reply; "
                              "not reading it again on this connection", wm.read_addr)
+        elif value is None:
+            # cisza (zgubiony datagram UDP przy tries=1): od WORK_MODE_FAIL_LIMIT z rzędu odstęp rośnie
+            # wykładniczo zamiast wyłączać odczyt. W tym czasie zgłaszany stan to ostatni udany odczyt —
+            # może być nieaktualny, dopóki kolejny odczyt się nie uda.
+            self._work_mode_fails += 1
         else:
             self._work_mode_fails = 0
         self.work_mode.update(classify_direct(value, wm.neutral_values))
+
+    def _work_mode_interval(self, poll_s: float) -> float:
+        """Odstęp do następnego odczytu trybu pracy: `poll_s`, po WORK_MODE_FAIL_LIMIT cichych przekroczeniach
+        czasu z rzędu `poll_s` x 2, x 4, ... (najwyżej doba)."""
+        over = self._work_mode_fails - WORK_MODE_FAIL_LIMIT + 1
+        if over <= 0:
+            return poll_s
+        return min(poll_s * 2 ** min(over, 32), max(WORK_MODE_BACKOFF_MAX_S, poll_s))
+
+    def _reset_work_mode_backoff(self) -> None:
+        """Łącze nawiązane na nowo i tożsamość potwierdzona: przerwa w odczytach trybu pracy od zera
+        (nie dotyczy wyłączenia po nieużytecznej odpowiedzi)."""
+        self._work_mode_fails = 0
 
     def _tick_monitor(self, now: float) -> None:
         stats = self.stats
@@ -656,6 +675,8 @@ class DirectConnection:
             # nieudane sprawdzenie: `pending`/`mismatch` trwają, pierwsze sprawdzenie zostaje `unknown`
             self.identity = previous if previous in ("pending", "mismatch") else "unknown"
             return self.identity
+        if self._recheck:
+            self._reset_work_mode_backoff()            # potwierdzenie po zdarzeniu łącza
         self._recheck = False
         self._identity_at = now
         if hmac.compare_digest(fp.encode(), expected.encode()):

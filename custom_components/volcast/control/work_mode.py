@@ -2,7 +2,7 @@
 
 Moduł czysty (bez importów HA). Stan to `"general"` | `"other:<kod>"` | `"unknown"`; `<kod>` to opcja selecta
 po normalizacji (kontrakt serwera: `^(general|unknown|other:[a-z0-9_]{1,24})$`). Odczyt bezpośredni
-z rejestru (`classify_direct`) dojdzie do tego samego modułu i tego samego `WorkModeTracker`."""
+z rejestru (`classify_direct`) i odczyt z encji karmią ten sam `WorkModeTracker`."""
 from __future__ import annotations
 
 import re

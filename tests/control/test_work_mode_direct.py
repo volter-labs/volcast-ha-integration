@@ -191,23 +191,147 @@ async def test_work_mode_stops_after_one_garbage_reply_without_conflict(make_has
         await h.close()
 
 
+async def _three_timeouts(h, state) -> None:
+    """Pierwszy odczyt udany (general), potem trzy ciche przekroczenia czasu co `poll_s`."""
+    await h.conn.async_poll()
+    state["timeout"] = True
+    for _ in range(3):
+        h.clock.advance(WM_POLL_S + 1)
+        await h.conn.async_poll()
+    assert state["calls"] == 3
+
+
 @pytest.mark.asyncio
-async def test_work_mode_three_silent_timeouts_stop_reading(make_hass, goodwe_udp_sim, goodwe_bank):
+async def test_work_mode_backs_off_after_three_silent_timeouts(make_hass, goodwe_udp_sim, goodwe_bank):
     h, _spy = await _start(make_hass, goodwe_udp_sim)
     state = {"timeout": False, "calls": 0}
     _silent_timeouts_on_wm(h.conn, state)
     try:
+        await _three_timeouts(h, state)
+        h.clock.advance(WM_POLL_S + 1)
         await h.conn.async_poll()
+        assert state["calls"] == 3                                        # nie po poll_s ...
+        h.clock.advance(WM_POLL_S)
+        await h.conn.async_poll()
+        assert state["calls"] == 4                                        # ... tylko po 2 x poll_s
+        h.clock.advance(2 * WM_POLL_S + 1)
+        await h.conn.async_poll()
+        assert state["calls"] == 4
+        h.clock.advance(2 * WM_POLL_S)
+        await h.conn.async_poll()
+        assert state["calls"] == 5                                        # potem 4 x poll_s
+        assert h.conn.work_mode.state == "general"                        # stan = ostatni udany odczyt
+        assert goodwe_bank.writes == []
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_work_mode_back_off_is_capped_at_one_day(make_hass, goodwe_udp_sim, goodwe_bank):
+    h, _spy = await _start(make_hass, goodwe_udp_sim)
+    state = {"timeout": False, "calls": 0}
+    _silent_timeouts_on_wm(h.conn, state)
+    day = 86400
+    try:
+        await _three_timeouts(h, state)
+        for _ in range(12):                                               # 300 s x 2^k przekracza dobę po 9 krokach
+            h.clock.advance(day + 1)
+            await h.conn.async_poll()
+        assert state["calls"] == 15
+        h.clock.advance(day - 1)
+        await h.conn.async_poll()
+        assert state["calls"] == 15
+        h.clock.advance(2)
+        await h.conn.async_poll()
+        assert state["calls"] == 16                                       # odstęp nie rośnie ponad dobę
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_work_mode_success_resets_back_off(make_hass, goodwe_udp_sim, goodwe_bank):
+    h, _spy = await _start(make_hass, goodwe_udp_sim)
+    state = {"timeout": False, "calls": 0}
+    _silent_timeouts_on_wm(h.conn, state)
+    try:
+        await _three_timeouts(h, state)
+        state["timeout"] = False
+        goodwe_bank.poke(WM_ADDR, 3)
+        h.clock.advance(2 * WM_POLL_S + 1)
+        await h.conn.async_poll()
+        assert h.conn.work_mode.state == "other:3"                        # odczyt po przerwie się udał
         state["timeout"] = True
+        for i in range(3):                                                # znowu co poll_s, licznik od zera
+            h.clock.advance(WM_POLL_S + 1)
+            await h.conn.async_poll()
+            assert state["calls"] == 4 + i
+        h.clock.advance(WM_POLL_S + 1)
+        await h.conn.async_poll()
+        assert state["calls"] == 6                                        # trzecia cisza z rzędu -> znowu przerwa
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("counter", ["reconnects", "peer_resets"])
+async def test_work_mode_reconnect_resets_back_off(make_hass, goodwe_udp_sim, goodwe_bank, counter):
+    h, _spy = await _start(make_hass, goodwe_udp_sim)
+    state = {"timeout": False, "calls": 0}
+    _silent_timeouts_on_wm(h.conn, state)
+    try:
+        await _three_timeouts(h, state)
+        setattr(h.conn.stats, counter, getattr(h.conn.stats, counter) + 1)   # łącze nawiązane na nowo
+        h.clock.advance(WM_POLL_S + 1)
+        await h.conn.async_poll()
+        assert h.conn.identity == "confirmed"
+        assert state["calls"] == 4                                        # bez przerwy: odczyt po poll_s
+        h.clock.advance(WM_POLL_S + 1)
+        await h.conn.async_poll()
+        assert state["calls"] == 5                                        # licznik ciszy też od zera
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_unusable_reply_stop_survives_reconnect(make_hass, goodwe_udp_sim, goodwe_bank):
+    h, _spy = await _start(make_hass, goodwe_udp_sim)
+    try:
+        await h.conn.async_poll()
+        goodwe_bank.unsupported.add(WM_ADDR)
+        h.clock.advance(WM_POLL_S + 1)
+        await h.conn.async_poll()
+        stopped_at = _sim_reqs(goodwe_udp_sim)
+        goodwe_bank.unsupported.discard(WM_ADDR)
+        h.conn.stats.reconnects += 1
         for _ in range(3):
             h.clock.advance(WM_POLL_S + 1)
             await h.conn.async_poll()
-        assert state["calls"] == 3
-        for _ in range(2):
-            h.clock.advance(WM_POLL_S + 1)
-            await h.conn.async_poll()
-        assert state["calls"] == 3                                        # po trzech ciszach: koniec odczytów
-        assert h.conn.work_mode.state == "general"
+        assert h.conn.identity == "confirmed"
+        assert _sim_reqs(goodwe_udp_sim) == stopped_at                    # odpowiedź nieużyteczna = koniec na stałe
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_work_mode_read_uses_a_single_try(make_hass, goodwe_udp_sim, goodwe_bank):
+    h, _spy = await _start(make_hass, goodwe_udp_sim)
+    seen: list = []
+    orig_sep, orig_rb = h.conn.client._separated, h.conn.client.read_block
+
+    async def sep(block, lost, **kw):
+        if block[0] == WM_ADDR:
+            seen.append(kw.get("tries"))
+        return await orig_sep(block, lost, **kw)
+
+    async def rb(addr, count, fc=3, *, tries=None):
+        if addr == WM_ADDR:
+            seen.append(tries)
+        return await orig_rb(addr, count, fc, tries=tries)
+
+    h.conn.client._separated, h.conn.client.read_block = sep, rb
+    try:
+        await h.conn.async_poll()
+        assert seen and set(seen) == {1} and h.conn.work_mode.state == "general"
     finally:
         await h.close()
 

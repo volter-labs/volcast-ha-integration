@@ -113,8 +113,10 @@ def test_runtime_wiring_primes_and_subscribes(monkeypatch):
     hass = SimpleNamespace(states=SimpleNamespace(get=lambda e: FakeState(e, "Eco Mode")))
     choice = SimpleNamespace(profile=_profile(), integration_domain="goodwe")
     rt = SimpleNamespace(work_mode=WorkModeTracker(), unsubs=[])
+    monkeypatch.setattr(rt_mod, "async_track_time_interval", lambda hass, action, interval: (lambda: None))
     rt_mod.start_work_mode_watch(hass, choice, rt)
-    assert rt.work_mode.state == "other:eco_mode" and subs[0][0] == ["select.inv_work_mode"] and len(rt.unsubs) == 1
+    # subskrypcja stanu + zegar odświeżania encji (select GoodWe nie odpytuje się sam)
+    assert rt.work_mode.state == "other:eco_mode" and subs[0][0] == ["select.inv_work_mode"] and len(rt.unsubs) == 2
     # brak encji -> unknown, bez subskrypcji stanu (jest tylko zegar ponowienia)
     monkeypatch.setattr(rt_mod, "_entity_candidates", lambda hass, dom: [])
     monkeypatch.setattr(rt_mod, "async_track_time_interval", lambda hass, action, interval: (lambda: None))
