@@ -93,7 +93,7 @@ Entity-mode control and account pairing are both beta features.
 
 ### EV charger (beta)
 
-A charger you track under **Options → EV charger** can follow the charging slots of the Volcast plan: Volcast sets the current (a `number` entity) and starts or stops charging (a `select` or `switch` entity) of that charger only. It writes under the same conditions as inverter control (consent, control switch on, not in plan-only mode), pauses after you start or stop a charge yourself until a newer plan arrives, and, if the cloud connection is lost for a long time, starts charging at full power when the ready time gets close. Needs the matching server-side update. Details: `docs/release-notes/v2.0.0-beta9.md`.
+A charger you track under **Options → EV charger** can follow the charging slots of the Volcast plan: Volcast sets the current (a `number` entity) and starts or stops charging (a `select` or `switch` entity) of that charger only. It writes under the same conditions as inverter control (consent, control switch on, not in plan-only mode), pauses after you start or stop a charge yourself until a newer plan arrives, and, if the cloud connection is lost for a long time, starts charging at full power when the ready time gets close, but only when the cloud explicitly allowed this for the current plan (not when you paused charging or chose a PV-only mode). Needs the matching server-side update. Details: `docs/release-notes/v2.0.0-beta9.md`.
 
 ### Diagnostics privacy
 
