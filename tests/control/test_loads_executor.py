@@ -1275,6 +1275,10 @@ def test_newer_plan_ends_the_hold_only_after_the_cloud_accepted_the_event():
         report = ex.report_for("dev1")
         assert report["manual_event"] == "stop"
         await ex.async_ack_report(report)                              # telemetria ze zdarzeniem przyjęta
+        # plan zużyty przed przyjęciem: początek wstrzymania = chwila przyjęcia, więc następna paczka
+        # zamówi przeliczenie po niej (ratunek, gdy plan po zdarzeniu przyszedł przed przyjęciem)
+        assert ex.state.held_since == clock.utc.isoformat()
+        assert datetime.fromisoformat(ex.report_for("dev1")["held_since"]) > held + timedelta(seconds=2)
         clock.advance(61)              # ten sam plan jeszcze raz (sprzed przyjęcia): wstrzymanie trwa
         await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=held + timedelta(seconds=2),
                                                                         remaining_kwh=8.0)))
@@ -1283,6 +1287,20 @@ def test_newer_plan_ends_the_hold_only_after_the_cloud_accepted_the_event():
         await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=clock.utc, remaining_kwh=8.0)))
         assert ex.state.held_since is None
         assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_ack_keeps_the_hold_start_when_no_newer_plan_was_used():
+    async def body():
+        h = _hass()
+        ex, clock = await _started_by_us(h, remaining=8.0)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "charged"))
+        held = ex.state.held_since
+        clock.advance(61)              # plan sprzed wstrzymania (w drodze), potem przyjęcie zdarzenia
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=NOW, remaining_kwh=8.0)))
+        await ex.async_ack_report(ex.report_for("dev1"))
+        assert ex.state.manual_event is None and ex.state.held_since == held
         await ex.async_stop()
     asyncio.run(body())
 

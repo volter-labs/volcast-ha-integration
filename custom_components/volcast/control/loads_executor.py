@@ -301,12 +301,17 @@ class LoadsExecutor:
 
     async def async_ack_manual(self, manual_at: str | None) -> None:
         """Telemetria ze zdarzeniem `manual_at` przyjęta — zdarzenie wysłane raz. Nowsze zostaje.
-        Wstrzymanie (`held_since`) trwa niezależnie, do planu wygenerowanego po nim."""
+        Wstrzymanie (`held_since`) trwa niezależnie, do NOWEGO planu wygenerowanego po nim. Gdy bieżący plan
+        jest już nowszy niż `held_since` (zużyty przed przyjęciem — np. zgubiona odpowiedź telemetrii),
+        początek wstrzymania przesuwa się na teraz: następna paczka zamówi przeliczenie po nim."""
         s = self._state
         if manual_at is None or s.manual_event is None or s.manual_at != manual_at:
             return
         s.manual_event = None
         s.manual_at = None
+        held, gen = _when(s.held_since), _when(s.plan_generated_at)
+        if held is not None and gen is not None and gen > held:
+            s.held_since = self._utcnow().isoformat()
         await self._async_save()
 
     # ── cykl życia ────────────────────────────────────────────────────────
