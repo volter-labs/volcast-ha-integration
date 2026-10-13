@@ -91,6 +91,10 @@ Entity-mode control and account pairing are both beta features.
 - **Repeated write failures** — a repair notification tells you control has stopped working and what to check.
 - **Known limitation:** a 30-minute pause does not survive a Home Assistant restart — after a restart, control resumes immediately even if a pause was in effect before.
 
+### EV charger (beta)
+
+A charger you track under **Options → EV charger** can follow the charging slots of the Volcast plan: Volcast sets the current (a `number` entity) and starts or stops charging (a `select` or `switch` entity) of that charger only. It writes under the same conditions as inverter control (consent, control switch on, not in plan-only mode), pauses after you start or stop a charge yourself until a newer plan arrives, and, if the cloud connection is lost for a long time, starts charging at full power when the ready time gets close. Needs the matching server-side update. Details: `docs/release-notes/v2.0.0-beta9.md`.
+
 ### Diagnostics privacy
 
 The downloadable diagnostics file masks serial numbers, MAC addresses and e-mail addresses (IP addresses are kept, since they help with troubleshooting). Once an entry is paired, its readings and control summary also go to your Volcast account, as listed above — diagnostics is no longer the only place they're visible.
