@@ -75,8 +75,8 @@ def issues(monkeypatch):
     return calls
 
 
-def _wired():
-    rt = SimpleNamespace(work_mode=WorkModeTracker(), unsubs=[])
+def _wired(entry_id="e1"):
+    rt = SimpleNamespace(work_mode=WorkModeTracker(), unsubs=[], entry=SimpleNamespace(entry_id=entry_id))
     rt_mod.wire_work_mode(object(), rt, None)
     return rt
 
@@ -89,12 +89,12 @@ def test_issue_created_on_transition_and_deleted_on_general(issues):
     rt.work_mode.update("other:3")
     rt.work_mode.update("other:3")                        # ta sama wartość: bez nowej zmiany
     assert [c[0] for c in issues] == ["create"]
-    assert issues[0][1] == "inverter_work_mode"
+    assert issues[0][1] == "inverter_work_mode_e1"
     assert issues[0][2]["is_fixable"] is False and issues[0][2]["translation_key"] == "inverter_work_mode"
     rt.work_mode.update(None)                             # nieudany odczyt: bez zmian
     assert [c[0] for c in issues] == ["create"]
     rt.work_mode.update("general")
-    assert issues[-1] == ("delete", "inverter_work_mode")
+    assert issues[-1] == ("delete", "inverter_work_mode_e1")
 
 
 def test_issue_created_on_first_read_other(issues):
@@ -114,7 +114,7 @@ def test_unknown_never_touches_issue(issues):
 
 def test_direct_connection_shares_runtime_tracker(issues):
     conn = SimpleNamespace(work_mode=WorkModeTracker())
-    rt = SimpleNamespace(work_mode=WorkModeTracker(), unsubs=[])
+    rt = SimpleNamespace(work_mode=WorkModeTracker(), unsubs=[], entry=SimpleNamespace(entry_id="e1"))
     rt_mod.wire_work_mode(object(), rt, conn)
     assert conn.work_mode is rt.work_mode
     conn.work_mode.update(classify_direct(3, (0,)))       # tak karmi go DirectConnection
@@ -221,6 +221,23 @@ def test_unload_removes_the_issue(issues):
     issues.clear()
     for unsub in rt.unsubs:
         unsub()
-    assert issues == [("delete", "inverter_work_mode")]
+    assert issues == [("delete", "inverter_work_mode_e1")]
     rt.work_mode.update("other:4")                        # po rozładunku hak nie zakłada zgłoszenia
-    assert issues == [("delete", "inverter_work_mode")]
+    assert issues == [("delete", "inverter_work_mode_e1")]
+
+
+def test_issue_is_per_entry(issues):
+    a, b = _wired("a"), _wired("b")
+    a.work_mode.update("other:3")
+    issues.clear()
+    for unsub in b.unsubs:                                # entry B się zatrzymuje / przeładowuje
+        unsub()
+    assert issues == [("delete", "inverter_work_mode_b")]
+    assert ("delete", "inverter_work_mode_a") not in issues
+
+
+def test_clear_failure_does_not_raise(monkeypatch, issues):
+    rt = _wired()
+    monkeypatch.setattr(rt_mod.ir, "async_delete_issue", lambda *a: (_ for _ in ()).throw(RuntimeError("x")))
+    for unsub in rt.unsubs:
+        unsub()

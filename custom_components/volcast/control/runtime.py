@@ -623,14 +623,16 @@ WORK_MODE_RETRY_S = 60
 def wire_work_mode(hass, rt, conn) -> None:
     """Jeden tracker trybu pracy dla obu źródeł (rejestr z `conn`, encja select) i zgłoszenie w Naprawach:
     `other:*` je zakłada, `general` kasuje, `unknown` go nie rusza (nieznany stan nie zmienia ostrzeżenia)."""
+    issue_id = f"{WORK_MODE_ISSUE}_{rt.entry.entry_id}"
+
     def _changed(state: str) -> None:
         try:
             if state.startswith("other:"):
-                ir.async_create_issue(hass, DOMAIN, WORK_MODE_ISSUE, is_fixable=False,
+                ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False,
                                       severity=getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning"),
                                       translation_key="inverter_work_mode")
             elif state == "general":
-                ir.async_delete_issue(hass, DOMAIN, WORK_MODE_ISSUE)
+                ir.async_delete_issue(hass, DOMAIN, issue_id)
         except Exception as err:  # noqa: BLE001 — ostrzeżenie nigdy nie psuje odczytu
             _LOGGER.debug("Volcast work mode issue skipped (%s)", type(err).__name__)
 
@@ -639,7 +641,10 @@ def wire_work_mode(hass, rt, conn) -> None:
     def _clear() -> None:
         """Rozładunek wpisu: ostrzeżenie o trybie pracy nie zostaje po wyłączeniu sterowania ani usunięciu."""
         rt.work_mode.on_change = None
-        ir.async_delete_issue(hass, DOMAIN, WORK_MODE_ISSUE)
+        try:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+        except Exception as err:  # noqa: BLE001 — rozładunek idzie dalej
+            _LOGGER.debug("Volcast work mode issue not cleared (%s)", type(err).__name__)
     rt.unsubs.append(_clear)
     if conn is not None:
         conn.work_mode = rt.work_mode
