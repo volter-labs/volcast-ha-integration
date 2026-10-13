@@ -2,23 +2,31 @@
 
 Osobny od wykonawcy falownika: własny magazyn (`LoadsStore`), własny pisarz i własny odstęp
 zapisów. Zapisuje WYŁĄCZNIE encje ról potwierdzonej ładowarki (`ev_chargers` w opcjach):
-nastawę (`number`) i start/stop (`select` albo `switch`). Encja falownika nigdy — rola wskazująca
-encję z listy zakazanej albo z innej domeny unieważnia ładowarkę w całości (brak zapisów).
+nastawę (`number`) i start/stop (`select` albo `switch`). Encja falownika nigdy: każda encja do
+zapisu musi w rejestrze encji należeć do urządzenia ładowarki (`device_id == load_key`) i nie może
+być na liście zakazanej (encje falownika); inaczej — albo przy innej domenie — ładowarka jest
+nieważna w całości (brak zapisów).
 
-Bramki (wszystkie naraz): zgoda konta ∧ przełącznik sterowania w HA ∧ `loads_meta.control_enabled`
-∧ status ładowarki czytelny. Slot dla „teraz” wybiera `slot_for` ([from, to)); brak slotu = brak
-zapisu. `forced`: nastawa PRZED startem; start tylko raz na plan (`last_action`), więc ładowarka,
-która nie rusza (auto pełne, kabel), nie dostaje komendy w kółko. `off`: stop tylko, gdy ładuje,
-też raz — ręcznego ładowania nie blokujemy. Nowy plan (`plan_generated_at`) zeruje `last_action`.
-`pv_surplus` nie jest jeszcze wykonywany (nic nie zapisujemy).
+Bramki (wszystkie naraz): zgoda konta ∧ przełącznik sterowania w HA ∧ NIE tryb „tylko plan”
+(własny sterownik właściciela — zero zapisów, także do ładowarki) ∧ `loads_meta.control_enabled`
+(z `plan_generated_at`) ∧ status ładowarki czytelny. Wartość bramki inna niż oczekiwana = zamknięta.
+Slot dla „teraz” wybiera `slot_for` ([from, to)) spośród slotów tej ładowarki i tej sesji; brak
+slotu = brak zapisu. `forced`: nastawa PRZED startem, start tylko przy nastawie zgodnej z planem w
+ODCZYCIE encji (obca zmiana nastawy = najpierw ponowny zapis); start raz na plan i fazę slotów
+(`last_action`), więc ładowarka, która nie rusza (auto pełne, kabel), nie dostaje komendy w kółko.
+`off`: stop tylko, gdy ładuje, też raz — ręcznego ładowania nie blokujemy. Nowy plan
+(`plan_generated_at`) i zmiana trybu slotu w trakcie pracy zerują `last_action`. Cofnięcie bramki
+w trakcie ładowania niczego nie zatrzymuje (ładowarka zostaje, jak jest). `pv_surplus` nie jest
+jeszcze wykonywany (nic nie zapisujemy).
 
 Odstęp: najwyżej jeden zapis na encję na `LOADS_MIN_WRITE_INTERVAL_S` (liczony od próby, także
 nieudanej). Powtórek tej samej wartości pilnują `last_setpoint_a` / `last_action`, nie odstęp —
 po obcym „stop” ten sam „start” musi dać się wysłać ponownie. Odczyt kontrolny po
 `LOADS_READBACK_S` tylko loguje rozjazd (bez ponownego zapisu).
 
-Status „ładuje” = słowo `charging` w stanie encji statusu (bez przeczenia „not”/„no”); stany
-w innych językach albo CamelCase nie są rozpoznawane jako ładowanie.
+Status „ładuje” = słowo z jawnej listy (`charging`) w stanie encji statusu i żadne słowo z listy
+wykluczeń (przeczenia, pauza, koniec, błąd, oczekiwanie). Stany w innych językach albo CamelCase
+nie są rozpoznawane jako ładowanie (kierunek bezpieczny: brak stopu, start raz na plan).
 """
 from __future__ import annotations
 
@@ -31,6 +39,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable, Iterable, Mapping
 
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
@@ -45,7 +54,12 @@ _LOGGER = logging.getLogger(__name__)
 _UNAVAILABLE = ("unavailable", "unknown")
 _TOKEN_RE = re.compile(r"[^a-z0-9]+")
 _HINTS = {"start": ("start", "resume"), "stop": ("stop", "pause")}
-_NEGATIONS = frozenset({"not", "no", "non"})
+# Słowa stanu „ładuje” i słowa, które to znaczenie odbierają („Charging paused”, „charging_completed”).
+_CHARGING_WORDS = frozenset({"charging"})
+_NOT_CHARGING_WORDS = frozenset({
+    "not", "no", "non", "pause", "paused", "suspend", "suspended", "stop", "stopped", "finish", "finished",
+    "complete", "completed", "done", "end", "ended", "error", "fault", "failed", "interrupted", "wait",
+    "waiting", "scheduled", "ready", "idle", "standby"})
 _SETPOINT_UNITS = ("A", "W")
 _START_STOP_DOMAINS = ("select", "switch")
 
@@ -72,7 +86,7 @@ def is_charging(state: Any) -> bool:
     if not isinstance(state, str):
         return False
     tokens = _tokens(state)
-    return "charging" in tokens and not _NEGATIONS.intersection(tokens)
+    return bool(_CHARGING_WORDS.intersection(tokens)) and not _NOT_CHARGING_WORDS.intersection(tokens)
 
 
 def charger_roles(options: Mapping, device_id: str) -> dict | None:
@@ -105,6 +119,7 @@ class _Charger:
 class LoadsExecutor:
     def __init__(self, hass, entry, writer, roles_provider: Callable[[str], dict | None], store,
                  consent_getter: Callable[[], Any], local_switch_getter: Callable[[], Any], *,
+                 plan_only_getter: Callable[[], Any],
                  forbidden_entities: Iterable[str] = (), clock: Callable[[], float] = time.monotonic,
                  utcnow=dt_util.utcnow, readback_s: float = LOADS_READBACK_S) -> None:
         self._hass, self._entry = hass, entry
@@ -113,6 +128,7 @@ class LoadsExecutor:
         self._store = store
         self._consent = consent_getter
         self._local_switch = local_switch_getter
+        self._plan_only = plan_only_getter
         self._forbidden = frozenset(forbidden_entities)
         self._clock, self._utcnow = clock, utcnow
         self._readback_s = readback_s
@@ -125,6 +141,7 @@ class LoadsExecutor:
         self._started = self._stopped = False
         self._unsub: list = []
         self._readback: asyncio.Task | None = None
+        self._slot_mode: str | None = None            # tryb slotu z ostatniego cyklu (tylko w pamięci)
 
     @property
     def state(self) -> LoadsState:
@@ -173,9 +190,9 @@ class LoadsExecutor:
         self._loads = tuple(getattr(schedule, "loads", None) or ())
         meta = getattr(schedule, "loads_meta", None)
         self._meta = meta
-        if meta is None:
-            return False
-        gen = meta.plan_generated_at.isoformat() if meta.plan_generated_at is not None else None
+        if meta is None or meta.plan_generated_at is None:
+            return False                         # bez znacznika planu cykl i tak nic nie zapisze
+        gen = meta.plan_generated_at.isoformat()
         if gen == self._state.plan_generated_at:
             return False
         self._state.plan_generated_at = gen
@@ -194,9 +211,9 @@ class LoadsExecutor:
     # ── cykl ──────────────────────────────────────────────────────────────
     async def _async_tick(self) -> None:
         meta = self._meta
-        if meta is None or not meta.control_enabled:
+        if meta is None or meta.control_enabled is not True or meta.plan_generated_at is None:
             return
-        if self._consent() is not True or self._local_switch() is not True:
+        if self._consent() is not True or self._local_switch() is not True or self._plan_only() is not False:
             return
         charger = self._charger(meta.load_key)
         if charger is None:
@@ -205,10 +222,13 @@ class LoadsExecutor:
         if status is None or status.state in _UNAVAILABLE:
             return
         mine = [s for s in self._loads if s.device_id == meta.load_key
-                and (s.session_id is None or s.session_id == meta.session_id)]
+                and s.session_id == meta.session_id]
         slot = slot_for(self._utcnow(), mine)
         if slot is None:
             return
+        if self._slot_mode is not None and slot.mode != self._slot_mode:
+            self._state.last_action = None       # nowa faza planu: start/stop znowu raz
+        self._slot_mode = slot.mode
         charging = is_charging(status.state)
         if slot.mode == "forced":
             await self._async_forced(slot, meta, charger, charging)
@@ -223,7 +243,7 @@ class LoadsExecutor:
             return None
         setpoint, start_stop = roles.get("setpoint"), roles.get("start_stop")
         writable = [e for e in (setpoint, start_stop) if e is not None]
-        if any(e in self._forbidden for e in writable):
+        if any(e in self._forbidden or self._device_of(e) != key for e in writable):
             return None
         if setpoint is not None and not setpoint.startswith("number."):
             return None
@@ -231,8 +251,18 @@ class LoadsExecutor:
             return None
         return _Charger(roles["status"], setpoint, start_stop)
 
+    def _device_of(self, eid: str) -> str | None:
+        """Urządzenie encji w rejestrze encji; brak wpisu albo błąd = None (ładowarka nieważna)."""
+        try:
+            ent = er.async_get(self._hass).entities.get(eid)
+        except Exception:  # noqa: BLE001 — rejestr niedostępny: nie zapisujemy
+            return None
+        device = getattr(ent, "device_id", None) if ent is not None else None
+        return device if isinstance(device, str) and device else None
+
     async def _async_forced(self, slot, meta, charger: _Charger, charging: bool) -> None:
         value = None
+        tol = 0.0
         if charger.setpoint is not None:
             spec = self._setpoint_spec(meta, charger.setpoint)
             if spec is None:
@@ -241,9 +271,11 @@ class LoadsExecutor:
             if value is None:
                 _LOGGER.debug("Volcast EV charger: planned power below the charger minimum, skipping")
                 return
+            tol = max(spec[3] / 2, 0.01)
         written_value = None
         in_sync = True
-        if value is not None and value != self._state.last_setpoint_a:
+        if value is not None and (value != self._state.last_setpoint_a
+                                  or not self._setpoint_reads(charger.setpoint, value, tol)):
             ok = await self._async_write(EntityWrite("ev_setpoint", charger.setpoint, "number", "set_value",
                                                      {"value": value}))
             if ok:
@@ -267,11 +299,18 @@ class LoadsExecutor:
         unit = unit.strip() if isinstance(unit, str) else None
         if unit not in _SETPOINT_UNITS or (meta.control_unit is not None and meta.control_unit != unit):
             return None
-        lo = meta.min if meta.min is not None else _num(st.attributes.get("min"))
-        hi = meta.max if meta.max is not None else _num(st.attributes.get("max"))
+        # Granice z planu tylko ZAWĘŻAJĄ granice encji — zapis spoza zakresu encji odrzuci usługa HA.
+        los = [v for v in (meta.min, _num(st.attributes.get("min"))) if v is not None]
+        his = [v for v in (meta.max, _num(st.attributes.get("max"))) if v is not None]
         step = meta.step if meta.step is not None and meta.step > 0 else _num(st.attributes.get("step"))
-        return (unit, lo if lo is not None else 0.0, hi if hi is not None else math.inf,
+        return (unit, max(los) if los else 0.0, min(his) if his else math.inf,
                 step if step is not None and step > 0 else 1.0)
+
+    def _setpoint_reads(self, eid: str, value: float, tol: float) -> bool:
+        """Czy encja nastawy pokazuje teraz `value` (nieczytelna = nie)."""
+        st = self._hass.states.get(eid)
+        actual = _num(st.state) if st is not None else None
+        return actual is not None and abs(actual - value) <= tol
 
     @staticmethod
     def _setpoint_value(slot, meta, spec) -> float | None:

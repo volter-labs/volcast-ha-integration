@@ -43,6 +43,11 @@ def _hass(status="Available", roles=ROLES, switch_state="off"):
     h.states.set(SWITCH, switch_state, {})
     h.states.set(INVERTER, "0", {"min": 0, "max": 10000, "step": 1, "unit_of_measurement": "W"})
     h.test_roles = roles
+    # rejestr encji: encje ładowarki należą do jej urządzenia, falownik do swojego
+    charger = (STATUS, CURRENT, START_STOP, SWITCH, "sensor.wb_current")
+    h.data["entity_registry"] = SimpleNamespace(entities={
+        **{e: SimpleNamespace(entity_id=e, device_id="dev1") for e in charger},
+        INVERTER: SimpleNamespace(entity_id=INVERTER, device_id="inv1")})
     return h
 
 
@@ -69,13 +74,15 @@ def _schedule(*slots, meta=None):
     return SimpleNamespace(loads=tuple(slots), loads_meta=meta if meta is not None else _meta())
 
 
-def _make(hass, *, store=None, consent=True, switch=True, clock=None, roles=None, forbidden=frozenset()):
+def _make(hass, *, store=None, consent=True, switch=True, clock=None, roles=None, forbidden=frozenset(),
+          plan_only=False):
     clock = clock or Clock()
     entry = _entry(roles or ROLES)
     ex = LoadsExecutor(hass, entry, writer=EntityServiceWriter(hass),
                        roles_provider=lambda key: charger_roles(entry.options, key),
                        store=store or LoadsStore(hass, "e1"),
                        consent_getter=lambda: consent, local_switch_getter=lambda: switch,
+                       plan_only_getter=lambda: plan_only,
                        forbidden_entities=forbidden, clock=lambda: clock.mono, utcnow=lambda: clock.utc,
                        readback_s=0)
     return ex, clock
@@ -256,6 +263,128 @@ def test_never_writes_inverter_entities():
     asyncio.run(body())
 
 
+@pytest.mark.parametrize("plan_only", [True, None])
+def test_plan_only_mode_blocks_writes(plan_only):
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h, plan_only=plan_only)      # nieznana wartość = brak zapisów
+        await ex.async_on_plan(_schedule(_slot()))
+        h.states.set(STATUS, "Charging")
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None), meta=_meta(gen=GEN + timedelta(minutes=1))))
+        assert _calls(h) == []
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_inverter_entity_role_blocked_even_without_forbidden_set():
+    async def body():
+        h = _hass()
+        roles = {"status": STATUS, "setpoint": INVERTER, "start_stop": START_STOP}
+        ex, _ = await _started(h, roles=roles)               # tryb bezpośredni: brak mapy encji falownika
+        await ex.async_on_plan(_schedule(_slot()))
+        assert _calls(h) == []
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("registry", ["other_device", "missing"])
+def test_writable_role_outside_charger_device_invalidates_charger(registry):
+    async def body():
+        h = _hass()
+        if registry == "missing":
+            del h.data["entity_registry"].entities[START_STOP]
+        else:
+            h.data["entity_registry"].entities[START_STOP] = SimpleNamespace(entity_id=START_STOP, device_id="x")
+        ex, _ = await _started(h)
+        await ex.async_on_plan(_schedule(_slot()))
+        assert _calls(h) == []         # także nastawa (należy do ładowarki) — cała ładowarka nieważna
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_setpoint_rewritten_when_entity_differs_from_cache():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot()))
+        h.services.calls.clear()
+        h.states.set(CURRENT, "10")    # ktoś zmienił nastawę poza Volcast
+        clock.advance(61)
+        await ex.async_on_plan(_schedule(_slot(), meta=_meta(gen=GEN + timedelta(minutes=1))))
+        assert _calls(h) == [
+            ("number", "set_value", {"entity_id": CURRENT, "value": 16.0}),
+            ("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"}),
+        ]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_no_start_when_setpoint_differs_and_write_is_throttled():
+    async def body():
+        h = _hass(status="Charging")
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot()))          # nastawa 16 zapisana, ładuje
+        h.services.calls.clear()
+        h.states.set(CURRENT, "8")
+        h.states.set(STATUS, "Available")
+        clock.advance(10)
+        await ex.async_on_plan(_schedule(_slot(), meta=_meta(gen=GEN + timedelta(minutes=1))))
+        assert _calls(h) == []         # nastawa czeka na odstęp, start czeka na nastawę
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_slot_without_session_is_ignored():
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(session=None)))
+        await ex.async_on_plan(_schedule(_slot(session="other"), meta=_meta(gen=GEN + timedelta(minutes=1))))
+        assert _calls(h) == []
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_plan_limits_are_clamped_to_entity_limits():
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(power=22080.0), meta=_meta(max=32.0, max_power_w=22080.0)))
+        assert _calls(h)[0] == ("number", "set_value", {"entity_id": CURRENT, "value": 16.0})
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_meta_without_generated_at_writes_nothing():
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(), meta=_meta(gen=None)))
+        assert _calls(h) == []
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_start_is_sent_again_in_a_later_forced_slot_of_the_same_plan():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        first = _slot(start=NOW, minutes=15)
+        gap = _slot(mode="off", power=None, start=NOW + timedelta(minutes=15), minutes=15)
+        second = _slot(start=NOW + timedelta(minutes=30), minutes=15)
+        await ex.async_on_plan(_schedule(first, gap, second))
+        assert [c[1] for c in _calls(h)] == ["set_value", "select_option"]   # auto nie ruszyło
+        h.services.calls.clear()
+        clock.advance(15 * 60)
+        await ex.async_tick()          # slot off bez ładowania: nic
+        assert _calls(h) == []
+        clock.advance(15 * 60)
+        await ex.async_tick()
+        assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
 def test_setpoint_role_of_wrong_domain_is_not_written():
     async def body():
         h = _hass()
@@ -321,6 +450,12 @@ def test_is_charging():
     assert is_charging("Charging") and is_charging("charging")
     assert not is_charging("Not charging") and not is_charging("Available") and not is_charging(None)
     assert not is_charging("discharging")
+    for s in ("Charging paused", "charging_completed", "Charging finished", "Charging complete",
+              "Charging stopped", "Suspended charging", "charging_done", "Charging ended", "charging_error",
+              "Waiting for charging", "Charging interrupted", "charging_scheduled", "Charging fault"):
+        assert not is_charging(s), s
+    for s in ("charging", "Charging", "ev_charging", "Charging EV", "car_charging", "Charging in progress"):
+        assert is_charging(s), s
 
 
 def test_switch_charger_turn_on_and_off():
@@ -507,10 +642,12 @@ def test_unload_stops_loads_executor_without_writes():
 def test_build_loads_executor_forbids_inverter_entities():
     from custom_components.volcast.control import runtime as rt_mod
     h = _hass()
-    ex = rt_mod._build_loads_executor(h, _entry(), SimpleNamespace(consent=True, local_switch=True),
+    ex = rt_mod._build_loads_executor(h, _entry(), SimpleNamespace(consent=True, local_switch=True, plan_only=False),
                                       frozenset({"select.goodwe_ems_mode"}), {"power_w": INVERTER})
     assert {INVERTER, "select.goodwe_ems_mode"} <= ex._forbidden
-    assert ex._consent() is True and ex._local_switch() is True
+    assert ex._consent() is True and ex._local_switch() is True and ex._plan_only() is False
+    bare = rt_mod._build_loads_executor(h, _entry(), SimpleNamespace(), frozenset(), {})
+    assert bare._plan_only() is None and bare._consent() is None    # brak pola = bramka zamknięta
 
 
 def test_charger_roles_lookup():

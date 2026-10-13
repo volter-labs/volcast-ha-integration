@@ -828,14 +828,16 @@ def plan_fan_out(executor, loads_executor):
 
 
 def _build_loads_executor(hass, entry, executor, inverter_entities: frozenset, mapped: Mapping[str, str]):
-    """Wykonawca ładowarki: bramki z wykonawcy falownika (zgoda konta, przełącznik w HA), zakaz
-    zapisu każdej encji falownika."""
+    """Wykonawca ładowarki: bramki z wykonawcy falownika (zgoda konta, przełącznik w HA, tryb „tylko
+    plan”), zakaz zapisu każdej encji falownika."""
     return LoadsExecutor(
         hass, entry, writer=EntityServiceWriter(hass),
         roles_provider=lambda key: charger_roles(entry.options, key),
         store=LoadsStore(hass, entry.entry_id),
         consent_getter=lambda: getattr(executor, "consent", None),
         local_switch_getter=lambda: getattr(executor, "local_switch", False),
+        # „tylko plan” (własny sterownik właściciela) = zero zapisów, także do ładowarki
+        plan_only_getter=lambda: getattr(executor, "plan_only", None),
         forbidden_entities=frozenset(inverter_entities) | {v for v in mapped.values() if isinstance(v, str)})
 
 
