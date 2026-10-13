@@ -58,19 +58,19 @@ def test_driver_block_carries_limits():
     b = driver_block(choice=GW, control_mode=None, mapped_keys=ALL, local_switch=False,
                      limits={"rated_power_w": 8000, "source": "entities"})
     assert b == {"id": "goodwe-et", "model": "mode_setpoint", "local_switch_enabled": False,
-                 "limits": {"rated_power_w": 8000, "source": "entities"}}
+                 "limits": {"rated_power_w": 8000, "source": "entities"}, "meta": {"work_mode": "unknown"}}
 
 
 def test_driver_block_carries_readings_source():
     src = {"soc": "entity", "pv_power_w": "none"}
     b = driver_block(choice=GW, control_mode=None, mapped_keys=ALL, local_switch=False, limits=None,
                      readings_source=src)
-    assert b["meta"] == {"readings_source": src}
+    assert b["meta"] == {"work_mode": "unknown", "readings_source": src}
     src["soc"] = "none"                                    # blok trzyma własną kopię
     assert b["meta"]["readings_source"]["soc"] == "entity"
-    # Bez mapy nie ma `meta` (stary kształt bloku bez zmian).
-    assert "meta" not in driver_block(choice=GW, control_mode=None, mapped_keys=ALL, local_switch=False,
-                                      limits=None)
+    # Bez mapy nie ma `readings_source` w `meta` (meta niesie tylko work_mode dla profilu z tym blokiem).
+    assert "readings_source" not in driver_block(choice=GW, control_mode=None, mapped_keys=ALL,
+                                                 local_switch=False, limits=None).get("meta", {})
 
 
 def test_entity_mode_readings_source_in_every_post():
@@ -90,7 +90,7 @@ def test_entity_mode_readings_source_in_every_post():
         assert src["battery_capacity_kwh"] == "manual"
         assert "load_energy_total_kwh" not in src                                # profil go nie zna
         assert "sensor." not in json.dumps(src)
-    assert set(cloud.sent[0]["driver"]["meta"]) == {"readings_source"}
+    assert set(cloud.sent[0]["driver"]["meta"]) == {"readings_source", "work_mode"}
 
 
 def test_unreadable_manual_entity_masks_profile_entity_in_source():

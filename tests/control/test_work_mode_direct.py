@@ -27,6 +27,12 @@ def _wm_profile(poll_s: int = WM_POLL_S, neutral=(0,)):
     return profile_from_dict(raw)
 
 
+def _without_work_mode_profile():
+    raw = _thaw(GW_V.raw)
+    raw.pop("work_mode", None)
+    return profile_from_dict(raw)
+
+
 class Spy:
     """Zlicza odczyty na kliencie połączenia (bez drugiego gniazda)."""
 
@@ -119,9 +125,10 @@ async def test_no_read_while_conflict(make_hass, goodwe_udp_sim, goodwe_bank):
 
 @pytest.mark.asyncio
 async def test_profile_without_work_mode_adds_no_request(make_hass, goodwe_udp_sim, goodwe_bank):
-    h, spy = await _start(make_hass, goodwe_udp_sim, profile=GW_V)
+    no_wm = _without_work_mode_profile()
+    h, spy = await _start(make_hass, goodwe_udp_sim, profile=no_wm)
     try:
-        assert GW_V.work_mode is None
+        assert no_wm.work_mode is None
         await h.conn.async_poll()
         h.clock.advance(1000)
         await h.conn.async_poll()

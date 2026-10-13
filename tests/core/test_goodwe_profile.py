@@ -152,3 +152,25 @@ def test_goodwe_et_read_plan_covers_counters_in_existing_blocks():
     for b in plan:
         if 35100 <= b[0] < 35225 or 37000 <= b[0] < 37024:
             assert any(o <= b[0] and b[0] + b[1] <= o + c for o, c in recorded), b
+
+
+def test_goodwe_work_mode_block_is_read_only_select_check():
+    # tryb pracy falownika: rejestr 47000 (u16), wartość 0 = General; tylko odczyt, bez zapisu
+    p = load_builtin("goodwe-et")
+    assert p.raw["work_mode"] == {
+        "read": {"addr": 47000, "type": "u16"},
+        "neutral_values": [0],
+        "ha": {"domain": "select", "unique_id_regex": "^goodwe-operation_mode-", "neutral_options": ["general"]},
+        "poll_s": 900,
+    }
+    assert "work_mode" not in p.raw["write"]
+
+
+def test_goodwe_work_mode_loads_through_validator_and_dataclass():
+    from custom_components.volcast.core.profile import WorkMode
+    from custom_components.volcast.core.profile_schema import validate_profile
+    p = load_builtin("goodwe-et")
+    assert validate_profile(dict(p.raw)) == []
+    assert p.work_mode == WorkMode(
+        read_addr=47000, read_type="u16", neutral_values=(0,),
+        ha_unique_id_regex="^goodwe-operation_mode-", ha_neutral_options=("general",), poll_s=900)

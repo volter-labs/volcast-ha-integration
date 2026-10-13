@@ -11,7 +11,7 @@ from custom_components.volcast.control import direct as direct_mod
 from custom_components.volcast.control.direct import (
     DirectConnection, async_entry_snaps, target_fingerprint)
 from custom_components.volcast.core.modbus.identity import device_fingerprint
-from custom_components.volcast.core.profile import load_builtin
+from custom_components.volcast.core.profile import load_builtin, profile_from_dict
 from custom_components.volcast.core.registers import RegisterImage
 from custom_components.volcast.core.transports.factory import make_transport
 from tests.core.transports.helpers import FakeClock
@@ -19,6 +19,8 @@ from tests.sim.fixtures import goodwe_words
 
 SALT = bytes(range(16))
 GOODWE = load_builtin("goodwe-et")
+# goodwe-et bez bloku work_mode: scenariusze o strumieniu żądań (timeouty) niezwiązane z trybem pracy
+GOODWE_NO_WORK_MODE = profile_from_dict({k: v for k, v in GOODWE.raw.items() if k != "work_mode"})
 
 
 def _entry(domain, entry_id, *, data=None, options=None, disabled_by=None):
@@ -49,9 +51,9 @@ def hass(make_hass):
     return build
 
 
-def _conn(hass, target, *, clock=None, resolve=None, **kw):
+def _conn(hass, target, *, clock=None, resolve=None, profile=GOODWE, **kw):
     entry = _entry(DOMAIN, "self")
-    return DirectConnection(hass, entry, GOODWE, target, trial=False, salt=SALT, transport_factory=_factory(),
+    return DirectConnection(hass, entry, profile, target, trial=False, salt=SALT, transport_factory=_factory(),
                             allow_loopback=True, clock=clock or FakeClock(), resolve=resolve,
                             unreadable=kw.pop("unreadable", {"soc_max"}), **kw)
 
@@ -217,11 +219,11 @@ async def test_identity_mismatch_after_reconnect_blocks_writes(hass, modbus_tcp_
 @pytest.mark.asyncio
 async def test_identity_rechecked_after_timeout_streak(hass, goodwe_udp_sim, sim_faults):
     clock = FakeClock()
-    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock, profile=GOODWE_NO_WORK_MODE)
     try:
         await conn.async_start()
         seen = len(goodwe_udp_sim.log)
-        sim_faults.drop_next = 4                               # 2 odczyty × 2 próby bez odpowiedzi
+        sim_faults.drop_next = 4                              # 2 odczyty × 2 próby bez odpowiedzi
         for _ in range(2):
             clock.advance(10.0)
             await conn.async_poll()

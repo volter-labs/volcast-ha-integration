@@ -250,7 +250,8 @@ def test_direct_driver_limits_source_registers():
                             local_switch=True, limits=limits)
     assert b == {"id": "goodwe-et", "model": "mode_setpoint", "local_switch_enabled": True, "access": "direct",
                  "capabilities": {"sell_from_battery": True},
-                 "limits": {"rated_power_w": 10000, "source": "registers"}}
+                 "limits": {"rated_power_w": 10000, "source": "registers"},
+                 "meta": {"work_mode": "unknown"}}
 
 
 def test_manual_rated_power_wins_with_source_user():
