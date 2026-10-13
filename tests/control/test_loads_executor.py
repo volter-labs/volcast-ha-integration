@@ -540,12 +540,16 @@ def test_store_roundtrip_and_corrupt_fields():
         assert await st.async_load() == LoadsState()
         s = LoadsState(last_action="stop", last_write_at="2026-09-23T10:00:00+00:00", last_setpoint_a=10.0,
                        plan_generated_at="2026-09-23T09:55:00+00:00", fallback_since=None,
-                       manual_event="stop", manual_at="2026-09-23T10:01:00+00:00")
+                       manual_event="stop", manual_at="2026-09-23T10:01:00+00:00",
+                       held_since="2026-09-23T10:01:00+00:00", held_session="s1")
         await st.async_save(s)
         assert await st.async_load() == s
         await st._store.async_save({"last_action": "dance", "last_setpoint_a": "16", "last_write_at": 5,
-                                    "manual_event": 1})
+                                    "manual_event": 1, "held_since": 7, "held_session": ["s1"]})
         assert await st.async_load() == LoadsState()
+        # magazyn sprzed `held_since`: wstrzymanie z `manual_at` trwa do nowszego planu
+        await st._store.async_save({"manual_event": "stop", "manual_at": "2026-09-23T10:01:00+00:00"})
+        assert (await st.async_load()).held_since == "2026-09-23T10:01:00+00:00"
         await st._store.async_save("garbage")
         assert await st.async_load() == LoadsState()
     asyncio.run(body())
@@ -951,9 +955,9 @@ def _event(eid, old, new, *, user="u1", ctx=None):
     }, context=context)
 
 
-async def _charging_forced(h, **kw):
+async def _charging_forced(h, remaining=8.0, minutes=60, **kw):
     ex, clock = await _started(h, **kw)
-    await ex.async_on_plan(_schedule(_slot(minutes=60)))
+    await ex.async_on_plan(_schedule(_slot(minutes=minutes), meta=_meta(remaining_kwh=remaining)))
     h.states.set(STATUS, "Charging")
     h.services.calls.clear()
     return ex, clock
@@ -1022,10 +1026,11 @@ def test_long_manual_hold_warns_once_and_keeps_holding(caplog):
     async def body():
         caplog.set_level(logging.WARNING, logger="custom_components.volcast.control.loads_executor")
         h = _hass()
-        ex, clock = await _charging_forced(h)
-        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        from custom_components.volcast.control.loads_executor import HOLD_WARN_S
+        ex, clock = await _charging_forced_quiet(h)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Fault"))       # samo wstrzymanie, bez zdarzenia
         h.states.set(STATUS, "Available")
-        clock.advance(6 * 3600 - 60)
+        clock.advance(HOLD_WARN_S - 60)
         await ex.async_tick()
         assert "no new plan" not in caplog.text
         for _ in range(3):
@@ -1045,6 +1050,7 @@ def test_any_user_change_during_hold_updates_the_event():
         clock.advance(10)                          # zmiana zdania przed nowym planem (slot dalej forced)
         ex.on_state_event(_event(START_STOP, "Stop charging", "Start charging"))
         assert ex.state.manual_event == "start" and ex.state.manual_at == clock.utc.isoformat()
+        assert ex.state.held_since == ex.state.manual_at        # wstrzymanie liczone od ostatniej decyzji
         await ex.async_stop()
     asyncio.run(body())
 
@@ -1140,26 +1146,63 @@ async def _charging_forced_quiet(h, **kw):
     return ex, clock
 
 
-@pytest.mark.parametrize("new", ["Paused", "Stopped", "SuspendedEVSE", "charging_paused", "Suspended"])
-def test_charger_app_stop_in_forced_slot_is_manual(new):
+@pytest.mark.parametrize("new", ["Paused", "Stopped", "SuspendedEVSE", "charging_paused", "Suspended",
+                                 "Finished", "Charging finished", "Completed", "Full", "charging_complete",
+                                 "Charged", "charged"])
+def test_charger_side_stop_or_end_with_energy_left_holds_and_reports_stop(new):
     async def body():
         h = _hass()
-        ex, _ = await _charging_forced_quiet(h)
+        ex, clock = await _charging_forced_quiet(h)
         ex.on_state_event(_no_ctx(STATUS, "Charging", new))
         assert ex.state.manual_event == "stop", new
+        assert ex.state.held_since == clock.utc.isoformat() and ex.state.manual_at == ex.state.held_since
         await ex.async_stop()
     asyncio.run(body())
 
 
-@pytest.mark.parametrize("new", ["Finished", "Charging finished", "Completed", "Full", "charging_complete", "Charged",
-                                 "Error", "Fault", "charging_error", "unavailable", "unknown",
-                                 "SuspendedEV", "suspended_ev", "Waiting", "Available", "Disconnected", "Unplugged"])
-def test_end_error_car_side_and_unplug_are_not_manual(new):
+@pytest.mark.parametrize("new", ["Error", "Fault", "fault", "charging_error", "unavailable", "unknown",
+                                 "SuspendedEV", "suspended_ev", "Waiting", "waiting_for_authorization",
+                                 "Available", "available", "Disconnected", "Unplugged", "plugged_in"])
+def test_error_unavailable_car_side_and_unplug_only_hold(new):
     async def body():
         h = _hass()
-        ex, _ = await _charging_forced_quiet(h)
+        ex, clock = await _charging_forced_quiet(h)
         ex.on_state_event(_no_ctx(STATUS, "Charging", new))
-        assert ex.state.manual_event is None, new
+        assert ex.state.manual_event is None and ex.state.manual_at is None, new
+        assert ex.state.held_since == clock.utc.isoformat(), new
+        h.states.set(STATUS, new)
+        h.services.calls.clear()
+        clock.advance(61)
+        await ex.async_tick()
+        assert _calls(h) == []                      # wstrzymanie: zero Startów
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("new", ["Charged", "Paused"])
+def test_stop_without_energy_left_or_with_stale_plan_only_holds(new):
+    async def body():
+        for remaining, stale in ((0.3, False), (0.0, False), (None, False), (8.0, True)):
+            h = _hass()
+            ex, clock = await _charging_forced_quiet(h, remaining=remaining, minutes=180)
+            if stale:
+                clock.advance(91 * 60)              # chmura milczy: `remaining_kwh` nieaktualne
+            ex.on_state_event(_no_ctx(STATUS, "Charging", new))
+            assert ex.state.manual_event is None, (new, remaining, stale)
+            assert ex.state.held_since == clock.utc.isoformat()
+            await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_unattended_stop_outside_forced_slot_is_ignored():
+    async def body():
+        h = _hass(status="Charging")
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, start=NOW + timedelta(hours=1)),
+                                         meta=_meta(remaining_kwh=8.0)))
+        clock.advance(61)                           # brak slotu „teraz”
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))
+        assert ex.state.held_since is None and ex.state.manual_event is None
         await ex.async_stop()
     asyncio.run(body())
 
@@ -1178,7 +1221,7 @@ def test_status_kind_priorities(raw, kind):
     assert status_kind(None) is None
 
 
-# ── „charged” po naszym starcie, jeden start na slot ──────────────────────
+# ── wstrzymanie czasowe (held_since) zamiast „start raz na slot” ─────────
 
 async def _started_by_us(h, remaining=8.0, minutes=60, **kw):
     """Nasz start w slocie forced (auto stało), potem ładuje; poza oknem echa."""
@@ -1192,56 +1235,69 @@ async def _started_by_us(h, remaining=8.0, minutes=60, **kw):
     return ex, clock
 
 
-def test_charged_with_energy_left_after_our_start_is_manual_stop_and_not_restarted():
+def test_charger_app_stop_shown_as_charged_holds_through_replans_until_a_newer_plan():
     async def body():
         h = _hass()
         ex, clock = await _started_by_us(h, remaining=8.0)
-        ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))      # Stop z aplikacji ładowarki
-        assert ex.state.manual_event == "stop"
-        h.states.set(STATUS, "Charged")
-        clock.advance(61)              # nowy plan, ten sam slot, nadal forced (np. chmura nie wstrzymała)
-        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=clock.utc, remaining_kwh=8.0)))
-        assert all(c[1] != "select_option" for c in _calls(h))       # brak drugiego startu w tym slocie
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "charged"))      # Stop z aplikacji ładowarki
+        held = ex.state.held_since
+        assert held == clock.utc.isoformat()
+        assert ex.state.manual_event == "stop" and ex.state.manual_at == held
+        h.states.set(STATUS, "charged")
+        clock.advance(61)              # plan w drodze (sprzed wstrzymania), reaktor przesunął początek slotu
+        moved = _slot(start=NOW + timedelta(seconds=40), minutes=60)
+        await ex.async_on_plan(_schedule(moved, meta=_meta(gen=datetime.fromisoformat(held), remaining_kwh=8.0)))
+        assert _calls(h) == [] and ex.state.held_since == held
+        clock.advance(20 * 60)         # następny slot tego samego planu: wstrzymanie trwa
+        await ex.async_tick()
+        assert _calls(h) == []
+        clock.advance(61)              # plan policzony PO wstrzymaniu, slot dalej forced („Wznów” w aplikacji)
+        await ex.async_on_plan(_schedule(moved, meta=_meta(gen=clock.utc, remaining_kwh=8.0)))
+        assert ex.state.held_since is None
+        assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
         await ex.async_stop()
     asyncio.run(body())
 
 
-@pytest.mark.parametrize("remaining", [0.0, 0.4, None])
-def test_charged_without_energy_left_is_end_of_charge(remaining):
-    async def body():
-        h = _hass()
-        ex, _ = await _started_by_us(h, remaining=remaining)
-        ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))
-        assert ex.state.manual_event is None
-        await ex.async_stop()
-    asyncio.run(body())
-
-
-def test_charged_with_stale_plan_is_end_of_charge():
-    async def body():
-        h = _hass()
-        ex, clock = await _started_by_us(h, remaining=8.0, minutes=180)
-        clock.advance(91 * 60)         # chmura milczy: `remaining_kwh` nieaktualne (slot forced trwa)
-        ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))
-        assert ex.state.manual_event is None
-        await ex.async_stop()
-    asyncio.run(body())
-
-
-def test_charged_without_our_start_in_this_slot_is_end_of_charge():
+def test_car_started_by_itself_then_charged_holds_without_start():
     async def body():
         h = _hass(status="Charging")   # ładowało już przed slotem: start nie był nasz
         ex, clock = await _started(h)
         await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(remaining_kwh=8.0)))
         assert [c[1] for c in _calls(h)] == ["set_value"]
-        clock.advance(31)
+        h.services.calls.clear()
+        clock.advance(61)
         ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))
-        assert ex.state.manual_event is None
+        h.states.set(STATUS, "Charged")
+        assert ex.state.held_since == clock.utc.isoformat() and ex.state.manual_event == "stop"
+        for _ in range(3):
+            clock.advance(61)
+            await ex.async_tick()
+        assert _calls(h) == []
         await ex.async_stop()
     asyncio.run(body())
 
 
-def test_new_plan_for_the_same_slot_does_not_start_twice():
+def test_status_end_right_after_our_stop_is_echo_not_hold():
+    async def body():
+        from custom_components.volcast.control.loads_executor import OWN_ECHO_S
+        for delay, held in ((15, False), (OWN_ECHO_S + 1, True)):
+            h = _hass(status="Charging")
+            ex, clock = await _started(h)
+            off = _slot(mode="off", power=None, start=NOW - timedelta(minutes=5), minutes=5)
+            forced = _slot(start=NOW, minutes=60)
+            clock.advance(-1)          # chwilę przed końcem slotu off: nasz Stop
+            await ex.async_on_plan(_schedule(off, forced, meta=_meta(remaining_kwh=8.0)))
+            assert [c[2].get("option") for c in _calls(h)] == ["Stop charging"]
+            clock.advance(delay)       # slot forced, ładowarka zgłasza koniec po naszym Stopie
+            ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))
+            assert (ex.state.held_since is not None) is held, delay
+            assert ex.state.manual_event == ("stop" if held else None)
+            await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_start_once_per_plan_while_the_charger_stands():
     async def body():
         h = _hass()
         ex, clock = await _started(h)
@@ -1249,15 +1305,13 @@ def test_new_plan_for_the_same_slot_does_not_start_twice():
         await ex.async_on_plan(_schedule(slot))
         assert [c[1] for c in _calls(h)] == ["set_value", "select_option"]
         h.services.calls.clear()
-        for i in range(3):             # przeliczenia planu w trakcie slotu, ładowarka stoi
+        for _ in range(3):             # ten sam plan, ładowarka stoi (auto pełne, kabel): bez powtórki
             clock.advance(61)
-            await ex.async_on_plan(_schedule(slot, meta=_meta(gen=GEN + timedelta(minutes=i + 1))))
+            await ex.async_tick()
         assert _calls(h) == []
-        clock.advance(61)              # następny slot: znowu jeden start
-        nxt = _slot(start=slot.end, minutes=30)
-        clock.utc = slot.end + timedelta(seconds=1)
-        await ex.async_on_plan(_schedule(slot, nxt, meta=_meta(gen=GEN + timedelta(minutes=10))))
-        assert [c[1] for c in _calls(h)] == ["select_option"]
+        clock.advance(61)              # nowy plan: najwyżej jeden start więcej
+        await ex.async_on_plan(_schedule(slot, meta=_meta(gen=GEN + timedelta(minutes=5))))
+        assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
         await ex.async_stop()
     asyncio.run(body())
 
@@ -1276,23 +1330,110 @@ def test_new_session_in_the_same_slot_starts_again():
     asyncio.run(body())
 
 
+def test_new_session_clears_the_hold():
+    async def body():
+        h = _hass()
+        ex, clock = await _started_by_us(h)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Available"))    # odłączenie: tylko wstrzymanie
+        held = ex.state.held_since
+        assert held is not None
+        h.states.set(STATUS, "Available")
+        clock.advance(61)              # nowa sesja (plan nawet sprzed wstrzymania): nowy stan
+        await ex.async_on_plan(_schedule(_slot(minutes=60, session="s2"),
+                                         meta=_meta(gen=datetime.fromisoformat(held), session_id="s2")))
+        assert ex.state.held_since is None
+        assert [c[1] for c in _calls(h)] == ["select_option"]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_unattended_hold_survives_restart():
+    async def body():
+        h = _hass()
+        store = LoadsStore(h, "e1")
+        ex, clock = await _started_by_us(h, store=store)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Fault"))
+        held = ex.state.held_since
+        await asyncio.sleep(0)         # zapis magazynu w tle
+        await ex.async_stop()
+        saved = await store.async_load()
+        assert saved.held_since == held and saved.held_session == "s1" and saved.manual_event is None
+        h.states.set(STATUS, "Available")
+        h.services.calls.clear()
+        ex2, _ = _make(h, store=store, clock=clock)
+        clock.advance(120)
+        await ex2.async_start(_schedule(_slot(minutes=60), meta=_meta(remaining_kwh=8.0)))
+        await ex2.async_tick()
+        assert _calls(h) == [] and ex2.report_for("dev1")["held_since"] == held
+        await ex2.async_stop()
+    asyncio.run(body())
+
+
+def test_unattended_stop_during_fallback_holds():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60), meta=_fb_meta()))
+        _stale(ex)
+        await ex.async_tick()          # awaryjnie: nastawa + start
+        h.states.set(STATUS, "Charging")
+        h.services.calls.clear()
+        clock.advance(61)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Paused"))
+        assert ex.state.held_since == clock.utc.isoformat()
+        h.states.set(STATUS, "Paused")
+        clock.advance(61)
+        await ex.async_tick()
+        assert _calls(h) == []         # w trakcie wstrzymania także reguła awaryjna nie startuje
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_off_slot_tolerates_autostart_for_three_minutes():
+    async def body():
+        from custom_components.volcast.control.loads_executor import OFF_AUTOSTART_GRACE_S
+        h = _hass(status="Available")
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60)))
+        clock.advance(61)
+        ex.on_state_event(_no_ctx(STATUS, "Available", "Charging"))     # auto ruszyło samo po podłączeniu
+        h.states.set(STATUS, "Charging")
+        assert ex.state.manual_event is None and ex.state.held_since is None
+        clock.advance(OFF_AUTOSTART_GRACE_S - 30)
+        await ex.async_tick()
+        assert _calls(h) == []         # tolerancja autostartu (serwer ma swoje okno)
+        clock.advance(31)
+        await ex.async_tick()
+        assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Stop charging"})]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_command_entity_change_without_actor_is_never_manual():
+    async def body():
+        h = _hass()
+        ex, _ = await _charging_forced_quiet(h)    # impuls urządzenia: „Stop charging” przy ładowaniu
+        ex.on_state_event(_no_ctx(START_STOP, "No operation", "Stop charging"))
+        assert ex.state.manual_event is None and ex.state.held_since is None
+        await ex.async_stop()
+        h = _hass(status="Charged")
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60)))
+        clock.advance(61)              # impuls „Start charging” przy odłączeniu kabla
+        ex.on_state_event(_no_ctx(START_STOP, "No operation", "Start charging"))
+        assert ex.state.manual_event is None and ex.state.held_since is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
 def test_status_change_right_after_own_write_is_not_manual():
     async def body():
         h = _hass()
         ex, clock = await _charging_forced(h)       # nasza nastawa i start chwilę temu
         clock.advance(10)
-        ex.on_state_event(_no_ctx(STATUS, "Charging", "Paused"))      # echo naszego zapisu
-        assert ex.state.manual_event is None
-        await ex.async_stop()
-    asyncio.run(body())
-
-
-def test_charger_app_stop_on_command_entity_is_manual():
-    async def body():
-        h = _hass()
-        ex, _ = await _charging_forced_quiet(h)
-        ex.on_state_event(_no_ctx(START_STOP, "No operation", "Stop charging"))
-        assert ex.state.manual_event == "stop"
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Paused"))      # możliwe echo naszego zapisu
+        # bez zdarzenia (to mogła być reakcja na naszą nastawę), ale wstrzymanie — zero Startów do planu
+        assert ex.state.manual_event is None and ex.state.held_since == clock.utc.isoformat()
         await ex.async_stop()
     asyncio.run(body())
 

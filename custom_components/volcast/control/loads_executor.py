@@ -14,7 +14,8 @@ Slot dla „teraz” wybiera `slot_for` ([from, to)) spośród slotów tej łado
 slotu = brak zapisu. `forced`: nastawa PRZED startem, start tylko przy nastawie zgodnej z planem w
 ODCZYCIE encji (obca zmiana nastawy = najpierw ponowny zapis); start raz na plan i fazę slotów
 (`last_action`), więc ładowarka, która nie rusza (auto pełne, kabel), nie dostaje komendy w kółko.
-`off`: stop tylko, gdy ładuje, też raz — ręcznego ładowania nie blokujemy. Nowy plan
+`off`: stop tylko, gdy ładuje, też raz — ręcznego ładowania nie blokujemy; ładowanie, które ruszyło
+samo (autostart po podłączeniu), zatrzymujemy dopiero po `OFF_AUTOSTART_GRACE_S`. Nowy plan
 (`plan_generated_at`) i zmiana trybu slotu w trakcie pracy zerują `last_action`. Cofnięcie bramki
 w trakcie ładowania niczego nie zatrzymuje (ładowarka zostaje, jak jest). `pv_surplus` nie jest
 jeszcze wykonywany (nic nie zapisujemy).
@@ -34,31 +35,33 @@ Gdy reguła działa: pełna moc i start jak w slocie `forced` (także bez slotu)
 `fallback_since` w magazynie; `fallback: true` w raporcie do świeżego planu i zatrzaśnięte do
 przyjęcia raportu (`async_ack_report`), żeby chmura zobaczyła także epizod zakończony przed wysyłką.
 
-Ręczna ingerencja: obserwacja encji `status` i `start_stop` ładowarki; nasz zapis (kontekst pisarza)
-nigdy nie jest ręczny. Zmiana z aktorem (użytkownik albo automatyzacja w HA — `is_foreign_change`):
-„stop” w slocie `forced`, „start” w slocie `off`. Zmiana bez aktora (aplikacja producenta, przycisk,
-karta RFID — integracja ładowarki zapisuje ją bez kontekstu użytkownika), poza oknem echa naszych
-zapisów (`OWN_ECHO_S`): „stop” = status ładuje → wstrzymane/zatrzymane albo komenda stop w slocie
-`forced`; „start” = status → ładuje albo komenda start w slocie `off`, ale tylko po NASZYM stopie w tej
-fazie. Koniec ładowania (finished/complete/full), błąd, niedostępność, pauza po stronie auta,
-odłączenie, autostart po podłączeniu i harmonogram auta NIE są ręczne (`status_kind`) — wyjątek:
-„koniec” po NASZYM starcie w bieżącym slocie, gdy świeży plan ma > `END_REMAINING_KWH` do celu
-(część ładowarek tak pokazuje stop z własnej aplikacji). Start: najwyżej jeden na slot i sesję
-(`_started_in`, w pamięci), także przez przeliczenia planu — ładowanie, które ustało bez naszego
-stopu, nie jest w tym slocie wznawiane. Zdarzenie trafia do stanu od razu
-w obsłudze zdarzenia (przed następnym odczytem telemetrii) z `manual_at` = czas obsługi, telemetria
-wysyła je raz (`async_ack_manual` po przyjęciu), a wykonawca nie pisze do ładowarki, dopóki nie
-przyjdzie plan wygenerowany PO zdarzeniu (`plan_generated_at` > `manual_at`; także reguła awaryjna
-czeka). W trakcie wstrzymania każda zmiana z aktorem (start albo stop) nadpisuje zdarzenie — wygrywa
-ostatnia decyzja. Wstrzymanie dłuższe niż `HOLD_WARN_S` bez nowego planu: jedno ostrzeżenie, bez
-samoczynnego wznowienia. Raport niesie `held_since` (= `manual_at`) w każdej paczce, dopóki
-wstrzymanie trwa — chmura zamawia przeliczenie, jeśli jej ostatni plan jest starszy (zgubione
-przeliczenie nie trzyma wstrzymania do następnego przebiegu plannera). Wszystko tylko przy
-otwartych bramkach.
+Wstrzymanie czasowe (`held_since`, trwałe w magazynie): zero zapisów, dopóki nie przyjdzie plan
+wygenerowany PO początku wstrzymania (`plan_generated_at` > `held_since`; także reguła awaryjna czeka).
+Zaczyna je:
+- zmiana z aktorem HA (użytkownik albo automatyzacja — `is_foreign_change`) na encji `status` albo
+  `start_stop`: „stop” w slocie `forced` (albo w trybie awaryjnym), „start” w slocie `off`; w trakcie
+  wstrzymania każda taka zmiana — wygrywa ostatnia decyzja. Zdarzenie `manual_event` + `manual_at`.
+- KAŻDE przejście statusu „ładuje” → „nie ładuje” bez aktora w slocie `forced` (albo w trybie
+  awaryjnym), poza oknem echa NASZEGO stopu (`OWN_ECHO_S`): pauza, koniec ładowania („charged” —
+  część ładowarek tak pokazuje każdy stop), błąd, niedostępność, odłączenie. Zdarzenie `stop` tylko
+  przy pauzie/końcu, poza oknem echa każdego naszego zapisu, gdy świeży plan (odpowiedź chmury
+  ≤ `FALLBACK_PLAN_AGE_S`) ma > `END_REMAINING_KWH` do celu; inaczej samo `held_since`. Limit
+  ładowania w aucie (np. 80 %) wygląda tak samo — fałszywa pauza do następnego planu (świadomie).
+- start bez aktora (status → ładuje) w slocie `off`, tylko po NASZYM stopie w tej fazie.
+Encja `start_stop` bez aktora NIE jest sygnałem: bywa impulsowa (po każdej zmianie wraca do „No
+operation”) i urządzenie samo ją przestawia (np. „Stop charging” w chwili, gdy ładowanie rusza,
+„Start charging” przy odłączeniu kabla). Nasz zapis (kontekst pisarza) nigdy nie jest ręczny.
+Zdjęcie wstrzymania: tylko plan nowszy niż `held_since` (wtedy slot `forced` = nastawa i start —
+„Wznów” w aplikacji i start po przesunięciu slotu przez serwer) albo nowa sesja (inne
+`session_id`). Zmiana slotu i przeliczenie sprzed wstrzymania go nie zdejmują. Zdarzenie trafia do
+stanu od razu w obsłudze zdarzenia, telemetria wysyła je raz (`async_ack_manual` po przyjęciu);
+`held_since` idzie w KAŻDEJ paczce, dopóki wstrzymanie trwa — chmura przelicza plan po nim.
+Wstrzymanie dłuższe niż `HOLD_WARN_S`: jedno ostrzeżenie, bez samoczynnego wznowienia. Wszystko tylko
+przy otwartych bramkach.
 
 Status „ładuje” = słowo z jawnej listy (`charging`) w stanie encji statusu i żadne słowo z listy
 wykluczeń (przeczenia, pauza, koniec, błąd, oczekiwanie). Stany w innych językach albo CamelCase
-nie są rozpoznawane jako ładowanie (kierunek bezpieczny: brak stopu, start raz na plan).
+nie są rozpoznawane jako ładowanie (kierunek bezpieczny: brak stopu i wstrzymania, start raz na plan).
 """
 from __future__ import annotations
 
@@ -100,12 +103,14 @@ _NOT_CHARGING_WORDS = frozenset({
 _SETPOINT_UNITS = ("A", "W")
 # Po starcie bez odpowiedzi chmury: przez ten czas wiek planu jest nieznany (sieć często wstaje po HA).
 STARTUP_GRACE_S = 300
-# Wstrzymanie po ręcznej ingerencji bez nowego planu dłużej niż to — jedno ostrzeżenie (bez wznowienia).
+# Wstrzymanie bez nowego planu dłużej niż to — jedno ostrzeżenie (bez wznowienia).
 HOLD_WARN_S = 6 * 3600
 # Zmiana stanu ładowarki do tylu sekund po NASZYM zapisie to echo tego zapisu (odczyt kontrolny jest po 20 s).
 OWN_ECHO_S = 30.0
-# „Koniec ładowania” przy tylu kWh brakujących do celu (świeży plan) po naszym starcie = ręczny stop.
+# Pauza/koniec ładowania bez aktora przy więcej niż tylu kWh do celu (świeży plan) = zdarzenie „stop”.
 END_REMAINING_KWH = 0.5
+# Slot `off`: ładowanie, które ruszyło samo (autostart po podłączeniu), zatrzymujemy dopiero po tym czasie.
+OFF_AUTOSTART_GRACE_S = 180.0
 # Słowa stanu statusu (zmiana bez aktora HA: aplikacja producenta, przycisk, karta RFID).
 _END_WORDS = frozenset({"finish", "finished", "complete", "completed", "full", "done", "charged", "end", "ended"})
 _ERROR_WORDS = frozenset({"error", "fault", "failed", "failure", "offline", "alarm", "unavailable", "unknown"})
@@ -247,9 +252,10 @@ class LoadsExecutor:
         self._slot_mode: str | None = None            # tryb slotu z ostatniego cyklu (tylko w pamięci)
         self._confirmed_mono: float | None = None     # ostatnia odpowiedź chmury z planem (zegar monotoniczny)
         self._started_mono: float | None = None
-        self._started_in: tuple | None = None         # (sesja, slot) naszego ostatniego startu (tylko w pamięci)
+        self._own_stop_mono: float | None = None      # próba NASZEGO ostatniego stopu (okno echa)
+        self._charging_seen_mono: float | None = None  # status → ładuje bez naszego zapisu (autostart)
         self._fallback_latched = False                # tryb awaryjny był, a raport z nim jeszcze nie przyjęty
-        self._hold_warned: str | None = None          # `manual_at` z ostrzeżeniem o długim wstrzymaniu
+        self._hold_warned: str | None = None          # `held_since` z ostrzeżeniem o długim wstrzymaniu
         self._rewrite_key: tuple | None = None        # (plan, slot) zużytego ponownego zapisu nastawy
         self._rewrite_warned: tuple | None = None
         self._watched: tuple[str, ...] = ()           # encje obserwowane pod kątem ręcznej ingerencji
@@ -281,8 +287,8 @@ class LoadsExecutor:
 
     def _held_since(self) -> str | None:
         """Początek trwającego wstrzymania (ISO-8601 ze strefą) albo None."""
-        at = _when(self._state.manual_at)
-        return at.isoformat() if at is not None and self._held() else None
+        at = _when(self._state.held_since)
+        return at.isoformat() if at is not None else None
 
     async def async_ack_report(self, report: Any) -> None:
         """Telemetria z tym raportem przyjęta: zdarzenie ręczne i zatrzask trybu awaryjnego wysłane."""
@@ -295,11 +301,12 @@ class LoadsExecutor:
 
     async def async_ack_manual(self, manual_at: str | None) -> None:
         """Telemetria ze zdarzeniem `manual_at` przyjęta — zdarzenie wysłane raz. Nowsze zostaje.
-        `manual_at` zostaje w stanie: wstrzymanie trwa do planu wygenerowanego po zdarzeniu."""
+        Wstrzymanie (`held_since`) trwa niezależnie, do planu wygenerowanego po nim."""
         s = self._state
         if manual_at is None or s.manual_event is None or s.manual_at != manual_at:
             return
         s.manual_event = None
+        s.manual_at = None
         await self._async_save()
 
     # ── cykl życia ────────────────────────────────────────────────────────
@@ -352,14 +359,27 @@ class LoadsExecutor:
             self._watch(meta.load_key)
         if meta is None or meta.plan_generated_at is None:
             return False                         # bez znacznika planu cykl i tak nic nie zapisze
+        released = self._release_hold(meta)
         gen = meta.plan_generated_at.isoformat()
         if gen == self._state.plan_generated_at:
-            return False
+            return released
         self._state.plan_generated_at = gen
         self._state.last_action = None          # nowy plan może znowu wystartować/zatrzymać
-        at = _when(self._state.manual_at)
-        if self._state.manual_event is None and at is not None and meta.plan_generated_at > at:
-            self._state.manual_at = None        # zdarzenie wysłane, plan już je uwzględnia
+        return True
+
+    def _release_hold(self, meta) -> bool:
+        """Koniec wstrzymania: plan wygenerowany PO `held_since` albo nowa sesja ładowania. True = zdjęte."""
+        s = self._state
+        at = _when(s.held_since)
+        if s.held_since is None:
+            return False
+        newer = at is None or meta.plan_generated_at > at
+        new_session = s.held_session is not None and meta.session_id != s.held_session
+        if not (newer or new_session):
+            return False
+        s.held_since = s.held_session = None
+        _LOGGER.info("Volcast EV charger: %s — commands resumed",
+                     "new plan after the pause" if newer else "new charging session")
         return True
 
     async def async_tick(self) -> None:
@@ -378,23 +398,20 @@ class LoadsExecutor:
         return self._consent() is True and self._local_switch() is True and self._plan_only() is False
 
     def _held(self) -> bool:
-        """Ręczna ingerencja: bez własnych zapisów do planu wygenerowanego po zdarzeniu."""
-        at = _when(self._state.manual_at)
-        if at is None:
-            return False
-        gen = getattr(self._meta, "plan_generated_at", None)
-        return gen is None or gen <= at
+        """Wstrzymanie: bez własnych zapisów do planu wygenerowanego po `held_since` (`_release_hold`)."""
+        return self._state.held_since is not None
 
     def _warn_long_hold(self) -> None:
         """Bezpiecznik: chmura przelicza plan po każdym przyjętym zdarzeniu, więc wstrzymanie dłuższe niż
         `HOLD_WARN_S` znaczy, że plan nie dotarł — jedno ostrzeżenie, zapisy NIE wracają same."""
-        at = _when(self._state.manual_at)
-        if at is None or self._hold_warned == self._state.manual_at:
+        at = _when(self._state.held_since)
+        if at is None or self._hold_warned == self._state.held_since:
             return
         if (self._utcnow() - at).total_seconds() > HOLD_WARN_S:
-            self._hold_warned = self._state.manual_at
-            _LOGGER.warning("Volcast EV charger: commands paused after a manual change for over 6 h and "
-                            "no new plan has arrived; the charger stays under manual control")
+            self._hold_warned = self._state.held_since
+            _LOGGER.warning("Volcast EV charger: commands paused for over %d h after the charger stopped "
+                            "outside Volcast and no new plan has arrived; the charger stays as it is",
+                            HOLD_WARN_S // 3600)
 
     def _current_slot(self, meta, now: datetime):
         mine = [s for s in self._loads if s.device_id == meta.load_key
@@ -446,8 +463,7 @@ class LoadsExecutor:
             await self._async_set_fallback(now)
             self._phase("fallback")
             # reguła awaryjna: pełna moc i start, nigdy stop
-            await self._async_forced(None, meta, charger, charging, (meta.plan_generated_at, "fallback"),
-                                     (meta.session_id, "fallback"))
+            await self._async_forced(None, meta, charger, charging, (meta.plan_generated_at, "fallback"))
             return
         await self._async_set_fallback(None)
         slot = self._current_slot(meta, now)
@@ -455,9 +471,8 @@ class LoadsExecutor:
             return
         self._phase(slot.mode)
         if slot.mode == "forced":
-            await self._async_forced(slot.power_w, meta, charger, charging, (meta.plan_generated_at, slot.start),
-                                     (meta.session_id, slot.start))
-        elif slot.mode == "off" and charging and self._state.last_action != "stop":
+            await self._async_forced(slot.power_w, meta, charger, charging, (meta.plan_generated_at, slot.start))
+        elif slot.mode == "off" and charging and self._state.last_action != "stop" and not self._autostart_grace():
             if await self._async_command(charger, "stop"):
                 await self._async_after_write(charger, setpoint=None, action="stop")
 
@@ -481,22 +496,32 @@ class LoadsExecutor:
 
     @callback
     def on_state_event(self, event) -> None:
-        """Zmiana encji ładowarki: ręczna ingerencja trafia do stanu OD RAZU (przed następnym odczytem)."""
+        """Zmiana encji ładowarki: wstrzymanie i zdarzenie trafiają do stanu OD RAZU (przed następnym odczytem)."""
         try:
-            action = self._manual_action(event)
+            change = self._classify(event)
         except Exception as err:  # noqa: BLE001 — obserwator nie może wywrócić pętli zdarzeń HA
             _LOGGER.warning("Volcast EV charger: manual change check failed (%s)", type(err).__name__)
             return
-        if action is None:
+        if change is None:
             return
-        self._state.manual_event = action
-        self._state.manual_at = self._utcnow().isoformat()
-        _LOGGER.warning("Volcast EV charger: manual %s outside Volcast — own commands paused until "
-                        "the next plan", action)
-        self._signal()                           # pilna telemetria ze zdarzeniem
+        action, session = change
+        s = self._state
+        now = self._utcnow().isoformat()
+        # zdarzenie z aktorem w trakcie wstrzymania przesuwa jego początek (wygrywa ostatnia decyzja);
+        # przejście bez aktora w trakcie wstrzymania nie dociera tutaj (`_unattended`)
+        s.held_since, s.held_session = now, session
+        if action is not None:
+            s.manual_event, s.manual_at = action, now
+            _LOGGER.warning("Volcast EV charger: manual %s outside Volcast — own commands paused until "
+                            "the next plan", action)
+        else:
+            _LOGGER.info("Volcast EV charger stopped charging outside Volcast — own commands paused until "
+                         "the next plan")
+        self._signal()                           # pilna telemetria z `held_since` (i zdarzeniem)
         self._hass.async_create_background_task(self._async_save(), "volcast_ev_manual_save")
 
-    def _manual_action(self, event) -> str | None:
+    def _classify(self, event) -> tuple[str | None, str] | None:
+        """(zdarzenie `start`/`stop` albo None = samo wstrzymanie, sesja) albo None = bez zmian."""
         if self._stopped or not self._started:
             return None
         meta = self._meta
@@ -507,18 +532,13 @@ class LoadsExecutor:
             return None
         data = getattr(event, "data", None) or {}
         eid, new, old = data.get("entity_id"), data.get("new_state"), data.get("old_state")
-        if new is None or eid is None:
+        if new is None or eid is None or eid not in (charger.status, charger.start_stop):
             return None
-        if eid == charger.status:
-            new_v, old_v = _status_word(new), _status_word(old)
-        elif eid == charger.start_stop:
-            new_v, old_v = _command_word(eid, new), _command_word(eid, old)
-        else:
-            return None
-        if new_v not in ("start", "stop"):
-            return None
+        is_status = eid == charger.status
         ctx = getattr(new, "context", None) or getattr(event, "context", None)
         ours = self._writer.is_ours(getattr(ctx, "id", None))
+        if is_status:
+            self._note_charging(old, new, ours)
         if ours:
             return None
         if self._state.fallback_since is not None:
@@ -528,55 +548,61 @@ class LoadsExecutor:
             mode = slot.mode if slot is not None else None
         if bool(getattr(ctx, "user_id", None) or getattr(ctx, "parent_id", None)):
             # użytkownik albo automatyzacja w HA
-            if not is_foreign_change(ours=False, has_actor=True, new_value=new_v, expected=old_v):
-                return None
-            if self._held():
-                return new_v                     # zmiana zdania przed nowym planem: wygrywa ostatnia decyzja
-            return new_v if (new_v, mode) in (("stop", "forced"), ("start", "off")) else None
-        return self._unattended_action(eid == charger.status, old, new, new_v, old_v, mode, meta)
+            if is_status:
+                new_v, old_v = _status_word(new), _status_word(old)
+            else:
+                new_v, old_v = _command_word(eid, new), _command_word(eid, old)
+            if new_v in ("start", "stop") and is_foreign_change(
+                    ours=False, has_actor=True, new_value=new_v, expected=old_v) and (
+                    self._held() or (new_v, mode) in (("stop", "forced"), ("start", "off"))):
+                return new_v, meta.session_id    # w trakcie wstrzymania wygrywa ostatnia decyzja
+        if not is_status:
+            return None                          # encja start/stop bez aktora: impuls urządzenia, nie sygnał
+        action = self._unattended(old, new, mode, meta)
+        return None if action is False else (action, meta.session_id)
 
-    def _end_looks_manual(self, meta, mode: str | None) -> bool:
-        """Stan „koniec ładowania” (np. `charged`) po NASZYM starcie w bieżącym slocie `forced`, gdy świeży plan
-        mówi, że do celu brakuje wyraźnie więcej niż `END_REMAINING_KWH` — część ładowarek tak pokazuje stop
-        z własnej aplikacji. Bez świeżego planu albo bez energii do celu = zwykły koniec ładowania."""
-        if mode != "forced" or self._state.fallback_since is not None:
-            return False
-        slot = self._current_slot(meta, self._utcnow())
-        if slot is None or self._started_in != (meta.session_id, slot.start):
-            return False
+    def _note_charging(self, old, new, ours: bool) -> None:
+        """Początek ładowania bez naszego zapisu (autostart po podłączeniu) — tolerancja w slocie `off`."""
+        if status_kind(new) != "charging":
+            self._charging_seen_mono = None
+        elif status_kind(old) != "charging":
+            self._charging_seen_mono = None if ours or self._recent_own_write() else self._clock()
+
+    def _autostart_grace(self) -> bool:
+        seen = self._charging_seen_mono
+        return seen is not None and 0 <= self._clock() - seen < OFF_AUTOSTART_GRACE_S
+
+    def _unattended(self, old, new, mode: str | None, meta) -> str | None | bool:
+        """Przejście statusu bez aktora HA (aplikacja producenta, przycisk, karta RFID, samo urządzenie).
+        Zwraca `stop`/`start` (zdarzenie i wstrzymanie), None (samo wstrzymanie) albo False (nic)."""
+        before, after = status_kind(old), status_kind(new)
+        if before == "charging" and after != "charging":
+            if mode != "forced" or self._held() or self._recent_own_stop():
+                return False
+            # zdarzenie tylko przy pauzie/końcu, gdy plan świeży i do celu brakuje energii; błąd,
+            # niedostępność, pauza auta, odłączenie albo możliwe echo naszego zapisu = samo wstrzymanie
+            if after in ("paused", "end") and not self._recent_own_write() and self._energy_left(meta):
+                return "stop"
+            return None
+        if after == "charging" and before not in (None, "charging", "error") and not self._recent_own_write() \
+                and mode == "off" and self._state.last_action == "stop":
+            return "start"                       # ponowny start po NASZYM stopie w tej fazie
+        return False
+
+    def _energy_left(self, meta) -> bool:
+        """Świeży plan (odpowiedź chmury ≤ `FALLBACK_PLAN_AGE_S`) z więcej niż `END_REMAINING_KWH` do celu."""
         remaining = _num(meta.remaining_kwh)
         age = self._plan_age_s(self._utcnow())
         return remaining is not None and remaining > END_REMAINING_KWH \
             and age is not None and age <= FALLBACK_PLAN_AGE_S
 
-    def _unattended_action(self, is_status: bool, old, new, new_v: str, old_v: str | None,
-                           mode: str | None, meta) -> str | None:
-        """Zmiana bez aktora HA (aplikacja producenta, przycisk, karta RFID — integracja ładowarki zapisuje ją
-        bez kontekstu użytkownika). Ręczna tylko, gdy nie jest echem naszego zapisu (`OWN_ECHO_S`) i:
-        stop = status ładuje → wstrzymane/zatrzymane (NIE koniec ładowania, błąd, pauza auta, odłączenie)
-        albo komenda stop; start = status nie-ładuje → ładuje albo komenda start, w slocie `off` tylko po
-        NASZYM stopie w tej fazie (autostart po podłączeniu i harmonogram auta nie są ręczne)."""
-        if self._recent_own_write():
-            return None
-        if is_status:
-            before, after = status_kind(old), status_kind(new)
-            if new_v == "stop" and not (before == "charging" and (
-                    after == "paused" or (after == "end" and self._end_looks_manual(meta, mode)))):
-                return None
-            if new_v == "start" and (after != "charging" or before in (None, "charging", "error")):
-                return None
-        elif old_v is None or old_v == new_v:
-            return None
-        held = self._held()
-        if new_v == "stop" and (held or mode == "forced"):
-            return "stop"
-        if new_v == "start" and (held or (mode == "off" and self._state.last_action == "stop")):
-            return "start"
-        return None
-
     def _recent_own_write(self) -> bool:
         now = self._clock()
         return any(at <= now and now - at < OWN_ECHO_S for at in self._last_write.values())
+
+    def _recent_own_stop(self) -> bool:
+        at, now = self._own_stop_mono, self._clock()
+        return at is not None and at <= now and now - at < OWN_ECHO_S
 
     def _signal(self) -> None:
         async_dispatcher_send(self._hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=self._entry.entry_id))
@@ -605,12 +631,10 @@ class LoadsExecutor:
         device = getattr(ent, "device_id", None) if ent is not None else None
         return device if isinstance(device, str) and device else None
 
-    async def _async_forced(self, power_w, meta, charger: _Charger, charging: bool, rewrite_key: tuple,
-                            start_key: tuple) -> None:
+    async def _async_forced(self, power_w, meta, charger: _Charger, charging: bool, rewrite_key: tuple) -> None:
         """Nastawa (moc slotu; None = pełna moc) i start. `rewrite_key` = (plan, slot) — jeden ponowny
-        zapis nastawy przy rozjeździe odczytu na tę parę. `start_key` = (sesja, slot) — najwyżej JEDEN
-        start na slot i sesję, także przez kolejne przeliczenia planu: ładowanie, które ustało bez naszego
-        stopu (np. stop z aplikacji ładowarki, którego nie rozpoznaliśmy), nie jest wznawiane."""
+        zapis nastawy przy rozjeździe odczytu na tę parę. Start raz na plan i fazę (`last_action`);
+        ładowanie, które ustało bez naszego stopu, zatrzymuje wstrzymanie (`held_since`), nie ten cykl."""
         value = None
         tol = 0.0
         if charger.setpoint is not None:
@@ -651,11 +675,9 @@ class LoadsExecutor:
                 written_value = value
         action = None
         # Bez potwierdzonej nastawy nie startujemy — ładowanie na starej, wyższej nastawie to ryzyko.
-        if in_sync and not charging and self._state.last_action != "start" and charger.start_stop is not None \
-                and self._started_in != start_key:
+        if in_sync and not charging and self._state.last_action != "start" and charger.start_stop is not None:
             if await self._async_command(charger, "start"):
                 action = "start"
-                self._started_in = start_key
         if written_value is not None or action is not None:
             await self._async_after_write(charger, setpoint=written_value, action=action)
 
@@ -725,6 +747,8 @@ class LoadsExecutor:
         if self._throttled(w.entity_id):
             return False
         self._last_write[w.entity_id] = self._clock()
+        if w.key == "ev_stop":
+            self._own_stop_mono = self._last_write[w.entity_id]
         result = await self._writer.async_write(w)
         if result != OK:
             if w.entity_id not in self._failed:

@@ -1,0 +1,137 @@
+[
+ {
+  "entity_id": "number.ev_charger_charge_current",
+  "ts": "2026-10-11T10:01:40.690103+00:00",
+  "state": "16"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T10:01:40.692410+00:00",
+  "state": "charging"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T10:01:40.699019+00:00",
+  "state": "No operation"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T12:33:12.866105+00:00",
+  "state": "Stop charging"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T12:33:13.214270+00:00",
+  "state": "charged"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T12:33:13.333608+00:00",
+  "state": "No operation"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T13:08:12.721497+00:00",
+  "state": "Start charging"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T13:08:12.948284+00:00",
+  "state": "plugged_in"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T13:08:13.446617+00:00",
+  "state": "No operation"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T13:08:27.125131+00:00",
+  "state": "Stop charging"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T13:08:27.607246+00:00",
+  "state": "charging"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T13:08:27.724044+00:00",
+  "state": "No operation"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T14:02:37.764151+00:00",
+  "state": "Stop charging"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T14:02:37.997219+00:00",
+  "state": "charged"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T14:02:38.596147+00:00",
+  "state": "No operation"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T14:11:05.339232+00:00",
+  "state": "Start charging"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T14:11:05.454279+00:00",
+  "state": "available"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T14:11:05.571419+00:00",
+  "state": "No operation"
+ },
+ {
+  "entity_id": "number.ev_charger_charge_current",
+  "ts": "2026-10-11T14:14:34.614477+00:00",
+  "state": "unavailable"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T14:14:34.615136+00:00",
+  "state": "unavailable"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T14:14:34.615566+00:00",
+  "state": "unavailable"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T16:20:52.463244+00:00",
+  "state": "unavailable"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T16:20:52.463269+00:00",
+  "state": "unavailable"
+ },
+ {
+  "entity_id": "number.ev_charger_charge_current",
+  "ts": "2026-10-11T16:20:52.463404+00:00",
+  "state": "unavailable"
+ },
+ {
+  "entity_id": "select.ev_charger_charging_operation",
+  "ts": "2026-10-11T16:23:04.316995+00:00",
+  "state": "unavailable"
+ },
+ {
+  "entity_id": "sensor.ev_charger_status",
+  "ts": "2026-10-11T16:23:04.317016+00:00",
+  "state": "unavailable"
+ },
+ {
+  "entity_id": "number.ev_charger_charge_current",
+  "ts": "2026-10-11T16:23:04.317136+00:00",
+  "state": "unavailable"
+ }
+]

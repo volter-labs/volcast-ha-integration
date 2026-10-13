@@ -6,6 +6,11 @@ ostatnim zapisie, więc następny cykl może zapisać jeszcze raz — ładowarka
 
 `last_setpoint_a` — ostatnia zapisana nastawa w jednostce encji nastawy (A; W dla ładowarek
 sterowanych mocą). Czasy jako ISO-8601 UTC.
+
+`held_since` — początek wstrzymania (zero Startów do planu wygenerowanego później), `held_session` — sesja
+ładowania, w której zaczęło się wstrzymanie (nowa sesja je kończy). `manual_event` + `manual_at` —
+zdarzenie ręczne do jednorazowego wysłania. Magazyn sprzed `held_since` (wstrzymanie trzymane w
+`manual_at`): `held_since` = `manual_at`, więc wstrzymanie trwa do nowszego planu jak wcześniej.
 """
 from __future__ import annotations
 
@@ -27,6 +32,8 @@ class LoadsState:
     fallback_since: str | None = None
     manual_event: str | None = None         # "start" | "stop"
     manual_at: str | None = None
+    held_since: str | None = None
+    held_session: str | None = None
 
 
 def _text(v) -> str | None:
@@ -52,6 +59,8 @@ class LoadsStore:
         raw = await self._store.async_load()
         if not isinstance(raw, dict):
             return LoadsState()
+        manual_at = _text(raw.get("manual_at"))
+        held_since = _text(raw.get("held_since")) if "held_since" in raw else manual_at
         return LoadsState(
             last_action=_choice(raw.get("last_action")),
             last_write_at=_text(raw.get("last_write_at")),
@@ -59,7 +68,9 @@ class LoadsStore:
             plan_generated_at=_text(raw.get("plan_generated_at")),
             fallback_since=_text(raw.get("fallback_since")),
             manual_event=_choice(raw.get("manual_event")),
-            manual_at=_text(raw.get("manual_at")),
+            manual_at=manual_at,
+            held_since=held_since,
+            held_session=_text(raw.get("held_session")),
         )
 
     async def async_save(self, state: LoadsState) -> None:
