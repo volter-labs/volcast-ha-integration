@@ -38,7 +38,7 @@ async def test_read_returns_bank_words_and_frame_hex(goodwe_udp_sim, goodwe_bank
 @pytest.mark.asyncio
 async def test_timeout_is_clear_nonzero_exit(goodwe_udp_sim, sim_faults, capsys):
     sim_faults.drop_next = 100
-    rc = await rr.amain(_argv(goodwe_udp_sim, ADDR, COUNT, "--timeout", "0.2", "--tries", "1"))
+    rc = await rr.amain(_argv(goodwe_udp_sim, ADDR, COUNT, "--timeout", "0.5", "--tries", "1"))
     assert rc != 0
     assert "no response" in capsys.readouterr().err.lower()
 
@@ -61,3 +61,25 @@ def test_guard_allows_fc3():
 def test_module_has_no_write_path():
     src = open(rr.__file__, encoding="utf-8").read()
     assert ".write(" not in src and "write_req" not in src and "pdu_write" not in src
+
+
+@pytest.mark.parametrize("flag,value", [("--tries", "0"), ("--tries", "20"), ("--timeout", "0.1"),
+                                        ("--timeout", "60")])
+def test_out_of_range_limits_rejected(flag, value):
+    with pytest.raises(SystemExit) as exc:
+        rr._parser().parse_args(["--host", "h", "--addr", "1", "--count", "1", flag, value])
+    assert exc.value.code == 2
+
+
+@pytest.mark.asyncio
+async def test_consecutive_attempts_are_spaced_by_gap(goodwe_udp_sim, sim_faults):
+    sim_faults.drop_next = 1                                   # pierwsza próba bez odpowiedzi, druga z odpowiedzią
+    waits = []
+
+    async def fake_sleep(s):
+        waits.append(s)
+
+    words, entry = await rr.read_registers(goodwe_udp_sim.host, ADDR, COUNT, port=goodwe_udp_sim.port,
+                                           timeout_s=0.5, tries=3, clock=lambda: 0.0, sleep=fake_sleep)
+    assert entry["valid"] is True
+    assert waits and all(w >= rr.GAP_S for w in waits) and rr.GAP_S >= 0.3

@@ -1,9 +1,12 @@
 """Odczyt rejestrów holding (Modbus FC 3) na żywym falowniku — WYŁĄCZNIE odczyt.
 
-Użycie: .venv/bin/python -m tools.live.read_registers --host <ip> --addr 47000 --count 1
+Użycie: .venv-ha/bin/python -m tools.live.read_registers --host <ip> --addr 47000 --count 1
+(wymaga interpretera z zainstalowanym `homeassistant`, czyli `.venv-ha`).
 
-Wypisuje słowa (dziesiętnie i hex) oraz dokładną ramkę żądania i odpowiedzi w formacie wpisu
-`tests/golden/goodwe_et/frames.json` (`offset`, `count`, `request`, `response`, `valid`).
+Wypisuje słowa (dziesiętnie i hex) oraz dokładną ramkę żądania i odpowiedzi jako samodzielny
+obiekt JSON w formacie wpisu `tests/golden/goodwe_et/frames.json` (`offset`, `count`, `request`,
+`response`, `valid`). Dopisanie go do `frames.json` to osobny, ręczny krok (dopisz wpis); narzędzie
+niczego nie importuje, a `tools/golden/import_direct_frames.py` bierze inny kształt danych.
 Narzędzie nie ma ścieżki zapisu: każdy kod funkcji inny niż 3 odrzuca `ensure_read_only`.
 """
 from __future__ import annotations
@@ -17,6 +20,10 @@ from custom_components.volcast.core.transports.base import LinkDown, RequestTime
 from custom_components.volcast.core.transports.goodwe_udp import GoodweUdpTransport
 
 READ_HOLDING = 3
+# Odstęp między kolejnymi żądaniami — jak `gap_ms` profilu goodwe-et (moduł Wi-Fi falownika nie znosi zalewu).
+GAP_S = 0.3
+TRIES_RANGE = (1, 5)
+TIMEOUT_RANGE = (0.5, 10.0)
 
 
 class WriteRefused(Exception):
@@ -28,6 +35,15 @@ def ensure_read_only(fc: int) -> None:
         raise WriteRefused(f"function code {fc} refused: this tool only reads (FC 3)")
 
 
+def _bounded(kind, lo, hi):
+    def parse(text: str):
+        value = kind(text)
+        if not lo <= value <= hi:
+            raise argparse.ArgumentTypeError(f"must be between {lo} and {hi}")
+        return value
+    return parse
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Read-only Modbus FC 3 register reader (GoodWe UDP).")
     p.add_argument("--host", required=True)
@@ -36,8 +52,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8899)
     p.add_argument("--unit-id", type=int, default=247)
     p.add_argument("--transport", choices=["goodwe_udp"], default="goodwe_udp")
-    p.add_argument("--timeout", type=float, default=2.0, help="seconds to wait for a reply")
-    p.add_argument("--tries", type=int, default=3)
+    p.add_argument("--timeout", type=_bounded(float, *TIMEOUT_RANGE), default=2.0, help="seconds to wait for a reply")
+    p.add_argument("--tries", type=_bounded(int, *TRIES_RANGE), default=3)
     return p
 
 
@@ -47,12 +63,14 @@ def _fail(msg: str) -> int:
 
 
 async def read_registers(host: str, addr: int, count: int, *, port: int = 8899, unit: int = 247,
-                         timeout_s: float = 2.0, tries: int = 3, fc: int = READ_HOLDING) -> tuple[list[int], dict]:
+                         timeout_s: float = 2.0, tries: int = 3, fc: int = READ_HOLDING,
+                         clock=None, sleep=None) -> tuple[list[int], dict]:
     """Zwraca (słowa, wpis w formacie frames.json). Rzuca `TransportError` przy braku odpowiedzi."""
     ensure_read_only(fc)
     cfg = TransportConfig(kind="goodwe_udp", host=host, port=port, unit=unit, timeout_s=timeout_s,
-                          read_tries=tries)
-    transport = GoodweUdpTransport(cfg, host)
+                          gap_s=GAP_S, read_tries=min(max(tries, TRIES_RANGE[0]), TRIES_RANGE[1]))
+    extra = {k: v for k, v in (("clock", clock), ("sleep", sleep)) if v is not None}
+    transport = GoodweUdpTransport(cfg, host, **extra)
     frames: list[tuple[bytes, bytes | None]] = []
     transport.recorder = lambda _req, request, response: frames.append((request, response))
     try:
