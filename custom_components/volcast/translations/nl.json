@@ -464,6 +464,10 @@
     "consent_mirror_error": {
       "title": "Volcast-regeling kon niet worden ingeschakeld",
       "description": "Volcast kon de regeling niet inschakelen ({reason}), dus de schakelaar blijft uit. Probeer het later opnieuw of zet de regeling aan in de Volcast-app."
+    },
+    "inverter_work_mode": {
+      "title": "De werkmodus van de omvormer kan de accu uit het net laden",
+      "description": "De omvormer heeft een eigen werkmodus of schema (bijvoorbeeld Eco of een tariefschema uit de app van de fabrikant) dat de accu buiten het Volcast-plan om uit het net kan laden. Schakel die modus of dat schema uit in de omvormer-app van de fabrikant en laat de algemene (standaard)modus aan. Zet de omvormer zelf niet uit."
     }
   },
   "services": {

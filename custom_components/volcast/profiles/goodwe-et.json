@@ -9,7 +9,8 @@
     {"what": "register map", "ref": "goodwe python library (ET family), cross-checked with recorded frames"},
     {"what": "mode semantics", "ref": "measurements on GW8KN-ET: standby honours Xset, sell_power covers house then exports Xset"},
     {"what": "golden vectors", "ref": "tests/golden/goodwe_et"},
-    {"what": "energy counters and BMS current limits (checked on a GW8KN-ET)", "ref": "goodwe python library ET sensor order (tests/golden/goodwe_et/ha_candidates.json) anchored at the measured 35191, 37003 and 37007; register widths and scales from the library map; values plausible in tests/golden/goodwe_et/frames.json; not yet checked against the inverter display"}
+    {"what": "energy counters and BMS current limits (checked on a GW8KN-ET)", "ref": "goodwe python library ET sensor order (tests/golden/goodwe_et/ha_candidates.json) anchored at the measured 35191, 37003 and 37007; register widths and scales from the library map; values plausible in tests/golden/goodwe_et/frames.json; not yet checked against the inverter display"},
+    {"what": "operation mode register", "ref": "goodwe python library (ET family) `work_mode` setting at 47000; value 0 = General measured on GW8KN-ET (tests/golden/goodwe_et)"}
   ],
   "unit_id": 247,
   "transports": ["goodwe_udp", "modbus_tcp", "modbus_rtu"],
@@ -111,6 +112,7 @@
     "standby": true, "set_power_w": true, "limit_export": true, "set_soc_floor": true,
     "set_soc_ceiling": true, "time_windows": 0
   },
+  "work_mode": {"read": {"addr": 47000, "type": "u16"}, "neutral_values": [0], "ha": {"domain": "select", "unique_id_regex": "^goodwe-operation_mode-", "neutral_options": ["general"]}, "poll_s": 900},
   "modbus": {
     "status": "verified",
     "status_note": "Register map and write semantics measured on a live GW8KN-ET over the Wi-Fi module (UDP); the module must not be shared with other clients.",

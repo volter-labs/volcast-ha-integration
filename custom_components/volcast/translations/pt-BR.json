@@ -464,6 +464,10 @@
     "consent_mirror_error": {
       "title": "Não foi possível ligar o controle da Volcast",
       "description": "A Volcast não conseguiu ligar o controle ({reason}), então a chave continua desligada. Tente novamente mais tarde ou ligue o controle no app Volcast."
+    },
+    "inverter_work_mode": {
+      "title": "O modo de operação do inversor pode carregar a bateria pela rede",
+      "description": "O inversor tem seu próprio modo de operação ou programação (por exemplo Eco ou um horário tarifário definido no app do fabricante) que pode carregar a bateria pela rede fora do plano Volcast. Desative esse modo ou programação no app do fabricante do inversor e deixe ativo o modo geral (padrão). Não desligue o próprio inversor."
     }
   },
   "services": {

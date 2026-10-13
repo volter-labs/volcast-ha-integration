@@ -57,7 +57,7 @@ MAX_READ_REGISTERS = 125
 _TOP_REQ = ("schema_version", "id", "label", "status", "control_model", "sources", "unit_id",
             "transports", "identify", "read", "write", "intents", "baseline", "write_policy",
             "limits", "ha", "capabilities", "modbus")
-_TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification")
+_TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification", "work_mode")
 # Nadpisania parametrów drabiny weryfikacji urządzenia (próbne godziny, okno próbne): pole → zakres.
 VERIFICATION_RANGES = {"trial_hours": (1, 72), "window_minutes": (5, 60), "window_power_w": (100, 3000)}
 
@@ -517,6 +517,36 @@ def _verification(v: _V, raw: Any) -> None:
             v.int_(b[key], f"{path}.{key}", lo, hi)
 
 
+WORK_MODE_MIN_POLL_S = 300
+
+
+def _work_mode(v: _V, raw: Any) -> None:
+    """Opcjonalny blok odczytu trybu pracy falownika (tylko odczyt, bez zapisu)."""
+    path = "$.work_mode"
+    b = v.obj(raw, path, ("read", "neutral_values", "ha", "poll_s"))
+    if b is None:
+        return
+    if "read" in b:
+        _reg(v, b["read"], f"{path}.read")
+    nv = b.get("neutral_values")
+    if "neutral_values" in b and (not isinstance(nv, list) or not nv or not all(
+            isinstance(x, int) and not isinstance(x, bool) for x in nv)):
+        v.err(f"{path}.neutral_values", "oczekiwano niepustej listy liczb całkowitych")
+    if "ha" in b:
+        ha = v.obj(b["ha"], f"{path}.ha", ("domain", "unique_id_regex", "neutral_options"))
+        if ha is not None:
+            if "domain" in ha:
+                v.enum(ha["domain"], f"{path}.ha.domain", ("select",))
+            if "unique_id_regex" in ha:
+                v.regex(ha["unique_id_regex"], f"{path}.ha.unique_id_regex")
+            if "neutral_options" in ha:
+                opts = v.str_list(ha["neutral_options"], f"{path}.ha.neutral_options")
+                if opts is not None and (not opts or not all(opts)):
+                    v.err(f"{path}.ha.neutral_options", "oczekiwano niepustej listy niepustych tekstów")
+    if "poll_s" in b:
+        v.int_(b["poll_s"], f"{path}.poll_s", WORK_MODE_MIN_POLL_S, 86400)
+
+
 def _limit_registers(v: _V, lim: dict, read: dict) -> None:
     """`$.limits.<pole>_register` → klucz `$.read` właściwego rodzaju (prąd BMS, pojemność)."""
     for field, allowed in LIMIT_REGISTERS.items():
@@ -722,6 +752,8 @@ def validate_profile(raw: object) -> list[str]:
     _ha(v, top.get("ha"))
     if "verification" in top:
         _verification(v, top["verification"])
+    if "work_mode" in top:
+        _work_mode(v, top["work_mode"])
 
     caps = v.obj(top.get("capabilities"), "$.capabilities", CAPABILITY_KEYS + ("time_windows",))
     if caps is not None:

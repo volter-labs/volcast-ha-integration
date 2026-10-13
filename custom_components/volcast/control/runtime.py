@@ -52,7 +52,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from ..cloud import control_choice
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
@@ -69,7 +69,7 @@ from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
 from ..core.control.recommend import recommend
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
-from ..core.entity_map import EntityCandidate, resolve_entities
+from ..core.entity_map import EntityCandidate, resolve_entities, resolve_work_mode_entity
 from ..core.modbus.views import UNCORRELATED_KINDS
 from ..registry_compat import all_devices
 from . import direct_search as ds
@@ -85,6 +85,7 @@ from .loads_store import LoadsStore
 from .signals_hub import SignalsHub
 from .store import ControlStore, async_installation_salt
 from .telemetry import TelemetrySender, control_block
+from .work_mode import WorkModeTracker, WorkModeWatcher
 from .verification import VerificationRunner, default_params, start_rung_for
 
 try:
@@ -217,6 +218,8 @@ class ControlRuntime:
     verification: object | None = None
     # drugi sterownik (`ConflictMonitor`); blok `conflicts` = `conflicts.conflicts()`
     conflicts: object | None = None
+    # tryb pracy falownika (`general` | `other:<kod>` | `unknown`); zasila go `start_work_mode_watch`
+    work_mode: WorkModeTracker = field(default_factory=WorkModeTracker)
     hass: object | None = None
     entry: object | None = None
     # wykonawca slotów ładowarki EV (`LoadsExecutor`), obok wykonawcy falownika
@@ -599,17 +602,113 @@ def _choice_for(hass, entry, profiles) -> ProfileChoice | None:
     return select_profile(hints, profiles)
 
 
-def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
-    if choice is None or not choice.integration_domain:
-        return {}
+def _entity_candidates(hass, integration_domain: str) -> list[EntityCandidate]:
     cands = []
     for e in er.async_get(hass).entities.values():
-        if e.platform != choice.integration_domain or getattr(e, "disabled_by", None):
+        if e.platform != integration_domain or getattr(e, "disabled_by", None):
             continue
         st = hass.states.get(e.entity_id)
         unit = (st.attributes.get("unit_of_measurement") if st else None) or getattr(e, "unit_of_measurement", None)
         cands.append(EntityCandidate(e.entity_id, e.platform, e.unique_id or "", unit))
+    return cands
+
+
+def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
+    if choice is None or not choice.integration_domain:
+        return {}
+    cands = _entity_candidates(hass, choice.integration_domain)
     return dict(resolve_entities(choice.profile, choice.integration_domain, cands).mapped)
+
+
+WORK_MODE_ISSUE = "inverter_work_mode"
+WORK_MODE_RETRY_S = 60
+
+
+def wire_work_mode(hass, rt, conn) -> None:
+    """Jeden tracker trybu pracy dla obu źródeł (rejestr z `conn`, encja select) i zgłoszenie w Naprawach:
+    `other:*` je zakłada, `general` kasuje, `unknown` go nie rusza (nieznany stan nie zmienia ostrzeżenia)."""
+    issue_id = f"{WORK_MODE_ISSUE}_{rt.entry.entry_id}"
+
+    def _changed(state: str) -> None:
+        try:
+            if state.startswith("other:"):
+                ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False,
+                                      severity=getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning"),
+                                      translation_key="inverter_work_mode")
+            elif state == "general":
+                ir.async_delete_issue(hass, DOMAIN, issue_id)
+        except Exception as err:  # noqa: BLE001 — ostrzeżenie nigdy nie psuje odczytu
+            _LOGGER.debug("Volcast work mode issue skipped (%s)", type(err).__name__)
+
+    rt.work_mode.on_change = _changed
+
+    def _clear() -> None:
+        """Rozładunek wpisu: ostrzeżenie o trybie pracy nie zostaje po wyłączeniu sterowania ani usunięciu."""
+        rt.work_mode.on_change = None
+        try:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+        except Exception as err:  # noqa: BLE001 — rozładunek idzie dalej
+            _LOGGER.debug("Volcast work mode issue not cleared (%s)", type(err).__name__)
+    rt.unsubs.append(_clear)
+    if conn is not None:
+        conn.work_mode = rt.work_mode
+
+
+def _start_work_mode_refresh(hass, rt, entity_id: str, poll_s: int) -> None:
+    """Select trybu pracy w integracji GoodWe nie odpytuje się sam (`should_poll=False`): bez wymuszenia
+    jego stan zostaje taki, jak przy starcie tamtej integracji. Co `poll_s` (i raz od razu) prosimy HA
+    o odświeżenie tej jednej encji — to odczyt przez połączenie integracji falownika, nic nie zapisuje."""
+
+    async def _update() -> None:
+        try:
+            await hass.services.async_call("homeassistant", "update_entity", {"entity_id": entity_id},
+                                           blocking=False)
+        except Exception as err:  # noqa: BLE001 — odświeżenie nigdy nie psuje sterowania
+            _LOGGER.debug("Volcast work mode refresh skipped (%s)", type(err).__name__)
+
+    @callback
+    def _refresh(_now=None) -> None:
+        try:
+            create = hass.async_create_background_task
+        except AttributeError as err:
+            _LOGGER.debug("Volcast work mode refresh skipped (%s)", type(err).__name__)
+            return
+        create(_update(), "volcast_work_mode_refresh")
+
+    rt.unsubs.append(async_track_time_interval(hass, _refresh, timedelta(seconds=poll_s)))
+    _refresh()
+
+
+def start_work_mode_watch(hass, choice: ProfileChoice | None, rt) -> None:
+    """Tryb pracy falownika z encji select (tylko odczyt): zasila `rt.work_mode`; brak encji = `unknown`.
+    Encji może jeszcze nie być (start tuż po restarcie HA) — wtedy ponawiamy co minutę, aż się pojawi.
+    W trybie encji (bez połączenia bezpośredniego) stan encji jest dodatkowo odświeżany co `poll_s`."""
+    if choice is None or not choice.integration_domain or getattr(choice.profile, "work_mode", None) is None:
+        return
+
+    def _resolve() -> bool:
+        eid = resolve_work_mode_entity(choice.profile, choice.integration_domain,
+                                       _entity_candidates(hass, choice.integration_domain))
+        if eid is None:
+            return False
+        watcher = WorkModeWatcher(eid, choice.profile.work_mode.ha_neutral_options, tracker=rt.work_mode)
+        watcher.prime(hass.states.get(eid))
+        rt.unsubs.append(async_track_state_change_event(hass, [eid], callback(watcher.on_event)))
+        if getattr(rt, "direct", None) is None:        # w trybie bezpośrednim tracker karmi odczyt rejestru
+            _start_work_mode_refresh(hass, rt, eid, choice.profile.work_mode.poll_s)
+        return True
+
+    if _resolve():
+        return
+    stop: list = []
+
+    @callback
+    def _retry(_now=None) -> None:
+        if stop and _resolve():
+            stop.pop()()
+
+    stop.append(async_track_time_interval(hass, _retry, timedelta(seconds=WORK_MODE_RETRY_S)))
+    rt.unsubs.append(lambda: stop.pop()() if stop else None)
 
 
 def mapped_with_overrides(hass, choice: ProfileChoice | None, options: Mapping) -> dict[str, str]:
@@ -983,6 +1082,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
 
         rt.unsubs.append(async_dispatcher_connect(
             hass, SIGNAL_DISCOVERY_UPDATED.format(entry_id=entry.entry_id), _on_discovery))
+        wire_work_mode(hass, rt, conn)
+        start_work_mode_watch(hass, choice, rt)
         track_ha_stop(hass, rt)
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").
         hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})["control"] = rt

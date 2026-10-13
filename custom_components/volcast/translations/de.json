@@ -464,6 +464,10 @@
     "consent_mirror_error": {
       "title": "Volcast-Steuerung konnte nicht eingeschaltet werden",
       "description": "Volcast konnte die Steuerung nicht einschalten ({reason}), daher bleibt der Schalter aus. Versuche es später erneut oder schalte die Steuerung in der Volcast-App ein."
+    },
+    "inverter_work_mode": {
+      "title": "Der Arbeitsmodus des Wechselrichters kann den Akku aus dem Netz laden",
+      "description": "Der Wechselrichter hat einen eigenen Arbeitsmodus oder Zeitplan (z. B. Eco oder ein Tarifzeitplan aus der App des Herstellers), der den Akku außerhalb des Volcast-Plans aus dem Netz laden kann. Schalten Sie diesen Modus oder Zeitplan in der Wechselrichter-App des Herstellers aus und lassen Sie den allgemeinen (Standard-)Modus aktiv. Schalten Sie nicht den Wechselrichter selbst aus."
     }
   },
   "services": {
