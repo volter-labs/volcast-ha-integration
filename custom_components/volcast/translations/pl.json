@@ -517,6 +517,9 @@
       "control_plan": {
         "name": "Plan"
       },
+      "control_plan_summary": {
+        "name": "Opis planu"
+      },
       "control_status": {
         "name": "Status"
       },

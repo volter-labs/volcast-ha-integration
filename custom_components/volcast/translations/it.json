@@ -517,6 +517,9 @@
       "control_plan": {
         "name": "Piano"
       },
+      "control_plan_summary": {
+        "name": "Riepilogo del piano"
+      },
       "control_status": {
         "name": "Stato"
       },

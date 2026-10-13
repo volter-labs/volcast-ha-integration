@@ -71,6 +71,72 @@ def plan_slots_for_card(raw: dict | None, now: datetime) -> list[dict]:
     return out
 
 
+_SUMMARY_KEYS = ("now", "then", "until", "no_plan", "charge_grid", "charge_pv", "charge", "discharge",
+                 "self_consume", "idle", "hold")
+# Teksty opisu planu dla człowieka (13 języków); wyłącznie słowa i godziny, bez liczb mocy.
+_SUMMARY_TEXTS = {
+    "pl": dict(zip(_SUMMARY_KEYS, (
+        "Teraz", "potem", "do", "Brak planu", "ładowanie z sieci", "ładowanie z PV", "ładowanie", "rozładowanie", "autokonsumpcja", "bateria w spoczynku", "bateria wstrzymana"))),
+    "en": dict(zip(_SUMMARY_KEYS, (
+        "Now", "then", "until", "No plan", "charging from the grid", "charging from PV", "charging", "discharging", "self-consumption", "battery idle", "battery on hold"))),
+    "de": dict(zip(_SUMMARY_KEYS, (
+        "Jetzt", "danach", "bis", "Kein Plan", "Laden aus dem Netz", "Laden aus PV", "Laden", "Entladen", "Eigenverbrauch", "Batterie im Leerlauf", "Batterie angehalten"))),
+    "nl": dict(zip(_SUMMARY_KEYS, (
+        "Nu", "daarna", "tot", "Geen plan", "laden vanaf het net", "laden met PV", "laden", "ontladen", "eigen verbruik", "batterij in rust", "batterij vastgehouden"))),
+    "es": dict(zip(_SUMMARY_KEYS, (
+        "Ahora", "después", "hasta", "Sin plan", "carga desde la red", "carga con FV", "carga", "descarga", "autoconsumo", "batería en reposo", "batería retenida"))),
+    "fr": dict(zip(_SUMMARY_KEYS, (
+        "Maintenant", "ensuite", "jusqu'à", "Aucun plan", "charge depuis le réseau", "charge depuis le PV", "charge", "décharge", "autoconsommation", "batterie au repos", "batterie en attente"))),
+    "uk": dict(zip(_SUMMARY_KEYS, (
+        "Зараз", "потім", "до", "Немає плану", "заряджання з мережі", "заряджання від PV", "заряджання", "розряджання", "власне споживання", "батарея у спокої", "батарея утримується"))),
+    "pt": dict(zip(_SUMMARY_KEYS, (
+        "Agora", "depois", "até", "Sem plano", "carregamento da rede", "carregamento com FV", "carregamento", "descarga", "autoconsumo", "bateria em repouso", "bateria retida"))),
+    "pt-BR": dict(zip(_SUMMARY_KEYS, (
+        "Agora", "depois", "até", "Sem plano", "carregamento da rede", "carregamento com FV", "carregamento", "descarga", "autoconsumo", "bateria em repouso", "bateria retida"))),
+    "ro": dict(zip(_SUMMARY_KEYS, (
+        "Acum", "apoi", "până la", "Fără plan", "încărcare din rețea", "încărcare din PV", "încărcare", "descărcare", "autoconsum", "baterie în repaus", "baterie reținută"))),
+    "cs": dict(zip(_SUMMARY_KEYS, (
+        "Nyní", "potom", "do", "Žádný plán", "nabíjení ze sítě", "nabíjení z FV", "nabíjení", "vybíjení", "vlastní spotřeba", "baterie v klidu", "baterie podržena"))),
+    "sk": dict(zip(_SUMMARY_KEYS, (
+        "Teraz", "potom", "do", "Žiadny plán", "nabíjanie zo siete", "nabíjanie z FV", "nabíjanie", "vybíjanie", "vlastná spotreba", "batéria v pokoji", "batéria podržaná"))),
+    "it": dict(zip(_SUMMARY_KEYS, (
+        "Ora", "poi", "fino alle", "Nessun piano", "carica dalla rete", "carica da FV", "carica", "scarica", "autoconsumo", "batteria a riposo", "batteria in attesa"))),
+}
+
+
+def _summary_label(texts: dict, slot: dict) -> str:
+    action = slot.get("action")
+    if action == "charge":
+        return texts["charge_" + slot["charge_source"]] if slot.get("charge_source") in ("grid", "pv") \
+            else texts["charge"]
+    return texts.get(action) or texts["idle"]
+
+
+def plan_summary_text(slots: list[dict], language: str | None, to_local) -> str:
+    """Krótki opis planu: bieżący odcinek (akcja + do której godziny), potem następny. Bez liczb mocy.
+
+    `slots` — wynik `plan_slots_for_card`; `to_local` zamienia chwilę UTC na czas lokalny użytkownika.
+    """
+    lang = language if language in _SUMMARY_TEXTS else (language or "").split("-")[0]
+    texts = _SUMMARY_TEXTS.get(lang, _SUMMARY_TEXTS["en"])
+    start = next((i for i, s in enumerate(slots) if s.get("now")), None)
+    if start is None:
+        return texts["no_plan"]
+
+    def run_end(i: int) -> int:
+        key = (slots[i].get("action"), slots[i].get("charge_source"))
+        while i + 1 < len(slots) and (slots[i + 1].get("action"), slots[i + 1].get("charge_source")) == key:
+            i += 1
+        return i
+
+    end = run_end(start)
+    until = to_local(dt_util.parse_datetime(slots[end]["to"])).strftime("%H:%M")
+    text = f"{texts['now']}: {_summary_label(texts, slots[start])} {texts['until']} {until}"
+    if end + 1 < len(slots):
+        text += f" · {texts['then']}: {_summary_label(texts, slots[end + 1])}"
+    return text
+
+
 class _ControlEntity:
     _attr_has_entity_name = True
     _attr_should_poll = False
@@ -122,6 +188,22 @@ class VolcastPlanSensor(_ControlEntity, SensorEntity):
             "battery_capacity_kwh": self._entry.options.get(OPT_BATTERY_CAPACITY_KWH),
             "tou_preview": ex.tou_preview,
         }
+
+
+class VolcastPlanSummarySensor(_ControlEntity, SensorEntity):
+    """Plan po ludzku: jeden krótki tekst z akcji i godzin slotów, bez liczb mocy."""
+
+    _attr_icon = "mdi:text-box-outline"
+
+    def __init__(self, entry, rt) -> None:
+        super().__init__(entry, rt, "plan_summary")
+
+    @property
+    def native_value(self) -> str:
+        now = dt_util.utcnow()
+        slots = plan_slots_for_card(self._rt.executor.raw_plan, now)
+        language = getattr(getattr(self.hass, "config", None), "language", None)
+        return plan_summary_text(slots, language, dt_util.as_local)[:255]
 
 
 class VolcastControlStatusSensor(_ControlEntity, SensorEntity):

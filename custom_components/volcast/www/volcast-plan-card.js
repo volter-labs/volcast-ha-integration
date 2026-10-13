@@ -384,6 +384,9 @@ class VolcastPlanCard extends HTMLElement {
   _prognozaSoc(slots, iTeraz, socTeraz, pojemnosc) {
     const puste = slots.map(() => null);
     if (socTeraz == null || !(pojemnosc > 0)) return puste;
+    // Plan bez zadanej mocy (poziom Plan): projekcja z samych zer to udawana płaska linia.
+    const brakMocy = slots.every((s) => s.power_w == null);
+    if (brakMocy) return puste;
 
     const out = puste.slice();
     let soc = socTeraz;

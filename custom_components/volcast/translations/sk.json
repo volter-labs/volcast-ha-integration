@@ -517,6 +517,9 @@
       "control_plan": {
         "name": "Plán"
       },
+      "control_plan_summary": {
+        "name": "Zhrnutie plánu"
+      },
       "control_status": {
         "name": "Stav"
       },

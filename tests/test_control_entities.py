@@ -1,10 +1,12 @@
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 from custom_components.volcast.control_entities import (VolcastControlStatusSensor, VolcastControlSwitch,
-                                                        VolcastPlanSensor, plan_slots_for_card)
+                                                        VolcastPlanSensor, VolcastPlanSummarySensor,
+                                                        plan_slots_for_card, plan_summary_text)
 
 NOW = datetime(2026, 9, 23, 10, 30, tzinfo=timezone.utc)
 
@@ -543,3 +545,58 @@ def test_failed_on_rearms_pending_off(monkeypatch):
     asyncio.run(go())
     assert cloud.calls == [("none", "ha_switch"), ("ha", "ha_switch"), ("none", "ha_switch")]
     assert ex.mirror_off_pending is False and ex.local_switch is False
+
+
+def _slot(h, action, source=None, power=None):
+    return {"from": f"2026-09-23T{h:02d}:00:00Z", "to": f"2026-09-23T{h + 1:02d}:00:00Z", "action": action,
+            "charge_source": source, "power_w": power, "now": h == 10}
+
+
+def _slots():
+    return [_slot(9, "idle"), _slot(10, "charge", "grid"), _slot(11, "charge", "grid"),
+            _slot(12, "self_consume"), _slot(13, "self_consume")]
+
+
+def test_plan_summary_text_pl_current_and_next_run():
+    text = plan_summary_text(_slots(), "pl", lambda m: m)
+    assert text == "Teraz: ładowanie z sieci do 12:00 · potem: autokonsumpcja"
+
+
+def test_plan_summary_text_en_and_fallback_language():
+    assert plan_summary_text(_slots(), "en", lambda m: m) == \
+        "Now: charging from the grid until 12:00 · then: self-consumption"
+    assert plan_summary_text(_slots(), "xx-YY", lambda m: m) == plan_summary_text(_slots(), "en", lambda m: m)
+    assert plan_summary_text(_slots(), "pt-BR", lambda m: m).startswith("Agora:")
+
+
+def test_plan_summary_text_has_no_numbers_but_times_and_ignores_power():
+    with_power = [dict(s, power_w=3000) for s in _slots()]
+    assert plan_summary_text(with_power, "pl", lambda m: m) == plan_summary_text(_slots(), "pl", lambda m: m)
+    import re
+    assert re.findall(r"\d+", plan_summary_text(with_power, "en", lambda m: m)) == ["12", "00"]
+
+
+def test_plan_summary_text_last_run_has_no_then_and_empty_plan():
+    assert plan_summary_text(_slots()[:3], "en", lambda m: m) == "Now: charging from the grid until 12:00"
+    assert plan_summary_text([], "pl", lambda m: m) == "Brak planu"
+    assert plan_summary_text([_slot(9, "idle")], "pl", lambda m: m) == "Brak planu"
+
+
+def test_plan_summary_all_languages_have_all_phrases():
+    from custom_components.volcast.control_entities import _SUMMARY_TEXTS
+    assert set(_SUMMARY_TEXTS) == {"pl", "en", "de", "nl", "es", "fr", "uk", "pt", "pt-BR", "ro", "cs", "sk", "it"}
+    for lang, texts in _SUMMARY_TEXTS.items():
+        assert set(texts) == set(_SUMMARY_TEXTS["en"]), lang
+
+
+def test_plan_summary_sensor_state_and_unique_id():
+    s = VolcastPlanSummarySensor(SimpleNamespace(entry_id="e1", options={}), _rt())
+    s.hass = SimpleNamespace(config=SimpleNamespace(language="pl"))
+    assert s._attr_unique_id == "e1_control_plan_summary"
+    assert s._attr_translation_key == "control_plan_summary"
+    assert s.native_value == "Teraz: autokonsumpcja do 00:00"  # 48 slotów self_consume od 00:00, „teraz" = 10:00
+
+
+def test_card_does_not_project_soc_from_null_power():
+    js = (Path(__file__).parents[1] / "custom_components" / "volcast" / "www" / "volcast-plan-card.js").read_text("utf-8")
+    assert "power_w != null" in js and "brakMocy" in js
