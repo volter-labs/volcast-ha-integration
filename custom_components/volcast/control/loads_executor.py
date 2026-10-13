@@ -41,7 +41,11 @@ karta RFID — integracja ładowarki zapisuje ją bez kontekstu użytkownika), p
 zapisów (`OWN_ECHO_S`): „stop” = status ładuje → wstrzymane/zatrzymane albo komenda stop w slocie
 `forced`; „start” = status → ładuje albo komenda start w slocie `off`, ale tylko po NASZYM stopie w tej
 fazie. Koniec ładowania (finished/complete/full), błąd, niedostępność, pauza po stronie auta,
-odłączenie, autostart po podłączeniu i harmonogram auta NIE są ręczne (`status_kind`). Zdarzenie trafia do stanu od razu
+odłączenie, autostart po podłączeniu i harmonogram auta NIE są ręczne (`status_kind`) — wyjątek:
+„koniec” po NASZYM starcie w bieżącym slocie, gdy świeży plan ma > `END_REMAINING_KWH` do celu
+(część ładowarek tak pokazuje stop z własnej aplikacji). Start: najwyżej jeden na slot i sesję
+(`_started_in`, w pamięci), także przez przeliczenia planu — ładowanie, które ustało bez naszego
+stopu, nie jest w tym slocie wznawiane. Zdarzenie trafia do stanu od razu
 w obsłudze zdarzenia (przed następnym odczytem telemetrii) z `manual_at` = czas obsługi, telemetria
 wysyła je raz (`async_ack_manual` po przyjęciu), a wykonawca nie pisze do ładowarki, dopóki nie
 przyjdzie plan wygenerowany PO zdarzeniu (`plan_generated_at` > `manual_at`; także reguła awaryjna
@@ -78,7 +82,7 @@ from ..const import (LOADS_EXECUTOR_INTERVAL_S, LOADS_MIN_WRITE_INTERVAL_S, LOAD
 from ..core.control.takeover import is_foreign_change
 from ..core.entity_map import EntityWrite
 from ..core.ev.convert import slot_for, watts_to_amps
-from ..core.ev.fallback import should_force
+from ..core.ev.fallback import FALLBACK_PLAN_AGE_S, should_force
 from ..core.write_sequence import OK
 from .loads_store import LoadsState
 
@@ -100,6 +104,8 @@ STARTUP_GRACE_S = 300
 HOLD_WARN_S = 6 * 3600
 # Zmiana stanu ładowarki do tylu sekund po NASZYM zapisie to echo tego zapisu (odczyt kontrolny jest po 20 s).
 OWN_ECHO_S = 30.0
+# „Koniec ładowania” przy tylu kWh brakujących do celu (świeży plan) po naszym starcie = ręczny stop.
+END_REMAINING_KWH = 0.5
 # Słowa stanu statusu (zmiana bez aktora HA: aplikacja producenta, przycisk, karta RFID).
 _END_WORDS = frozenset({"finish", "finished", "complete", "completed", "full", "done", "charged", "end", "ended"})
 _ERROR_WORDS = frozenset({"error", "fault", "failed", "failure", "offline", "alarm", "unavailable", "unknown"})
@@ -241,6 +247,7 @@ class LoadsExecutor:
         self._slot_mode: str | None = None            # tryb slotu z ostatniego cyklu (tylko w pamięci)
         self._confirmed_mono: float | None = None     # ostatnia odpowiedź chmury z planem (zegar monotoniczny)
         self._started_mono: float | None = None
+        self._started_in: tuple | None = None         # (sesja, slot) naszego ostatniego startu (tylko w pamięci)
         self._fallback_latched = False                # tryb awaryjny był, a raport z nim jeszcze nie przyjęty
         self._hold_warned: str | None = None          # `manual_at` z ostrzeżeniem o długim wstrzymaniu
         self._rewrite_key: tuple | None = None        # (plan, slot) zużytego ponownego zapisu nastawy
@@ -439,7 +446,8 @@ class LoadsExecutor:
             await self._async_set_fallback(now)
             self._phase("fallback")
             # reguła awaryjna: pełna moc i start, nigdy stop
-            await self._async_forced(None, meta, charger, charging, (meta.plan_generated_at, "fallback"))
+            await self._async_forced(None, meta, charger, charging, (meta.plan_generated_at, "fallback"),
+                                     (meta.session_id, "fallback"))
             return
         await self._async_set_fallback(None)
         slot = self._current_slot(meta, now)
@@ -447,7 +455,8 @@ class LoadsExecutor:
             return
         self._phase(slot.mode)
         if slot.mode == "forced":
-            await self._async_forced(slot.power_w, meta, charger, charging, (meta.plan_generated_at, slot.start))
+            await self._async_forced(slot.power_w, meta, charger, charging, (meta.plan_generated_at, slot.start),
+                                     (meta.session_id, slot.start))
         elif slot.mode == "off" and charging and self._state.last_action != "stop":
             if await self._async_command(charger, "stop"):
                 await self._async_after_write(charger, setpoint=None, action="stop")
@@ -524,10 +533,24 @@ class LoadsExecutor:
             if self._held():
                 return new_v                     # zmiana zdania przed nowym planem: wygrywa ostatnia decyzja
             return new_v if (new_v, mode) in (("stop", "forced"), ("start", "off")) else None
-        return self._unattended_action(eid == charger.status, old, new, new_v, old_v, mode)
+        return self._unattended_action(eid == charger.status, old, new, new_v, old_v, mode, meta)
+
+    def _end_looks_manual(self, meta, mode: str | None) -> bool:
+        """Stan „koniec ładowania” (np. `charged`) po NASZYM starcie w bieżącym slocie `forced`, gdy świeży plan
+        mówi, że do celu brakuje wyraźnie więcej niż `END_REMAINING_KWH` — część ładowarek tak pokazuje stop
+        z własnej aplikacji. Bez świeżego planu albo bez energii do celu = zwykły koniec ładowania."""
+        if mode != "forced" or self._state.fallback_since is not None:
+            return False
+        slot = self._current_slot(meta, self._utcnow())
+        if slot is None or self._started_in != (meta.session_id, slot.start):
+            return False
+        remaining = _num(meta.remaining_kwh)
+        age = self._plan_age_s(self._utcnow())
+        return remaining is not None and remaining > END_REMAINING_KWH \
+            and age is not None and age <= FALLBACK_PLAN_AGE_S
 
     def _unattended_action(self, is_status: bool, old, new, new_v: str, old_v: str | None,
-                           mode: str | None) -> str | None:
+                           mode: str | None, meta) -> str | None:
         """Zmiana bez aktora HA (aplikacja producenta, przycisk, karta RFID — integracja ładowarki zapisuje ją
         bez kontekstu użytkownika). Ręczna tylko, gdy nie jest echem naszego zapisu (`OWN_ECHO_S`) i:
         stop = status ładuje → wstrzymane/zatrzymane (NIE koniec ładowania, błąd, pauza auta, odłączenie)
@@ -537,7 +560,8 @@ class LoadsExecutor:
             return None
         if is_status:
             before, after = status_kind(old), status_kind(new)
-            if new_v == "stop" and not (before == "charging" and after == "paused"):
+            if new_v == "stop" and not (before == "charging" and (
+                    after == "paused" or (after == "end" and self._end_looks_manual(meta, mode)))):
                 return None
             if new_v == "start" and (after != "charging" or before in (None, "charging", "error")):
                 return None
@@ -581,9 +605,12 @@ class LoadsExecutor:
         device = getattr(ent, "device_id", None) if ent is not None else None
         return device if isinstance(device, str) and device else None
 
-    async def _async_forced(self, power_w, meta, charger: _Charger, charging: bool, rewrite_key: tuple) -> None:
+    async def _async_forced(self, power_w, meta, charger: _Charger, charging: bool, rewrite_key: tuple,
+                            start_key: tuple) -> None:
         """Nastawa (moc slotu; None = pełna moc) i start. `rewrite_key` = (plan, slot) — jeden ponowny
-        zapis nastawy przy rozjeździe odczytu na tę parę."""
+        zapis nastawy przy rozjeździe odczytu na tę parę. `start_key` = (sesja, slot) — najwyżej JEDEN
+        start na slot i sesję, także przez kolejne przeliczenia planu: ładowanie, które ustało bez naszego
+        stopu (np. stop z aplikacji ładowarki, którego nie rozpoznaliśmy), nie jest wznawiane."""
         value = None
         tol = 0.0
         if charger.setpoint is not None:
@@ -624,9 +651,11 @@ class LoadsExecutor:
                 written_value = value
         action = None
         # Bez potwierdzonej nastawy nie startujemy — ładowanie na starej, wyższej nastawie to ryzyko.
-        if in_sync and not charging and self._state.last_action != "start" and charger.start_stop is not None:
+        if in_sync and not charging and self._state.last_action != "start" and charger.start_stop is not None \
+                and self._started_in != start_key:
             if await self._async_command(charger, "start"):
                 action = "start"
+                self._started_in = start_key
         if written_value is not None or action is not None:
             await self._async_after_write(charger, setpoint=written_value, action=action)
 

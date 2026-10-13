@@ -312,8 +312,8 @@ def test_setpoint_rewritten_when_entity_differs_from_cache():
         await ex.async_on_plan(_schedule(_slot()))
         h.services.calls.clear()
         h.states.set(CURRENT, "10")    # ktoś zmienił nastawę poza Volcast
-        clock.advance(61)
-        await ex.async_on_plan(_schedule(_slot(), meta=_meta(gen=GEN + timedelta(minutes=1))))
+        clock.advance(61)              # następny slot (w tym samym slocie drugiego startu nie ma)
+        await ex.async_on_plan(_schedule(_slot(start=NOW, minutes=30), meta=_meta(gen=GEN + timedelta(minutes=1))))
         assert _calls(h) == [
             ("number", "set_value", {"entity_id": CURRENT, "value": 16.0}),
             ("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"}),
@@ -695,11 +695,13 @@ def test_exhausted_rewrite_starts_only_below_planned_setpoint():
             await ex.async_tick()
         h.services.calls.clear()
         ex.state.last_action = None                                    # nowa faza: start znowu dozwolony
+        ex._started_in = None
         clock.advance(61)
         await ex.async_tick()
         assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
         h.services.calls.clear()
         ex.state.last_action = None
+        ex._started_in = None
         h.states.set(CURRENT, "32")    # obca nastawa WYŻSZA niż plan: bez startu
         clock.advance(61)
         await ex.async_tick()
@@ -1174,6 +1176,104 @@ def test_status_kind_priorities(raw, kind):
     from .ha_fakes import FakeState
     assert status_kind(FakeState(STATUS, raw)) == kind
     assert status_kind(None) is None
+
+
+# ── „charged” po naszym starcie, jeden start na slot ──────────────────────
+
+async def _started_by_us(h, remaining=8.0, minutes=60, **kw):
+    """Nasz start w slocie forced (auto stało), potem ładuje; poza oknem echa."""
+    from custom_components.volcast.control.loads_executor import OWN_ECHO_S
+    ex, clock = await _started(h, **kw)
+    await ex.async_on_plan(_schedule(_slot(minutes=minutes), meta=_meta(remaining_kwh=remaining)))
+    assert [c[1] for c in _calls(h)] == ["set_value", "select_option"]
+    h.states.set(STATUS, "Charging")
+    h.services.calls.clear()
+    clock.advance(OWN_ECHO_S + 1)
+    return ex, clock
+
+
+def test_charged_with_energy_left_after_our_start_is_manual_stop_and_not_restarted():
+    async def body():
+        h = _hass()
+        ex, clock = await _started_by_us(h, remaining=8.0)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))      # Stop z aplikacji ładowarki
+        assert ex.state.manual_event == "stop"
+        h.states.set(STATUS, "Charged")
+        clock.advance(61)              # nowy plan, ten sam slot, nadal forced (np. chmura nie wstrzymała)
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=clock.utc, remaining_kwh=8.0)))
+        assert all(c[1] != "select_option" for c in _calls(h))       # brak drugiego startu w tym slocie
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("remaining", [0.0, 0.4, None])
+def test_charged_without_energy_left_is_end_of_charge(remaining):
+    async def body():
+        h = _hass()
+        ex, _ = await _started_by_us(h, remaining=remaining)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))
+        assert ex.state.manual_event is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_charged_with_stale_plan_is_end_of_charge():
+    async def body():
+        h = _hass()
+        ex, clock = await _started_by_us(h, remaining=8.0, minutes=180)
+        clock.advance(91 * 60)         # chmura milczy: `remaining_kwh` nieaktualne (slot forced trwa)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))
+        assert ex.state.manual_event is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_charged_without_our_start_in_this_slot_is_end_of_charge():
+    async def body():
+        h = _hass(status="Charging")   # ładowało już przed slotem: start nie był nasz
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(remaining_kwh=8.0)))
+        assert [c[1] for c in _calls(h)] == ["set_value"]
+        clock.advance(31)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Charged"))
+        assert ex.state.manual_event is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_new_plan_for_the_same_slot_does_not_start_twice():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        slot = _slot(minutes=60)
+        await ex.async_on_plan(_schedule(slot))
+        assert [c[1] for c in _calls(h)] == ["set_value", "select_option"]
+        h.services.calls.clear()
+        for i in range(3):             # przeliczenia planu w trakcie slotu, ładowarka stoi
+            clock.advance(61)
+            await ex.async_on_plan(_schedule(slot, meta=_meta(gen=GEN + timedelta(minutes=i + 1))))
+        assert _calls(h) == []
+        clock.advance(61)              # następny slot: znowu jeden start
+        nxt = _slot(start=slot.end, minutes=30)
+        clock.utc = slot.end + timedelta(seconds=1)
+        await ex.async_on_plan(_schedule(slot, nxt, meta=_meta(gen=GEN + timedelta(minutes=10))))
+        assert [c[1] for c in _calls(h)] == ["select_option"]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_new_session_in_the_same_slot_starts_again():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(minutes=60)))
+        h.services.calls.clear()
+        clock.advance(61)              # auto odłączone i podłączone ponownie: nowa sesja, ten sam slot
+        await ex.async_on_plan(_schedule(_slot(minutes=60, session="s2"),
+                                         meta=_meta(gen=GEN + timedelta(minutes=1), session_id="s2")))
+        assert [c[1] for c in _calls(h)] == ["select_option"]
+        await ex.async_stop()
+    asyncio.run(body())
 
 
 def test_status_change_right_after_own_write_is_not_manual():
