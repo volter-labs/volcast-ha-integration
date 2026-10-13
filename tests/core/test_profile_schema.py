@@ -629,3 +629,51 @@ def test_verify_flag_warns_only_in_verified_profile():
     assert profile_warnings(_with_counters("draft")) == []               # cały profil i tak testowy
     assert profile_warnings(ms_profile()) == []
     assert profile_warnings("not a profile") == []                        # nigdy wyjątek
+
+
+# ── opcjonalny blok `work_mode` (tylko odczyt trybu pracy falownika) ─────────
+
+def _wm():
+    return {"read": {"addr": 35000, "type": "u16"}, "neutral_values": [0],
+            "ha": {"domain": "select", "unique_id_regex": "work_mode$", "neutral_options": ["general"]},
+            "poll_s": 300}
+
+
+def test_work_mode_block_accepted_and_accessor():
+    from custom_components.volcast.core.profile import profile_from_dict
+    p = ms_profile()
+    p["work_mode"] = _wm()
+    assert validate_profile(p) == []
+    wm = profile_from_dict(p).work_mode
+    assert wm.read_addr == 35000 and wm.neutral_values == (0,) and wm.poll_s == 300
+    assert wm.ha_unique_id_regex == "work_mode$" and wm.ha_neutral_options == ("general",)
+
+
+def test_work_mode_absent_accessor_none():
+    from custom_components.volcast.core.profile import profile_from_dict
+    assert profile_from_dict(ms_profile()).work_mode is None
+
+
+def _wm_mut(f):
+    p = ms_profile()
+    p["work_mode"] = _wm()
+    f(p["work_mode"])
+    return p
+
+
+@pytest.mark.parametrize("mutate,needle", [
+    (lambda w: w.pop("neutral_values"), "$.work_mode.neutral_values"),
+    (lambda w: w.update(neutral_values=[]), "$.work_mode.neutral_values"),
+    (lambda w: w.update(neutral_values=["0"]), "$.work_mode.neutral_values"),
+    (lambda w: w["read"].update(type="u8"), "$.work_mode.read.type"),
+    (lambda w: w["read"].update(addr=70000), "$.work_mode.read.addr"),
+    (lambda w: w.pop("read"), "$.work_mode.read"),
+    (lambda w: w.update(poll_s=299), "$.work_mode.poll_s"),
+    (lambda w: w.update(poll_s="300"), "$.work_mode.poll_s"),
+    (lambda w: w["ha"].update(neutral_options=[]), "$.work_mode.ha.neutral_options"),
+    (lambda w: w["ha"].update(domain="sensor"), "$.work_mode.ha.domain"),
+    (lambda w: w["ha"].update(unique_id_regex="("), "$.work_mode.ha.unique_id_regex"),
+    (lambda w: w.update(extra=1), "$.work_mode.extra"),
+])
+def test_work_mode_block_rejected(mutate, needle):
+    assert needle in _errs(_wm_mut(mutate))

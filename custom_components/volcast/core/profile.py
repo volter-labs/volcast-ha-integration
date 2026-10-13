@@ -60,6 +60,17 @@ class NvmBudget:
 
 
 @dataclass(frozen=True)
+class WorkMode:
+    """Odczyt trybu pracy falownika (Eco/ToU itp.) — tylko odczyt, do ostrzeżeń."""
+    read_addr: int
+    read_type: str
+    neutral_values: tuple[int, ...]
+    ha_unique_id_regex: str
+    ha_neutral_options: tuple[str, ...]
+    poll_s: int
+
+
+@dataclass(frozen=True)
 class Profile:
     raw: Mapping[str, Any]
     id: str
@@ -83,6 +94,7 @@ class Profile:
     nvm_budget: NvmBudget | None
     # odczekanie przed ponownym odczytem zwrotnym, gdy pierwszy pokazał wartość sprzed zapisu
     readback_settle_s: float = DEFAULT_READBACK_SETTLE_S
+    work_mode: WorkMode | None = None
 
     def intent(self, name: str) -> Mapping[str, Any] | None:
         return self.raw["intents"][name]
@@ -110,6 +122,17 @@ class Profile:
         return self.modes[name].direction
 
 
+def _work_mode(w: Mapping[str, Any] | None) -> WorkMode | None:
+    if not w:
+        return None
+    return WorkMode(
+        read_addr=w["read"]["addr"], read_type=w["read"]["type"],
+        neutral_values=tuple(w["neutral_values"]),
+        ha_unique_id_regex=w["ha"]["unique_id_regex"],
+        ha_neutral_options=tuple(w["ha"]["neutral_options"]),
+        poll_s=w["poll_s"])
+
+
 def profile_from_dict(raw: dict) -> Profile:
     errors = validate_profile(raw)
     if errors:
@@ -133,6 +156,7 @@ def profile_from_dict(raw: dict) -> Profile:
         modbus=_modbus_spec(raw["modbus"]),
         nvm_budget=_nvm_budget(wp.get("nvm_budget")),
         readback_settle_s=float(wp.get("readback_settle_s", DEFAULT_READBACK_SETTLE_S)),
+        work_mode=_work_mode(raw.get("work_mode")),
     )
 
 
