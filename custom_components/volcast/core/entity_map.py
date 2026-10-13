@@ -97,6 +97,20 @@ def resolve_entities(profile, integration_domain: str,
     return ResolveResult(mapped, missing, ambiguous, incompatible, units)
 
 
+def resolve_work_mode_entity(profile, integration_domain: str,
+                             candidates: Iterable[EntityCandidate]) -> str | None:
+    """Encja select trybu pracy (blok `work_mode` profilu) po `ha.unique_id_regex`; brak bloku, brak
+    dopasowania albo niejednoznaczność -> None (stan zostaje `unknown`)."""
+    wm = getattr(profile, "work_mode", None)
+    if wm is None:
+        return None
+    rx = re.compile(wm.ha_unique_id_regex)
+    hits = sorted(c.entity_id for c in candidates
+                  if c.platform == integration_domain and c.entity_id.split(".", 1)[0] == "select"
+                  and rx.search(c.unique_id))
+    return hits[0] if len(hits) == 1 else None
+
+
 def entity_writes(params: Params, profile, integration_domain: str, mapped: Mapping[str, str],
                   keys: Iterable[str] | None = None,
                   units: Mapping[str, str | None] | None = None,

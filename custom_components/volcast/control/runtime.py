@@ -52,7 +52,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from ..cloud import control_choice
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
@@ -69,7 +69,7 @@ from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
 from ..core.control.recommend import recommend
 from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
-from ..core.entity_map import EntityCandidate, resolve_entities
+from ..core.entity_map import EntityCandidate, resolve_entities, resolve_work_mode_entity
 from ..core.modbus.views import UNCORRELATED_KINDS
 from ..registry_compat import all_devices
 from . import direct_search as ds
@@ -83,6 +83,7 @@ from .live import LiveSender
 from .signals_hub import SignalsHub
 from .store import ControlStore, async_installation_salt
 from .telemetry import TelemetrySender, control_block
+from .work_mode import WorkModeTracker, WorkModeWatcher
 from .verification import VerificationRunner, default_params, start_rung_for
 
 try:
@@ -215,6 +216,8 @@ class ControlRuntime:
     verification: object | None = None
     # drugi sterownik (`ConflictMonitor`); blok `conflicts` = `conflicts.conflicts()`
     conflicts: object | None = None
+    # tryb pracy falownika (`general` | `other:<kod>` | `unknown`); zasila go `start_work_mode_watch`
+    work_mode: WorkModeTracker = field(default_factory=WorkModeTracker)
     hass: object | None = None
     entry: object | None = None
     _meta_dirty: bool = False
@@ -595,17 +598,35 @@ def _choice_for(hass, entry, profiles) -> ProfileChoice | None:
     return select_profile(hints, profiles)
 
 
-def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
-    if choice is None or not choice.integration_domain:
-        return {}
+def _entity_candidates(hass, integration_domain: str) -> list[EntityCandidate]:
     cands = []
     for e in er.async_get(hass).entities.values():
-        if e.platform != choice.integration_domain or getattr(e, "disabled_by", None):
+        if e.platform != integration_domain or getattr(e, "disabled_by", None):
             continue
         st = hass.states.get(e.entity_id)
         unit = (st.attributes.get("unit_of_measurement") if st else None) or getattr(e, "unit_of_measurement", None)
         cands.append(EntityCandidate(e.entity_id, e.platform, e.unique_id or "", unit))
+    return cands
+
+
+def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
+    if choice is None or not choice.integration_domain:
+        return {}
+    cands = _entity_candidates(hass, choice.integration_domain)
     return dict(resolve_entities(choice.profile, choice.integration_domain, cands).mapped)
+
+
+def start_work_mode_watch(hass, choice: ProfileChoice | None, rt) -> None:
+    """Tryb pracy falownika z encji select (tylko odczyt): zasila `rt.work_mode`; brak encji = `unknown`."""
+    if choice is None or not choice.integration_domain or getattr(choice.profile, "work_mode", None) is None:
+        return
+    eid = resolve_work_mode_entity(choice.profile, choice.integration_domain,
+                                   _entity_candidates(hass, choice.integration_domain))
+    if eid is None:
+        return
+    watcher = WorkModeWatcher(eid, choice.profile.work_mode.ha_neutral_options, tracker=rt.work_mode)
+    watcher.prime(hass.states.get(eid))
+    rt.unsubs.append(async_track_state_change_event(hass, [eid], callback(watcher.on_event)))
 
 
 def mapped_with_overrides(hass, choice: ProfileChoice | None, options: Mapping) -> dict[str, str]:
@@ -929,6 +950,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
 
         rt.unsubs.append(async_dispatcher_connect(
             hass, SIGNAL_DISCOVERY_UPDATED.format(entry_id=entry.entry_id), _on_discovery))
+        start_work_mode_watch(hass, choice, rt)
         track_ha_stop(hass, rt)
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").
         hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})["control"] = rt
