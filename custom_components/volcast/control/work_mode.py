@@ -45,6 +45,8 @@ class WorkModeTracker:
 
     def __init__(self) -> None:
         self._state = UNKNOWN
+        # wołane po każdej zmianie stanu (oba źródła odczytu karmią ten sam tracker)
+        self.on_change: Callable[[str], None] | None = None
 
     @property
     def state(self) -> str:
@@ -55,6 +57,8 @@ class WorkModeTracker:
         if value is None or value == self._state:
             return False
         self._state = value
+        if self.on_change is not None:
+            self.on_change(value)
         return True
 
 

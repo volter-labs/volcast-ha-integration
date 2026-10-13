@@ -464,6 +464,10 @@
     "consent_mirror_error": {
       "title": "Impossibile attivare il controllo Volcast",
       "description": "Volcast non è riuscito ad attivare il controllo ({reason}), quindi l’interruttore resta spento. Riprova più tardi oppure attiva il controllo nell’app Volcast."
+    },
+    "inverter_work_mode": {
+      "title": "La modalità di lavoro dell'inverter può caricare la batteria dalla rete",
+      "description": "L'inverter ha una propria modalità di lavoro o programmazione (ad esempio Eco o una fascia oraria impostata nell'app del produttore) che può caricare la batteria dalla rete al di fuori del piano Volcast. Disattivi quella modalità o programmazione nell'app del produttore dell'inverter e lasci attiva la modalità generale (standard). Non spenga l'inverter stesso."
     }
   },
   "services": {

@@ -464,6 +464,10 @@
     "consent_mirror_error": {
       "title": "Volcast control could not be turned on",
       "description": "Volcast could not turn control on ({reason}), so the switch stays off. Try again later, or turn control on in the Volcast app."
+    },
+    "inverter_work_mode": {
+      "title": "Inverter work mode may charge the battery from the grid",
+      "description": "The inverter has its own work mode or schedule (for example Eco or a time-of-use schedule set in the manufacturer's app) that can charge the battery from the grid outside the Volcast plan. Switch that mode or schedule off in the manufacturer's inverter app and leave the general (standard) mode on. Do not switch the inverter itself off."
     }
   },
   "services": {

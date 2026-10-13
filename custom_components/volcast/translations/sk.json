@@ -464,6 +464,10 @@
     "consent_mirror_error": {
       "title": "Riadenie Volcast sa nepodarilo zapnúť",
       "description": "Volcast nemohol riadenie zapnúť ({reason}), preto prepínač zostáva vypnutý. Skúste to neskôr znova alebo zapnite riadenie v aplikácii Volcast."
+    },
+    "inverter_work_mode": {
+      "title": "Pracovný režim meniča môže nabíjať batériu zo siete",
+      "description": "Menič má vlastný pracovný režim alebo plán (napríklad Eco alebo tarifný plán nastavený v aplikácii výrobcu), ktorý môže nabíjať batériu zo siete mimo plánu Volcast. Tento režim alebo plán vypnite v aplikácii výrobcu meniča a ponechajte zapnutý všeobecný (štandardný) režim. Nevypínajte samotný menič."
     }
   },
   "services": {

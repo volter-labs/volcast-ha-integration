@@ -464,6 +464,10 @@
     "consent_mirror_error": {
       "title": "No se pudo activar el control de Volcast",
       "description": "Volcast no pudo activar el control ({reason}), así que el interruptor sigue desactivado. Inténtalo de nuevo más tarde o activa el control en la app de Volcast."
+    },
+    "inverter_work_mode": {
+      "title": "El modo de trabajo del inversor puede cargar la batería desde la red",
+      "description": "El inversor tiene su propio modo de trabajo o programación (por ejemplo Eco o un horario por tarifa ajustado en la app del fabricante) que puede cargar la batería desde la red fuera del plan de Volcast. Desactive ese modo o programación en la app del fabricante del inversor y deje activo el modo general (estándar). No apague el inversor en sí."
     }
   },
   "services": {

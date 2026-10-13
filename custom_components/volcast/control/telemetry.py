@@ -83,15 +83,21 @@ COUNTER_MAX_KWH = 1e7
 DRIVER_FEATURES = ("live",)
 
 
-def _with_sources(block: dict, readings_source: Mapping[str, str] | None) -> dict:
+def _with_sources(block: dict, readings_source: Mapping[str, str] | None, profile=None,
+                  work_mode: str | None = None) -> dict:
+    meta: dict = {}
     if readings_source:
-        block["meta"] = {"readings_source": dict(readings_source)}
+        meta["readings_source"] = dict(readings_source)
+    if getattr(profile, "work_mode", None) is not None:
+        meta["work_mode"] = work_mode or "unknown"        # profil z blokiem: pole jest zawsze
+    if meta:
+        block["meta"] = meta
     return block
 
 
 def driver_block(*, choice: ProfileChoice | None, control_mode: str | None, mapped_keys: Iterable[str],
                  local_switch: bool, limits: dict | None,
-                 readings_source: Mapping[str, str] | None = None) -> dict | None:
+                 readings_source: Mapping[str, str] | None = None, work_mode: str | None = None) -> dict | None:
     """Deklaracja wykonawcy; możliwości tylko w trybie encji z integracją i modelem `mode_setpoint`."""
     if choice is None:
         return None
@@ -105,11 +111,12 @@ def driver_block(*, choice: ProfileChoice | None, control_mode: str | None, mapp
         block["capabilities"] = caps
     if limits is not None:
         block["limits"] = limits
-    return _with_sources(block, readings_source)
+    return _with_sources(block, readings_source, choice.profile, work_mode)
 
 
 def direct_driver_block(*, profile, access: str, capabilities: Mapping[str, bool] | None, local_switch: bool,
-                        limits: dict | None, readings_source: Mapping[str, str] | None = None) -> dict:
+                        limits: dict | None, readings_source: Mapping[str, str] | None = None,
+                        work_mode: str | None = None) -> dict:
     """Deklaracja wykonawcy w trybie bezpośrednim — bez seriala i adresu."""
     block: dict = {"id": profile.id, "model": profile.control_model, "local_switch_enabled": bool(local_switch),
                    "access": access}
@@ -117,7 +124,7 @@ def direct_driver_block(*, profile, access: str, capabilities: Mapping[str, bool
         block["capabilities"] = dict(capabilities)
     if limits is not None:
         block["limits"] = limits
-    return _with_sources(block, readings_source)
+    return _with_sources(block, readings_source, profile, work_mode)
 
 
 def _declared_keys(choice: ProfileChoice | None, manual_keys: Iterable[str], *, direct: bool) -> frozenset[str]:
@@ -377,18 +384,25 @@ class TelemetrySender:
             _LOGGER.debug("Volcast telemetry: register limits skipped (%s)", type(err).__name__)
             return self._limits
 
+    def _work_mode_state(self) -> str:
+        """Stan trybu pracy z trackera runtime (tryb bezpośredni: tracker połączenia, gdy runtime jeszcze nie ma)."""
+        tracker = getattr(self.control_runtime, "work_mode", None) or getattr(self._direct, "work_mode", None)
+        return getattr(tracker, "state", "unknown")
+
     def _driver(self) -> dict | None:
         """Blok `driver` (oba tryby) z cechami integracji dopisanymi w jednym miejscu."""
         local = bool(getattr(self._executor, "local_switch", False))
         if self._direct is not None:
             block = direct_driver_block(profile=self._choice.profile, access="direct",
                                         capabilities=None if self._direct.trial else self._direct_caps,
-                                        local_switch=local, limits=self._direct_limits(), readings_source=self._sources)
+                                        local_switch=local, limits=self._direct_limits(), readings_source=self._sources,
+                                        work_mode=self._work_mode_state())
         else:
             unsupported = self._unsupported()
             block = driver_block(choice=self._choice, control_mode=self._entry.options.get(OPT_CONTROL_MODE),
                                  mapped_keys=[k for k in self._profile_map if k not in unsupported],
-                                 local_switch=local, limits=self._limits, readings_source=self._sources)
+                                 local_switch=local, limits=self._limits, readings_source=self._sources,
+                                 work_mode=self._work_mode_state())
         if block is not None:
             block["features"] = list(DRIVER_FEATURES)
         rt = self.control_runtime

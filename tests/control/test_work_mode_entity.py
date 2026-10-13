@@ -115,8 +115,9 @@ def test_runtime_wiring_primes_and_subscribes(monkeypatch):
     rt = SimpleNamespace(work_mode=WorkModeTracker(), unsubs=[])
     rt_mod.start_work_mode_watch(hass, choice, rt)
     assert rt.work_mode.state == "other:eco_mode" and subs[0][0] == ["select.inv_work_mode"] and len(rt.unsubs) == 1
-    # brak encji -> unknown, bez subskrypcji
+    # brak encji -> unknown, bez subskrypcji stanu (jest tylko zegar ponowienia)
     monkeypatch.setattr(rt_mod, "_entity_candidates", lambda hass, dom: [])
+    monkeypatch.setattr(rt_mod, "async_track_time_interval", lambda hass, action, interval: (lambda: None))
     rt2 = SimpleNamespace(work_mode=WorkModeTracker(), unsubs=[])
     rt_mod.start_work_mode_watch(hass, choice, rt2)
-    assert rt2.work_mode.state == "unknown" and rt2.unsubs == []
+    assert rt2.work_mode.state == "unknown" and len(rt2.unsubs) == 1

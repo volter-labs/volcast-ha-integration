@@ -616,17 +616,55 @@ def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
     return dict(resolve_entities(choice.profile, choice.integration_domain, cands).mapped)
 
 
+WORK_MODE_ISSUE = "inverter_work_mode"
+WORK_MODE_RETRY_S = 60
+
+
+def wire_work_mode(hass, rt, conn) -> None:
+    """Jeden tracker trybu pracy dla obu źródeł (rejestr z `conn`, encja select) i zgłoszenie w Naprawach:
+    `other:*` je zakłada, `general` kasuje, `unknown` go nie rusza (nieznany stan nie zmienia ostrzeżenia)."""
+    def _changed(state: str) -> None:
+        try:
+            if state.startswith("other:"):
+                ir.async_create_issue(hass, DOMAIN, WORK_MODE_ISSUE, is_fixable=False,
+                                      severity=getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning"),
+                                      translation_key="inverter_work_mode")
+            elif state == "general":
+                ir.async_delete_issue(hass, DOMAIN, WORK_MODE_ISSUE)
+        except Exception as err:  # noqa: BLE001 — ostrzeżenie nigdy nie psuje odczytu
+            _LOGGER.debug("Volcast work mode issue skipped (%s)", type(err).__name__)
+
+    rt.work_mode.on_change = _changed
+    if conn is not None:
+        conn.work_mode = rt.work_mode
+
+
 def start_work_mode_watch(hass, choice: ProfileChoice | None, rt) -> None:
-    """Tryb pracy falownika z encji select (tylko odczyt): zasila `rt.work_mode`; brak encji = `unknown`."""
+    """Tryb pracy falownika z encji select (tylko odczyt): zasila `rt.work_mode`; brak encji = `unknown`.
+    Encji może jeszcze nie być (start tuż po restarcie HA) — wtedy ponawiamy co minutę, aż się pojawi."""
     if choice is None or not choice.integration_domain or getattr(choice.profile, "work_mode", None) is None:
         return
-    eid = resolve_work_mode_entity(choice.profile, choice.integration_domain,
-                                   _entity_candidates(hass, choice.integration_domain))
-    if eid is None:
+
+    def _resolve() -> bool:
+        eid = resolve_work_mode_entity(choice.profile, choice.integration_domain,
+                                       _entity_candidates(hass, choice.integration_domain))
+        if eid is None:
+            return False
+        watcher = WorkModeWatcher(eid, choice.profile.work_mode.ha_neutral_options, tracker=rt.work_mode)
+        watcher.prime(hass.states.get(eid))
+        rt.unsubs.append(async_track_state_change_event(hass, [eid], callback(watcher.on_event)))
+        return True
+
+    if _resolve():
         return
-    watcher = WorkModeWatcher(eid, choice.profile.work_mode.ha_neutral_options, tracker=rt.work_mode)
-    watcher.prime(hass.states.get(eid))
-    rt.unsubs.append(async_track_state_change_event(hass, [eid], callback(watcher.on_event)))
+    stop: list = []
+
+    def _retry(_now=None) -> None:
+        if stop and _resolve():
+            stop.pop()()
+
+    stop.append(async_track_time_interval(hass, _retry, timedelta(seconds=WORK_MODE_RETRY_S)))
+    rt.unsubs.append(lambda: stop.pop()() if stop else None)
 
 
 def mapped_with_overrides(hass, choice: ProfileChoice | None, options: Mapping) -> dict[str, str]:
@@ -950,6 +988,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
 
         rt.unsubs.append(async_dispatcher_connect(
             hass, SIGNAL_DISCOVERY_UPDATED.format(entry_id=entry.entry_id), _on_discovery))
+        wire_work_mode(hass, rt, conn)
         start_work_mode_watch(hass, choice, rt)
         track_ha_stop(hass, rt)
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").

@@ -464,6 +464,10 @@
     "consent_mirror_error": {
       "title": "Řízení Volcast se nepodařilo zapnout",
       "description": "Volcast nemohl řízení zapnout ({reason}), proto přepínač zůstává vypnutý. Zkuste to později znovu nebo zapněte řízení v aplikaci Volcast."
+    },
+    "inverter_work_mode": {
+      "title": "Pracovní režim střídače může nabíjet baterii ze sítě",
+      "description": "Střídač má vlastní pracovní režim nebo plán (například Eco nebo tarifní plán nastavený v aplikaci výrobce), který může nabíjet baterii ze sítě mimo plán Volcast. Tento režim nebo plán vypněte v aplikaci výrobce střídače a ponechte zapnutý obecný (standardní) režim. Nevypínejte samotný střídač."
     }
   },
   "services": {

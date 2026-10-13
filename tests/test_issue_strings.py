@@ -28,7 +28,7 @@ def _issue_keys_in_code() -> set[str]:
 
 def test_code_uses_the_known_issue_keys():
     assert _issue_keys_in_code() >= {"production_tracking_available", "foreign_control", "control_error",
-                                    "unsupported_setting"}
+                                    "unsupported_setting", "inverter_work_mode"}
 
 
 @pytest.mark.parametrize("path", [COMPONENT / "strings.json", COMPONENT / "translations" / "en.json"])
