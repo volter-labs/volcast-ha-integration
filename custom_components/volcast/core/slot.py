@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
+from .ev.model import LoadSlot, LoadsMeta, parse_loads
+
 
 class Action(str, Enum):
     CHARGE = "charge"
@@ -71,6 +73,9 @@ class Schedule:
     slots: tuple[Slot, ...]
     fallback: Fallback
     control_enabled: bool
+    # Plan ładowarki EV; starsze koperty nie mają kluczy — domyślnie puste.
+    loads: tuple[LoadSlot, ...] = ()
+    loads_meta: LoadsMeta | None = None
 
     def slot_for(self, moment: datetime) -> Slot | None:
         for s in self.slots:
@@ -213,6 +218,8 @@ def parse_schedule(raw: Any) -> Schedule:
         raise InvalidSchedule("generated_at", f"musi być tekstem, jest {gen!r}")
     else:
         generated_at = _dt(gen, "generated_at")
+    # Plan ładowarki jest leniwy: zły kształt nie unieważnia planu baterii.
+    loads, loads_meta = parse_loads(raw)
     return Schedule(
         schedule_id=sid,
         generated_at=generated_at,
@@ -220,6 +227,8 @@ def parse_schedule(raw: Any) -> Schedule:
         fallback=fallback,
         # Brak pola = False. Starsza chmura nie może dać prawa sterowania.
         control_enabled=raw.get("control_enabled") is True,
+        loads=tuple(loads),
+        loads_meta=loads_meta,
     )
 
 
