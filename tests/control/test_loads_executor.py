@@ -1124,6 +1124,141 @@ def test_not_a_manual_event(case):
     asyncio.run(body())
 
 
+# ── ręczna ingerencja spoza HA (aplikacja producenta, przycisk, karta) ─────
+
+def _no_ctx(eid, old, new):
+    """Zmiana zapisana przez integrację ładowarki z jej chmury: kontekst bez aktora i nie nasz."""
+    return _event(eid, old, new, user=None)
+
+
+async def _charging_forced_quiet(h, **kw):
+    ex, clock = await _charging_forced(h, **kw)
+    from custom_components.volcast.control.loads_executor import OWN_ECHO_S
+    clock.advance(OWN_ECHO_S + 1)               # poza oknem echa naszych zapisów
+    return ex, clock
+
+
+@pytest.mark.parametrize("new", ["Paused", "Stopped", "SuspendedEVSE", "charging_paused", "Suspended"])
+def test_charger_app_stop_in_forced_slot_is_manual(new):
+    async def body():
+        h = _hass()
+        ex, _ = await _charging_forced_quiet(h)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", new))
+        assert ex.state.manual_event == "stop", new
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("new", ["Finished", "Charging finished", "Completed", "Full", "charging_complete", "Charged",
+                                 "Error", "Fault", "charging_error", "unavailable", "unknown",
+                                 "SuspendedEV", "suspended_ev", "Waiting", "Available", "Disconnected", "Unplugged"])
+def test_end_error_car_side_and_unplug_are_not_manual(new):
+    async def body():
+        h = _hass()
+        ex, _ = await _charging_forced_quiet(h)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", new))
+        assert ex.state.manual_event is None, new
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("raw,kind", [
+    ("Charging", "charging"), ("Paused", "paused"), ("SuspendedEVSE", "paused"),
+    ("Stopped - finished", "end"), ("Stopped (full)", "end"), ("Paused: error", "error"), ("Stopped, fault", "error"),
+    ("Paused, disconnected", "unplugged"), ("Stopped (not connected)", "unplugged"), ("SuspendedEV", "car"),
+    ("Paused, waiting for car", "car"), ("Idle", "other"), ("unavailable", None),
+])
+def test_status_kind_priorities(raw, kind):
+    from custom_components.volcast.control.loads_executor import status_kind
+
+    from .ha_fakes import FakeState
+    assert status_kind(FakeState(STATUS, raw)) == kind
+    assert status_kind(None) is None
+
+
+def test_status_change_right_after_own_write_is_not_manual():
+    async def body():
+        h = _hass()
+        ex, clock = await _charging_forced(h)       # nasza nastawa i start chwilę temu
+        clock.advance(10)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Paused"))      # echo naszego zapisu
+        assert ex.state.manual_event is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_charger_app_stop_on_command_entity_is_manual():
+    async def body():
+        h = _hass()
+        ex, _ = await _charging_forced_quiet(h)
+        ex.on_state_event(_no_ctx(START_STOP, "No operation", "Stop charging"))
+        assert ex.state.manual_event == "stop"
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_new_plan_after_charger_app_stop_does_not_resume():
+    async def body():
+        h = _hass()
+        ex, clock = await _charging_forced_quiet(h)
+        ex.on_state_event(_no_ctx(STATUS, "Charging", "Paused"))
+        h.states.set(STATUS, "Paused")
+        h.services.calls.clear()
+        clock.advance(61)                           # plan w drodze (sprzed zdarzenia), slot dalej forced
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=NOW + timedelta(seconds=1))))
+        assert _calls(h) == []
+        clock.advance(61)                           # plan po zdarzeniu: chmura wstrzymała sesję (off)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, start=NOW, minutes=60),
+                                         meta=_meta(gen=clock.utc)))
+        assert _calls(h) == []                      # nie ładuje — stop nie jest potrzebny, start nie idzie
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_charger_app_start_in_off_slot_after_our_stop_is_manual():
+    async def body():
+        from custom_components.volcast.control.loads_executor import OWN_ECHO_S
+        h = _hass(status="Charging")
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60)))   # autostart → nasz stop
+        h.states.set(STATUS, "Stopped")
+        clock.advance(OWN_ECHO_S + 1)
+        ex.on_state_event(_no_ctx(STATUS, "Stopped", "Charging"))
+        assert ex.state.manual_event == "start"
+        h.services.calls.clear()
+        clock.advance(61)
+        h.states.set(STATUS, "Charging")
+        await ex.async_tick()
+        assert _calls(h) == []                      # ręcznie włączonego ładowania nie zatrzymujemy
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_autostart_in_off_slot_without_our_stop_is_not_manual():
+    async def body():
+        from custom_components.volcast.control.loads_executor import OWN_ECHO_S
+        h = _hass(status="Available")
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60)))
+        clock.advance(OWN_ECHO_S + 1)
+        ex.on_state_event(_no_ctx(STATUS, "Available", "Charging"))     # auto ruszyło samo po podłączeniu
+        assert ex.state.manual_event is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_status_start_right_after_our_stop_is_not_manual():
+    async def body():
+        h = _hass(status="Charging")
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60)))
+        clock.advance(5)
+        ex.on_state_event(_no_ctx(STATUS, "Stopped", "Charging"))       # ładowarka jeszcze nie przyjęła stopu
+        assert ex.state.manual_event is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
 def test_state_change_watch_follows_charger_entities(monkeypatch):
     from custom_components.volcast.control import loads_executor as mod
     subs, unsubs = [], []

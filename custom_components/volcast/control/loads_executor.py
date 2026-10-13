@@ -34,10 +34,14 @@ Gdy reguła działa: pełna moc i start jak w slocie `forced` (także bez slotu)
 `fallback_since` w magazynie; `fallback: true` w raporcie do świeżego planu i zatrzaśnięte do
 przyjęcia raportu (`async_ack_report`), żeby chmura zobaczyła także epizod zakończony przed wysyłką.
 
-Ręczna ingerencja: obserwacja encji `status` i `start_stop` ładowarki. Zmiana z aktorem
-(użytkownik albo automatyzacja w HA — `is_foreign_change`), nie z naszego zapisu: „stop” (status
-ładuje → nie ładuje albo komenda stop) w slocie `forced`, „start” w slocie `off`. Zmiana bez aktora
-(auto skończyło, pauza auta, harmonogram auta) NIE jest ręczna. Zdarzenie trafia do stanu od razu
+Ręczna ingerencja: obserwacja encji `status` i `start_stop` ładowarki; nasz zapis (kontekst pisarza)
+nigdy nie jest ręczny. Zmiana z aktorem (użytkownik albo automatyzacja w HA — `is_foreign_change`):
+„stop” w slocie `forced`, „start” w slocie `off`. Zmiana bez aktora (aplikacja producenta, przycisk,
+karta RFID — integracja ładowarki zapisuje ją bez kontekstu użytkownika), poza oknem echa naszych
+zapisów (`OWN_ECHO_S`): „stop” = status ładuje → wstrzymane/zatrzymane albo komenda stop w slocie
+`forced`; „start” = status → ładuje albo komenda start w slocie `off`, ale tylko po NASZYM stopie w tej
+fazie. Koniec ładowania (finished/complete/full), błąd, niedostępność, pauza po stronie auta,
+odłączenie, autostart po podłączeniu i harmonogram auta NIE są ręczne (`status_kind`). Zdarzenie trafia do stanu od razu
 w obsłudze zdarzenia (przed następnym odczytem telemetrii) z `manual_at` = czas obsługi, telemetria
 wysyła je raz (`async_ack_manual` po przyjęciu), a wykonawca nie pisze do ładowarki, dopóki nie
 przyjdzie plan wygenerowany PO zdarzeniu (`plan_generated_at` > `manual_at`; także reguła awaryjna
@@ -94,6 +98,14 @@ _SETPOINT_UNITS = ("A", "W")
 STARTUP_GRACE_S = 300
 # Wstrzymanie po ręcznej ingerencji bez nowego planu dłużej niż to — jedno ostrzeżenie (bez wznowienia).
 HOLD_WARN_S = 6 * 3600
+# Zmiana stanu ładowarki do tylu sekund po NASZYM zapisie to echo tego zapisu (odczyt kontrolny jest po 20 s).
+OWN_ECHO_S = 30.0
+# Słowa stanu statusu (zmiana bez aktora HA: aplikacja producenta, przycisk, karta RFID).
+_END_WORDS = frozenset({"finish", "finished", "complete", "completed", "full", "done", "charged", "end", "ended"})
+_ERROR_WORDS = frozenset({"error", "fault", "failed", "failure", "offline", "alarm", "unavailable", "unknown"})
+_UNPLUGGED_WORDS = frozenset({"available", "disconnected", "unplugged"})
+_CAR_SIDE_WORDS = frozenset({"suspendedev", "waiting", "wait"})
+_PAUSE_PREFIXES = ("pause", "stop", "suspend")
 _START_STOP_DOMAINS = ("select", "switch")
 
 
@@ -158,6 +170,28 @@ def _status_word(state) -> str | None:
     if state is None or state.state in _UNAVAILABLE:
         return None
     return "start" if is_charging(state.state) else "stop"
+
+
+def status_kind(state) -> str | None:
+    """Rodzaj stanu statusu: `charging`, `paused` (wstrzymane/zatrzymane po stronie ładowarki), `end` (koniec,
+    auto naładowane), `error`, `car` (pauza po stronie auta), `unplugged`, `other`; nieczytelny = None."""
+    if state is None or not isinstance(state.state, str) or state.state in _UNAVAILABLE:
+        return None
+    tokens = _tokens(state.state)
+    words = set(tokens)
+    if words & _ERROR_WORDS:
+        return "error"
+    if words & _END_WORDS:
+        return "end"
+    if is_charging(state.state):
+        return "charging"
+    if words & _CAR_SIDE_WORDS or ("ev" in words and "evse" not in words):
+        return "car"
+    if words & _UNPLUGGED_WORDS or ("not" in words and "connected" in words):
+        return "unplugged"
+    if any(t.startswith(_PAUSE_PREFIXES) for t in tokens):
+        return "paused"
+    return "other"
 
 
 def _command_word(eid: str, state) -> str | None:
@@ -475,20 +509,50 @@ class LoadsExecutor:
         if new_v not in ("start", "stop"):
             return None
         ctx = getattr(new, "context", None) or getattr(event, "context", None)
-        if not is_foreign_change(ours=self._writer.is_ours(getattr(ctx, "id", None)),
-                                 has_actor=bool(getattr(ctx, "user_id", None) or getattr(ctx, "parent_id", None)),
-                                 new_value=new_v, expected=old_v):
+        ours = self._writer.is_ours(getattr(ctx, "id", None))
+        if ours:
             return None
-        if self._held():
-            return new_v                         # zmiana zdania przed nowym planem: wygrywa ostatnia decyzja
         if self._state.fallback_since is not None:
             mode = "forced"                      # tryb awaryjny działa jak slot `forced`
         else:
             slot = self._current_slot(meta, self._utcnow())
             mode = slot.mode if slot is not None else None
-        if (new_v, mode) in (("stop", "forced"), ("start", "off")):
-            return new_v
+        if bool(getattr(ctx, "user_id", None) or getattr(ctx, "parent_id", None)):
+            # użytkownik albo automatyzacja w HA
+            if not is_foreign_change(ours=False, has_actor=True, new_value=new_v, expected=old_v):
+                return None
+            if self._held():
+                return new_v                     # zmiana zdania przed nowym planem: wygrywa ostatnia decyzja
+            return new_v if (new_v, mode) in (("stop", "forced"), ("start", "off")) else None
+        return self._unattended_action(eid == charger.status, old, new, new_v, old_v, mode)
+
+    def _unattended_action(self, is_status: bool, old, new, new_v: str, old_v: str | None,
+                           mode: str | None) -> str | None:
+        """Zmiana bez aktora HA (aplikacja producenta, przycisk, karta RFID — integracja ładowarki zapisuje ją
+        bez kontekstu użytkownika). Ręczna tylko, gdy nie jest echem naszego zapisu (`OWN_ECHO_S`) i:
+        stop = status ładuje → wstrzymane/zatrzymane (NIE koniec ładowania, błąd, pauza auta, odłączenie)
+        albo komenda stop; start = status nie-ładuje → ładuje albo komenda start, w slocie `off` tylko po
+        NASZYM stopie w tej fazie (autostart po podłączeniu i harmonogram auta nie są ręczne)."""
+        if self._recent_own_write():
+            return None
+        if is_status:
+            before, after = status_kind(old), status_kind(new)
+            if new_v == "stop" and not (before == "charging" and after == "paused"):
+                return None
+            if new_v == "start" and (after != "charging" or before in (None, "charging", "error")):
+                return None
+        elif old_v is None or old_v == new_v:
+            return None
+        held = self._held()
+        if new_v == "stop" and (held or mode == "forced"):
+            return "stop"
+        if new_v == "start" and (held or (mode == "off" and self._state.last_action == "stop")):
+            return "start"
         return None
+
+    def _recent_own_write(self) -> bool:
+        now = self._clock()
+        return any(at <= now and now - at < OWN_ECHO_S for at in self._last_write.values())
 
     def _signal(self) -> None:
         async_dispatcher_send(self._hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=self._entry.entry_id))
