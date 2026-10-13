@@ -635,6 +635,12 @@ def wire_work_mode(hass, rt, conn) -> None:
             _LOGGER.debug("Volcast work mode issue skipped (%s)", type(err).__name__)
 
     rt.work_mode.on_change = _changed
+
+    def _clear() -> None:
+        """Rozładunek wpisu: ostrzeżenie o trybie pracy nie zostaje po wyłączeniu sterowania ani usunięciu."""
+        rt.work_mode.on_change = None
+        ir.async_delete_issue(hass, DOMAIN, WORK_MODE_ISSUE)
+    rt.unsubs.append(_clear)
     if conn is not None:
         conn.work_mode = rt.work_mode
 
@@ -659,6 +665,7 @@ def start_work_mode_watch(hass, choice: ProfileChoice | None, rt) -> None:
         return
     stop: list = []
 
+    @callback
     def _retry(_now=None) -> None:
         if stop and _resolve():
             stop.pop()()

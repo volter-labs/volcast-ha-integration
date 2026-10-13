@@ -147,3 +147,80 @@ def test_entity_retry_resolves_when_entity_appears_then_stops(monkeypatch):
     assert rt.work_mode.state == "other:eco_mode" and subs == [["select.inv_work_mode"]] and stopped == [True]
     ticks[0](None)                                         # po rozwiązaniu nic więcej
     assert len(subs) == 1
+
+
+# ── TelemetrySender._driver() ──
+
+
+def _sender(profile, *, direct, rt):
+    s = object.__new__(tm.TelemetrySender)
+    s._executor = SimpleNamespace(local_switch=False)
+    s._choice = SimpleNamespace(profile=profile, integration_domain=None)
+    s._direct = direct
+    s._direct_caps = None
+    s._entry = SimpleNamespace(options={})
+    s._profile_map = {}
+    s._limits = None
+    s._sources = {}
+    s._direct_limits = lambda: None
+    s._unsupported = lambda: set()
+    s.control_runtime = rt
+    return s
+
+
+def _rt(tracker):
+    return SimpleNamespace(work_mode=tracker, control_block=lambda: {})
+
+
+def test_sender_driver_follows_runtime_tracker():
+    tracker = WorkModeTracker()
+    direct = SimpleNamespace(trial=False, work_mode=WorkModeTracker())
+    s = _sender(_wm_profile(), direct=direct, rt=_rt(tracker))
+    assert s._driver()["meta"]["work_mode"] == "unknown"
+    tracker.update("general")
+    assert s._driver()["meta"]["work_mode"] == "general"
+    tracker.update("other:3")
+    assert s._driver()["meta"]["work_mode"] == "other:3"
+
+
+def test_sender_direct_falls_back_to_connection_tracker():
+    direct = SimpleNamespace(trial=False, work_mode=WorkModeTracker())
+    direct.work_mode.update("other:7")
+    s = _sender(_wm_profile(), direct=direct, rt=None)
+    assert s._driver()["meta"]["work_mode"] == "other:7"
+
+
+def test_sender_entity_mode_and_profile_without_block():
+    tracker = WorkModeTracker()
+    tracker.update("general")
+    assert _sender(_wm_profile(), direct=None, rt=_rt(tracker))._driver()["meta"]["work_mode"] == "general"
+    out = _sender(_plain(), direct=SimpleNamespace(trial=False, work_mode=tracker), rt=_rt(tracker))._driver()
+    assert "work_mode" not in out.get("meta", {})
+    out = _sender(_plain(), direct=None, rt=_rt(tracker))._driver()
+    assert "work_mode" not in out.get("meta", {})
+
+
+# ── wątek pętli zdarzeń i rozładunek ──
+
+
+def test_retry_timer_action_runs_in_event_loop(monkeypatch):
+    # conftest podstawia `callback` tożsamością — oznaczamy funkcję sami i sprawdzamy, że akcja timera przeszła przez dekorator
+    monkeypatch.setattr(rt_mod, "callback", lambda f: setattr(f, "_hass_callback", True) or f)
+    monkeypatch.setattr(rt_mod, "_entity_candidates", lambda hass, dom: [])
+    actions = []
+    monkeypatch.setattr(rt_mod, "async_track_time_interval", lambda hass, a, i: actions.append(a) or (lambda: None))
+    rt = SimpleNamespace(work_mode=WorkModeTracker(), unsubs=[])
+    choice = SimpleNamespace(profile=_wm_profile(), integration_domain="goodwe")
+    rt_mod.start_work_mode_watch(SimpleNamespace(), choice, rt)
+    assert getattr(actions[0], "_hass_callback", False)
+
+
+def test_unload_removes_the_issue(issues):
+    rt = _wired()
+    rt.work_mode.update("other:3")
+    issues.clear()
+    for unsub in rt.unsubs:
+        unsub()
+    assert issues == [("delete", "inverter_work_mode")]
+    rt.work_mode.update("other:4")                        # po rozładunku hak nie zakłada zgłoszenia
+    assert issues == [("delete", "inverter_work_mode")]
