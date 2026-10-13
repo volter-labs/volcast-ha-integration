@@ -3,12 +3,16 @@
 Czyta encje ról zapisanych w opcjach (`ev_chargers`) i przekazuje je dalej bez interpretacji:
 stan encji statusu idzie jako tekst, tak jak go podaje HA. Jedyna obróbka to przeliczenie
 jednostek (moc do W, energia do kWh, nastawa do A albo W). Nieznana jednostka nie jest zgadywana.
+
+Rola `start_stop` (gdy przypisana): `start_stop_state` i `start_stop_options` dosłownie. Blok
+`executor` (`last_write_at`, `last_action`, `manual_event`, `manual_at`, `fallback`) — z wykonawcy
+ładowarki, tylko dla ładowarki, którą wykonawca prowadzi.
 """
 from __future__ import annotations
 
 import math
 import logging
-from typing import Any
+from typing import Any, Callable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,9 +41,11 @@ def _unit(state) -> str | None:
 
 
 class LoadsReader:
-    def __init__(self, hass, entry) -> None:
+    def __init__(self, hass, entry, *, executor_report: Callable[[str], dict | None] | None = None) -> None:
         self._hass, self._entry = hass, entry
+        self._executor_report = executor_report
         self._warned = False
+        self._report_warned = False
 
     def read(self) -> list[dict] | None:
         """Wpisy bloku `loads`; None, gdy nie ma potwierdzonej ładowarki."""
@@ -91,7 +97,31 @@ class LoadsReader:
         entry["energy_kwh"] = round(energy, 6) if energy is not None else None
         entry["setpoint"] = self._setpoint(self._state(roles, "setpoint"))
         entry["source"] = {"executor": "ha", "device_ref": roles.get("setpoint") or key}
+        if isinstance(roles.get("start_stop"), str) and roles.get("start_stop"):
+            # stan i opcje encji start/stop dosłownie (jak status) — tylko gdy rola jest przypisana
+            sw = self._state(roles, "start_stop")
+            sw_options = sw.attributes.get("options") if sw is not None else None
+            entry["start_stop_state"] = sw.state if sw is not None else None
+            entry["start_stop_options"] = [str(o) for o in sw_options] \
+                if isinstance(sw_options, (list, tuple)) else None
+        report = self._report(key)
+        if report is not None:
+            entry["executor"] = report
         return entry
+
+    def _report(self, key: str) -> dict | None:
+        """Raport wykonawcy tej ładowarki; błąd raportu nie zabiera wpisu."""
+        if self._executor_report is None:
+            return None
+        try:
+            report = self._executor_report(key)
+        except Exception as err:  # noqa: BLE001 — raport jest dodatkiem do odczytu
+            if not self._report_warned:
+                self._report_warned = True
+                _LOGGER.warning("Volcast EV charger executor report skipped (%s)", type(err).__name__)
+            return None
+        self._report_warned = False
+        return dict(report) if isinstance(report, dict) else None
 
     @staticmethod
     def _scaled(state, factors: dict[str, float]) -> float | None:

@@ -22,7 +22,24 @@ jeszcze wykonywany (nic nie zapisujemy).
 Odstęp: najwyżej jeden zapis na encję na `LOADS_MIN_WRITE_INTERVAL_S` (liczony od próby, także
 nieudanej). Powtórek tej samej wartości pilnują `last_setpoint_a` / `last_action`, nie odstęp —
 po obcym „stop” ten sam „start” musi dać się wysłać ponownie. Odczyt kontrolny po
-`LOADS_READBACK_S` tylko loguje rozjazd (bez ponownego zapisu).
+`LOADS_READBACK_S` tylko loguje rozjazd (bez ponownego zapisu). Encja nastawy, która trzyma inną
+wartość niż plan (własny limit ładowarki, kabel, ręczna zmiana), dostaje najwyżej JEDEN ponowny
+zapis na plan i slot; potem start idzie tylko, gdy odczyt jest NIŻSZY niż plan (wyższa obca
+nastawa mogłaby przekroczyć limit przyłącza).
+
+Reguła awaryjna (`core/ev/fallback.py`): wiek planu = czas od ostatniej odpowiedzi chmury
+(`note_plan_confirmed`, nowy plan) — przed pierwszą odpowiedzią od startu: od wygenerowania planu.
+Gdy reguła działa: pełna moc i start jak w slocie `forced` (także bez slotu), nigdy stop;
+`fallback_since` w magazynie i `fallback: true` w raporcie, do świeżego planu.
+
+Ręczna ingerencja: obserwacja encji `status` i `start_stop` ładowarki. Zmiana z aktorem
+(użytkownik albo automatyzacja w HA — `is_foreign_change`), nie z naszego zapisu: „stop” (status
+ładuje → nie ładuje albo komenda stop) w slocie `forced`, „start” w slocie `off`. Zmiana bez aktora
+(auto skończyło, pauza auta, harmonogram auta) NIE jest ręczna. Zdarzenie trafia do stanu od razu
+w obsłudze zdarzenia (przed następnym odczytem telemetrii) z `manual_at` = czas obsługi, telemetria
+wysyła je raz (`async_ack_manual` po przyjęciu), a wykonawca nie pisze do ładowarki, dopóki nie
+przyjdzie plan wygenerowany PO zdarzeniu (`plan_generated_at` > `manual_at`; także reguła awaryjna
+czeka). Wszystko tylko przy otwartych bramkach.
 
 Status „ładuje” = słowo z jawnej listy (`charging`) w stanie encji statusu i żadne słowo z listy
 wykluczeń (przeczenia, pauza, koniec, błąd, oczekiwanie). Stany w innych językach albo CamelCase
@@ -36,16 +53,21 @@ import math
 import re
 import time
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Callable, Iterable, Mapping
 
+from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.util import dt as dt_util
 
-from ..const import LOADS_EXECUTOR_INTERVAL_S, LOADS_MIN_WRITE_INTERVAL_S, LOADS_READBACK_S
+from ..const import (LOADS_EXECUTOR_INTERVAL_S, LOADS_MIN_WRITE_INTERVAL_S, LOADS_READBACK_S,
+                     SIGNAL_CONTROL_STATE_UPDATED)
+from ..core.control.takeover import is_foreign_change
 from ..core.entity_map import EntityWrite
 from ..core.ev.convert import slot_for, watts_to_amps
+from ..core.ev.fallback import should_force
 from ..core.write_sequence import OK
 from .loads_store import LoadsState
 
@@ -109,6 +131,36 @@ def _num(v) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def _when(text: Any) -> datetime | None:
+    """Czas ISO-8601 ze strefą z magazynu; zły albo bez strefy = None."""
+    if not isinstance(text, str):
+        return None
+    try:
+        d = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return d if d.tzinfo is not None else None
+
+
+def _status_word(state) -> str | None:
+    """Stan encji statusu jako `start` (ładuje) / `stop` (nie ładuje); nieczytelny = None."""
+    if state is None or state.state in _UNAVAILABLE:
+        return None
+    return "start" if is_charging(state.state) else "stop"
+
+
+def _command_word(eid: str, state) -> str | None:
+    """Stan encji start/stop jako komenda; czytelna opcja bez komendy („No operation”) = `idle`."""
+    if state is None or state.state in _UNAVAILABLE:
+        return None
+    if eid.startswith("switch."):
+        return {"on": "start", "off": "stop"}.get(state.state, "idle")
+    for action in ("start", "stop"):
+        if pick_option([state.state], action) is not None:
+            return action
+    return "idle"
+
+
 @dataclass(frozen=True)
 class _Charger:
     status: str
@@ -142,10 +194,40 @@ class LoadsExecutor:
         self._unsub: list = []
         self._readback: asyncio.Task | None = None
         self._slot_mode: str | None = None            # tryb slotu z ostatniego cyklu (tylko w pamięci)
+        self._confirmed_mono: float | None = None     # ostatnia odpowiedź chmury z planem (zegar monotoniczny)
+        self._rewrite_key: tuple | None = None        # (plan, slot) zużytego ponownego zapisu nastawy
+        self._rewrite_warned: tuple | None = None
+        self._watched: tuple[str, ...] = ()           # encje obserwowane pod kątem ręcznej ingerencji
+        self._watch_unsub: Callable[[], None] | None = None
 
     @property
     def state(self) -> LoadsState:
         return self._state
+
+    def note_plan_confirmed(self) -> None:
+        """Chmura odpowiedziała planem (zmienionym albo nie) — wiek planu dla reguły awaryjnej od zera."""
+        self._confirmed_mono = self._clock()
+
+    def report_for(self, key: str) -> dict | None:
+        """Blok `executor` wpisu ładowarki w telemetrii; None dla innej ładowarki albo bez planu.
+        `manual_at` idzie tylko razem z niewysłanym zdarzeniem."""
+        meta = self._meta
+        if meta is None or meta.load_key != key:
+            return None
+        s = self._state
+        event = s.manual_event
+        return {"last_write_at": s.last_write_at, "last_action": s.last_action, "manual_event": event,
+                "manual_at": s.manual_at if event is not None else None,
+                "fallback": s.fallback_since is not None}
+
+    async def async_ack_manual(self, manual_at: str | None) -> None:
+        """Telemetria ze zdarzeniem `manual_at` przyjęta — zdarzenie wysłane raz. Nowsze zostaje.
+        `manual_at` zostaje w stanie: wstrzymanie trwa do planu wygenerowanego po zdarzeniu."""
+        s = self._state
+        if manual_at is None or s.manual_event is None or s.manual_at != manual_at:
+            return
+        s.manual_event = None
+        await self._async_save()
 
     # ── cykl życia ────────────────────────────────────────────────────────
     async def async_start(self, schedule=None) -> None:
@@ -170,6 +252,7 @@ class LoadsExecutor:
         for unsub in self._unsub:
             unsub()
         self._unsub.clear()
+        self._unwatch()
         if self._readback is not None and not self._readback.done():
             self._readback.cancel()
 
@@ -180,6 +263,7 @@ class LoadsExecutor:
     async def async_on_plan(self, schedule) -> None:
         if self._stopped:
             return
+        self.note_plan_confirmed()
         async with self._lock:
             if self._remember(schedule):
                 await self._async_save()
@@ -190,6 +274,8 @@ class LoadsExecutor:
         self._loads = tuple(getattr(schedule, "loads", None) or ())
         meta = getattr(schedule, "loads_meta", None)
         self._meta = meta
+        if meta is not None:
+            self._watch(meta.load_key)
         if meta is None or meta.plan_generated_at is None:
             return False                         # bez znacznika planu cykl i tak nic nie zapisze
         gen = meta.plan_generated_at.isoformat()
@@ -197,6 +283,9 @@ class LoadsExecutor:
             return False
         self._state.plan_generated_at = gen
         self._state.last_action = None          # nowy plan może znowu wystartować/zatrzymać
+        at = _when(self._state.manual_at)
+        if self._state.manual_event is None and at is not None and meta.plan_generated_at > at:
+            self._state.manual_at = None        # zdarzenie wysłane, plan już je uwzględnia
         return True
 
     async def async_tick(self) -> None:
@@ -209,32 +298,148 @@ class LoadsExecutor:
             _LOGGER.warning("Volcast EV charger cycle failed (%s)", type(err).__name__)
 
     # ── cykl ──────────────────────────────────────────────────────────────
-    async def _async_tick(self) -> None:
-        meta = self._meta
+    def _gates_open(self, meta) -> bool:
         if meta is None or meta.control_enabled is not True or meta.plan_generated_at is None:
-            return
-        if self._consent() is not True or self._local_switch() is not True or self._plan_only() is not False:
-            return
-        charger = self._charger(meta.load_key)
-        if charger is None:
-            return
-        status = self._hass.states.get(charger.status)
-        if status is None or status.state in _UNAVAILABLE:
-            return
+            return False
+        return self._consent() is True and self._local_switch() is True and self._plan_only() is False
+
+    def _held(self) -> bool:
+        """Ręczna ingerencja: bez własnych zapisów do planu wygenerowanego po zdarzeniu."""
+        at = _when(self._state.manual_at)
+        if at is None:
+            return False
+        gen = getattr(self._meta, "plan_generated_at", None)
+        return gen is None or gen <= at
+
+    def _current_slot(self, meta, now: datetime):
         mine = [s for s in self._loads if s.device_id == meta.load_key
                 and s.session_id == meta.session_id]
-        slot = slot_for(self._utcnow(), mine)
+        return slot_for(now, mine)
+
+    def _plan_age_s(self, now: datetime) -> float | None:
+        """Czas od ostatniej odpowiedzi chmury; przed pierwszą od startu — od wygenerowania planu."""
+        if self._confirmed_mono is not None:
+            return max(0.0, self._clock() - self._confirmed_mono)
+        gen = getattr(self._meta, "plan_generated_at", None)
+        return (now - gen).total_seconds() if gen is not None else None
+
+    def _phase(self, mode: str) -> None:
+        if self._slot_mode is not None and mode != self._slot_mode:
+            self._state.last_action = None       # nowa faza planu: start/stop znowu raz
+        self._slot_mode = mode
+
+    async def _async_set_fallback(self, now: datetime | None) -> None:
+        """`fallback_since` = początek trybu awaryjnego (None = poza nim); zapis tylko przy zmianie."""
+        if (now is None) == (self._state.fallback_since is None):
+            return
+        self._state.fallback_since = now.isoformat() if now is not None else None
+        if now is not None:
+            _LOGGER.warning("Volcast EV charger: no fresh plan from the cloud and the deadline is near — "
+                            "charging at full power until a fresh plan arrives")
+        else:
+            _LOGGER.info("Volcast EV charger: fallback charging ended")
+        await self._async_save()
+        self._signal()
+
+    async def _async_tick(self) -> None:
+        meta = self._meta
+        charger = self._charger(meta.load_key) if self._gates_open(meta) else None
+        status = self._hass.states.get(charger.status) if charger is not None else None
+        if status is None or status.state in _UNAVAILABLE or self._held():
+            # bramka zamknięta, ładowarka nieczytelna albo ręczna ingerencja: bez zapisów i bez trybu awaryjnego
+            await self._async_set_fallback(None)
+            return
+        now = self._utcnow()
+        charging = is_charging(status.state)
+        if should_force(now, meta, self._plan_age_s(now), status.state):
+            await self._async_set_fallback(now)
+            self._phase("fallback")
+            # reguła awaryjna: pełna moc i start, nigdy stop
+            await self._async_forced(None, meta, charger, charging, (meta.plan_generated_at, "fallback"))
+            return
+        await self._async_set_fallback(None)
+        slot = self._current_slot(meta, now)
         if slot is None:
             return
-        if self._slot_mode is not None and slot.mode != self._slot_mode:
-            self._state.last_action = None       # nowa faza planu: start/stop znowu raz
-        self._slot_mode = slot.mode
-        charging = is_charging(status.state)
+        self._phase(slot.mode)
         if slot.mode == "forced":
-            await self._async_forced(slot, meta, charger, charging)
+            await self._async_forced(slot.power_w, meta, charger, charging, (meta.plan_generated_at, slot.start))
         elif slot.mode == "off" and charging and self._state.last_action != "stop":
             if await self._async_command(charger, "stop"):
                 await self._async_after_write(charger, setpoint=None, action="stop")
+
+    # ── ręczna ingerencja ─────────────────────────────────────────────────
+    def _watch(self, key: str) -> None:
+        """Obserwacja encji `status` i `start_stop` ładowarki z planu (ponowna tylko przy zmianie encji)."""
+        roles = self._roles(key) or {}
+        ents = tuple(e for e in (roles.get("status"), roles.get("start_stop")) if isinstance(e, str) and e)
+        if ents == self._watched or self._stopped:
+            return
+        self._unwatch()
+        self._watched = ents
+        if ents:
+            self._watch_unsub = async_track_state_change_event(self._hass, list(ents), self.on_state_event)
+
+    def _unwatch(self) -> None:
+        if self._watch_unsub is not None:
+            self._watch_unsub()
+        self._watch_unsub = None
+        self._watched = ()
+
+    @callback
+    def on_state_event(self, event) -> None:
+        """Zmiana encji ładowarki: ręczna ingerencja trafia do stanu OD RAZU (przed następnym odczytem)."""
+        try:
+            action = self._manual_action(event)
+        except Exception as err:  # noqa: BLE001 — obserwator nie może wywrócić pętli zdarzeń HA
+            _LOGGER.warning("Volcast EV charger: manual change check failed (%s)", type(err).__name__)
+            return
+        if action is None:
+            return
+        self._state.manual_event = action
+        self._state.manual_at = self._utcnow().isoformat()
+        _LOGGER.warning("Volcast EV charger: manual %s outside Volcast — own commands paused until "
+                        "the next plan", action)
+        self._signal()                           # pilna telemetria ze zdarzeniem
+        self._hass.async_create_background_task(self._async_save(), "volcast_ev_manual_save")
+
+    def _manual_action(self, event) -> str | None:
+        if self._stopped or not self._started:
+            return None
+        meta = self._meta
+        if not self._gates_open(meta):
+            return None
+        charger = self._charger(meta.load_key)
+        if charger is None:
+            return None
+        data = getattr(event, "data", None) or {}
+        eid, new, old = data.get("entity_id"), data.get("new_state"), data.get("old_state")
+        if new is None or eid is None:
+            return None
+        if eid == charger.status:
+            new_v, old_v = _status_word(new), _status_word(old)
+        elif eid == charger.start_stop:
+            new_v, old_v = _command_word(eid, new), _command_word(eid, old)
+        else:
+            return None
+        if new_v not in ("start", "stop"):
+            return None
+        ctx = getattr(new, "context", None) or getattr(event, "context", None)
+        if not is_foreign_change(ours=self._writer.is_ours(getattr(ctx, "id", None)),
+                                 has_actor=bool(getattr(ctx, "user_id", None) or getattr(ctx, "parent_id", None)),
+                                 new_value=new_v, expected=old_v):
+            return None
+        if self._state.fallback_since is not None:
+            mode = "forced"                      # tryb awaryjny działa jak slot `forced`
+        else:
+            slot = self._current_slot(meta, self._utcnow())
+            mode = slot.mode if slot is not None else None
+        if (new_v, mode) in (("stop", "forced"), ("start", "off")):
+            return new_v
+        return None
+
+    def _signal(self) -> None:
+        async_dispatcher_send(self._hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=self._entry.entry_id))
 
     def _charger(self, key: str) -> _Charger | None:
         """Role ładowarki; None, gdy brak statusu albo rola do zapisu jest spoza ładowarki."""
@@ -260,28 +465,47 @@ class LoadsExecutor:
         device = getattr(ent, "device_id", None) if ent is not None else None
         return device if isinstance(device, str) and device else None
 
-    async def _async_forced(self, slot, meta, charger: _Charger, charging: bool) -> None:
+    async def _async_forced(self, power_w, meta, charger: _Charger, charging: bool, rewrite_key: tuple) -> None:
+        """Nastawa (moc slotu; None = pełna moc) i start. `rewrite_key` = (plan, slot) — jeden ponowny
+        zapis nastawy przy rozjeździe odczytu na tę parę."""
         value = None
         tol = 0.0
         if charger.setpoint is not None:
             spec = self._setpoint_spec(meta, charger.setpoint)
             if spec is None:
                 return
-            value = self._setpoint_value(slot, meta, spec)
+            value = self._setpoint_value(power_w, meta, spec)
             if value is None:
                 _LOGGER.debug("Volcast EV charger: planned power below the charger minimum, skipping")
                 return
             tol = max(spec[3] / 2, 0.01)
         written_value = None
         in_sync = True
-        if value is not None and (value != self._state.last_setpoint_a
-                                  or not self._setpoint_reads(charger.setpoint, value, tol)):
-            ok = await self._async_write(EntityWrite("ev_setpoint", charger.setpoint, "number", "set_value",
-                                                     {"value": value}))
-            if ok:
+        if value is not None:
+            write = EntityWrite("ev_setpoint", charger.setpoint, "number", "set_value", {"value": value})
+            actual = self._setpoint_actual(charger.setpoint)
+            wrote = False
+            if value != self._state.last_setpoint_a:
+                wrote = in_sync = await self._async_write(write)
+            elif actual is not None and abs(actual - value) <= tol:
+                in_sync = True
+            elif self._rewrite_key != rewrite_key:
+                # inna wartość encji przy zgodnym cache: jeden ponowny zapis na plan i slot
+                if self._throttled(charger.setpoint):
+                    in_sync = False
+                else:
+                    self._rewrite_key = rewrite_key
+                    wrote = in_sync = await self._async_write(write)
+            else:
+                if self._rewrite_warned != rewrite_key:
+                    self._rewrite_warned = rewrite_key
+                    _LOGGER.warning("Volcast EV charger keeps a different setpoint than planned; "
+                                    "not rewriting it again in this slot")
+                # start tylko przy nastawie NIŻSZEJ niż plan (wyższa mogłaby przekroczyć limit przyłącza)
+                in_sync = actual is not None and actual <= value + tol
+            if wrote:
                 self._state.last_setpoint_a = value
                 written_value = value
-            in_sync = ok
         action = None
         # Bez potwierdzonej nastawy nie startujemy — ładowanie na starej, wyższej nastawie to ryzyko.
         if in_sync and not charging and self._state.last_action != "start" and charger.start_stop is not None:
@@ -306,16 +530,15 @@ class LoadsExecutor:
         return (unit, max(los) if los else 0.0, min(his) if his else math.inf,
                 step if step is not None and step > 0 else 1.0)
 
-    def _setpoint_reads(self, eid: str, value: float, tol: float) -> bool:
-        """Czy encja nastawy pokazuje teraz `value` (nieczytelna = nie)."""
+    def _setpoint_actual(self, eid: str) -> float | None:
+        """Bieżący odczyt encji nastawy (nieczytelna = None)."""
         st = self._hass.states.get(eid)
-        actual = _num(st.state) if st is not None else None
-        return actual is not None and abs(actual - value) <= tol
+        return _num(st.state) if st is not None else None
 
     @staticmethod
-    def _setpoint_value(slot, meta, spec) -> float | None:
+    def _setpoint_value(power_w, meta, spec) -> float | None:
         unit, lo, hi, step = spec
-        power = slot.power_w if slot.power_w is not None else meta.max_power_w
+        power = power_w if power_w is not None else meta.max_power_w
         if power is None:
             return hi if math.isfinite(hi) and hi > 0 else None     # „wykonawca decyduje” = pełna moc
         if unit == "A":
@@ -344,14 +567,19 @@ class LoadsExecutor:
         self._state.last_action = action
         return True
 
+    def _throttled(self, eid: str) -> bool:
+        now = self._clock()
+        at = self._last_write.get(eid)
+        return at is not None and at <= now and now - at < LOADS_MIN_WRITE_INTERVAL_S
+
     async def _async_write(self, w: EntityWrite) -> bool:
         if w.entity_id in self._forbidden or w.domain not in ("number", "select", "switch"):
             return False          # bezpiecznik: nigdy encja falownika ani obca domena
-        now = self._clock()
-        at = self._last_write.get(w.entity_id)
-        if at is not None and at <= now and now - at < LOADS_MIN_WRITE_INTERVAL_S:
+        if self._held():
+            return False          # ręczna ingerencja w trakcie cyklu: od teraz bez zapisów
+        if self._throttled(w.entity_id):
             return False
-        self._last_write[w.entity_id] = now
+        self._last_write[w.entity_id] = self._clock()
         result = await self._writer.async_write(w)
         if result != OK:
             if w.entity_id not in self._failed:

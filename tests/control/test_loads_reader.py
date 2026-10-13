@@ -145,3 +145,44 @@ def test_one_broken_charger_does_not_drop_the_rest(monkeypatch, caplog):
     assert [e["key"] for e in r.read()] == ["ok"]
     warns = [x for x in caplog.records if x.levelno == logging.WARNING]
     assert len(warns) == 1 and "secret" not in caplog.text and "RuntimeError" in caplog.text
+
+
+# ── rola start/stop i raport wykonawcy ─────────────────────────────────────
+
+def test_start_stop_role_state_and_options():
+    s = _states()
+    s.set("select.wb_start_stop", "No operation", {"options": ["Start charging", "Stop charging", "No operation"]})
+    e = _one(s, roles={**ROLES, "start_stop": "select.wb_start_stop"})
+    assert e["start_stop_state"] == "No operation"
+    assert e["start_stop_options"] == ["Start charging", "Stop charging", "No operation"]
+    s.set("switch.wb_charging", "on", {})
+    e = _one(s, roles={**ROLES, "start_stop": "switch.wb_charging"})
+    assert e["start_stop_state"] == "on" and e["start_stop_options"] is None
+    missing = _one(_states(), roles={**ROLES, "start_stop": "select.nope"})
+    assert missing["start_stop_state"] is None and missing["start_stop_options"] is None
+
+
+def test_without_start_stop_role_keys_are_absent():
+    e = _one(_states())
+    assert "start_stop_state" not in e and "start_stop_options" not in e and "executor" not in e
+
+
+def test_executor_report_attached_per_charger():
+    rep = {"last_write_at": "2026-09-23T10:00:00+00:00", "last_action": "start", "manual_event": "stop",
+           "manual_at": "2026-09-23T10:01:00+00:00", "fallback": False}
+    hass = SimpleNamespace(states=_states())
+    r = LoadsReader(hass, SimpleNamespace(options={"ev_chargers": [
+        {"device_id": "dev1", "roles": ROLES}, {"device_id": "dev2", "roles": ROLES}]}),
+        executor_report=lambda key: dict(rep) if key == "dev1" else None)
+    first, second = r.read()
+    assert first["executor"] == rep and "executor" not in second
+
+
+def test_failing_executor_report_does_not_drop_the_charger():
+    def boom(_key):
+        raise RuntimeError("x")
+    hass = SimpleNamespace(states=_states())
+    r = LoadsReader(hass, SimpleNamespace(options={"ev_chargers": [{"device_id": "dev1", "roles": ROLES}]}),
+                    executor_report=boom)
+    (e,) = r.read()
+    assert e["key"] == "dev1" and "executor" not in e

@@ -35,6 +35,11 @@ restarcie albo przeładowaniu opcji pola nie ma do pierwszej próbki z pasma), p
 `meta.readings_source` (klucz → `entity|register|manual|none`, `core/control/readings.py`) — chmura
 czyści brakującą mapę w trybie bezpośrednim, a w trybie encji trzymałaby nieaktualną. Inne pola
 `meta` nie idą (sufit chmury 1500 B).
+
+Ładowarka EV: wpis `loads[]` niesie blok `executor` wykonawcy ładowarki (`runtime.loads_executor`).
+Zdarzenie ręczne (`manual_event` + `manual_at`) jest wysyłane RAZ: po przyjęciu odczytu wykonawca je
+kasuje (`async_ack_manual`, tylko to samo `manual_at`). Pilną wysyłkę po zdarzeniu zamawia wykonawca
+sygnałem `SIGNAL_CONTROL_STATE_UPDATED` (ogranicznik w runtime).
 """
 from __future__ import annotations
 
@@ -250,7 +255,7 @@ class TelemetrySender:
         self._prices_at: datetime | None = None
         self._unsub = None
         self._busy = False
-        self._loads = LoadsReader(hass, entry)
+        self._loads = LoadsReader(hass, entry, executor_report=self._loads_report)
         self._loads_warned = False
         # Runtime sterowania (`control_block()` + `async_persist_control_meta()`) — ustawiany po jego złożeniu.
         self.control_runtime = None
@@ -413,6 +418,23 @@ class TelemetrySender:
         self._loads_warned = False
         return block
 
+    def _loads_executor(self):
+        return getattr(self.control_runtime, "loads_executor", None)
+
+    def _loads_report(self, key: str) -> dict | None:
+        lx = self._loads_executor()
+        return lx.report_for(key) if lx is not None else None
+
+    async def _async_ack_manual(self, reading: dict) -> None:
+        """Przyjęta telemetria: zdarzenia ręczne z tego odczytu są wysłane (każde raz)."""
+        lx = self._loads_executor()
+        if lx is None:
+            return
+        for load in reading.get("loads") or ():
+            report = load.get("executor") if isinstance(load, dict) else None
+            if isinstance(report, dict) and report.get("manual_event") is not None:
+                await lx.async_ack_manual(report.get("manual_at"))
+
     async def async_flush(self) -> bool:
         """Jeden odczyt do chmury; True = przyjęty. Nigdy nie rzuca."""
         if self._busy:
@@ -498,6 +520,11 @@ class TelemetrySender:
                 await rt.async_persist_control_meta()
             except Exception as err:  # noqa: BLE001 — zapis licznika nie psuje przyjętej telemetrii
                 _LOGGER.debug("Volcast control meta save failed (%s)", type(err).__name__)
+        if ok:
+            try:
+                await self._async_ack_manual(reading)
+            except Exception as err:  # noqa: BLE001 — potwierdzenie nie psuje przyjętej telemetrii
+                _LOGGER.debug("Volcast EV charger manual event ack failed (%s)", type(err).__name__)
         if ok and priced:
             self._prices_fp, self._prices_at = priced[1], now
         if ok and self._on_signals is not None:

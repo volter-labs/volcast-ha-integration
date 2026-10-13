@@ -827,6 +827,17 @@ def plan_fan_out(executor, loads_executor):
     return on_plan
 
 
+async def refresh_and_tick(fetcher, executor, loads_executor) -> None:
+    """Odświeżenie planu, potem cykle obu wykonawców. Odpowiedź chmury z planem (nowym albo bez
+    zmian) odmładza plan ładowarki — reguła awaryjna liczy wiek od ostatniej odpowiedzi."""
+    result = await fetcher.async_refresh()
+    if loads_executor is not None and result in ("accepted", "unchanged"):
+        loads_executor.note_plan_confirmed()
+    await executor.async_tick()
+    if loads_executor is not None:
+        await loads_executor.async_tick()
+
+
 def _build_loads_executor(hass, entry, executor, inverter_entities: frozenset, mapped: Mapping[str, str]):
     """Wykonawca ładowarki: bramki z wykonawcy falownika (zgoda konta, przełącznik w HA, tryb „tylko
     plan”), zakaz zapisu każdej encji falownika."""
@@ -894,10 +905,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
 
         async def _fetch(_now=None) -> None:
             # Odświeżenie planu (i zgody) — zaraz po nim cykl: cofnięta zgoda działa od razu.
-            await fetcher.async_refresh()
-            await executor.async_tick()
-            if loads_executor is not None:
-                await loads_executor.async_tick()
+            await refresh_and_tick(fetcher, executor, loads_executor)
 
         channel = SignalChannel(async_get_clientsession(hass), on_wake=_wake, task_factory=_task)
         if conn is not None:

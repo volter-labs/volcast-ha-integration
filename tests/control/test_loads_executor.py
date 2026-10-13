@@ -279,6 +279,9 @@ def test_plan_only_mode_blocks_writes(plan_only):
 def test_inverter_entity_role_blocked_even_without_forbidden_set():
     async def body():
         h = _hass()
+        # encja falownika w amperach (np. prąd ładowania baterii): jednostka i zakres pasują do planu,
+        # więc zapis zatrzymuje WYŁĄCZNIE sprawdzenie urządzenia w rejestrze encji (inv1 ≠ dev1)
+        h.states.set(INVERTER, "0", {"min": 0, "max": 32, "step": 1, "unit_of_measurement": "A"})
         roles = {"status": STATUS, "setpoint": INVERTER, "start_stop": START_STOP}
         ex, _ = await _started(h, roles=roles)               # tryb bezpośredni: brak mapy encji falownika
         await ex.async_on_plan(_schedule(_slot()))
@@ -656,3 +659,466 @@ def test_charger_roles_lookup():
     assert charger_roles(opts, "dev2") == {}
     assert charger_roles(opts, "nope") is None
     assert charger_roles({}, "dev1") is None
+
+
+# ── ponowny zapis nastawy przy rozjeździe odczytu ──────────────────────────
+
+def test_setpoint_rewrite_at_most_once_per_plan_and_slot():
+    async def body():
+        h = _hass(status="Charging")
+        ex, clock = await _started(h)
+        slot = _slot(minutes=60)
+        await ex.async_on_plan(_schedule(slot))
+        assert [c[1] for c in _calls(h)] == ["set_value"]
+        for _ in range(10):            # ładowarka trzyma własny limit 15 A przy planie 16 A
+            h.states.set(CURRENT, "15")
+            clock.advance(61)
+            await ex.async_tick()
+        assert [c[1] for c in _calls(h)] == ["set_value", "set_value"]     # jeden ponowny zapis
+        h.services.calls.clear()
+        h.states.set(CURRENT, "15")
+        clock.advance(61)
+        await ex.async_on_plan(_schedule(slot, meta=_meta(gen=GEN + timedelta(minutes=30))))
+        assert [c[1] for c in _calls(h)] == ["set_value"]                   # nowy plan: znowu raz
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_exhausted_rewrite_starts_only_below_planned_setpoint():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(minutes=60)))         # 16 A + start; auto nie rusza
+        for actual in ("13", "13"):    # ponowny zapis i dalej 13 A (np. limit kabla)
+            h.states.set(CURRENT, actual)
+            clock.advance(61)
+            await ex.async_tick()
+        h.services.calls.clear()
+        ex.state.last_action = None                                    # nowa faza: start znowu dozwolony
+        clock.advance(61)
+        await ex.async_tick()
+        assert _calls(h) == [("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"})]
+        h.services.calls.clear()
+        ex.state.last_action = None
+        h.states.set(CURRENT, "32")    # obca nastawa WYŻSZA niż plan: bez startu
+        clock.advance(61)
+        await ex.async_tick()
+        assert all(c[1] != "select_option" for c in _calls(h))
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+# ── reguła awaryjna ───────────────────────────────────────────────────────
+
+OLD_GEN = NOW - timedelta(hours=8)
+
+
+def _fb_meta(**kw):
+    # 11,04 kWh przy 11 040 W = 1 h; termin za 1 h 15 min → okno awaryjne trwa od 15 min
+    base = dict(gen=OLD_GEN, remaining_kwh=11.04, ready_by=NOW + timedelta(minutes=75))
+    base.update(kw)
+    return _meta(**base)
+
+
+def test_fallback_forces_full_power_when_plan_is_stale():
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60), meta=_fb_meta()))
+        assert _calls(h) == []         # plan właśnie przyszedł: świeży, slot off
+        ex._confirmed_mono = None      # brak potwierdzenia od startu: wiek liczony od wygenerowania planu
+        await ex.async_tick()
+        assert _calls(h) == [
+            ("number", "set_value", {"entity_id": CURRENT, "value": 16.0}),
+            ("select", "select_option", {"entity_id": START_STOP, "option": "Start charging"}),
+        ]
+        assert ex.state.fallback_since == NOW.isoformat()
+        assert ex.report_for("dev1")["fallback"] is True
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_fallback_waits_90_minutes_after_last_confirmation():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=240), meta=_fb_meta(
+            ready_by=NOW + timedelta(hours=3))))
+        clock.advance(60 * 60)
+        ex.note_plan_confirmed()       # chmura odpowiada (plan bez zmian)
+        clock.advance(89 * 60)
+        await ex.async_tick()
+        assert _calls(h) == []
+        clock.advance(2 * 60)          # 91 min bez potwierdzenia
+        await ex.async_tick()
+        assert [c[1] for c in _calls(h)] == ["set_value", "select_option"]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_fallback_without_any_slot_still_forces():
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        await ex.async_on_plan(_schedule(meta=_fb_meta()))           # plan bez slotów (np. po terminie)
+        ex._confirmed_mono = None
+        await ex.async_tick()
+        assert [c[1] for c in _calls(h)] == ["set_value", "select_option"]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("gate", ["consent", "switch", "plan_only", "control_enabled"])
+def test_fallback_respects_every_gate(gate):
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h, consent=gate != "consent", switch=gate != "switch",
+                               plan_only=gate == "plan_only")
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None), meta=_fb_meta(
+            control=gate != "control_enabled")))
+        ex._confirmed_mono = None
+        await ex.async_tick()
+        assert _calls(h) == [] and ex.state.fallback_since is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_fallback_never_stops_charging_and_ends_with_fresh_plan():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60), meta=_fb_meta()))
+        ex._confirmed_mono = None
+        await ex.async_tick()          # awaryjnie: nastawa + start
+        h.states.set(STATUS, "Charging")
+        h.services.calls.clear()
+        for _ in range(3):
+            clock.advance(61)
+            await ex.async_tick()
+        assert all(c[1] != "select_option" for c in _calls(h))       # w trybie awaryjnym nigdy stop
+        assert ex.state.fallback_since is not None
+        clock.advance(61)
+        await ex.async_on_plan(_schedule(_slot(mode="forced", start=clock.utc, minutes=60),
+                                         meta=_fb_meta(gen=clock.utc - timedelta(seconds=1))))
+        assert ex.state.fallback_since is None and ex.report_for("dev1")["fallback"] is False
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_fallback_flag_cleared_when_a_gate_closes():
+    async def body():
+        h = _hass()
+        consent = {"v": True}
+        clock = Clock()
+        entry = _entry()
+        ex = LoadsExecutor(h, entry, writer=EntityServiceWriter(h),
+                           roles_provider=lambda key: charger_roles(entry.options, key),
+                           store=LoadsStore(h, "e1"), consent_getter=lambda: consent["v"],
+                           local_switch_getter=lambda: True, plan_only_getter=lambda: False,
+                           clock=lambda: clock.mono, utcnow=lambda: clock.utc, readback_s=0)
+        await ex.async_start()
+        await ex.async_on_plan(_schedule(meta=_fb_meta()))
+        ex._confirmed_mono = None
+        await ex.async_tick()
+        assert ex.report_for("dev1")["fallback"] is True
+        consent["v"] = False
+        await ex.async_tick()
+        assert ex.report_for("dev1")["fallback"] is False
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_fallback_with_zero_power_meta_is_not_forced():
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None), meta=_fb_meta(max_power_w=0.0, step=0.0)))
+        ex._confirmed_mono = None
+        await ex.async_tick()
+        assert _calls(h) == [] and ex.state.fallback_since is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_refresh_confirms_plan_only_on_cloud_answer():
+    from custom_components.volcast.control.runtime import refresh_and_tick
+    seen = []
+
+    class Fetcher:
+        def __init__(self, result):
+            self.result = result
+
+        async def async_refresh(self):
+            return self.result
+
+    class Battery:
+        async def async_tick(self):
+            seen.append("battery")
+
+    class Loads:
+        def note_plan_confirmed(self):
+            seen.append("confirmed")
+
+        async def async_tick(self):
+            seen.append("loads")
+
+    for result in ("accepted", "unchanged", "network", "auth", "rejected", "error"):
+        seen.clear()
+        asyncio.run(refresh_and_tick(Fetcher(result), Battery(), Loads()))
+        assert seen == (["confirmed", "battery", "loads"] if result in ("accepted", "unchanged")
+                        else ["battery", "loads"]), result
+    seen.clear()
+    asyncio.run(refresh_and_tick(Fetcher("accepted"), Battery(), None))
+    assert seen == ["battery"]
+
+
+# ── ręczna ingerencja ─────────────────────────────────────────────────────
+
+def _event(eid, old, new, *, user="u1", ctx=None):
+    from homeassistant.core import Context
+
+    from .ha_fakes import FakeState
+    context = ctx or Context(user_id=user)
+    return SimpleNamespace(data={
+        "entity_id": eid,
+        "old_state": FakeState(eid, old) if old is not None else None,
+        "new_state": FakeState(eid, new, context=context) if new is not None else None,
+    }, context=context)
+
+
+async def _charging_forced(h, **kw):
+    ex, clock = await _started(h, **kw)
+    await ex.async_on_plan(_schedule(_slot(minutes=60)))
+    h.states.set(STATUS, "Charging")
+    h.services.calls.clear()
+    return ex, clock
+
+
+def test_manual_stop_in_forced_slot_is_reported_and_holds_writes(monkeypatch):
+    from custom_components.volcast.control import loads_executor as mod
+    signals = []
+    monkeypatch.setattr(mod, "async_dispatcher_send", lambda hass, sig: signals.append(sig))
+
+    async def body():
+        h = _hass()
+        ex, clock = await _charging_forced(h)
+        clock.advance(30)
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        assert ex.state.manual_event == "stop" and ex.state.manual_at == clock.utc.isoformat()
+        assert signals == ["volcast_control_state_updated_e1"]
+        await asyncio.sleep(0)         # zapis magazynu w tle
+        assert (await ex._store.async_load()).manual_event == "stop"
+        h.states.set(STATUS, "Available")
+        for _ in range(3):             # ten sam plan: ani start, ani nastawa
+            clock.advance(61)
+            await ex.async_tick()
+        assert _calls(h) == []
+        clock.advance(61)              # nowy plan, policzony PO zdarzeniu: wykonanie wraca
+        await ex.async_on_plan(_schedule(_slot(start=NOW, minutes=60),
+                                         meta=_meta(gen=clock.utc - timedelta(seconds=5))))
+        assert [c[1] for c in _calls(h)] == ["select_option"]
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_plan_generated_before_manual_event_keeps_hold():
+    async def body():
+        h = _hass()
+        ex, clock = await _charging_forced(h)
+        clock.advance(30)
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        h.states.set(STATUS, "Available")
+        clock.advance(61)              # plan w drodze: wygenerowany przed zdarzeniem
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=NOW + timedelta(seconds=10))))
+        assert _calls(h) == []
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_manual_event_during_cycle_blocks_the_rest_of_it():
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        real = h.services.async_call
+
+        async def call(domain, service, data, blocking=False, context=None):
+            await real(domain, service, data, blocking=blocking, context=context)
+            if service == "set_value":     # użytkownik zatrzymuje w trakcie naszego cyklu
+                ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        h.services.async_call = call
+        await ex.async_on_plan(_schedule(_slot()))
+        assert [c[1] for c in _calls(h)] == ["set_value"]                   # start już nie poszedł
+        assert ex.state.manual_event == "stop"
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_manual_hold_beats_fallback():
+    async def body():
+        h = _hass()
+        ex, clock = await _started(h)
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_fb_meta(gen=NOW - timedelta(minutes=1))))
+        h.states.set(STATUS, "Charging")
+        h.services.calls.clear()
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        h.states.set(STATUS, "Available")
+        ex._confirmed_mono = None
+        clock.advance(2 * 3600)        # plan stary, termin blisko — ręczny stop i tak wygrywa
+        await ex.async_tick()
+        assert _calls(h) == [] and ex.state.fallback_since is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_manual_start_in_off_slot_is_reported_and_not_stopped():
+    async def body():
+        roles = {"status": STATUS, "setpoint": CURRENT, "start_stop": SWITCH}
+        h = _hass(roles=roles)
+        ex, clock = await _started(h, roles=roles)
+        await ex.async_on_plan(_schedule(_slot(mode="off", power=None, minutes=60)))
+        ex.on_state_event(_event(SWITCH, "off", "on"))
+        assert ex.state.manual_event == "start"
+        h.states.set(STATUS, "Charging")
+        clock.advance(61)
+        await ex.async_tick()
+        assert _calls(h) == []         # ręcznego ładowania nie zatrzymujemy
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_manual_status_change_with_actor_is_classified():
+    async def body():
+        h = _hass()
+        ex, _ = await _charging_forced(h)
+        ex.on_state_event(_event(STATUS, "Charging", "Available"))
+        assert ex.state.manual_event == "stop"
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize("case", ["own_write", "no_actor", "stop_in_off", "start_in_forced", "no_slot",
+                                  "gate_closed", "other_entity", "no_option", "unavailable"])
+def test_not_a_manual_event(case):
+    async def body():
+        h = _hass(status="Charging")
+        ex, _ = await _started(h, consent=case != "gate_closed")
+        mode = "off" if case == "stop_in_off" else "forced"
+        start = NOW + timedelta(hours=2) if case == "no_slot" else NOW - timedelta(minutes=5)
+        await ex.async_on_plan(_schedule(_slot(mode=mode, power=None if mode == "off" else 11100.0,
+                                               start=start, minutes=60)))
+        if case == "own_write":
+            from homeassistant.core import Context
+            # nasz zapis „stop” z kontekstem, który ma aktora — odróżnia go tylko pamięć pisarza
+            ex._writer = EntityServiceWriter(h, context_factory=lambda: Context(user_id="u1"))
+            assert await ex._async_command(ex._charger("dev1"), "stop")
+            ev = _event(START_STOP, "No operation", "Stop charging", ctx=h.states.get(START_STOP).context)
+        elif case == "no_actor":
+            ev = _event(STATUS, "Charging", "Available", user=None)        # auto skończyło / pauza auta
+        elif case == "start_in_forced":
+            ev = _event(START_STOP, "No operation", "Start charging")
+        elif case == "other_entity":
+            ev = _event(CURRENT, "16", "10")
+        elif case == "no_option":
+            ev = _event(START_STOP, "Stop charging", "No operation")
+        elif case == "unavailable":
+            ev = _event(STATUS, "Charging", "unavailable")
+        else:
+            ev = _event(START_STOP, "No operation", "Stop charging")
+        ex.on_state_event(ev)
+        assert ex.state.manual_event is None and ex.state.manual_at is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_state_change_watch_follows_charger_entities(monkeypatch):
+    from custom_components.volcast.control import loads_executor as mod
+    subs, unsubs = [], []
+
+    def track(hass, entities, action):
+        subs.append(list(entities))
+        return lambda: unsubs.append(list(entities))
+    monkeypatch.setattr(mod, "async_track_state_change_event", track)
+
+    async def body():
+        h = _hass()
+        ex, _ = await _started(h)
+        await ex.async_on_plan(_schedule(_slot()))
+        await ex.async_on_plan(_schedule(_slot(), meta=_meta(gen=GEN + timedelta(minutes=1))))
+        assert subs == [[STATUS, START_STOP]]                         # bez ponownej subskrypcji
+        await ex.async_stop()
+        assert unsubs == [[STATUS, START_STOP]]
+    asyncio.run(body())
+
+
+def test_manual_hold_survives_restart():
+    async def body():
+        h = _hass()
+        store = LoadsStore(h, "e1")
+        ex, clock = await _charging_forced(h, store=store)
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        await asyncio.sleep(0)
+        await ex.async_ack_manual(ex.state.manual_at)                  # zgłoszone do chmury
+        await ex.async_stop()
+        h.states.set(STATUS, "Available")
+        h.services.calls.clear()
+        ex2, _ = _make(h, store=store, clock=clock)
+        clock.advance(120)
+        await ex2.async_start(_schedule(_slot(minutes=60)))
+        await ex2.async_tick()
+        assert _calls(h) == []
+        await ex2.async_stop()
+    asyncio.run(body())
+
+
+# ── raport wykonawcy w telemetrii ─────────────────────────────────────────
+
+def test_report_and_ack_send_each_manual_event_once():
+    async def body():
+        h = _hass()
+        ex, clock = await _charging_forced(h)
+        assert ex.report_for("dev2") is None
+        assert ex.report_for("dev1") == {"last_write_at": NOW.isoformat(), "last_action": "start",
+                                         "manual_event": None, "manual_at": None, "fallback": False}
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        first = ex.report_for("dev1")
+        assert first["manual_event"] == "stop" and first["manual_at"] == NOW.isoformat()
+        clock.advance(5)               # drugie zdarzenie przed potwierdzeniem pierwszej wysyłki
+        ex.on_state_event(_event(STATUS, "Charging", "Available"))
+        assert ex.state.manual_at == clock.utc.isoformat()
+        await ex.async_ack_manual(first["manual_at"])                  # stara wysyłka nie kasuje nowszego
+        assert ex.state.manual_event == "stop"
+        await ex.async_ack_manual(ex.state.manual_at)
+        assert ex.state.manual_event is None
+        assert ex.report_for("dev1")["manual_at"] is None              # manual_at tylko ze zdarzeniem
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_telemetry_carries_executor_block_and_acks_after_accepted_flush():
+    from .test_telemetry import Cloud, sender
+
+    async def body():
+        h = _hass()
+        ex, _ = await _charging_forced(h)
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        at = ex.state.manual_at
+
+        async def persist():
+            return None
+        rt = SimpleNamespace(loads_executor=ex, async_persist_control_meta=persist)
+        opts = {"entity_price_buy": "sensor.nordpool", "ev_chargers": _entry().options["ev_chargers"]}
+        failing = sender(h, Cloud(ok=False), options=opts)
+        failing.control_runtime = rt
+        assert await failing.async_flush() is False
+        assert ex.state.manual_event == "stop"                         # nieprzyjęta: zostaje do wysłania
+        cloud = Cloud()
+        s = sender(h, cloud, options=opts)
+        s.control_runtime = rt
+        assert await s.async_flush() is True
+        (load,) = cloud.sent[0]["loads"]
+        assert load["executor"] == {"last_write_at": NOW.isoformat(), "last_action": "start",
+                                    "manual_event": "stop", "manual_at": at, "fallback": False}
+        assert ex.state.manual_event is None
+        assert ex.report_for("dev1")["manual_event"] is None           # następna paczka już bez zdarzenia
+        await ex.async_stop()
+    asyncio.run(body())
