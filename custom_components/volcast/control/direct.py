@@ -40,6 +40,7 @@ from ..const import (CONTROL_MODE_DIRECT, DIRECT_POLL_S, DIRECT_SLOW_POLL_S, DOM
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL)
 from ..core.control.conflict import CONFLICT_DOMAINS, SELF_DOMAIN, ContentionMonitor, EntrySnap, static_conflicts
 from ..core.discovery.known import HOST_KEYS
+from ..core.modbus.blocks import make_block
 from ..core.modbus.client import RegisterClient
 from ..core.modbus.reading import DirectReading
 from ..core.transports.base import TransportConfig, TransportError, TransportStats, check_target, validate_config
@@ -542,8 +543,9 @@ class DirectConnection:
     async def _read_work_mode(self, now: float) -> None:
         """Tryb pracy falownika: JEDEN rejestr (FC3), tylko odczyt, co `work_mode.poll_s`. Idzie na tym samym
         kliencie i pod tym samym `_poll_lock` co bloki (jedno gniazdo — moduł Wi-Fi GoodWe toleruje jednego
-        klienta i odpowiada poprzednią odpowiedzią na ramki o tej samej długości; odczyt 1 rejestru ma
-        niepowtarzalną długość wśród bloków 125/45/24/4/4). Nie przy kolizji; błąd nie zmienia stanu i nie
+        klienta i odpowiada poprzednią odpowiedzią na ramki o tej samej długości; cykl kończy się odczytem
+        1 rejestru, więc odczyt trybu pracy idzie przez ten sam mechanizm rozdzielania co bloki cyklu —
+        blok rozdzielający o innej długości, gdy poprzedni odczyt miał tę samą). Nie przy kolizji; błąd nie zmienia stanu i nie
         rusza wykonawcy ani zgody; bez zapisów i bez budżetu NVM."""
         wm = getattr(self.profile, "work_mode", None)
         if wm is None or self.conflict or self.client is None:
@@ -553,7 +555,12 @@ class DirectConnection:
         self._work_mode_at = now
         value = None
         try:
-            word = (await self.client.read_block(wm.read_addr, 1, 3, tries=1))[0]
+            if self.client._disambiguate:
+                block = make_block(wm.read_addr, 1, 3)
+                async with self.client._session():
+                    word = (await self.client._separated(block, [0.0]))[0]
+            else:
+                word = (await self.client.read_block(wm.read_addr, 1, 3, tries=1))[0]
             if wm.read_type == "u16":
                 value = int(word)
             elif wm.read_type == "i16":

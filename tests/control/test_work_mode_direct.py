@@ -128,3 +128,37 @@ async def test_profile_without_work_mode_adds_no_request(make_hass, goodwe_udp_s
         assert spy.wm == 0 and h.conn.work_mode.state == "unknown"
     finally:
         await h.close()
+
+
+@pytest.mark.asyncio
+async def test_replayed_previous_reply_is_never_taken_for_work_mode(make_hass):
+    # Cykl kończy się odczytem 1 rejestru (soc_max, 47760 — tu czytelny); odczyt trybu pracy też ma 1 rejestr,
+    # więc bez rozdzielenia moduł Wi-Fi odpowiedziałby poprzednią odpowiedzią (wartość soc_max) -> fałszywe „other”.
+    from tests.sim.device import RegisterBank
+    from tests.sim.fixtures import goodwe_words
+    from tests.sim.flaky import flaky_module
+    bank = RegisterBank(goodwe_words())
+    bank.poke(47760, 5)
+    bank.poke(WM_ADDR, 0)
+    m = await flaky_module(bank)
+    h = Harness(make_hass, _wm_profile(), gw_target(m, unreadable=[]))
+    try:
+        await h.conn.async_start()
+        orig = h.conn.client.transport.read
+        reads: list[tuple[int, int]] = []
+
+        async def read(addr, count, **kw):
+            reads.append((addr, count))
+            if (addr, count) == (WM_ADDR, 1):
+                m.plan = ["replay"]                   # następna odpowiedź = poprzednia odpowiedź modułu
+            return await orig(addr, count, **kw)
+
+        h.conn.client.transport.read = read
+        await h.conn.async_poll()
+        assert (47760, 1) in reads and (WM_ADDR, 1) in reads
+        assert h.conn.work_mode.state != "other:5"
+        assert h.conn.work_mode.state in ("general", "unknown")
+        assert bank.writes == []
+    finally:
+        await h.close()
+        await m.close()
