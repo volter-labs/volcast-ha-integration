@@ -1172,7 +1172,8 @@ def test_report_and_ack_send_each_manual_event_once():
         ex, clock = await _charging_forced(h)
         assert ex.report_for("dev2") is None
         assert ex.report_for("dev1") == {"last_write_at": NOW.isoformat(), "last_action": "start",
-                                         "manual_event": None, "manual_at": None, "fallback": False}
+                                         "manual_event": None, "manual_at": None, "fallback": False,
+                                         "held_since": None}
         ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
         first = ex.report_for("dev1")
         assert first["manual_event"] == "stop" and first["manual_at"] == NOW.isoformat()
@@ -1211,8 +1212,64 @@ def test_telemetry_carries_executor_block_and_acks_after_accepted_flush():
         assert await s.async_flush() is True
         (load,) = cloud.sent[0]["loads"]
         assert load["executor"] == {"last_write_at": NOW.isoformat(), "last_action": "start",
-                                    "manual_event": "stop", "manual_at": at, "fallback": False}
+                                    "manual_event": "stop", "manual_at": at, "fallback": False,
+                                    "held_since": at}
         assert ex.state.manual_event is None
         assert ex.report_for("dev1")["manual_event"] is None           # następna paczka już bez zdarzenia
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_held_since_in_every_report_while_hold_lasts():
+    from .ha_fakes import GOODWE_ENTITIES
+    from .test_telemetry import Cloud, sender
+
+    async def body():
+        h = _hass()
+        h.states.set(GOODWE_ENTITIES["soc"], "60", {"unit_of_measurement": "%"})   # każda paczka ma odczyt
+        ex, clock = await _charging_forced(h)
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        at = ex.state.manual_at
+
+        async def persist():
+            return None
+        cloud = Cloud()
+        s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool",
+                                      "ev_chargers": _entry().options["ev_chargers"]})
+        s.control_runtime = SimpleNamespace(loads_executor=ex, async_persist_control_meta=persist)
+        for _ in range(3):             # zdarzenie wysłane raz, wstrzymanie zgłaszane w KAŻDEJ paczce
+            assert await s.async_flush() is True
+        reports = [r["loads"][0]["executor"] for r in cloud.sent]
+        assert [r["held_since"] for r in reports] == [at, at, at]
+        assert [r["manual_event"] for r in reports] == ["stop", None, None]
+        held = datetime.fromisoformat(at)
+        assert held.tzinfo is not None and held.utcoffset() == timedelta(0)
+        clock.advance(61)              # plan policzony po zdarzeniu: koniec wstrzymania
+        await ex.async_on_plan(_schedule(_slot(start=NOW, minutes=60), meta=_meta(gen=clock.utc)))
+        assert await s.async_flush() is True
+        assert cloud.sent[-1]["loads"][0]["executor"]["held_since"] is None
+        await ex.async_stop()
+    asyncio.run(body())
+
+
+def test_held_since_absent_without_hold_and_stale_plan_keeps_it():
+    async def body():
+        h = _hass()
+        ex, clock = await _charging_forced(h)
+        assert ex.report_for("dev1")["held_since"] is None
+        ex.on_state_event(_event(START_STOP, "No operation", "Stop charging"))
+        at = ex.state.manual_at
+        await ex.async_ack_manual(at)
+        clock.advance(61)              # plan wygenerowany PRZED zdarzeniem: wstrzymanie trwa
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=NOW - timedelta(seconds=1))))
+        assert ex.report_for("dev1")["held_since"] == at
+        clock.advance(61)              # nowszy plan przed potwierdzeniem wysyłki: zdarzenie zostaje, wstrzymanie nie
+        ex.on_state_event(_event(STATUS, "Charging", "Available"))
+        later = ex.state.manual_at
+        clock.advance(61)
+        await ex.async_on_plan(_schedule(_slot(minutes=60), meta=_meta(gen=clock.utc)))
+        report = ex.report_for("dev1")
+        assert report["manual_event"] == "stop" and report["manual_at"] == later
+        assert report["held_since"] is None
         await ex.async_stop()
     asyncio.run(body())

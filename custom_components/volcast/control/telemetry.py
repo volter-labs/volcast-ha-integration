@@ -39,7 +39,8 @@ czyści brakującą mapę w trybie bezpośrednim, a w trybie encji trzymałaby n
 Ładowarka EV: wpis `loads[]` niesie blok `executor` wykonawcy ładowarki (`runtime.loads_executor`).
 Zdarzenie ręczne (`manual_event` + `manual_at`) jest wysyłane RAZ: po przyjęciu odczytu wykonawca je
 kasuje (`async_ack_manual`, tylko to samo `manual_at`). Pilną wysyłkę po zdarzeniu zamawia wykonawca
-sygnałem `SIGNAL_CONTROL_STATE_UPDATED` (ogranicznik w runtime).
+sygnałem `SIGNAL_CONTROL_STATE_UPDATED` (ogranicznik w runtime). `held_since` idzie w każdej paczce,
+dopóki trwa wstrzymanie po ręcznej ingerencji (bez potwierdzania — to stan, nie zdarzenie).
 """
 from __future__ import annotations
 

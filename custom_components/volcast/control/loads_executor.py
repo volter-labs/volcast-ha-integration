@@ -43,7 +43,10 @@ wysyła je raz (`async_ack_manual` po przyjęciu), a wykonawca nie pisze do ład
 przyjdzie plan wygenerowany PO zdarzeniu (`plan_generated_at` > `manual_at`; także reguła awaryjna
 czeka). W trakcie wstrzymania każda zmiana z aktorem (start albo stop) nadpisuje zdarzenie — wygrywa
 ostatnia decyzja. Wstrzymanie dłuższe niż `HOLD_WARN_S` bez nowego planu: jedno ostrzeżenie, bez
-samoczynnego wznowienia. Wszystko tylko przy otwartych bramkach.
+samoczynnego wznowienia. Raport niesie `held_since` (= `manual_at`) w każdej paczce, dopóki
+wstrzymanie trwa — chmura zamawia przeliczenie, jeśli jej ostatni plan jest starszy (zgubione
+przeliczenie nie trzyma wstrzymania do następnego przebiegu plannera). Wszystko tylko przy
+otwartych bramkach.
 
 Status „ładuje” = słowo z jawnej listy (`charging`) w stanie encji statusu i żadne słowo z listy
 wykluczeń (przeczenia, pauza, koniec, błąd, oczekiwanie). Stany w innych językach albo CamelCase
@@ -230,7 +233,15 @@ class LoadsExecutor:
         return {"last_write_at": s.last_write_at, "last_action": s.last_action, "manual_event": event,
                 "manual_at": s.manual_at if event is not None else None,
                 # zatrzask: tryb awaryjny zakończony przed wysyłką i tak trafia do chmury
-                "fallback": s.fallback_since is not None or self._fallback_latched}
+                "fallback": s.fallback_since is not None or self._fallback_latched,
+                # w KAŻDEJ paczce, dopóki trwa wstrzymanie: chmura zamawia przeliczenie, gdy jej
+                # najnowszy plan jest starszy (samoleczenie po zgubionym przeliczeniu)
+                "held_since": self._held_since()}
+
+    def _held_since(self) -> str | None:
+        """Początek trwającego wstrzymania (ISO-8601 ze strefą) albo None."""
+        at = _when(self._state.manual_at)
+        return at.isoformat() if at is not None and self._held() else None
 
     async def async_ack_report(self, report: Any) -> None:
         """Telemetria z tym raportem przyjęta: zdarzenie ręczne i zatrzask trybu awaryjnego wysłane."""
