@@ -1,22 +1,24 @@
 """Test generyczny profili sterowany danymi: każdy `<katalog>/*.json` przez te same asercje.
 
-Katalog: `VOLCAST_PROFILES_DIR` (np. `profiles/` repo Volcast, golden obok profilu w `<id>.golden/`),
-domyślnie profile wbudowane pakietu (golden w `tests/golden/<id>/`, bez `expected.json` — stan
-wzorcowy wbudowanych pilnują testy per profil). Testy per profil zostają: pokrywają niuanse marek.
+Katalog: zmienna `VOLCAST_PROFILES_DIR` czytana WYŁĄCZNIE tutaj (np. `profiles/` repo Volcast, golden
+obok profilu w `<id>.golden/`); domyślnie profile wbudowane pakietu (golden w `tests/golden/<id>/`,
+bez `expected.json` — stan wzorcowy wbudowanych pilnują testy per profil). Kod integracji zmiennej
+nie zna. Testy per profil zostają: pokrywają niuanse marek.
 """
 import json
+import os
 import shutil
 from pathlib import Path
 
 import pytest
 
-from custom_components.volcast.core.profile import PROFILES_DIR, load_profile, profiles_dir
+from custom_components.volcast.core.profile import PROFILES_DIR, builtin_ids, load_profile
 from custom_components.volcast.core.profile_schema import validate_profile
 from tests.core import profile_golden as pg
 from tests.core.modbus.helpers import GOLDEN, golden_image, goodwe_image
-from tests.core.test_profile_sofar_hyd import REFERENCE as SOFAR_REFERENCE
 
-DIR = profiles_dir()
+PROFILES_DIR_ENV = "VOLCAST_PROFILES_DIR"
+DIR = Path(os.environ.get(PROFILES_DIR_ENV) or PROFILES_DIR)
 PATHS = pg.profile_paths(DIR)
 
 
@@ -38,9 +40,34 @@ def _expected(path: Path) -> dict | None:
     return pg.load_expected(_golden_dir(path))
 
 
-def _foreign_image(profile):
-    # Obraz GoodWe ET jest obcy dla każdego profilu poza samym goodwe-et; dla niego obcy jest Deye.
-    return golden_image("deye-sg") if profile.id == "goodwe-et" else goodwe_image()
+def _packaged_images() -> list:
+    """Obrazy golden pakietu jako (id, etykieta, obraz); goodwe_et to nagrane ramki."""
+    out = []
+    for d in sorted(GOLDEN.iterdir()):
+        pid = d.name.replace("_", "-")
+        if d.name == "goodwe_et":
+            out.append((pid, f"tests/golden/{d.name}", goodwe_image()))
+        elif (d / "registers.json").is_file():
+            out.append((pid, f"tests/golden/{d.name}", golden_image(pid)))
+    return out
+
+
+def _directory_images(paths) -> list:
+    """Obrazy golden profili katalogu; profil z zepsutym golden pomija się tu (pada we własnym teście)."""
+    out = []
+    for path in paths:
+        if _packaged(path):
+            continue
+        try:
+            out.append((path.stem, f"{path.stem}.golden", pg.golden_dir_image(_golden_dir(path), load_profile(path))))
+        except (AssertionError, OSError, ValueError):
+            continue
+    return out
+
+
+@pytest.fixture(scope="module")
+def all_images():
+    return _packaged_images() + _directory_images(PATHS)
 
 
 @pytest.fixture(params=PATHS, ids=[p.stem for p in PATHS])
@@ -59,10 +86,18 @@ def test_profile_validates(case):
     assert profile.id == path.stem
 
 
-def test_identify_matches_own_golden_and_rejects_foreign(case):
+def test_identify_matches_own_golden(case):
     _, profile, golden = case
     pg.assert_identify_matches(profile, pg.golden_dir_image(golden, profile))
-    pg.assert_identify_rejects(profile, _foreign_image(profile))
+
+
+def test_identify_rejects_every_other_golden(case, all_images):
+    pg.assert_rejects_foreign_images(case[1], all_images)
+
+
+def test_every_read_key_decodes(case):
+    _, profile, golden = case
+    pg.assert_reads_decode(profile, pg.golden_dir_image(golden, profile))
 
 
 def test_reads_decode_expected_reference(case):
@@ -80,6 +115,10 @@ def test_intents_consistent(case):
         pg.assert_expected_lists_match(profile, expected)
 
 
+def test_capabilities_match_writes(case):
+    pg.assert_capabilities_match_writes(case[1])
+
+
 def test_ha_regexes_compile(case):
     pg.assert_ha_regexes_compile(case[1])
 
@@ -94,17 +133,15 @@ def test_origin_rules(case):
         pg.assert_origin_rules(profile, expected, golden)
 
 
-# --- Środowisko: wybór katalogu i lista profili ---
+# --- Środowisko: zmienna dotyczy tylko tego testu, lista profili ---
 
 
-def test_profiles_dir_defaults_to_package(monkeypatch):
-    monkeypatch.delenv("VOLCAST_PROFILES_DIR", raising=False)
-    assert profiles_dir() == PROFILES_DIR
-
-
-def test_profiles_dir_reads_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOLCAST_PROFILES_DIR", str(tmp_path))
-    assert profiles_dir() == tmp_path
+def test_integration_ignores_profiles_dir_env(monkeypatch, tmp_path):
+    shutil.copy(PROFILES_DIR / "sofar-hyd.json", tmp_path / "zz-foreign.json")
+    packaged = builtin_ids()
+    monkeypatch.setenv(PROFILES_DIR_ENV, str(tmp_path))
+    assert builtin_ids() == packaged
+    assert packaged and "zz-foreign" not in packaged
 
 
 def test_profile_paths_skip_schema_file(tmp_path):
@@ -113,20 +150,30 @@ def test_profile_paths_skip_schema_file(tmp_path):
     assert [p.name for p in pg.profile_paths(tmp_path)] == ["a.json", "b.json"]
 
 
+def test_packaged_ids_are_the_builtin_profiles():
+    assert pg.PACKAGED_IDS == frozenset(builtin_ids())
+
+
 # --- Fixtury zewnętrznego katalogu: zestaw dobry przechodzi, zepsuty pada ---
 
+# Stan wzorcowy obrazu tests/golden/sofar_hyd (README katalogu), konwencja rdzenia: bateria dodatnia =
+# rozładowanie, sieć dodatnia = pobór. Wpisany ręcznie — niezależna wyrocznia znaku mocy.
+SOFAR_REF = {"soc": 55, "pv_power_w": 3200, "battery_power_w": -1500, "grid_power_w": 400, "load_power_w": 2100}
+NEW_ID = "acme-new"
 
-def _external(tmp_path, *, profile_edit=None, expected_edit=None, with_expected=True):
-    """Katalog w układzie repo Volcast z profilem sofar-hyd i jego obrazem golden."""
+
+def _external(tmp_path, *, pid="sofar-hyd", profile_edit=None, expected_edit=None, with_expected=True):
+    """Katalog w układzie repo Volcast z profilem sofar-hyd (opcjonalnie pod innym id) i jego obrazem."""
     raw = json.loads((PROFILES_DIR / "sofar-hyd.json").read_text(encoding="utf-8"))
+    raw["id"] = pid
     if profile_edit:
         profile_edit(raw)
-    path = tmp_path / "sofar-hyd.json"
+    path = tmp_path / f"{pid}.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
-    golden = tmp_path / "sofar-hyd.golden"
+    golden = tmp_path / f"{pid}.golden"
     golden.mkdir()
     shutil.copy(GOLDEN / "sofar_hyd" / "registers.json", golden / "registers.json")
-    expected = {"reference": dict(SOFAR_REFERENCE), "intents": sorted(raw["intents"]),
+    expected = {"reference": dict(SOFAR_REF), "intents": sorted(raw["intents"]),
                 "modes": sorted(raw.get("modes", {}))}
     if expected_edit:
         expected_edit(expected)
@@ -135,26 +182,45 @@ def _external(tmp_path, *, profile_edit=None, expected_edit=None, with_expected=
     return path, golden
 
 
-def _run_all(path, golden):
+def _run_all(path, golden, foreign=None):
+    """Wszystkie asercje testu generycznego; obce obrazy domyślnie = obrazy pakietu (bez sofar_hyd,
+    bo fixtura pod nowym id to kopia sofar-hyd)."""
     profile = load_profile(path)
     expected = pg.load_expected(golden)
     image = pg.golden_dir_image(golden, profile)
+    if foreign is None:
+        foreign = [i for i in _packaged_images() if i[0] != "sofar-hyd"]
     pg.assert_identify_matches(profile, image)
-    pg.assert_identify_rejects(profile, goodwe_image())
+    pg.assert_rejects_foreign_images(profile, foreign)
+    pg.assert_reads_decode(profile, image)
     pg.assert_reference_decodes(profile, image, expected["reference"])
     pg.assert_intents_consistent(profile)
     pg.assert_expected_lists_match(profile, expected)
+    pg.assert_capabilities_match_writes(profile)
     pg.assert_ha_regexes_compile(profile)
     pg.assert_sources_public(profile.raw)
     pg.assert_origin_rules(profile, expected, golden)
 
 
+def _auto(e):
+    e["origin"] = "auto"
+
+
+def _verified(raw):
+    raw["status"] = "verified"
+    raw["modbus"]["status"] = "verified"
+
+
 def test_external_fixture_passes(tmp_path):
-    _run_all(*_external(tmp_path))
+    _run_all(*_external(tmp_path), foreign=_packaged_images())
 
 
 def test_auto_draft_fixture_passes(tmp_path):
-    _run_all(*_external(tmp_path, expected_edit=lambda e: e.update(origin="auto")))
+    _run_all(*_external(tmp_path, expected_edit=_auto), foreign=_packaged_images())
+
+
+def test_new_auto_draft_fixture_passes(tmp_path):
+    _run_all(*_external(tmp_path, pid=NEW_ID, expected_edit=_auto))
 
 
 def test_wrong_power_sign_fails(tmp_path):
@@ -181,35 +247,106 @@ def test_expected_intents_drift_fails(tmp_path):
         _run_all(*_external(tmp_path, expected_edit=lambda e: e["intents"].pop()))
 
 
+def test_unreadable_read_key_fails(tmp_path):
+    def phantom(raw):
+        raw["read"]["load_power_w"] = {"addr": 40000, "type": "u16"}  # rejestru brak w obrazie
+    with pytest.raises(AssertionError, match="load_power_w"):
+        _run_all(*_external(tmp_path, profile_edit=phantom))
+
+
+def test_capability_without_write_fails(tmp_path):
+    def claim(raw):
+        raw["write"].pop("soc_min", None)
+        raw["capabilities"]["set_soc_floor"] = True
+    with pytest.raises(AssertionError, match="set_soc_floor"):
+        _run_all(*_external(tmp_path, profile_edit=claim))
+
+
+@pytest.mark.parametrize("regex", [".*", "^.*", "SP1"])
+def test_broad_model_regex_of_auto_profile_fails(tmp_path, regex):
+    def broaden(raw):
+        raw["identify"]["model_regex"] = [regex]
+    with pytest.raises(AssertionError, match="model_regex"):
+        _run_all(*_external(tmp_path, pid=NEW_ID, profile_edit=broaden, expected_edit=_auto))
+
+
+def test_identify_overlapping_another_golden_fails(tmp_path):
+    # Id inne niż sofar-hyd, identyfikacja jak sofar → rozpoznaje obraz tests/golden/sofar_hyd.
+    with pytest.raises(AssertionError, match="sofar_hyd"):
+        _run_all(*_external(tmp_path, pid=NEW_ID, expected_edit=_auto), foreign=_packaged_images())
+
+
+# --- Reguły origin (domknięte bezpiecznie) ---
+
+
+def _origin(tmp_path, **kw):
+    path, golden = _external(tmp_path, **kw)
+    pg.assert_origin_rules(load_profile(path), pg.load_expected(golden), golden)
+
+
 def test_auto_origin_must_stay_draft(tmp_path):
-    def verified(raw):
-        raw["status"] = "verified"
+    with pytest.raises(AssertionError, match="status draft"):
+        _origin(tmp_path, profile_edit=_verified, expected_edit=_auto)
+
+
+def test_auto_origin_modbus_status_alone_verified_fails(tmp_path):
+    def modbus_only(raw):
         raw["modbus"]["status"] = "verified"
+    with pytest.raises(AssertionError, match="modbus.status draft"):
+        _origin(tmp_path, profile_edit=modbus_only, expected_edit=_auto)
+
+
+def test_new_id_without_origin_fails(tmp_path):
+    with pytest.raises(AssertionError, match="origin auto"):
+        _origin(tmp_path, pid=NEW_ID, profile_edit=_verified)
+
+
+def test_new_id_with_manual_origin_fails(tmp_path):
+    with pytest.raises(AssertionError, match="origin auto"):
+        _origin(tmp_path, pid=NEW_ID, expected_edit=lambda e: e.update(origin="manual"))
+
+
+def test_new_id_auto_verified_fails(tmp_path):
     with pytest.raises(AssertionError, match="draft"):
-        _run_all(*_external(tmp_path, profile_edit=verified, expected_edit=lambda e: e.update(origin="auto")))
+        _origin(tmp_path, pid=NEW_ID, profile_edit=_verified, expected_edit=_auto)
 
 
-def test_auto_origin_requires_reference(tmp_path):
-    path, golden = _external(tmp_path, expected_edit=lambda e: e.update(origin="auto", reference=None))
-    with pytest.raises(AssertionError, match="reference"):
-        pg.assert_origin_rules(load_profile(path), pg.load_expected(golden), golden)
-
-
-def test_auto_origin_requires_registers_image(tmp_path):
-    path, golden = _external(tmp_path, expected_edit=lambda e: e.update(origin="auto"))
-    (golden / "registers.json").unlink()
-    with pytest.raises(AssertionError, match="registers.json"):
-        pg.assert_origin_rules(load_profile(path), pg.load_expected(golden), golden)
+@pytest.mark.parametrize("origin", [None, "manual"])
+def test_packaged_id_manual_verified_passes(tmp_path, origin):
+    edit = (lambda e: e.update(origin=origin)) if origin else None
+    _origin(tmp_path, profile_edit=_verified, expected_edit=edit)
 
 
 def test_unknown_origin_fails(tmp_path):
-    path, golden = _external(tmp_path, expected_edit=lambda e: e.update(origin="Auto"))
     with pytest.raises(AssertionError, match="origin"):
+        _origin(tmp_path, expected_edit=lambda e: e.update(origin="Auto"))
+
+
+def test_auto_origin_requires_reference(tmp_path):
+    with pytest.raises(AssertionError, match="reference"):
+        _origin(tmp_path, expected_edit=lambda e: e.update(origin="auto", reference=None))
+
+
+@pytest.mark.parametrize("key", ["soc", "battery_power_w", "grid_power_w", "pv_power_w"])
+def test_auto_reference_must_cover_power_and_soc(tmp_path, key):
+    def drop(e):
+        e.update(origin="auto")
+        del e["reference"][key]
+    with pytest.raises(AssertionError, match=key):
+        _origin(tmp_path, expected_edit=drop)
+
+
+@pytest.mark.parametrize("key", ["battery_power_w", "grid_power_w"])
+def test_auto_reference_zero_power_fails(tmp_path, key):
+    def zero(e):
+        e.update(origin="auto")
+        e["reference"][key] = 0
+    with pytest.raises(AssertionError, match=f"{key} = 0"):
+        _origin(tmp_path, expected_edit=zero)
+
+
+def test_auto_origin_requires_registers_image(tmp_path):
+    path, golden = _external(tmp_path, expected_edit=_auto)
+    (golden / "registers.json").unlink()
+    with pytest.raises(AssertionError, match="registers.json"):
         pg.assert_origin_rules(load_profile(path), pg.load_expected(golden), golden)
-
-
-def test_missing_origin_is_manual_and_allows_verified(tmp_path):
-    def verified(raw):
-        raw["status"] = "verified"
-    path, golden = _external(tmp_path, profile_edit=verified)
-    pg.assert_origin_rules(load_profile(path), pg.load_expected(golden), golden)

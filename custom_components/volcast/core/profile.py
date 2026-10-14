@@ -6,7 +6,6 @@ wołać przez `hass.async_add_executor_job`.
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,8 +15,6 @@ from typing import Any, Mapping
 from .profile_schema import validate_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
-# Zewnętrzny katalog profili (np. `profiles/` repo Volcast w CI); bez zmiennej = profile pakietu.
-PROFILES_DIR_ENV = "VOLCAST_PROFILES_DIR"
 _BUILTIN_ID_RE = re.compile(r"[a-z0-9-]+")
 # Falownik (GW8KN-ET) pokazuje nową nastawę w odczycie dopiero po < 1 s od echa zapisu. Domyślna
 # dla KAŻDEGO profilu bez pola (celowo): prawdziwa odmowa z echem zgodnym kosztuje ~3 s i 2 odczyty
@@ -218,18 +215,12 @@ def load_profile(path: Path) -> Profile:
     return profile
 
 
-def profiles_dir() -> Path:
-    """Katalog profili: `VOLCAST_PROFILES_DIR`, gdy ustawiona, inaczej katalog pakietu."""
-    override = os.environ.get(PROFILES_DIR_ENV)
-    return Path(override) if override else PROFILES_DIR
-
-
 def builtin_ids() -> tuple[str, ...]:
-    return tuple(sorted(p.stem for p in profiles_dir().glob("*.json")))
+    return tuple(sorted(p.stem for p in PROFILES_DIR.glob("*.json")))
 
 
 def load_builtin(profile_id: str) -> Profile:
     # Id trafia do ścieżki pliku — bez tej kontroli "../x" wyszłoby poza katalog profili.
     if not isinstance(profile_id, str) or not _BUILTIN_ID_RE.fullmatch(profile_id):
         raise ProfileError([f"$.id: niedozwolony identyfikator profilu {profile_id!r}"])
-    return load_profile(profiles_dir() / f"{profile_id}.json")
+    return load_profile(PROFILES_DIR / f"{profile_id}.json")

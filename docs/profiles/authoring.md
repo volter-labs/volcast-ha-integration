@@ -327,25 +327,36 @@ golden data next to the profile file instead of under `tests/golden/`:
 ```
 
 * `reference` is the state the golden image encodes, in core conventions (battery positive =
-  discharge, grid positive = import). `null` when there is no register image to decode (recorded
-  frames only, or an image used only for identification).
+  discharge, grid positive = import). `null` is accepted only for a hand-written profile whose data
+  is recorded frames or an image without a documented reference state; a generated profile always
+  needs one.
 * `intents` / `modes` list the profile's keys; they only check that the files agree with each
   other, they are not an independent oracle.
-* `origin` is `auto` for a generated profile, `manual` (or absent) for a hand-written one. An `auto`
-  profile must stay `draft` (both `status` and `modbus.status`), must have `registers.json` and a
-  non-null `reference`.
+* `origin` is `auto` for a generated profile and `manual` for a hand-written one. The rules fail
+  closed:
+  * a profile whose id is not already packaged must have `origin: "auto"` (missing or `manual`
+    fails);
+  * an `auto` profile must stay `draft` (both `status` and `modbus.status`) and must have
+    `registers.json` (recorded `frames.json` alone is not enough);
+  * its `reference` must cover `soc`, `battery_power_w`, `grid_power_w` and `pv_power_w` (those
+    the profile reads), with non-zero battery and grid power, so a wrong sign cannot pass;
+  * every `identify.model_regex` must start with `^` and must not match an empty model;
+  * a packaged id may omit `origin` (hand-written); any other value than `auto`/`manual` fails.
 
 `tests/core/test_profiles_generic.py` runs every `*.json` in the profile directory through the same
-checks: schema validation, identification of its own golden image, rejection of a foreign image,
-the reference state decoded key by key (floats with tolerance), intent consistency, HA regexes,
-public sources and the `origin` rules. Point it at another directory with
+checks: schema validation, identification of its own golden image, rejection of every other
+profile's golden image (the packaged `tests/golden/*` images and the images beside the other
+profiles in the directory), every `read` key decoding from its own image, the reference state
+decoded key by key (floats with tolerance), intent consistency, capabilities matching the write
+keys, HA regexes, public sources and the `origin` rules. Point it at another directory with
 `VOLCAST_PROFILES_DIR`:
 
 ```bash
 VOLCAST_PROFILES_DIR=/path/to/profiles python -m pytest tests/core/test_profiles_generic.py -q
 ```
 
-Without the variable it runs over the packaged profiles with their golden data from
+The variable is read by this test only; the integration always loads its packaged profiles.
+Without the variable the test runs over the packaged profiles with their golden data from
 `tests/golden/` (no `expected.json` there; the per-profile tests hold their reference states).
 `schema-lite.json` in the directory is skipped. The per-profile tests stay: they cover what is
 specific to each brand.
