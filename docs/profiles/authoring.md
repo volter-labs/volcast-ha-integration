@@ -244,6 +244,10 @@ a `verified` profile.
   `tou_N_power_w` and `tou_N_soc` `number`.
 * `unique_id_regex` should be broad enough to match the usual unique ids across versions, but must
   compile. `transform` is `negate` or `invert_percent`.
+* Every `*_regex` field of the profile (`identify.model_regex`, `ha.integrations[].model_regex`,
+  `unique_id_regex` of entities and of `work_mode.ha`) must compile, be at most 200 characters and
+  have no nested quantifier (a quantified group under a quantifier: `(a+)+`, `(?:[a-z]+_)+`,
+  `([a-z]+){2,}`). Schema validation enforces it, with the same rule the profile feed loader uses.
 
 **Direct mode (`modbus`).** No integration exists, so the integration talks to the inverter. The
 whole block is required:
@@ -351,7 +355,8 @@ holds no blank-register value `0`/`0xFFFF` and at most 64 values), identificatio
 golden image, rejection of every other profile's golden image (the packaged `tests/golden/*` images and the images beside the other
 profiles in the directory), every `read` key decoding from its own image, the reference state
 decoded key by key (floats with tolerance), intent consistency, capabilities matching the write
-keys, HA regexes, public sources and the `origin` rules. Point it at another directory with
+keys, HA regexes, public sources, the `origin` rules, and acceptance by the profile feed loader
+(a profile this test passes can never make clients reject the signed feed). Point it at another directory with
 `VOLCAST_PROFILES_DIR`:
 
 ```bash

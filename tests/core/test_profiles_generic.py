@@ -8,10 +8,13 @@ nie zna. Testy per profil zostają: pokrywają niuanse marek.
 import json
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from custom_components.volcast.core import profile_feed
 from custom_components.volcast.core.profile import PROFILES_DIR, builtin_ids, load_profile
 from custom_components.volcast.core.profile_schema import validate_profile
 from tests.core import profile_golden as pg
@@ -84,6 +87,16 @@ def test_profile_validates(case):
     path, profile, _ = case
     assert validate_profile(json.loads(path.read_text(encoding="utf-8"))) == []
     assert profile.id == path.stem
+
+
+def test_feed_loader_accepts(case):
+    # Profil przyjęty przez tę bramę trafia do podpisanego feedu; ładowarka feedu odrzuca CAŁY feed,
+    # gdy choć jeden wpis nie przejdzie jej reguł — brama musi być co najmniej tak samo ścisła.
+    path = case[0]
+    try:
+        profile_feed._one_profile(json.loads(path.read_text(encoding="utf-8")))
+    except profile_feed.FeedRejected as err:
+        pytest.fail(f"{path.name}: ładowarka feedu odrzuciłaby profil ({err})")
 
 
 def test_identify_matches_own_golden(case):
@@ -226,6 +239,35 @@ def test_auto_draft_fixture_passes(tmp_path):
 
 def test_new_auto_draft_fixture_passes(tmp_path):
     _run_all(*_external(tmp_path, pid=NEW_ID, expected_edit=_auto))
+
+
+def _generic_run(profiles_dir: Path) -> subprocess.CompletedProcess:
+    """Ten moduł uruchomiony jak w CI repo Volcast: katalog profili ze zmiennej środowiskowej."""
+    env = {**os.environ, PROFILES_DIR_ENV: str(profiles_dir)}
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", __file__,
+         "-k", "test_profile_validates or test_feed_loader_accepts"],
+        cwd=Path(__file__).resolve().parents[2], env=env, capture_output=True, text=True, timeout=300)
+
+
+def test_generic_run_passes_a_good_directory(tmp_path):
+    _external(tmp_path, pid=NEW_ID, expected_edit=_auto)
+    run = _generic_run(tmp_path)
+    assert run.returncode == 0, run.stdout[-2000:]
+
+
+@pytest.mark.parametrize("regex", ["^" + "A" * 250, "^(a+)+$", "^(?:[0-9a-z]+_)+soc$", "^(unclosed"],
+                         ids=["too_long", "nested_quantifier", "nested_noncapturing", "uncompilable"])
+def test_unsafe_ha_regex_fails_the_generic_run(tmp_path, regex):
+    # Wzorzec, którego ładowarka feedu nie przyjmie, nie może przejść bramy profili.
+    def edit(raw):
+        raw["ha"]["integrations"][0]["entities"]["soc"]["unique_id_regex"] = regex
+    _external(tmp_path, pid=NEW_ID, profile_edit=edit, expected_edit=_auto)
+    raw = json.loads((tmp_path / f"{NEW_ID}.json").read_text(encoding="utf-8"))
+    assert any(e.startswith("$.ha.integrations[0].entities.soc.unique_id_regex:") for e in validate_profile(raw))
+    run = _generic_run(tmp_path)
+    assert run.returncode == 1, run.stdout[-2000:]
+    assert NEW_ID in run.stdout
 
 
 def test_wrong_power_sign_fails(tmp_path):

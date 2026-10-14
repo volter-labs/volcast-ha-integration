@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Awaitable, Callable, Iterable, Mapping
+from typing import Any, Awaitable, Callable, Mapping
 
 from .profile_schema import validate_profile
 
@@ -53,9 +53,6 @@ _HEX_KEY_RE = re.compile(r"[0-9a-fA-F]{64}")
 _MODEL_PROBES = ("A", "Q", "z", "0", "7", "-", "QX", "ZZZZZZZZ", "Q0-Q0", "00000000", "xyz123", "NOT-A-MODEL")
 _BLANK_REGISTER_VALUES = (0x0000, 0xFFFF)
 _MAX_DEVICE_TYPE_EXPECT = 64
-_MAX_REGEX_LEN = 200
-# Grupa z kwantyfikatorem, sama pod kwantyfikatorem: `(a+)+`, `(.*)*`, `([a-z]+){2,}`.
-_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*(?:[*+]|\{\d*,\d*\})(?:[^()\\]|\\.)*\)(?:[*+]|\{\d*,?\d*\})")
 _FLOOR_MAX_AHEAD_S = 24 * 3600
 
 
@@ -224,31 +221,6 @@ def _identify_narrow(raw: dict) -> bool:
     return len(expect) <= _MAX_DEVICE_TYPE_EXPECT and not set(expect) & set(_BLANK_REGISTER_VALUES)
 
 
-def _regexes(node: Any) -> Iterable[Any]:
-    """Wszystkie wzorce profilu (`*_regex`: napis albo lista napisów), na każdej głębokości."""
-    if isinstance(node, dict):
-        for k, v in node.items():
-            if isinstance(k, str) and k.endswith("_regex"):
-                yield from (v if isinstance(v, list) else [v])
-            else:
-                yield from _regexes(v)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _regexes(v)
-
-
-def _regex_safe(rx: Any) -> bool:
-    """Wzorce z feedu działają w pętli zdarzeń HA: krótkie, kompilowalne, bez zagnieżdżonych
-    kwantyfikatorów (katastrofalne nawroty)."""
-    if not isinstance(rx, str) or len(rx) > _MAX_REGEX_LEN or _NESTED_QUANTIFIER.search(rx):
-        return False
-    try:
-        re.compile(rx)
-    except re.error:
-        return False
-    return True
-
-
 def _as_draft(raw: dict) -> dict:
     """Kopia profilu z każdym statusem zaufania ustawionym na `draft` (feed nie podnosi zaufania)."""
     out = copy.deepcopy(raw)
@@ -314,9 +286,9 @@ def _one_profile(raw: Any) -> dict:
         if validate_profile(raw):
             raise FeedRejected("profile_invalid")
         draft = _as_draft(raw)
-        # Te same reguły co dla profilu z pakietu (id kebab-case, schemat), na kopii już zdegradowanej.
-        if validate_profile(draft) or not _identify_narrow(draft) \
-                or not all(_regex_safe(rx) for rx in _regexes(draft)):
+        # Te same reguły co dla profilu z pakietu (id kebab-case, schemat, bezpieczeństwo wzorców
+        # `*_regex` — `profile_schema.regex_problem`), na kopii już zdegradowanej.
+        if validate_profile(draft) or not _identify_narrow(draft):
             raise FeedRejected("profile_invalid")
     except (TypeError, AttributeError, ValueError, KeyError, re.error) as err:
         raise FeedRejected("profile_invalid") from err
