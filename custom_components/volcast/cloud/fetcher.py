@@ -1,8 +1,9 @@
 """Pobieranie planu (pull co 5 min). Błąd sieci nie kasuje planu lokalnego; zły
 plan jest odrzucany w całości; zgoda z tej samej odpowiedzi jest stosowana nawet
 przy odrzuconym planie (cofnięcie zgody nie może czekać na poprawny plan).
-Pole `discovery_request` (raport rozpoznania na żądanie) jest obsługiwane PO planie — wysyłka
-nie opóźnia zgody ani planu, a jej błąd nie wywraca odświeżenia.
+Pole `discovery_request` (raport rozpoznania na żądanie) uruchamia PO planie zadanie w tle
+(najwyżej jedno naraz, twardy limit czasu, anulowane w `async_stop`) — wysyłka nigdy nie
+opóźnia zgody, planu ani cyklu wykonawcy, a jej błąd nie wywraca odświeżenia.
 Deduplikacja po `schedule_id` ORAZ treści — id bywa to samo przy innej treści.
 
 Odrzucony plan loguje ostrzeżenie raz na treść (chmura serwuje go co 5 min).
@@ -12,6 +13,7 @@ Plan, którego callback się nie powiódł, nie jest zapamiętany — następny 
 poda go jeszcze raz."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Awaitable, Callable
@@ -22,7 +24,7 @@ from ..const import DOMAIN
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from ..version import async_integration_version
 from .client import CloudAuthError
-from .discovery_report import DiscoveryReportSender
+from .discovery_report import DiscoveryReportSender, async_send_bounded
 
 try:
     from packaging.version import InvalidVersion, Version
@@ -73,6 +75,7 @@ class ScheduleFetcher:
         # Ostatni raport wykrywania (bez nowego przebiegu) — wysyłany, gdy plan niesie `discovery_request`.
         self._discovery = (DiscoveryReportSender(hass, cloud, discovery_report)
                            if discovery_report is not None else None)
+        self._discovery_task: asyncio.Task | None = None
 
     async def async_refresh(self) -> str:
         try:
@@ -106,7 +109,7 @@ class ScheduleFetcher:
         if isinstance(consent, bool):
             await self._on_consent(consent)
         result = await self._async_plan(raw)
-        await self._async_discovery(raw)
+        self._start_discovery(raw)
         return result
 
     async def _async_plan(self, raw: dict) -> str:
@@ -130,14 +133,36 @@ class ScheduleFetcher:
         self._last_rejected = None
         return "accepted"
 
-    async def _async_discovery(self, raw: dict) -> None:
-        """Raport rozpoznania na żądanie chmury; jego błąd (także pamięci w Store) nie wywraca odświeżenia."""
-        if self._discovery is None:
+    def _start_discovery(self, raw: dict) -> None:
+        """Raport rozpoznania na żądanie chmury jako zadanie w tle — odświeżenie na nie nie czeka;
+        trwające zadanie nie dostaje drugiego. Błąd startu nie wywraca odświeżenia."""
+        block = raw.get("discovery_request")
+        if self._discovery is None or not self._discovery.wants(block):
             return
+        if self._discovery_task is not None and not self._discovery_task.done():
+            return
+        coro = self._run_discovery(block)
         try:
-            await self._discovery.async_handle(raw.get("discovery_request"))
-        except Exception as err:  # noqa: BLE001 — wysyłka raportu nie może zatrzymać planu
-            _LOGGER.debug("Volcast discovery report failed (%s)", type(err).__name__)
+            if self._hass is not None:
+                self._discovery_task = self._hass.async_create_background_task(coro, "volcast_discovery_report")
+            else:
+                self._discovery_task = asyncio.get_running_loop().create_task(coro)
+        except Exception as err:  # noqa: BLE001 — start wysyłki nie może zatrzymać planu
+            coro.close()
+            _LOGGER.debug("Volcast discovery report not started (%s)", type(err).__name__)
+
+    async def _run_discovery(self, block) -> None:
+        # Pierwszy krok oddaje sterowanie: zadanie HA bywa startowane gorliwie, a odświeżenie
+        # (i cykl wykonawcy po nim) ma wrócić, zanim ruszy cokolwiek z wysyłki.
+        await asyncio.sleep(0)
+        await async_send_bounded(self._discovery, block)
+
+    async def async_stop(self) -> None:
+        """Rozładunek wpisu: anuluj trwającą wysyłkę raportu (próba jest już policzona w Store)."""
+        task, self._discovery_task = self._discovery_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.wait([task])
 
     def _apply_consent_mirror(self, raw: dict) -> None:
         """Lustro zgody tylko przy jawnym `control.consent_mirror: true`; błąd odbiorcy nie wywraca odświeżenia."""

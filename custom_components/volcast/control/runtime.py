@@ -1233,6 +1233,9 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
     for unsub in rt.unsubs:
         unsub()
     rt.unsubs.clear()
+    stop_discovery = getattr(rt.fetcher, "async_stop", None)   # wysyłka raportu rozpoznania w tle
+    if stop_discovery is not None:
+        await stop_discovery()
     if rt.verification is not None:
         await rt.verification.async_stop()
     # Sygnały przed powrotem: cykl z pingu po powrocie do trybu bazowego zapisałby plan z powrotem.

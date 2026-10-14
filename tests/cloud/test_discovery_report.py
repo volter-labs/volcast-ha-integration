@@ -143,11 +143,23 @@ def test_prepare_drops_largest_optional_section_when_too_big():
     assert out["inverters"]
 
 
+def _huge_devices(report):
+    report["inverters"][0]["devices"] = [{"name": "y" * 2000} for _ in range(200)]
+    return report
+
+
 def test_prepare_returns_none_when_core_still_too_big():
+    assert prepare_report(_huge_devices(_real_report())) is None
+
+
+def test_prepare_trims_inverter_entities_before_giving_up():
     report = _real_report()
     report["inverters"][0]["entities"] = [{"entity_id": f"sensor.e{i}", "pad": "y" * 2000}
                                           for i in range(200)]
-    assert prepare_report(report) is None
+    out = prepare_report(report)
+    assert out is not None and len(json.dumps(out).encode()) <= dr.MAX_REPORT_BYTES
+    assert 0 < len(out["inverters"][0]["entities"]) < 200
+    assert "inverters.entities" in out["truncated"]
 
 
 def test_prepare_refuses_non_dict():
@@ -238,8 +250,20 @@ def _fetcher(cloud, store, report=_real_report, plans=None):
     return f, got
 
 
+async def _settle(f):
+    task = f._discovery_task
+    if task is not None:
+        await asyncio.wait([task])
+
+
 def _run(f, n=1):
-    return [asyncio.run(f.async_refresh()) for _ in range(n)]
+    async def go():
+        out = []
+        for _ in range(n):
+            out.append(await f.async_refresh())
+            await _settle(f)
+        return out
+    return asyncio.run(go())
 
 
 def test_flag_present_sends_exactly_one_clean_report():
@@ -334,8 +358,7 @@ def test_report_not_ready_waits_without_counting_attempt():
 
 
 def test_report_too_big_is_not_sent_and_gives_up():
-    big = _real_report()
-    big["inverters"][0]["entities"] = [{"entity_id": f"sensor.e{i}", "pad": "y" * 2000} for i in range(200)]
+    big = _huge_devices(_real_report())
     cloud, store = Cloud([_plan()], [200]), MemStore()
     f, _ = _fetcher(cloud, store, report=lambda: big)
     _run(f, 2)
@@ -401,3 +424,239 @@ async def test_control_setup_wires_last_discovery_report_into_fetcher(monkeypatc
     await drain(hass)
     assert rt.fetcher._discovery is not None and rt.fetcher._discovery._report() is marker
     await rt_mod.async_unload_control(hass, rt)
+
+
+# --- MAC w postaci slugu / bez separatorów ----------------------------------------------------
+
+@pytest.mark.parametrize("text, leaked", [
+    ("sensor.aa_bb_cc_dd_ee_ff_rssi", "dd_ee_ff"),
+    ("sensor.wifi_00_11_22_33_44_55_signal", "33_44_55"),
+    ("device aa-bb-cc-dd-ee-ff online", "dd-ee-ff"),
+    ("binary_sensor.aabbccddeeff_status", "ddeeff"),
+    ("logger_AABBCCDDEEFF", "DDEEFF"),
+    ("cisco aabb.ccdd.eeff form", "ccdd.eeff"),
+    ("MAC: 001122334455 reported", "334455"),
+    ("wifi_mac=00-11-22-33-44-55", "33-44-55"),
+    ("zero width A​A:BB:CC:DD:EE:FF", "DD:EE:FF"),
+    ("mail jan@​example.com", "example.com"),
+])
+def test_slug_and_compact_mac_masked(text, leaked):
+    out = mask_network(text)
+    assert leaked.lower() not in out.lower()
+
+
+def test_mac_keeps_vendor_prefix_and_numbers_untouched():
+    assert mask_network("sensor.aa_bb_cc_dd_ee_ff_rssi") == "sensor.AABBCC******_rssi"
+    for s in ("202610141000", "energy 123456789012 Wh", "frame 01 03 02 00 0a ff"):
+        assert mask_network(s) == s
+
+
+def test_mac_labelled_key_masked_but_masked_prefix_kept():
+    out = mask_network({"wifi_mac": "001122334455", "mac": "AABBCC******"})
+    assert out == {"wifi_mac": "001122******", "mac": "AABBCC******"}
+
+
+def test_widened_host_keys_and_ddns_and_home_arpa():
+    out = mask_network({"inverter_host": "solar", "dongle_ip": "x", "ip_addr": "y", "url": "z",
+                        "t": "via kowalski.duckdns.org and my-nas.home.arpa"})
+    assert out["inverter_host"] == out["dongle_ip"] == out["ip_addr"] == out["url"] == "<HOST>"
+    assert "kowalski" not in out["t"] and "my-nas" not in out["t"] and ".arpa" not in out["t"]
+
+
+# --- dane konta i wrażliwe stany encji -------------------------------------------------------
+
+def _report_with_account_data() -> dict:
+    report = _real_report()
+    inv = report["inverters"][0]
+    inv["config_entry_title"] = "jkowalski"
+    inv["entities"] += [
+        {"entity_id": "sensor.router_wifi_ssid", "original_name": "WiFi SSID", "state": "Kowalski_Home",
+         "options": None, "unit": None},
+        {"entity_id": "sensor.cloud_account", "original_name": "Account", "state": "jan.kowalski",
+         "unit": None},
+        {"entity_id": "select.dongle_network", "original_name": "Network name", "state": "Dom",
+         "options": ["Dom", "Sasiad"]},
+        {"entity_id": "sensor.inverter_power", "original_name": "Power", "state": "1234", "unit": "W"},
+    ]
+    report["price_entities"] = [{"entity_id": "sensor.tariff_login", "state": "kowalski77"},
+                                {"entity_id": "sensor.price", "state": "0.61"}]
+    return report
+
+
+def test_config_entry_title_masked_whole():
+    report = _real_report()
+    report["inverters"][0]["config_entry_title"] = "jan.kowalski@example.com"
+    out = prepare_report(report)
+    assert out["inverters"][0]["config_entry_title"] == "***"
+
+
+def test_sensitive_entity_states_masked_other_states_kept():
+    out = prepare_report(_report_with_account_data())
+    ents = {e["entity_id"]: e for e in out["inverters"][0]["entities"]}
+    assert ents["sensor.router_wifi_ssid"]["state"] == "***"
+    assert ents["sensor.cloud_account"]["state"] == "***"
+    assert ents["select.dongle_network"]["state"] == "***"
+    assert ents["select.dongle_network"]["options"] == "***"
+    assert ents["sensor.inverter_power"]["state"] == "1234"
+    prices = {e["entity_id"]: e for e in out["price_entities"]}
+    assert prices["sensor.tariff_login"]["state"] == "***" and prices["sensor.price"]["state"] == "0.61"
+    text = json.dumps(out)
+    for leaked in ("jkowalski", "Kowalski_Home", "jan.kowalski", "Sasiad", "kowalski77"):
+        assert leaked not in text
+
+
+# --- wysyłka w tle: plan i cykl nigdy nie czekają na raport -----------------------------------
+
+class HangCloud(Cloud):
+    """POST raportu, który nie wraca (do anulowania / limitu czasu)."""
+
+    def __init__(self, plans):
+        super().__init__(plans, [200])
+        self.started = asyncio.Event()
+
+    async def async_post_discovery_report(self, request_id, report):
+        self.posts.append((request_id, report))
+        self.started.set()
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_hanging_post_does_not_delay_refresh_tick_or_next_plan():
+    cloud, store = HangCloud([_plan(), _plan(sid_note=1)]), MemStore()
+    f, got = _fetcher(cloud, store)
+    ticks = []
+
+    async def fetch_then_tick():          # jak `_fetch` w runtime: odświeżenie, zaraz po nim cykl
+        result = await f.async_refresh()
+        ticks.append(result)
+
+    await asyncio.wait_for(fetch_then_tick(), 1)
+    await asyncio.wait_for(cloud.started.wait(), 1)
+    assert ticks == ["accepted"] and len(cloud.posts) == 1
+    await asyncio.wait_for(fetch_then_tick(), 1)          # nowy plan w trakcie POST-a — od razu
+    assert ticks == ["accepted", "accepted"] and len(got["plans"]) == 2
+    assert len(cloud.posts) == 1                          # najwyżej jedno zadanie raportu naraz
+    await f.async_stop()
+    assert f._discovery_task is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_send_keeps_attempt_counted_and_retries_later():
+    cloud, store = HangCloud([_plan()]), MemStore()
+    f, _ = _fetcher(cloud, store)
+    await asyncio.wait_for(f.async_refresh(), 1)
+    task = f._discovery_task
+    await asyncio.wait_for(cloud.started.wait(), 1)
+    await f.async_stop()                                  # rozładunek wpisu
+    assert task.done()
+    assert store.data["attempts"] == {RID: 1} and store.data["sent"] == []
+    cloud2 = Cloud([_plan()], [200])
+    f2, _ = _fetcher(cloud2, store)
+    await asyncio.wait_for(f2.async_refresh(), 1)
+    await _settle(f2)
+    assert len(cloud2.posts) == 1 and store.data["sent"] == [RID] and store.data["attempts"] == {}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_on_last_attempt_gives_up_without_another_post():
+    store = MemStore({"sent": [], "attempts": {RID: 2}})
+    cloud = HangCloud([_plan()])
+    f, _ = _fetcher(cloud, store)
+    await asyncio.wait_for(f.async_refresh(), 1)
+    await asyncio.wait_for(cloud.started.wait(), 1)
+    await f.async_stop()
+    assert store.data["attempts"] == {RID: 3}
+    cloud2 = Cloud([_plan()], [200])
+    f2, _ = _fetcher(cloud2, store)
+    await asyncio.wait_for(f2.async_refresh(), 1)
+    await _settle(f2)
+    assert cloud2.posts == [] and store.data["sent"] == [RID]
+
+
+@pytest.mark.asyncio
+async def test_hard_timeout_counts_attempt_without_logging_content(monkeypatch, caplog):
+    monkeypatch.setattr(dr, "SEND_TIMEOUT_S", 0.05)
+    caplog.set_level(logging.DEBUG)
+    cloud, store = HangCloud([_plan()]), MemStore()
+    f, _ = _fetcher(cloud, store)
+    for _ in range(4):                                   # 3 próby przerwane limitem, 4. = rezygnacja bez POST-a
+        await asyncio.wait_for(f.async_refresh(), 1)
+        await asyncio.wait_for(_settle(f), 2)
+    assert len(cloud.posts) == 3 and store.data["sent"] == [RID]
+    assert "timed out" in caplog.text
+    assert "solarman" not in caplog.text and "Deye" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_concurrent_handle_is_busy():
+    cloud, store = HangCloud([_plan()]), MemStore()
+    sender = DiscoveryReportSender(None, cloud, _real_report, store=store)
+    first = asyncio.ensure_future(sender.async_handle({"request_id": RID}))
+    await asyncio.wait_for(cloud.started.wait(), 1)
+    assert await sender.async_handle({"request_id": RID}) == "busy"
+    first.cancel()
+    await asyncio.wait([first])
+
+
+def test_discovery_runs_on_rejected_plan_too():
+    plan = _plan()
+    plan["slots"] = [{"mode": "nonsense"}]
+    cloud, store = Cloud([plan], [200]), MemStore()
+    f, _ = _fetcher(cloud, store)
+    assert _run(f) == ["rejected"] and len(cloud.posts) == 1
+
+
+@pytest.mark.parametrize("status", [400, 403, 413])
+def test_other_client_errors_finish_without_retry(status):
+    cloud, store = Cloud([_plan()], [status]), MemStore()
+    f, _ = _fetcher(cloud, store)
+    _run(f, 3)
+    assert len(cloud.posts) == 1 and store.data["sent"] == [RID]
+
+
+@pytest.mark.parametrize("errors", [["timeout"], ["runner: RuntimeError: x"], ["runner: report build failed"]])
+def test_failed_discovery_run_report_is_not_ready(errors):
+    report = _real_report()
+    report["errors"] = errors
+    cloud, store = Cloud([_plan()], [200]), MemStore()
+    f, _ = _fetcher(cloud, store, report=lambda: report)
+    _run(f, 2)
+    assert cloud.posts == [] and store.saves == 0
+
+
+def test_request_id_with_trailing_newline_rejected():
+    plan = _plan(rid=RID + "\n")
+    cloud, store = Cloud([plan], [200]), MemStore()
+    f, _ = _fetcher(cloud, store)
+    _run(f)
+    assert cloud.posts == []
+
+
+@pytest.mark.asyncio
+async def test_unload_control_cancels_inflight_discovery_send(monkeypatch):
+    from custom_components.volcast.control import runtime as rt_mod
+    from tests.control.test_runtime import FakeCloud, _entry, _patch, _setup_hass
+    from tests.setup_harness import drain
+
+    state = {"plan": None, "started": None}
+
+    class Hang(FakeCloud):
+        async def async_get_schedule(self):
+            return state["plan"]
+
+        async def async_post_discovery_report(self, request_id, report):
+            state["started"].set()
+            await asyncio.Event().wait()
+
+    _patch(monkeypatch)
+    monkeypatch.setattr(rt_mod, "VolcastCloud", Hang)
+    hass, entry = _setup_hass(), _entry()
+    rt = await rt_mod.async_setup_control(hass, entry, report=_real_report)
+    await drain(hass)
+    state["plan"], state["started"] = _plan(), asyncio.Event()
+    await asyncio.wait_for(rt.fetcher.async_refresh(), 1)
+    task = rt.fetcher._discovery_task
+    await asyncio.wait_for(state["started"].wait(), 1)
+    await rt_mod.async_unload_control(hass, rt)
+    assert task.done()
+    assert rt.fetcher._discovery_task is None
