@@ -470,8 +470,8 @@
       "description": "Střídač má vlastní pracovní režim nebo plán (například Eco nebo tarifní plán nastavený v aplikaci výrobce), který může nabíjet baterii ze sítě mimo plán Volcast. Tento režim nebo plán vypněte v aplikaci výrobce střídače a ponechte zapnutý obecný (standardní) režim. Nevypínejte samotný střídač."
     },
     "brand_profile_ready": {
-      "title": "Je k dispozici profil pro váš střídač",
-      "description": "Volcast získal nový profil střídače, který odpovídá této instalaci: {label} ({profile}). Jde o testovací profil — nic se nemění, dokud ho nezvolíte v nastavení Volcast, a řízení začne až po ověření zařízení. Zvolte Opravit pro zavření tohoto upozornění.",
+      "title": "Je k dispozici testovací profil pro váš střídač",
+      "description": "Volcast získal nový testovací profil, který odpovídá této instalaci: {label} ({profile}). Po opětovném načtení integrace ho Volcast může použít k rozpoznání střídače a čtení jeho dat. S profilem získaným tímto způsobem Volcast střídač nikdy neřídí. Zvolte Opravit pro zavření tohoto upozornění.",
       "fix_flow": {
         "step": {
           "confirm": {

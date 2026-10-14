@@ -160,7 +160,7 @@ from ..core.engines.time_window import baseline_programs, compress
 from ..core.guard_state import WriteBudget
 from ..core.modbus.writer import KEPT
 from ..core.params import Params
-from ..core.profile import direct_verified
+from ..core.profile import direct_verified, writes_allowed
 from ..core.registers import RegisterWrite
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from ..core.write_sequence import ERROR as WRITE_ERROR, OK as WRITE_OK
@@ -370,7 +370,9 @@ class VolcastExecutor:
         """Czy drabina może pisać (szczeble 4–5): zgoda konta, przełącznik, wybrany ten sposób sterowania,
         nie próba bez zapisu i nie tryb „tylko plan”."""
         trial = self._direct is not None and self._direct.trial
-        return (self._state.consent is True and self._state.local_switch and not self._stopped
+        # Profil spoza pakietu (podpisany feed) jest tylko do odczytu — drabina nigdy nie pisze.
+        return (writes_allowed(self._profile) and self._state.consent is True and self._state.local_switch
+                and not self._stopped
                 and not self._frozen and not self._disabled and not trial and not self._state.plan_only
                 and self._entry.options.get(OPT_CONTROL_MODE) == self.io.kind)
 
@@ -1916,6 +1918,8 @@ class VolcastExecutor:
             verified = direct_verified(self._profile) and not direct.trial
         else:
             verified = control_verified(self._profile, self._domain)
+        if self._profile is not None and not writes_allowed(self._profile):
+            verified = False                         # profil z feedu: tylko odczyt, w każdej gałęzi
         # „Tylko plan” = sterowanie wyłączone (jak opcja `control_off`), także zanim opcje się przeładują.
         mode = None if self._state.plan_only else self._entry.options.get(OPT_CONTROL_MODE)
         return Gates(consent=self._state.consent, local_switch=self._state.local_switch,

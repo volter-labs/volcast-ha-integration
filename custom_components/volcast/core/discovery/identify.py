@@ -92,6 +92,15 @@ def transport_order(candidate: Candidate) -> tuple[str, ...]:
     return _V5_TRANSPORTS if candidate.logger_serial is not None else _DEFAULT_TRANSPORTS
 
 
+def probe_order(profiles: Sequence[Any]) -> list[Any]:
+    """Kolejność sondy: zweryfikowane profile z pakietu, potem reszta pakietu, na końcu profile z feedu
+    (pierwsze dopasowanie wygrywa, budżet ramek jest wspólny); w obrębie poziomu kolejność wejścia."""
+    def key(p: Any) -> tuple[bool, bool]:
+        packaged = getattr(p, "origin", None) == "package"
+        return (not packaged, not (packaged and getattr(p, "status", None) == "verified"))
+    return sorted(profiles, key=key)
+
+
 def _groups(kind: str, profiles: Sequence[Any]) -> list[tuple[tuple[int, int, float, float], list[Any]]]:
     """Profile obsługujące transport, pogrupowane po parametrach łącza (jedno połączenie na grupę)."""
     groups: dict[tuple[int, int, float, float], list[Any]] = {}
@@ -156,7 +165,7 @@ async def identify_detailed(candidate: Candidate, profiles: Sequence[Any], *, tr
     for kind in transport_order(candidate):
         if kind == "solarman_v5" and candidate.logger_serial is None:
             continue
-        for (port, unit, timeout_s, gap_s), profs in _groups(kind, profiles):
+        for (port, unit, timeout_s, gap_s), profs in _groups(kind, probe_order(profiles)):
             if used >= budget:
                 _note(errors, "budget")
                 return None, None, used, tuple(errors)

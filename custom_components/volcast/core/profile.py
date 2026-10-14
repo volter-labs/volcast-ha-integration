@@ -5,6 +5,8 @@ wołać przez `hass.async_add_executor_job`.
 """
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -21,6 +23,10 @@ _BUILTIN_ID_RE = re.compile(r"[a-z0-9-]+")
 # dla KAŻDEGO profilu bez pola (celowo): prawdziwa odmowa z echem zgodnym kosztuje ~3 s i 2 odczyty
 # więcej, za to opóźnione zastosowanie nigdy nie jest odmową. Profil może ustawić 0.
 DEFAULT_READBACK_SETTLE_S = 1.5
+# Pochodzenie profilu: pakiet integracji albo podpisany feed. Profil z feedu jest TYLKO DO ODCZYTU
+# (rozpoznanie, odczyty, wykrywanie) — nigdy nie dopuszcza zapisu na falownik (`writes_allowed`).
+ORIGIN_PACKAGE = "package"
+ORIGIN_FEED = "feed"
 
 
 class ProfileError(ValueError):
@@ -96,6 +102,9 @@ class Profile:
     # odczekanie przed ponownym odczytem zwrotnym, gdy pierwszy pokazał wartość sprzed zapisu
     readback_settle_s: float = DEFAULT_READBACK_SETTLE_S
     work_mode: WorkMode | None = None
+    origin: str = ORIGIN_PACKAGE
+    # SHA-256 treści profilu (JSON z kluczami posortowanymi) — wiąże wynik drabiny weryfikacji z treścią.
+    fingerprint: str = ""
 
     def intent(self, name: str) -> Mapping[str, Any] | None:
         return self.raw["intents"][name]
@@ -158,7 +167,13 @@ def profile_from_dict(raw: dict) -> Profile:
         nvm_budget=_nvm_budget(wp.get("nvm_budget")),
         readback_settle_s=float(wp.get("readback_settle_s", DEFAULT_READBACK_SETTLE_S)),
         work_mode=_work_mode(raw.get("work_mode")),
+        fingerprint=_fingerprint(raw),
     )
+
+
+def _fingerprint(raw: dict) -> str:
+    text = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _modbus_spec(m: Mapping[str, Any]) -> ModbusSpec:
@@ -181,9 +196,16 @@ def _nvm_budget(b: Mapping[str, Any] | None) -> NvmBudget | None:
     return NvmBudget(window_s=float(b["window_h"]) * 3600.0, per_key=b["per_key"], total=b["total"])
 
 
+def writes_allowed(profile) -> bool:
+    """Czy profil w ogóle może prowadzić do zapisu na falownik: tylko profil z pakietu integracji.
+    Profil z feedu (i obiekt bez pochodzenia) — nigdy, niezależnie od statusu, zgody i drabiny."""
+    return getattr(profile, "origin", None) == ORIGIN_PACKAGE
+
+
 def direct_verified(profile: Profile) -> bool:
-    """Ścieżka rejestrów dopuszczona do zapisu: i profil, i jego sekcja `modbus` zweryfikowane."""
-    return profile.status == "verified" and profile.modbus.status == "verified"
+    """Ścieżka rejestrów dopuszczona do zapisu: profil z pakietu, i profil, i jego sekcja `modbus`
+    zweryfikowane."""
+    return writes_allowed(profile) and profile.status == "verified" and profile.modbus.status == "verified"
 
 
 def ha_integration(profile: Profile, domain: str | None) -> Mapping[str, Any] | None:
@@ -227,21 +249,17 @@ def builtin_ids() -> tuple[str, ...]:
 
 
 def load_builtin(profile_id: str) -> Profile:
-    """Pakietowy `verified` zawsze wygrywa; profil z feedu (zawsze `draft`) nadpisuje pakietowy
-    `draft` albo dodaje nowe id."""
+    """Profil z pakietu (zawsze wygrywa) albo — dla id spoza pakietu — z podpisanego feedu: `draft`,
+    pochodzenie `feed`, tylko do odczytu. Feed w etapie 1 jedynie DODAJE marki."""
     # Id trafia do ścieżki pliku — bez tej kontroli "../x" wyszłoby poza katalog profili.
     if not isinstance(profile_id, str) or not _BUILTIN_ID_RE.fullmatch(profile_id):
         raise ProfileError([f"$.id: niedozwolony identyfikator profilu {profile_id!r}"])
     path = PROFILES_DIR / f"{profile_id}.json"
     from_feed = profile_feed.feed_profile(profile_id)
-    if from_feed is None:
+    if from_feed is None or path.is_file():
         return load_profile(path)
-    if path.is_file():
-        packaged = load_profile(path)
-        if packaged.status == "verified":
-            return packaged
-    profile = profile_from_dict(from_feed)
+    profile = dataclasses.replace(profile_from_dict(from_feed), origin=ORIGIN_FEED)
     # Bezpiecznik: rejestr feedu przyjmuje tylko zdegradowane profile o tym samym id.
-    if profile.id != profile_id or profile.status != "draft" or direct_verified(profile):
+    if profile.id != profile_id or profile.status != "draft" or profile.modbus.status != "draft":
         raise ProfileError([f"$.id: profil z feedu {profile_id!r} odrzucony"])
     return profile

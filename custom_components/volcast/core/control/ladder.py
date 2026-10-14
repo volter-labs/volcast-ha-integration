@@ -127,12 +127,15 @@ def _parse_iso(raw: Any) -> datetime | None:
 
 
 class Ladder:
-    def __init__(self, start_rung: int, params: LadderParams, *, device_key: str) -> None:
+    def __init__(self, start_rung: int, params: LadderParams, *, device_key: str,
+                 profile_hash: str | None = None) -> None:
         if start_rung not in START_RUNGS:
             raise ValueError(f"start rung must be one of {START_RUNGS}")
         self.start_rung = start_rung
         self.params = params
         self.device_key = device_key
+        # Odcisk treści profilu, z którym drabina przeszła (None = rekord sprzed powiązania).
+        self.profile_hash = profile_hash if valid_profile_hash(profile_hash) else None
         self.consent_given = False
         self.state = LadderState(rung=start_rung, state=IDLE)
         self.migrated = False
@@ -310,6 +313,18 @@ class Ladder:
         if mid:
             self._stop(IDENTIFY_CHANGED, now)
 
+    def profile_changed(self, new_hash: str, now: datetime) -> None:
+        """Inna treść profilu niż ta, z którą drabina szła/przeszła: wynik nieważny — od szczebla startowego
+        (w trakcie: stop jak przy zmianie urządzenia, właściciel ponawia)."""
+        if new_hash == self.profile_hash:
+            return
+        mid = self._active() or self.state.state == STOPPED
+        self.profile_hash = new_hash
+        self.migrated = False
+        self.state = LadderState(rung=self.start_rung, state=IDLE, since=now)
+        if mid:
+            self._stop(IDENTIFY_CHANGED, now)
+
     # ── blok kontraktu ──
 
     def to_payload(self) -> dict:
@@ -348,7 +363,7 @@ class Ladder:
                 "would_write": s.would_write, "foreign_writes": s.foreign_writes, "hours_done": s.hours_done,
                 "trial_started": iso(s.trial_started) if s.trial_started else None,
                 "target_w": s.target_w, "measured_w": s.measured_w, "deviation_pct": s.deviation_pct,
-                "migrated": self.migrated}
+                "migrated": self.migrated, "profile_hash": self.profile_hash}
 
     @classmethod
     def from_record(cls, raw: Any, params: LadderParams) -> "Ladder | None":
@@ -367,7 +382,7 @@ class Ladder:
         reason = raw.get("stop_reason")
         if (state == STOPPED) != (reason in STOP_REASONS):
             return None
-        lad = cls(start, params, device_key=key)
+        lad = cls(start, params, device_key=key, profile_hash=raw.get("profile_hash"))
         lad.migrated = raw.get("migrated") is True
         s = lad.state
         s.rung, s.state, s.since = rung, state, since
@@ -390,6 +405,10 @@ class Ladder:
         if s.state == RUNNING and rung == RUNG_TRIAL and s.next_at is None:
             return None                                  # próba bez końca nie ruszy dalej
         return lad
+
+
+def valid_profile_hash(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
 
 def valid_record(raw: Any) -> bool:

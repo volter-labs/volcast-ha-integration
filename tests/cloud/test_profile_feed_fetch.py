@@ -43,6 +43,9 @@ def _backend() -> Backend:
 def _acme(pid="acme-hybrid") -> dict:
     raw = json.loads((PROFILES_DIR / "sofar-hyd.json").read_text("utf-8"))
     raw["id"], raw["label"] = pid, "Acme Hybrid [click](https://evil.example) <b>x</b>"
+    raw["identify"]["model_regex"] = ["^ACME-H[0-9]"]
+    for integ in raw["ha"]["integrations"]:
+        integ["domain"], integ["model_regex"] = "acme_power", ["(?i)\\bacme"]
     return raw
 
 
@@ -191,7 +194,7 @@ def _fetcher(cloud, feed):
 
 def _due_updater(store=None, keys=KEYS):
     clock = types.SimpleNamespace(t=1_000_000.0)
-    upd = pf.ProfileFeedUpdater(store or _Store(), keys=keys, packaged_ids=(), clock=lambda: clock.t)
+    upd = pf.ProfileFeedUpdater(store or _Store(), keys=keys, clock=lambda: clock.t)
     clock.t += pf.FEED_FIRST_CHECK_DELAY_S
     return upd, clock
 
@@ -376,13 +379,19 @@ def test_repair_created_on_a_match(issues, hass_kw):
 @pytest.mark.parametrize("hass_kw", [
     {},
     {"reports": [_report(candidates=["sofar-hyd", "deye-sg"], manufacturer="Sofar")]},
+    {"reports": [_report(manufacturer="Acmetronics Ltd")]},                    # tylko całe słowo marki
+    {"entries": [_entry("acme-other")], "verified": {"acme-other"}},            # wpis na profilu verified
+    {"reports": [_report(manufacturer="ACME")], "entries": [_entry("acme-other")], "verified": {"acme-other"}},
     {"reports": [None, {"inverters": "nope"}, {"inverters": [{"devices": None}]}]},
     {"entries": [_entry("sofar-hyd"), _entry(None)]},
-], ids=["nothing", "other-brand", "malformed-reports", "other-entry-brand"])
+], ids=["nothing", "other-brand", "brand-not-a-whole-word", "entry-on-verified-profile",
+        "brand-of-a-verified-entry", "malformed-reports", "other-entry-brand"])
 def test_no_repair_without_a_match(issues, hass_kw):
+    hass_kw = dict(hass_kw)
+    verified = hass_kw.pop("verified", frozenset())
     hass = _Hass(**hass_kw)
     profiles = {"acme-hybrid": _acme()}
-    assert coord.async_profile_ready_issues(hass, frozenset(profiles), profiles) == []
+    assert coord.async_profile_ready_issues(hass, frozenset(profiles), profiles, verified_ids=verified) == []
     assert issues == []
 
 
@@ -420,6 +429,10 @@ async def test_repair_fix_flow_is_a_plain_confirmation():
 def test_repair_texts_present_in_every_language(path):
     issue = json.loads(path.read_text("utf-8"))["issues"][ISSUE_BRAND_PROFILE_READY]
     assert issue["title"] and "{label}" in issue["description"]
+    if path.name in ("strings.json", "en.json"):
+        # Profil z feedu jest tylko do odczytu — tekst nie może obiecywać sterowania po wyborze.
+        assert "until you choose" not in issue["description"]
+        assert "never controls" in issue["description"]
     confirm = issue["fix_flow"]["step"]["confirm"]
     assert confirm["title"] and confirm["description"]
 

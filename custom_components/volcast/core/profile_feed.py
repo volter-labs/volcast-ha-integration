@@ -18,6 +18,7 @@ import asyncio
 import base64
 import binascii
 import copy
+import functools
 import hashlib
 import json
 import logging
@@ -25,7 +26,8 @@ import math
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 
@@ -51,6 +53,10 @@ _HEX_KEY_RE = re.compile(r"[0-9a-fA-F]{64}")
 _MODEL_PROBES = ("A", "Q", "z", "0", "7", "-", "QX", "ZZZZZZZZ", "Q0-Q0", "00000000", "xyz123", "NOT-A-MODEL")
 _BLANK_REGISTER_VALUES = (0x0000, 0xFFFF)
 _MAX_DEVICE_TYPE_EXPECT = 64
+_MAX_REGEX_LEN = 200
+# Grupa z kwantyfikatorem, sama pod kwantyfikatorem: `(a+)+`, `(.*)*`, `([a-z]+){2,}`.
+_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*(?:[*+]|\{\d*,\d*\})(?:[^()\\]|\\.)*\)(?:[*+]|\{\d*,?\d*\})")
+_FLOOR_MAX_AHEAD_S = 24 * 3600
 
 
 class CanonicalError(ValueError):
@@ -131,6 +137,7 @@ class VerifiedFeed:
     signature: str
     generated_at: datetime
     profiles: Mapping[str, dict]          # id → profil po wymuszeniu `draft`
+    ignored: tuple[str, ...] = ()         # wpisy o id profilu z pakietu (pominięte)
 
     @property
     def etag(self) -> str:
@@ -216,6 +223,31 @@ def _identify_narrow(raw: dict) -> bool:
     return len(expect) <= _MAX_DEVICE_TYPE_EXPECT and not set(expect) & set(_BLANK_REGISTER_VALUES)
 
 
+def _regexes(node: Any) -> Iterable[Any]:
+    """Wszystkie wzorce profilu (`*_regex`: napis albo lista napisów), na każdej głębokości."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(k, str) and k.endswith("_regex"):
+                yield from (v if isinstance(v, list) else [v])
+            else:
+                yield from _regexes(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _regexes(v)
+
+
+def _regex_safe(rx: Any) -> bool:
+    """Wzorce z feedu działają w pętli zdarzeń HA: krótkie, kompilowalne, bez zagnieżdżonych
+    kwantyfikatorów (katastrofalne nawroty)."""
+    if not isinstance(rx, str) or len(rx) > _MAX_REGEX_LEN or _NESTED_QUANTIFIER.search(rx):
+        return False
+    try:
+        re.compile(rx)
+    except re.error:
+        return False
+    return True
+
+
 def _as_draft(raw: dict) -> dict:
     """Kopia profilu z każdym statusem zaufania ustawionym na `draft` (feed nie podnosi zaufania)."""
     out = copy.deepcopy(raw)
@@ -228,26 +260,100 @@ def _as_draft(raw: dict) -> dict:
     return out
 
 
-def _profiles(raw_list: Any) -> dict[str, dict]:
-    if not isinstance(raw_list, list) or len(raw_list) > FEED_MAX_PROFILES:
+# --- obrazy wzorcowe profili pakietu (kontrola nakładania się) ---------------------------------------
+
+REFS_PATH = Path(__file__).with_name("identity_refs.json")
+
+
+@functools.lru_cache(maxsize=1)
+def packaged_refs() -> Mapping[str, Mapping[str, Any]]:
+    """{id profilu pakietu: obrazy rejestrów, model, domeny HA, verified} — plik pilnowany testem
+    zgodności z profilami pakietu i `tests/golden/`. Odczyt pliku: pierwsze wołanie w `run_job`."""
+    return MappingProxyType(json.loads(REFS_PATH.read_text(encoding="utf-8")))
+
+
+def packaged_verified_ids() -> frozenset[str]:
+    return frozenset(pid for pid, ref in packaged_refs().items() if ref.get("verified") is True)
+
+
+def _ref_image(ref: Mapping[str, Any]):
+    from .registers import RegisterImage
+    return RegisterImage({int(a): w for a, w in ref["holding"].items()},
+                         {int(a): w for a, w in ref["input"].items()})
+
+
+def overlaps_packaged(raw: dict, *, only: str | None = None) -> bool:
+    """Czy profil rozpoznałby urządzenie z obrazu wzorcowego profilu pakietu (rejestry identyfikacji)
+    albo jego model w tej samej domenie integracji HA. Zachowawczo: takie nakładanie się = odrzucenie."""
+    from .modbus.identity import identity_info
+    from .profile import profile_from_dict
+    profile = profile_from_dict(raw)
+    domains: dict[str, list[str]] = {}
+    for integ in (raw.get("ha") or {}).get("integrations") or ():
+        domains.setdefault(integ["domain"], []).extend(integ.get("model_regex") or ())
+    own = list((raw.get("identify") or {}).get("model_regex") or ())
+    for pid, ref in packaged_refs().items():
+        if only is not None and pid != only:
+            continue
+        if identity_info(profile, _ref_image(ref))["matched"]:
+            return True
+        model = ref.get("model")
+        shared = [d for d in ref.get("domains") or () if d in domains]
+        if isinstance(model, str) and shared:
+            regexes = own + [rx for d in shared for rx in domains[d]]
+            if any(re.search(rx, model) for rx in regexes):
+                return True
+    return False
+
+
+def _one_profile(raw: Any) -> dict:
+    if not isinstance(raw, dict):
         raise FeedRejected("profile_invalid")
-    out: dict[str, dict] = {}
-    for raw in raw_list:
-        if not isinstance(raw, dict):
+    try:
+        if validate_profile(raw):
             raise FeedRejected("profile_invalid")
         draft = _as_draft(raw)
         # Te same reguły co dla profilu z pakietu (id kebab-case, schemat), na kopii już zdegradowanej.
-        if validate_profile(draft) or not _identify_narrow(draft):
+        if validate_profile(draft) or not _identify_narrow(draft) \
+                or not all(_regex_safe(rx) for rx in _regexes(draft)):
             raise FeedRejected("profile_invalid")
+    except (TypeError, AttributeError, ValueError, KeyError, re.error) as err:
+        raise FeedRejected("profile_invalid") from err
+    return draft
+
+
+def _profiles(raw_list: Any) -> tuple[dict[str, dict], tuple[str, ...]]:
+    """(nowe profile, pominięte id pakietu). Etap 1: feed tylko DODAJE marki — wpis o id profilu
+    z pakietu jest pomijany (pakiet wygrywa); każdy inny błąd odrzuca cały feed."""
+    if not isinstance(raw_list, list) or len(raw_list) > FEED_MAX_PROFILES:
+        raise FeedRejected("profile_invalid")
+    packaged = packaged_refs()
+    out: dict[str, dict] = {}
+    ignored: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_list:
+        draft = _one_profile(raw)
         pid = draft["id"]
-        if pid in out:
+        if pid in seen:
             raise FeedRejected("profile_invalid")
+        seen.add(pid)
+        if pid in packaged:
+            ignored.append(pid)
+            continue
+        try:
+            overlap = overlaps_packaged(draft)
+        except (TypeError, AttributeError, ValueError, KeyError, re.error) as err:
+            raise FeedRejected("profile_invalid") from err
+        if overlap:
+            raise FeedRejected("profile_overlap")
         out[pid] = draft
-    return out
+    return out, tuple(sorted(ignored))
 
 
-def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None) -> VerifiedFeed:
-    """Weryfikacja w kolejności kontraktu (§2); `held` = feed już trzymany (anty-rollback)."""
+def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None,
+                floor: datetime | None = None) -> VerifiedFeed:
+    """Weryfikacja w kolejności kontraktu (§2); `held` = feed już trzymany (anty-rollback), `floor` =
+    najnowsze `generated_at` kiedykolwiek przyjęte (gdy trzymanego feedu nie da się już zweryfikować)."""
     # Pola koperty poza tymi trzema nie są podpisane — pomijamy je (nie trafiają też do magazynu).
     if not isinstance(doc, dict) or not {"feed", "key_id", "signature"} <= set(doc):
         raise FeedRejected("malformed")
@@ -278,19 +384,22 @@ def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None)
         raise FeedRejected("schema_version")
     # 4. anty-rollback: starszy odrzucony, równy tylko z identycznym podpisem
     generated_at = _parse_generated_at(feed.get("generated_at"))
+    if floor is not None and generated_at < floor:
+        raise FeedRejected("rollback")
     if held is not None:
         if generated_at < held.generated_at:
             raise FeedRejected("rollback")
         if generated_at == held.generated_at and doc["signature"] != held.signature:
             raise FeedRejected("replay")
-    profiles = _profiles(feed.get("profiles"))
+    profiles, ignored = _profiles(feed.get("profiles"))
     document = {"feed": copy.deepcopy(feed), "key_id": key_id, "signature": doc["signature"]}
     return VerifiedFeed(document=document, key_id=key_id, signature=doc["signature"],
-                        generated_at=generated_at, profiles=profiles)
+                        generated_at=generated_at, profiles=profiles, ignored=ignored)
 
 
-def verify_feed_body(body: bytes, *, keys: Mapping[str, str], held: VerifiedFeed | None) -> VerifiedFeed:
-    return verify_feed(parse_feed_body(body), keys=keys, held=held)
+def verify_feed_body(body: bytes, *, keys: Mapping[str, str], held: VerifiedFeed | None,
+                     floor: datetime | None = None) -> VerifiedFeed:
+    return verify_feed(parse_feed_body(body), keys=keys, held=held, floor=floor)
 
 
 # --- rejestr profili z feedu (czyta `profile.py`) --------------------------------------------------
@@ -333,15 +442,11 @@ class ProfileFeedUpdater:
     wyłącznie po pełnej weryfikacji."""
 
     def __init__(self, store, *, keys: Mapping[str, str] | None,
-                 packaged_ids: Iterable[str] | Callable[[], Iterable[str]] = (),
                  clock: Callable[[], float] = time.time,
                  run_job: Callable[..., Awaitable[Any]] | None = None,
                  on_new_profiles: Callable[[frozenset[str], Mapping[str, dict]], None] | None = None) -> None:
         self._store = store
         self._keys = _usable_keys(keys)
-        # Id z pakietu (nie są „nowe” dla Naprawy); funkcja = odczyt katalogu w `run_job` przy wczytaniu.
-        self._packaged_source = packaged_ids if callable(packaged_ids) else None
-        self._packaged = frozenset() if callable(packaged_ids) else frozenset(packaged_ids)
         self._clock = clock
         self._run_job = run_job
         self._on_new = on_new_profiles
@@ -350,6 +455,9 @@ class ProfileFeedUpdater:
         self._load_lock = asyncio.Lock()
         self._busy = False
         self.held: VerifiedFeed | None = None
+        # Najnowsze przyjęte `generated_at` (zapisywane obok feedu) — anty-rollback także wtedy, gdy
+        # trzymanego feedu nie da się już zweryfikować (np. po rotacji klucza).
+        self._floor: datetime | None = None
 
     @property
     def active(self) -> bool:
@@ -376,8 +484,6 @@ class ProfileFeedUpdater:
                 return
             self._loaded = True
             try:
-                if self._packaged_source is not None:
-                    self._packaged = frozenset(await self._job(self._packaged_source))
                 data = await self._store.async_load()
             except Exception as err:  # noqa: BLE001 — bez magazynu działamy na profilach pakietu
                 _LOGGER.debug("Volcast profile feed store load failed (%s)", type(err).__name__)
@@ -388,6 +494,7 @@ class ProfileFeedUpdater:
             now = self._clock()
             if isinstance(checked, (int, float)) and not isinstance(checked, bool) and checked <= now:
                 self._next_check = max(self._next_check, checked + FEED_CHECK_INTERVAL_S)
+            self._floor = self._stored_floor(data.get("floor"), now)
             try:
                 held = await self._job(_verify_stored, data.get("document"), self._keys)
             except FeedRejected as err:
@@ -395,7 +502,22 @@ class ProfileFeedUpdater:
                                 err.reason)
                 return
             self.held = held
+            self._raise_floor(held.generated_at)
             set_feed_profiles(held.profiles)
+
+    @staticmethod
+    def _stored_floor(raw: Any, now: float) -> datetime | None:
+        """Próg z magazynu; dalej niż dobę w przyszłości = pominięty (uszkodzony zapis nie blokuje feedu)."""
+        try:
+            floor = _parse_generated_at(raw)
+        except FeedRejected:
+            return None
+        limit = datetime.fromtimestamp(now, timezone.utc) + timedelta(seconds=_FLOOR_MAX_AHEAD_S)
+        return floor if floor <= limit else None
+
+    def _raise_floor(self, generated_at: datetime) -> None:
+        if self._floor is None or generated_at > self._floor:
+            self._floor = generated_at
 
     async def async_check(self, fetch: Callable[[str | None], Awaitable[FeedFetch]]) -> str:
         """Jedno sprawdzenie: "inert", "busy", "error", "unchanged", "rejected" albo "updated"."""
@@ -429,18 +551,22 @@ class ProfileFeedUpdater:
         if status != "ok" or not isinstance(result.body, (bytes, bytearray)):
             return "error"
         try:
-            verified = await self._job(_verify_body, bytes(result.body), self._keys, held)
+            verified = await self._job(_verify_body, bytes(result.body), self._keys, held, self._floor)
         except FeedRejected as err:
             _LOGGER.warning("Volcast profile feed rejected (%s) — keeping the previous profiles", err.reason)
             return "rejected"
         if held is not None and verified.signature == held.signature:
             await self._save(held)
             return "unchanged"
+        self._raise_floor(verified.generated_at)
         await self._save(verified)
         before = frozenset(held.profiles) if held is not None else frozenset()
         self.held = verified
         set_feed_profiles(verified.profiles)
-        new_ids = frozenset(verified.profiles) - before - self._packaged
+        if verified.ignored:
+            _LOGGER.warning("Volcast profile feed: ignored entries for profiles shipped with the integration (%s)",
+                            ", ".join(verified.ignored))
+        new_ids = frozenset(verified.profiles) - before
         if new_ids and self._on_new is not None:
             try:
                 self._on_new(new_ids, MappingProxyType(dict(verified.profiles)))
@@ -452,13 +578,19 @@ class ProfileFeedUpdater:
     async def _save(self, feed: VerifiedFeed) -> None:
         try:
             await self._store.async_save({"document": copy.deepcopy(dict(feed.document)),
-                                          "etag": feed.etag, "checked_at": self._clock()})
+                                          "etag": feed.etag, "checked_at": self._clock(),
+                                          "floor": _iso(self._floor or feed.generated_at)})
         except Exception as err:  # noqa: BLE001 — feed i tak działa w procesie
             _LOGGER.warning("Volcast profile feed could not be saved (%s)", type(err).__name__)
 
 
-def _verify_body(body: bytes, keys: Mapping[str, str], held: VerifiedFeed | None) -> VerifiedFeed:
-    return verify_feed_body(body, keys=keys, held=held)
+def _iso(dt: datetime) -> str:
+    return f"{dt:%Y-%m-%dT%H:%M:%S}.{dt.microsecond:06d}Z"
+
+
+def _verify_body(body: bytes, keys: Mapping[str, str], held: VerifiedFeed | None,
+                 floor: datetime | None = None) -> VerifiedFeed:
+    return verify_feed_body(body, keys=keys, held=held, floor=floor)
 
 
 def _verify_stored(document: Any, keys: Mapping[str, str]) -> VerifiedFeed:

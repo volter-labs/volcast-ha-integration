@@ -470,8 +470,8 @@
       "description": "O inversor tem o seu próprio modo de funcionamento ou programação (por exemplo Eco ou um horário tarifário definido na app do fabricante) que pode carregar a bateria a partir da rede fora do plano Volcast. Desative esse modo ou programação na app do fabricante do inversor e deixe ativo o modo geral (padrão). Não desligue o próprio inversor."
     },
     "brand_profile_ready": {
-      "title": "Está disponível um perfil para o seu inversor",
-      "description": "O Volcast recebeu um novo perfil de inversor que corresponde a esta instalação: {label} ({profile}). É um perfil de teste — nada muda até o escolher na configuração do Volcast, e o controlo só começa após a verificação do dispositivo. Selecione Corrigir para fechar este aviso.",
+      "title": "Está disponível um perfil de teste para o seu inversor",
+      "description": "O Volcast recebeu um novo perfil de teste que corresponde a esta instalação: {label} ({profile}). Depois de a integração ser recarregada, o Volcast pode usá-lo para reconhecer o inversor e ler os seus dados. O Volcast nunca controla o inversor com um perfil recebido desta forma. Selecione Corrigir para fechar este aviso.",
       "fix_flow": {
         "step": {
           "confirm": {

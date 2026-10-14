@@ -470,8 +470,8 @@
       "description": "De omvormer heeft een eigen werkmodus of schema (bijvoorbeeld Eco of een tariefschema uit de app van de fabrikant) dat de accu buiten het Volcast-plan om uit het net kan laden. Schakel die modus of dat schema uit in de omvormer-app van de fabrikant en laat de algemene (standaard)modus aan. Zet de omvormer zelf niet uit."
     },
     "brand_profile_ready": {
-      "title": "Er is een profiel voor je omvormer beschikbaar",
-      "description": "Volcast heeft een nieuw omvormerprofiel ontvangen dat bij deze installatie past: {label} ({profile}). Het is een testprofiel — er verandert niets totdat je het kiest in de Volcast-instellingen, en de aansturing start pas na de apparaatverificatie. Kies Repareren om deze melding te sluiten.",
+      "title": "Er is een testprofiel voor je omvormer beschikbaar",
+      "description": "Volcast heeft een nieuw testprofiel ontvangen dat bij deze installatie past: {label} ({profile}). Nadat de integratie opnieuw is geladen, kan Volcast het gebruiken om de omvormer te herkennen en zijn gegevens te lezen. Met een profiel dat op deze manier is ontvangen, stuurt Volcast de omvormer nooit aan. Kies Repareren om deze melding te sluiten.",
       "fix_flow": {
         "step": {
           "confirm": {

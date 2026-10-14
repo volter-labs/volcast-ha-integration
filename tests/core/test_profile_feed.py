@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import dataclasses
 import json
 import logging
 from pathlib import Path
@@ -21,8 +22,11 @@ from custom_components.volcast.control.verification import start_rung_for
 from custom_components.volcast.core import profile_feed as pf
 from custom_components.volcast.core.control.ladder import RUNG_CONTROL_WRITE, RUNG_IDENTIFY
 from custom_components.volcast.core.control.select import control_verified
+from custom_components.volcast.core import profile as prof_mod
+from custom_components.volcast.core.control.select import InverterHint, select_profile
+from custom_components.volcast.core.discovery import identify as identify_mod
 from custom_components.volcast.core.profile import (
-    PROFILES_DIR, ProfileError, builtin_ids, direct_verified, load_builtin)
+    PROFILES_DIR, ProfileError, builtin_ids, direct_verified, load_builtin, profile_from_dict)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "profile_feed"
 TS_BODY = (FIXTURES / "feed_ts.json").read_bytes()
@@ -37,7 +41,6 @@ _OTHER = Ed25519PrivateKey.generate()
 
 T0 = "2026-10-14T08:00:00.000Z"
 T1 = "2026-10-15T08:00:00.000Z"
-PACKAGED = frozenset(p.stem for p in PROFILES_DIR.glob("*.json"))
 
 
 def _raw(pid: str) -> dict:
@@ -45,9 +48,13 @@ def _raw(pid: str) -> dict:
 
 
 def _acme(pid="acme-hybrid", **edits) -> dict:
+    """Nowa marka: kopia sofar-hyd z własną identyfikacją (nie pokrywa się z żadnym profilem pakietu)."""
     raw = _raw("sofar-hyd")
     raw["id"] = pid
     raw["label"] = "Acme Hybrid"
+    raw["identify"]["model_regex"] = ["^ACME-H[0-9]"]
+    for integ in raw["ha"]["integrations"]:
+        integ["domain"], integ["model_regex"] = "acme_power", ["(?i)\\bacme"]
     raw.update(edits)
     return raw
 
@@ -116,7 +123,8 @@ def test_ts_fixture_canonical_bytes_match_python():
 
 def test_ts_fixture_signature_verifies_in_python():
     v = pf.verify_feed_body(TS_BODY, keys=TS_KEYS, held=None)
-    assert sorted(v.profiles) == ["acme-hybrid", "goodwe-et", "sofar-hyd"]
+    assert sorted(v.profiles) == ["acme-hybrid"]                  # id z pakietu pominięte
+    assert v.ignored == ("goodwe-et", "sofar-hyd")
     assert v.generated_at.isoformat() == "2026-10-14T08:00:00+00:00"
     assert v.etag.startswith('"') and len(v.etag) == 66
 
@@ -269,17 +277,21 @@ def test_packaged_verified_profile_never_overridden():
     assert p.raw["label"] == _raw("goodwe-et")["label"] and direct_verified(p)
 
 
-def test_feed_overrides_packaged_draft():
-    raw = _raw("sofar-hyd")
-    raw["label"] = "Sofar HYD (feed)"
-    _activate(raw)
-    assert load_builtin("sofar-hyd").raw["label"] == "Sofar HYD (feed)"
+@pytest.mark.parametrize("pid", ["sofar-hyd", "goodwe-et"])
+def test_feed_entry_with_a_packaged_id_is_ignored_and_the_rest_accepted(pid):
+    raw = _raw(pid)
+    raw["label"] = "From the feed"
+    v = _activate(raw, _acme())
+    assert v.ignored == (pid,) and list(v.profiles) == ["acme-hybrid"]
+    p = load_builtin(pid)
+    assert p.raw["label"] == _raw(pid)["label"] and p.origin == "package"
+    assert load_builtin("acme-hybrid").origin == "feed"
 
 
 def test_ts_fixture_merge_rules():
     pf.set_feed_profiles(pf.verify_feed_body(TS_BODY, keys=TS_KEYS, held=None).profiles)
     assert load_builtin("goodwe-et").raw["label"] == _raw("goodwe-et")["label"]
-    assert load_builtin("sofar-hyd").raw["label"] == "Sofar HYD (feed)"
+    assert load_builtin("sofar-hyd").raw["label"] == _raw("sofar-hyd")["label"]
     assert load_builtin("acme-hybrid").status == "draft"
 
 
@@ -364,7 +376,7 @@ def _ok(body):
 
 
 class Clock:
-    def __init__(self, t=1_000_000.0):
+    def __init__(self, t=1_792_454_400.0):                       # 2026-10-20 UTC
         self.t = t
 
     def __call__(self):
@@ -372,7 +384,7 @@ class Clock:
 
 
 def _updater(store, *, keys=KEYS, clock=None, on_new=None):
-    return pf.ProfileFeedUpdater(store, keys=keys, packaged_ids=PACKAGED, clock=clock or Clock(),
+    return pf.ProfileFeedUpdater(store, keys=keys, clock=clock or Clock(),
                                  on_new_profiles=on_new)
 
 
@@ -597,7 +609,7 @@ def test_verification_runs_in_the_job_runner():
     async def job(fn, *args):
         calls.append(fn.__name__)
         return fn(*args)
-    upd = pf.ProfileFeedUpdater(MemStore(), keys=KEYS, packaged_ids=PACKAGED, clock=Clock(), run_job=job)
+    upd = pf.ProfileFeedUpdater(MemStore(), keys=KEYS, clock=Clock(), run_job=job)
     assert _run(upd.async_check(Fetch(_ok(_body())))) == "updated"
     assert calls and all(c.startswith("_verify") or c.startswith("verify") for c in calls)
 
@@ -606,3 +618,116 @@ def test_missing_crypto_library_rejects_instead_of_accepting(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.asymmetric.ed25519", None)
     assert _reason(_body()) == "crypto_unavailable"
+
+
+# --- etap 1: feed tylko DODAJE marki; nakładanie się z pakietem odrzuca feed ------------------------
+
+def _copy_as(pid_from: str, pid_to: str) -> dict:
+    raw = _raw(pid_from)
+    raw["id"] = pid_to
+    return raw
+
+
+@pytest.mark.parametrize("source, new_id", [("goodwe-et", "goodwe-et-g2"), ("sofar-hyd", "aaa-sofar"),
+                                            ("deye-sg", "deye-sg-clone")])
+def test_feed_profile_identifying_a_packaged_device_rejects_the_feed(source, new_id):
+    assert _reason(_body(feed=_feed([_acme(), _copy_as(source, new_id)]))) == "profile_overlap"
+
+
+def test_feed_profile_claiming_a_packaged_model_for_the_same_ha_domain_rejects_the_feed():
+    raw = _acme()
+    raw["ha"]["integrations"][0]["domain"] = "solarman"            # domena sofar-hyd (pakiet)
+    raw["ha"]["integrations"][0]["model_regex"] = ["^SP"]           # model z obrazu wzorcowego sofar-hyd
+    assert _reason(_body(feed=_feed([raw]))) == "profile_overlap"
+
+
+def test_shipped_identity_refs_cover_every_packaged_profile():
+    refs = pf.packaged_refs()
+    assert set(refs) == set(prof_mod.packaged_ids())
+    for pid, ref in refs.items():
+        assert pf.overlaps_packaged(_raw(pid), only=pid), pid       # każdy profil pakietu rozpoznaje swój obraz
+
+
+@pytest.mark.parametrize("regex", ["^(a+)+$", "^(.*)*x", "^([a-z]+)+[0-9]", "^" + "A" * 300])
+def test_unsafe_regex_rejects_the_feed(regex):
+    raw = _acme()
+    raw["ha"]["integrations"][0]["model_regex"] = [regex]
+    assert _reason(_body(feed=_feed([raw]))) == "profile_invalid"
+
+
+@pytest.mark.parametrize("bad", [["x"], "x", 5, {"integrations": "x"}, {"integrations": [5]}])
+def test_malformed_sections_are_a_rejection_not_a_crash(bad):
+    raw = _acme()
+    raw["ha"] = bad
+    assert _reason(_body(feed=_feed([raw]))) == "profile_invalid"
+
+
+def test_rollback_floor_survives_an_unverifiable_store(caplog):
+    store = MemStore()
+    _run(_updater(store).async_check(Fetch(_ok(_body(generated_at=T1)))))
+    store.data["document"]["signature"] = base64.b64encode(b"\0" * 64).decode()   # np. rotacja klucza
+    pf.set_feed_profiles({})
+    upd = _updater(store)
+    _run(upd.async_load())
+    assert upd.held is None
+    assert _run(upd.async_check(Fetch(_ok(_body(generated_at=T0))))) == "rejected"
+    assert _run(upd.async_check(Fetch(_ok(_body(generated_at="2026-10-16T08:00:00.000Z"))))) == "updated"
+
+
+def test_far_future_floor_is_ignored():
+    store = MemStore({"document": None, "floor": "2999-01-01T00:00:00.000Z", "checked_at": 0})
+    upd = _updater(store)
+    assert _run(upd.async_check(Fetch(_ok(_body(generated_at=T0))))) == "updated"
+
+
+def test_ignored_packaged_ids_logged_with_ids_only(caplog):
+    raw = _raw("sofar-hyd")
+    raw["label"] = "SECRET-LABEL"
+    with caplog.at_level(logging.WARNING):
+        assert _run(_updater(MemStore()).async_check(Fetch(_ok(_body(feed=_feed([_acme(), raw])))))) == "updated"
+    assert "sofar-hyd" in caplog.text and "SECRET-LABEL" not in caplog.text
+
+
+# --- pierwszeństwo profili pakietu przy wyborze i sondzie -------------------------------------------
+
+def _feed_draft(pid="goodwe-et-g2", source="goodwe-et"):
+    p = profile_from_dict(pf._as_draft(_copy_as(source, pid)))
+    return dataclasses.replace(p, origin="feed")
+
+
+def test_select_prefers_the_verified_profile_over_a_shadowing_draft():
+    hint = InverterHint("goodwe", "GoodWe", "GW8KN-ET")
+    profiles = [load_builtin("goodwe-et"), _feed_draft()]
+    assert select_profile([hint], profiles).profile.id == "goodwe-et"
+    assert select_profile([hint], [load_builtin("goodwe-et")]).profile.id == "goodwe-et"
+
+
+def test_probe_order_puts_packaged_verified_profiles_first():
+    profiles = [_feed_draft("aaa-first"), load_builtin("deye-sg"), load_builtin("goodwe-et")]
+    assert [p.id for p in identify_mod.probe_order(profiles)] == ["goodwe-et", "deye-sg", "aaa-first"]
+
+
+def test_load_profiles_lists_packaged_verified_first_and_feed_last():
+    _activate(_acme("aaa-acme"))
+    ids = [p.id for p in ds.load_profiles()]
+    assert ids[0] == "goodwe-et" and ids[-1] == "aaa-acme"
+
+
+@pytest.mark.asyncio
+async def test_register_probe_tries_profiles_in_priority_order(monkeypatch):
+    tried = []
+
+    async def fake_read(transport, prof, left, errors):
+        tried.append(prof.id)
+        return None, "fail"
+
+    class _T:
+        stats = None
+
+        async def close(self):
+            return None
+    monkeypatch.setattr(identify_mod, "_read_identify", fake_read)
+    profiles = [_feed_draft("aaa-first"), load_builtin("goodwe-et")]
+    cand = identify_mod.Candidate(host="192.0.2.1", source="manual", transports=("goodwe_udp",))
+    await identify_mod.identify_detailed(cand, profiles, transport_factory=lambda cfg: _T(), salt=b"s" * 16)
+    assert tried == ["goodwe-et", "aaa-first"]

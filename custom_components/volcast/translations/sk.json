@@ -470,8 +470,8 @@
       "description": "Menič má vlastný pracovný režim alebo plán (napríklad Eco alebo tarifný plán nastavený v aplikácii výrobcu), ktorý môže nabíjať batériu zo siete mimo plánu Volcast. Tento režim alebo plán vypnite v aplikácii výrobcu meniča a ponechajte zapnutý všeobecný (štandardný) režim. Nevypínajte samotný menič."
     },
     "brand_profile_ready": {
-      "title": "Je k dispozícii profil pre váš striedač",
-      "description": "Volcast získal nový profil striedača, ktorý zodpovedá tejto inštalácii: {label} ({profile}). Ide o testovací profil — nič sa nemení, kým ho nezvolíte v nastavení Volcast, a riadenie sa začne až po overení zariadenia. Zvoľte Opraviť na zatvorenie tohto upozornenia.",
+      "title": "Je k dispozícii testovací profil pre váš striedač",
+      "description": "Volcast získal nový testovací profil, ktorý zodpovedá tejto inštalácii: {label} ({profile}). Po opätovnom načítaní integrácie ho Volcast môže použiť na rozpoznanie striedača a čítanie jeho údajov. S profilom získaným týmto spôsobom Volcast striedač nikdy neriadi. Zvoľte Opraviť na zatvorenie tohto upozornenia.",
       "fix_flow": {
         "step": {
           "confirm": {

@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
-from ..profile import Profile
+from ..profile import Profile, writes_allowed
 
 
 @dataclass(frozen=True)
@@ -62,13 +62,21 @@ def _ha_text_ok(profile: Profile, hint: InverterHint) -> bool:
 
 
 def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
-    """Zawęża kandydatów po tekście urządzenia; filtr bez trafień pomijamy."""
+    """Zawęża kandydatów po tekście urządzenia; filtr bez trafień pomijamy. Gdy nadal zostaje kilka,
+    rozstrzyga pierwszeństwo: jedyny zweryfikowany profil z pakietu, potem jedyny profil z pakietu —
+    profil z feedu nie przesłoni profilu pakietu."""
     for keep in (lambda p: _maker_ok(p, hint), lambda p: _ha_text_ok(p, hint),
                  lambda p: _model_ok(p, hint.model)):
         if len(cands) <= 1:
             break
         sub = [p for p in cands if keep(p)]
         if sub:
+            cands = sub
+    for preferred in (lambda p: writes_allowed(p) and p.status == "verified", writes_allowed):
+        if len(cands) <= 1:
+            break
+        sub = [p for p in cands if preferred(p)]
+        if len(sub) == 1:
             cands = sub
     return cands
 
@@ -124,7 +132,7 @@ def ambiguous_profiles(hints: Sequence[InverterHint], profiles: Sequence[Profile
 
 
 def control_verified(profile: Profile, integration_domain: str | None) -> bool:
-    if integration_domain is None or profile.status != "verified":
+    if integration_domain is None or profile.status != "verified" or not writes_allowed(profile):
         return False
     return any(i["domain"] == integration_domain and i.get("status") == "verified"
                for i in (profile.raw.get("ha") or {}).get("integrations") or ())

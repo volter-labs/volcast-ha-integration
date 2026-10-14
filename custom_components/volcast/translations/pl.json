@@ -470,8 +470,8 @@
       "description": "Falownik ma własny tryb pracy lub harmonogram (np. Eco albo harmonogram taryfowy ustawiony w aplikacji producenta), który może ładować baterię z sieci poza planem Volcast. Wyłącz ten tryb lub harmonogram w aplikacji producenta falownika i zostaw włączony tryb ogólny (standardowy). Nie wyłączaj samego falownika."
     },
     "brand_profile_ready": {
-      "title": "Dostępny profil Twojego falownika",
-      "description": "Volcast otrzymał nowy profil falownika pasujący do tej instalacji: {label} ({profile}). To profil testowy — nic się nie zmienia, dopóki nie wybierzesz go w konfiguracji Volcast, a sterowanie rusza dopiero po weryfikacji urządzenia. Wybierz Napraw, aby zamknąć to powiadomienie.",
+      "title": "Dostępny profil testowy Twojego falownika",
+      "description": "Volcast otrzymał nowy profil testowy pasujący do tej instalacji: {label} ({profile}). Po ponownym wczytaniu integracji Volcast może go użyć do rozpoznania falownika i odczytu jego danych. Volcast nigdy nie steruje falownikiem z profilem otrzymanym w ten sposób. Wybierz Napraw, aby zamknąć to powiadomienie.",
       "fix_flow": {
         "step": {
           "confirm": {
