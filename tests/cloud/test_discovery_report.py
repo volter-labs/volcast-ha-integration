@@ -104,7 +104,7 @@ def test_host_and_ip_keys_masked_whole():
 
 def test_ordinary_text_untouched():
     for s in ("Selling First", "2026-10-14T10:00:00+00:00", "12:30:45", "SUN-10K-SG04LP3-EU",
-              "v1.2.3", "2026.10.0", "<SN>", "AABBCC******", "Zero Export To Load"):
+              "v1.2.3", "2026.10.0", "<SN>", "A4BBCC******", "Zero Export To Load"):
         assert mask_network(s) == s
 
 
@@ -446,14 +446,14 @@ def test_slug_and_compact_mac_masked(text, leaked):
 
 
 def test_mac_keeps_vendor_prefix_and_numbers_untouched():
-    assert mask_network("sensor.aa_bb_cc_dd_ee_ff_rssi") == "sensor.AABBCC******_rssi"
+    assert mask_network("sensor.a4_bb_cc_dd_ee_ff_rssi") == "sensor.A4BBCC******_rssi"
     for s in ("202610141000", "energy 123456789012 Wh", "frame 01 03 02 00 0a ff"):
         assert mask_network(s) == s
 
 
 def test_mac_labelled_key_masked_but_masked_prefix_kept():
-    out = mask_network({"wifi_mac": "001122334455", "mac": "AABBCC******"})
-    assert out == {"wifi_mac": "001122******", "mac": "AABBCC******"}
+    out = mask_network({"wifi_mac": "001122334455", "mac": "A4BBCC******"})
+    assert out == {"wifi_mac": "001122******", "mac": "A4BBCC******"}
 
 
 def test_widened_host_keys_and_ddns_and_home_arpa():
@@ -536,7 +536,7 @@ async def test_hanging_post_does_not_delay_refresh_tick_or_next_plan():
     await asyncio.wait_for(fetch_then_tick(), 1)          # nowy plan w trakcie POST-a — od razu
     assert ticks == ["accepted", "accepted"] and len(got["plans"]) == 2
     assert len(cloud.posts) == 1                          # najwyżej jedno zadanie raportu naraz
-    await f.async_stop()
+    await asyncio.wait_for(f.async_stop(), 2)
     assert f._discovery_task is None
 
 
@@ -547,13 +547,13 @@ async def test_cancelled_send_keeps_attempt_counted_and_retries_later():
     await asyncio.wait_for(f.async_refresh(), 1)
     task = f._discovery_task
     await asyncio.wait_for(cloud.started.wait(), 1)
-    await f.async_stop()                                  # rozładunek wpisu
+    await asyncio.wait_for(f.async_stop(), 2)                                  # rozładunek wpisu
     assert task.done()
     assert store.data["attempts"] == {RID: 1} and store.data["sent"] == []
     cloud2 = Cloud([_plan()], [200])
     f2, _ = _fetcher(cloud2, store)
     await asyncio.wait_for(f2.async_refresh(), 1)
-    await _settle(f2)
+    await asyncio.wait_for(_settle(f2), 2)
     assert len(cloud2.posts) == 1 and store.data["sent"] == [RID] and store.data["attempts"] == {}
 
 
@@ -564,12 +564,12 @@ async def test_cancelled_on_last_attempt_gives_up_without_another_post():
     f, _ = _fetcher(cloud, store)
     await asyncio.wait_for(f.async_refresh(), 1)
     await asyncio.wait_for(cloud.started.wait(), 1)
-    await f.async_stop()
+    await asyncio.wait_for(f.async_stop(), 2)
     assert store.data["attempts"] == {RID: 3}
     cloud2 = Cloud([_plan()], [200])
     f2, _ = _fetcher(cloud2, store)
     await asyncio.wait_for(f2.async_refresh(), 1)
-    await _settle(f2)
+    await asyncio.wait_for(_settle(f2), 2)
     assert cloud2.posts == [] and store.data["sent"] == [RID]
 
 
@@ -595,7 +595,7 @@ async def test_concurrent_handle_is_busy():
     await asyncio.wait_for(cloud.started.wait(), 1)
     assert await sender.async_handle({"request_id": RID}) == "busy"
     first.cancel()
-    await asyncio.wait([first])
+    await asyncio.wait_for(asyncio.wait([first]), 2)
 
 
 def test_discovery_runs_on_rejected_plan_too():
@@ -657,6 +657,107 @@ async def test_unload_control_cancels_inflight_discovery_send(monkeypatch):
     await asyncio.wait_for(rt.fetcher.async_refresh(), 1)
     task = rt.fetcher._discovery_task
     await asyncio.wait_for(state["started"].wait(), 1)
-    await rt_mod.async_unload_control(hass, rt)
+    await asyncio.wait_for(rt_mod.async_unload_control(hass, rt), 2)
     assert task.done()
     assert rt.fetcher._discovery_task is None
+
+
+
+# --- runda 2: zatrzymanie, próba przed maskowaniem, nazwy, MAC lokalne ------------------------
+
+@pytest.mark.asyncio
+async def test_no_upload_starts_after_stop_even_if_refresh_was_running():
+    cloud, store = Cloud([_plan()], [200]), MemStore()
+    f, _ = _fetcher(cloud, store)
+    await asyncio.wait_for(f.async_stop(), 2)            # rozładunek w trakcie pobierania planu
+    assert await asyncio.wait_for(f.async_refresh(), 1) == "accepted"
+    assert f._discovery_task is None and cloud.posts == []
+
+
+@pytest.mark.asyncio
+async def test_stop_during_masking_prevents_post():
+    cloud, store = Cloud([_plan()], [200]), MemStore()
+    gate = asyncio.Event()
+
+    class SlowHass:
+        async def async_add_executor_job(self, fn, *args):
+            await gate.wait()
+            return fn(*args)
+
+    sender = DiscoveryReportSender(SlowHass(), cloud, _real_report, store=store)
+    task = asyncio.ensure_future(sender.async_handle({"request_id": RID}))
+    await asyncio.sleep(0.01)
+    sender.stop()
+    gate.set()
+    assert await asyncio.wait_for(task, 2) == "stopped"
+    assert cloud.posts == [] and store.data["attempts"] == {RID: 1}
+
+
+@pytest.mark.asyncio
+async def test_slow_masking_is_counted_and_given_up_after_three(monkeypatch):
+    monkeypatch.setattr(dr, "SEND_TIMEOUT_S", 0.05)
+    cloud, store = Cloud([_plan()], [200]), MemStore()
+
+    class StuckHass:
+        async def async_add_executor_job(self, fn, *args):
+            await asyncio.Event().wait()
+
+    sender = DiscoveryReportSender(StuckHass(), cloud, _real_report, store=store)
+    for _ in range(3):
+        await asyncio.wait_for(dr.async_send_bounded(sender, {"request_id": RID}), 2)
+    assert store.data["attempts"] == {RID: 3} and cloud.posts == []
+    await asyncio.wait_for(dr.async_send_bounded(sender, {"request_id": RID}), 2)
+    assert store.data["sent"] == [RID] and store.data["attempts"] == {} and cloud.posts == []
+
+
+def test_masking_5000_entities_is_fast():
+    import time
+    report = _real_report()
+    report["inverters"][0]["entities"] = [
+        {"entity_id": f"sensor.deye_{i}_power", "platform": "solarman", "unique_id": f"solarman_<SN>_{i}",
+         "device_class": "power", "unit": "W", "original_name": f"Power {i}", "state": str(i * 7),
+         "options": None, "min": None, "max": None, "step": None, "state_class": "measurement"}
+        for i in range(5000)]
+    t0 = time.perf_counter()
+    out = prepare_report(report)
+    elapsed = time.perf_counter() - t0
+    print(f"prepare_report 5000 entities: {elapsed:.3f}s")
+    assert out is not None and elapsed < 2.0
+
+
+@pytest.mark.parametrize("entity_id, name, state", [
+    ("sensor.dongle_wlan_name", "WLAN", "Kowalski_Home"),
+    ("sensor.inverter_hostname", "Hostname", "deye-kowalski"),
+    ("sensor.solarman_owner", "Owner", "Jan Kowalski"),
+    ("sensor.solax_phone", "Phone", "+48 600 100 200"),
+    ("sensor.fusionsolar_plant", "Plant", "Dom Kowalskich"),
+    ("sensor.foxess_station", "Station", "Kowalski PV"),
+])
+def test_more_sensitive_names_hidden(entity_id, name, state):
+    report = _real_report()
+    report["inverters"][0]["entities"].append({"entity_id": entity_id, "original_name": name, "state": state})
+    ent = [e for e in prepare_report(report)["inverters"][0]["entities"] if e["entity_id"] == entity_id][0]
+    assert ent["state"] == "***"
+
+
+@pytest.mark.parametrize("entity_id, name, state", [
+    ("sensor.fusionsolar_plant_current_power", "Plant current power", "4.21"),
+    ("sensor.foxess_station_daily_yield", "Station daily yield", "12"),
+])
+def test_plant_and_station_measurements_kept(entity_id, name, state):
+    report = _real_report()
+    report["inverters"][0]["entities"].append({"entity_id": entity_id, "original_name": name, "state": state})
+    ent = [e for e in prepare_report(report)["inverters"][0]["entities"] if e["entity_id"] == entity_id][0]
+    assert ent["state"] == state
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("sensor.02_bb_cc_dd_ee_ff_rssi", "sensor.************_rssi"),
+    ("random 06:11:22:33:44:55 phone", "random ************ phone"),
+    ("dev aabbccddeeff", "dev ************"),
+    ("dev a4bbccddeeff", "dev A4BBCC******"),
+    ("masked 0AAABB****** before", "masked ************ before"),
+    ("masked A4BBCC****** before", "masked A4BBCC****** before"),
+])
+def test_locally_administered_mac_masked_fully(text, expected):
+    assert mask_network(text) == expected

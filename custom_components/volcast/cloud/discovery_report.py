@@ -16,13 +16,14 @@ egzotycznych form IPv4 (szesnastkowe oktety, liczba całkowita, kropka ideografi
 Jeden `request_id` = najwyżej jedna udana wysyłka: 2xx, 409 (już złożony), 404 (żądanie nie
 nasze / wygasło) i inne 4xx kończą sprawę; brak odpowiedzi, 5xx, 401 i 429 = ponowienie przy
 następnym pobraniu planu, najwyżej `MAX_ATTEMPTS` prób na id. Próba jest liczona i zapisana
-PRZED wysyłką — przerwana wysyłka (anulowanie przy rozładunku, limit czasu) też się liczy.
-Wysłane id i liczniki prób są w Store, żeby przetrwały restart. Treść raportu nigdy nie trafia
+PRZED maskowaniem i wysyłką — przerwana wysyłka (anulowanie przy rozładunku, limit czasu) też się liczy.
+Twardy limit czasu obejmuje maskowanie i POST. Wysłane id i liczniki prób są w Store, żeby przetrwały restart. Treść raportu nigdy nie trafia
 do logów (tylko status HTTP / nazwa klasy). Żadnej logiki poza wysyłką.
 """
 from __future__ import annotations
 
 import asyncio
+import functools
 import ipaddress
 import json
 import logging
@@ -62,8 +63,12 @@ _HOST_KEYS = frozenset({"host", "hostname", "ip", "ip_address", "ip_addr", "addr
 _HOST_SUFFIXES = ("_host", "_ip")
 # Encja, której stan bywa daną konta lub sieci — stan (i opcje) idą jako `***`.
 _SENSITIVE_RE = re.compile(
-    r"(?i)ssid|wi[ _\-]?fi|network[ _\-]?name|user[ _\-]?name|account|login|e[ _\-]?mail|"
-    r"passw|token|api[ _\-]?key|location|address|latitude|longitude|gps")
+    r"(?i)ssid|wi[ _\-]?fi|wlan|network[ _\-]?name|host[ _\-]?name|user[ _\-]?name|account|login|"
+    r"e[ _\-]?mail|passw|token|api[ _\-]?key|location|address|latitude|longitude|gps|owner|phone")
+# Nazwa elektrowni/stacji w chmurach falowników bywa nazwiskiem lub adresem — ale „plant”/„station”
+# niosą też pomiary (`plant_current_power`): ukrywamy tylko stan nieliczbowy.
+_NAME_LIKE_RE = re.compile(r"(?i)plant|station")
+_NUMBER_RE = re.compile(r"[+\-]?\d+(?:[.,]\d+)?(?:[eE][+\-]?\d+)?")
 _ENTITY_NAME_KEYS = ("entity_id", "unique_id", "original_name", "translation_key", "friendly_name", "name")
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
@@ -96,8 +101,17 @@ _LOCAL_HOST_RE = re.compile(
 
 
 def _mac_mask(raw: str) -> str:
-    """Prefiks producenta (OUI) zostaje, jak w `build_report`; reszta gwiazdki."""
-    return re.sub(r"[^0-9A-Fa-f]", "", raw)[:6].upper() + "******"
+    """Prefiks producenta (OUI) zostaje, jak w `build_report`; reszta gwiazdki. MAC administrowany
+    lokalnie (bit 0x02 pierwszego oktetu — druga cyfra 2/6/A/E) jest losowy, więc prefiks też
+    identyfikuje urządzenie — maskowany w całości."""
+    hexdigits = re.sub(r"[^0-9A-Fa-f]", "", raw)
+    if len(hexdigits) >= 2 and hexdigits[1].upper() in "26AE":
+        return "*" * 12
+    return hexdigits[:6].upper() + "******"
+
+
+# Forma już zamaskowana przez `build_report` (`AABBCC******`) — prefiks MAC-a lokalnego też znika.
+_MASKED_MAC_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{6}\*{6}")
 
 
 def _ipv6_repl(m: re.Match[str]) -> str:
@@ -130,13 +144,16 @@ def _apply(s: str) -> str:
     s = _MAC_SEP_RE.sub(lambda m: _mac_mask(m.group(0)), s)
     s = _MAC_DOTTED_RE.sub(lambda m: _mac_mask(m.group(0)), s)
     s = _MAC_COMPACT_RE.sub(lambda m: _mac_mask(m.group(0)), s)
+    s = _MASKED_MAC_RE.sub(lambda m: _mac_mask(m.group(0)), s)
     s = _EMAIL_RE.sub("<EMAIL>", s)
     s = _IPV6_RUN_RE.sub(_ipv6_repl, s)
     s = _IPV4_RE.sub(_IP, s)
     return _LOCAL_HOST_RE.sub(_HOST, s)
 
 
+@functools.lru_cache(maxsize=4096)
 def _mask_text(text: str) -> str:
+    # Pamięć podręczna: raport powtarza te same teksty (platforma, jednostka, klasa) tysiące razy.
     masked = _apply(text)
     norm = _strip_format(text)
     if norm == text:
@@ -202,7 +219,9 @@ def _hide_entity(ent: Any) -> None:
     if not isinstance(ent, dict):
         return
     names = " ".join(str(ent.get(k) or "") for k in _ENTITY_NAME_KEYS)
-    if not _SENSITIVE_RE.search(names):
+    state = ent.get("state")
+    numeric = isinstance(state, (int, float)) or (isinstance(state, str) and _NUMBER_RE.fullmatch(state.strip()))
+    if not (_SENSITIVE_RE.search(names) or (_NAME_LIKE_RE.search(names) and not numeric)):
         return
     for k in ("state", "options"):
         if ent.get(k) is not None:
@@ -287,6 +306,11 @@ class DiscoveryReportSender:
         self._attempts: dict[str, int] = {}
         self._loaded = False
         self._busy = False
+        self._stopped = False
+
+    def stop(self) -> None:
+        """Rozładunek wpisu: żadna nowa wysyłka; trwająca nie dojdzie do POST-a."""
+        self._stopped = True
 
     @staticmethod
     def wants(block: Any) -> bool:
@@ -295,7 +319,7 @@ class DiscoveryReportSender:
 
     async def async_handle(self, block: Any) -> str:
         """Obsługa pola `discovery_request` z planu. Wynik (do testów i logów debug): "none",
-        "busy", "done", "not_ready", "sent", "refused", "too_large", "retry", "gave_up"."""
+        "busy", "stopped", "done", "not_ready", "sent", "refused", "too_large", "retry", "gave_up"."""
         rid = _request_id(block)
         if rid is None:
             return "none"
@@ -314,6 +338,8 @@ class DiscoveryReportSender:
         return prepare_report(report)
 
     async def _handle(self, rid: str) -> str:
+        if self._stopped:
+            return "stopped"
         await self._load()
         if rid in self._sent:
             return "done"
@@ -328,17 +354,20 @@ class DiscoveryReportSender:
         if prev >= MAX_ATTEMPTS:        # ostatnia próba przerwana (anulowanie, limit czasu)
             await self._finish(rid)
             return "gave_up"
-        payload = await self._prepare(report)
-        if payload is None:
-            _LOGGER.warning("Volcast discovery report too large to send — request skipped")
-            await self._finish(rid)
-            return "too_large"
         attempt = prev + 1
         self._attempts.pop(rid, None)
         self._attempts[rid] = attempt
         while len(self._attempts) > SENT_MAX:
             self._attempts.pop(next(iter(self._attempts)))
-        await self._save()              # próba liczona PRZED wysyłką — przerwanie jej nie kasuje
+        # Próba liczona PRZED maskowaniem i wysyłką — przerwanie (limit czasu, rozładunek) jej nie kasuje.
+        await self._save()
+        payload = await self._prepare(report)
+        if payload is None:
+            _LOGGER.warning("Volcast discovery report too large to send — request skipped")
+            await self._finish(rid)
+            return "too_large"
+        if self._stopped:
+            return "stopped"
         try:
             status = await self._cloud.async_post_discovery_report(rid, payload)
         except Exception as err:  # noqa: BLE001 — klient nie powinien rzucać; traktujemy jak brak odpowiedzi

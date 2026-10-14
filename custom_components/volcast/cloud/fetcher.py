@@ -76,6 +76,7 @@ class ScheduleFetcher:
         self._discovery = (DiscoveryReportSender(hass, cloud, discovery_report)
                            if discovery_report is not None else None)
         self._discovery_task: asyncio.Task | None = None
+        self._stopped = False          # po `async_stop` (rozładunek) żadna nowa wysyłka raportu
 
     async def async_refresh(self) -> str:
         try:
@@ -137,7 +138,7 @@ class ScheduleFetcher:
         """Raport rozpoznania na żądanie chmury jako zadanie w tle — odświeżenie na nie nie czeka;
         trwające zadanie nie dostaje drugiego. Błąd startu nie wywraca odświeżenia."""
         block = raw.get("discovery_request")
-        if self._discovery is None or not self._discovery.wants(block):
+        if self._stopped or self._discovery is None or not self._discovery.wants(block):
             return
         if self._discovery_task is not None and not self._discovery_task.done():
             return
@@ -158,7 +159,11 @@ class ScheduleFetcher:
         await async_send_bounded(self._discovery, block)
 
     async def async_stop(self) -> None:
-        """Rozładunek wpisu: anuluj trwającą wysyłkę raportu (próba jest już policzona w Store)."""
+        """Rozładunek wpisu: anuluj trwającą wysyłkę raportu (próba jest już policzona w Store); pobranie
+        planu trwające w chwili rozładunku nie uruchomi już nowej."""
+        self._stopped = True
+        if self._discovery is not None:
+            self._discovery.stop()
         task, self._discovery_task = self._discovery_task, None
         if task is not None and not task.done():
             task.cancel()
