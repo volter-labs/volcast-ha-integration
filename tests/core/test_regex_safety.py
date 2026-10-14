@@ -118,7 +118,7 @@ def test_shared_rule_accepts_every_packaged_regex():
 def test_feed_loader_uses_the_shared_rule(monkeypatch):
     raw = _raw("sofar-hyd")
     pf._one_profile(raw)
-    monkeypatch.setattr(profile_schema, "regex_problem", lambda rx: "flagged")
+    monkeypatch.setattr(profile_schema, "regex_problem", lambda rx, **_kw: "flagged")
     assert validate_profile(raw)
     with pytest.raises(pf.FeedRejected):
         pf._one_profile(raw)

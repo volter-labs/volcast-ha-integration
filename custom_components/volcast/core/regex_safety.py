@@ -276,10 +276,12 @@ def tree_problem(rx: str) -> str | None:
     return "too_many_quantifiers" if width > MAX_PATH_WIDTH else None
 
 
-def regex_problem(rx: Any) -> str | None:
+def regex_problem(rx: Any, *, parse_tree: bool = True) -> str | None:
     """Kod powodu odrzucenia wzorca (`not_string`, `length`, `nested_quantifier`, `compile`,
     `too_many_quantifiers`, `backreference`) albo None, gdy wzorzec jest bezpieczny. Wzorzec musi
-    przejść i regułę tekstową (kopia Volcast), i tę samą regułę na drzewie parsera `re`."""
+    przejść regułę tekstową (kopia Volcast) i — przy `parse_tree` — tę samą regułę na drzewie
+    prywatnego parsera `re` (fail closed). Profile z pakietu sprawdza się bez drzewa (`parse_tree=False`):
+    ich ładowanie nie może zależeć od prywatnego API; feed i bramy CI sprawdzają z drzewem."""
     if not isinstance(rx, str):
         return "not_string"
     if len(rx) > MAX_REGEX_LEN:
@@ -290,7 +292,22 @@ def regex_problem(rx: Any) -> str | None:
         re.compile(rx)
     except Exception:  # noqa: BLE001 — nie tylko re.error: np. `a{4294967296}` → OverflowError
         return "compile"
-    return structure_problem(rx) or tree_problem(rx)
+    return structure_problem(rx) or (tree_problem(rx) if parse_tree else None)
+
+
+# --- dopasowanie w czasie działania ---------------------------------------------------------------
+# Każdy wzorzec z danych profilu (pakiet albo feed) trafia do `re` WYŁĄCZNIE tędy (pilnuje test AST).
+# Tekst przycinamy do INPUT_CAP znaków: czas nawrotów wzorca przyjętego przez regułę zależy od długości
+# tekstu, a modele i unique_id encji HA są krótsze. `re` trzyma skompilowane wzorce w swojej pamięci.
+INPUT_CAP = 128
+
+
+def safe_search(pattern: str | re.Pattern[str], text: str) -> re.Match[str] | None:
+    return re.compile(pattern).search(text[:INPUT_CAP])
+
+
+def safe_match(pattern: str | re.Pattern[str], text: str) -> re.Match[str] | None:
+    return re.compile(pattern).match(text[:INPUT_CAP])
 
 
 def iter_regex_fields(node: Any, path: str = "$") -> Iterator[tuple[str, str]]:

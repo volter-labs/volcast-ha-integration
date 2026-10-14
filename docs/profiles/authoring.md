@@ -264,9 +264,12 @@ a `verified` profile.
     scoped flags (`(?i:…)`), global flags other than `i`, `m`, `s`, `a`, `u` (so no `(?x)`), comments
     (any `(?#` in the pattern) and `\N{…}` escapes.
 
-  The rule runs twice and a pattern must pass both: on the pattern text (the same tokenizer the
-  Volcast gates use) and on the parse tree Python `re` actually executes. If the private parser
-  module is unavailable or returns a node the rule does not know, the pattern is rejected.
+  The rule checks the pattern text (the same tokenizer the Volcast gates use). For feed profiles and
+  in the generic profile test it also checks the parse tree Python `re` actually executes; if that
+  private parser module is unavailable or returns a node the rule does not know, the feed profile
+  is rejected. Packaged profiles are loaded with the text check only, so they never depend on it.
+  At run time every profile pattern is matched through `core/regex_safety.py` (`safe_search` /
+  `safe_match`), which truncates the subject to 128 characters.
 
   The cases shared with the Volcast profile gates are in `tests/fixtures/regex-safety.json` (the
   generic test reads the Volcast copy from `VOLCAST_PROFILES_DIR/fixtures/` when that is set).

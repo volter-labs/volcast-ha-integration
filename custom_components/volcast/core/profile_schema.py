@@ -572,7 +572,7 @@ def profile_warnings(raw: object) -> list[str]:
             if isinstance(spec, dict) and spec.get("verify") is True]
 
 
-def validate_profile(raw: object) -> list[str]:
+def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
     v = _V()
     top = v.obj(raw, "$", _TOP_REQ, _TOP_OPT)
     if top is None:
@@ -764,7 +764,7 @@ def validate_profile(raw: object) -> list[str]:
         if tw != expected:
             v.err("$.capabilities.time_windows", f"oczekiwano {expected}")
     for path, rx in iter_regex_fields(top):
-        problem = regex_problem(rx)
+        problem = regex_problem(rx, parse_tree=parse_tree)
         if problem:
             v.err(path, f"niebezpieczny regex ({problem})")
     return v.errors

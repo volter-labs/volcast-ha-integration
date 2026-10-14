@@ -17,6 +17,7 @@ import hmac
 import re
 from typing import Any, Mapping
 
+from ..regex_safety import safe_match
 from ..registers import RegisterError, RegisterImage, decode
 from .blocks import block_fc
 
@@ -62,7 +63,7 @@ def _fields(profile, image: RegisterImage) -> dict[str, Any]:
         raw = raw.strip() if isinstance(raw, str) else None
         if raw and _MODEL_RE.fullmatch(raw):
             model = raw
-            matched = any(re.match(rx, raw) for rx in ident.get("model_regex", ()))
+            matched = any(safe_match(rx, raw) for rx in ident.get("model_regex", ()))
     elif "device_type" in regs:
         dt = _decoded(regs["device_type"], image)
         if isinstance(dt, (int, float)) and not isinstance(dt, bool):

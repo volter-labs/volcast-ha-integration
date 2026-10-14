@@ -31,6 +31,7 @@ from typing import Any, Mapping, Sequence
 
 from ..discovery.known import INVERTER_DOMAINS
 from ..profile import Profile, direct_verified, ha_integration
+from ..regex_safety import safe_search
 from .conflict import entry_conflicts
 from .select import InverterHint, ProfileChoice, control_verified, select_profile
 
@@ -125,7 +126,7 @@ def _report_inverter(report: Mapping | None, domain: str) -> Mapping | None:
 
 def _model_ok(profile: Profile, model: Any) -> bool:
     regexes = (profile.raw.get("identify") or {}).get("model_regex") or ()
-    return isinstance(model, str) and bool(model) and any(re.search(rx, model) for rx in regexes)
+    return isinstance(model, str) and bool(model) and any(safe_search(rx, model) for rx in regexes)
 
 
 def _belongs(inv: Mapping, profile: Profile) -> bool:

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
 from .params import Params
+from .regex_safety import safe_search
 from .registers import ordered_keys
 
 _UNAVAILABLE = ("unavailable", "unknown", "")
@@ -80,9 +81,9 @@ def resolve_entities(profile, integration_domain: str,
     incompatible: dict[str, list[str]] = {}
     units: dict[str, str | None] = {}
     for key, spec in ents.items():
-        rx = re.compile(spec["unique_id_regex"])
+        rx = spec["unique_id_regex"]
         hits = [c for c in pool
-                if c.entity_id.split(".", 1)[0] == spec["domain"] and rx.search(c.unique_id)]
+                if c.entity_id.split(".", 1)[0] == spec["domain"] and safe_search(rx, c.unique_id)]
         ok = sorted((c for c in hits if _unit_factor(key, c.unit) is not None),
                     key=lambda c: c.entity_id)
         if len(ok) == 1:
@@ -104,10 +105,9 @@ def resolve_work_mode_entity(profile, integration_domain: str,
     wm = getattr(profile, "work_mode", None)
     if wm is None:
         return None
-    rx = re.compile(wm.ha_unique_id_regex)
     hits = sorted(c.entity_id for c in candidates
                   if c.platform == integration_domain and c.entity_id.split(".", 1)[0] == "select"
-                  and rx.search(c.unique_id))
+                  and safe_search(wm.ha_unique_id_regex, c.unique_id))
     return hits[0] if len(hits) == 1 else None
 
 

@@ -32,6 +32,7 @@ from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping
 
 from .profile_schema import validate_profile
+from .regex_safety import safe_match, safe_search
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -207,10 +208,9 @@ def _regex_ok(rx: Any) -> bool:
     if not isinstance(rx, str) or not rx.startswith("^"):
         return False
     try:
-        pattern = re.compile(rx)
+        return safe_search(rx, "") is None and not any(safe_match(rx, p) for p in _MODEL_PROBES)
     except re.error:
         return False
-    return pattern.search("") is None and not any(pattern.match(p) for p in _MODEL_PROBES)
 
 
 def _identify_narrow(raw: dict) -> bool:
@@ -274,7 +274,7 @@ def overlaps_packaged(raw: dict, *, only: str | None = None) -> bool:
         shared = [d for d in ref.get("domains") or () if d in domains]
         if isinstance(model, str) and shared:
             regexes = own + [rx for d in shared for rx in domains[d]]
-            if any(re.search(rx, model) for rx in regexes):
+            if any(safe_search(rx, model) for rx in regexes):
                 return True
     return False
 
@@ -287,8 +287,8 @@ def _one_profile(raw: Any) -> dict:
             raise FeedRejected("profile_invalid")
         draft = _as_draft(raw)
         # Te same reguły co dla profilu z pakietu (id kebab-case, schemat, bezpieczeństwo wzorców
-        # `*_regex` — `profile_schema.regex_problem`), na kopii już zdegradowanej.
-        if validate_profile(draft) or not _identify_narrow(draft):
+        # `*_regex` — `regex_problem` z drzewem parsera, fail closed), na kopii już zdegradowanej.
+        if validate_profile(draft, parse_tree=True) or not _identify_narrow(draft):
             raise FeedRejected("profile_invalid")
     except (TypeError, AttributeError, ValueError, KeyError, re.error) as err:
         raise FeedRejected("profile_invalid") from err

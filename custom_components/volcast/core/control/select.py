@@ -15,11 +15,11 @@ Profil bez `identify.model_regex` (identyfikacja po rejestrze) trafia wyłączni
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Sequence
 
 from ..profile import Profile, writes_allowed
+from ..regex_safety import safe_search
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,7 @@ def _model_ok(profile: Profile, model: str | None) -> bool:
     if not model:
         return False
     regexes = (profile.raw.get("identify") or {}).get("model_regex") or ()
-    return any(re.search(rx, model) for rx in regexes)
+    return any(safe_search(rx, model) for rx in regexes)
 
 
 def _maker_ok(profile: Profile, hint: InverterHint) -> bool:
@@ -56,7 +56,7 @@ def _ha_text_ok(profile: Profile, hint: InverterHint) -> bool:
     if not text:
         return False
     for integ in (profile.raw.get("ha") or {}).get("integrations") or ():
-        if integ["domain"] == hint.domain and any(re.search(rx, text) for rx in integ.get("model_regex") or ()):
+        if integ["domain"] == hint.domain and any(safe_search(rx, text) for rx in integ.get("model_regex") or ()):
             return True
     return False
 

@@ -85,7 +85,7 @@ def test_directory_has_profiles():
 
 def test_profile_validates(case):
     path, profile, _ = case
-    assert validate_profile(json.loads(path.read_text(encoding="utf-8"))) == []
+    assert validate_profile(json.loads(path.read_text(encoding="utf-8")), parse_tree=True) == []
     assert profile.id == path.stem
 
 
