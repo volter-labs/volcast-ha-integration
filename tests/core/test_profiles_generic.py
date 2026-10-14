@@ -91,6 +91,10 @@ def test_identify_matches_own_golden(case):
     pg.assert_identify_matches(profile, pg.golden_dir_image(golden, profile))
 
 
+def test_identify_not_overbroad(case):
+    pg.assert_identify_not_overbroad(case[1])
+
+
 def test_identify_rejects_every_other_golden(case, all_images):
     pg.assert_rejects_foreign_images(case[1], all_images)
 
@@ -192,6 +196,7 @@ def _run_all(path, golden, foreign=None):
         foreign = [i for i in _packaged_images() if i[0] != "sofar-hyd"]
     pg.assert_identify_matches(profile, image)
     pg.assert_rejects_foreign_images(profile, foreign)
+    pg.assert_identify_not_overbroad(profile)
     pg.assert_reads_decode(profile, image)
     pg.assert_reference_decodes(profile, image, expected["reference"])
     pg.assert_intents_consistent(profile)
@@ -270,6 +275,28 @@ def test_broad_model_regex_of_auto_profile_fails(tmp_path, regex):
         _run_all(*_external(tmp_path, pid=NEW_ID, profile_edit=broaden, expected_edit=_auto))
 
 
+@pytest.mark.parametrize("regex", [".*", "^.*", "SP1"])
+def test_broad_model_regex_of_packaged_manual_verified_profile_fails(tmp_path, regex):
+    # Id wbudowane, bez origin, verified: regex `.*` nie może przejść tylko dlatego, że to nie automat.
+    def broaden(raw):
+        _verified(raw)
+        raw["identify"]["model_regex"] = [regex]
+    with pytest.raises(AssertionError, match="model_regex"):
+        _run_all(*_external(tmp_path, profile_edit=broaden), foreign=_packaged_images())
+
+
+@pytest.mark.parametrize("value", [0, 0xFFFF])
+def test_device_type_expect_blank_value_fails(tmp_path, value):
+    # Identyfikacja po typie urządzenia: 0 i 0xFFFF to wartości pustego rejestru, nie typ.
+    path, _ = _external(tmp_path, pid=NEW_ID, expected_edit=_auto)
+    raw = json.loads((PROFILES_DIR / "deye-sg.json").read_text(encoding="utf-8"))
+    raw["id"] = NEW_ID
+    raw["identify"]["registers"]["device_type"]["expect"] = [5, value]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(AssertionError, match="device_type.expect"):
+        pg.assert_identify_not_overbroad(load_profile(path))
+
+
 def test_identify_overlapping_another_golden_fails(tmp_path):
     # Id inne niż sofar-hyd, identyfikacja jak sofar → rozpoznaje obraz tests/golden/sofar_hyd.
     with pytest.raises(AssertionError, match="sofar_hyd"):
@@ -334,6 +361,17 @@ def test_auto_reference_must_cover_power_and_soc(tmp_path, key):
         del e["reference"][key]
     with pytest.raises(AssertionError, match=key):
         _origin(tmp_path, expected_edit=drop)
+
+
+def test_auto_profile_reading_no_power_or_soc_fails(tmp_path):
+    def strip(raw):
+        for key in pg.AUTO_REFERENCE_KEYS:
+            raw["read"].pop(key, None)
+    def ref(e):
+        e.update(origin="auto")
+        e["reference"] = {"load_power_w": 2100}
+    with pytest.raises(AssertionError, match="nie czyta"):
+        _origin(tmp_path, profile_edit=strip, expected_edit=ref)
 
 
 @pytest.mark.parametrize("key", ["battery_power_w", "grid_power_w"])

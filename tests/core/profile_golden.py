@@ -18,6 +18,8 @@ ORIGINS = ("auto", "manual")
 # niezerowe — przy 0 W odwrócony znak przechodzi niezauważony.
 AUTO_REFERENCE_KEYS = ("soc", "battery_power_w", "grid_power_w", "pv_power_w")
 AUTO_NONZERO_KEYS = ("battery_power_w", "grid_power_w")
+# Słowa niezapisanego / nieobsługiwanego rejestru — nie mogą wskazywać typu urządzenia.
+BLANK_REGISTER_VALUES = (0x0000, 0xFFFF)
 # Odnośniki, których profil w publicznym repo nie może cytować: załączniki wrzucane na GitHub
 # (user-attachments) i pliki wgrane na fora (iobroker, loxforum) bywają kopiami dokumentów producenta
 # z zakazem redystrybucji; linki do dyskusji są dozwolone.
@@ -96,7 +98,8 @@ def assert_origin_rules(profile, expected: dict, golden_dir: Path, packaged_ids=
     """Domknięte bezpiecznie: profil spoza pakietu musi mieć `origin: auto` i zostaje draftem.
 
     Profil wbudowany może nie mieć `origin` (= pisany ręcznie). `origin: auto` dodatkowo wymaga
-    `registers.json`, stanu wzorcowego z mocami o niezerowym znaku i zakotwiczonych regexów modelu."""
+    `registers.json` i stanu wzorcowego z SoC i mocami o niezerowym znaku (wąską identyfikację
+    sprawdza `assert_identify_not_overbroad` dla każdego profilu)."""
     origin = expected.get("origin")
     assert origin is None or origin in ORIGINS, f"{profile.id}: nieznane origin {origin!r} (dozwolone {ORIGINS})"
     if profile.id not in packaged_ids:
@@ -110,19 +113,24 @@ def assert_origin_rules(profile, expected: dict, golden_dir: Path, packaged_ids=
     reference = expected["reference"]
     assert reference, f"{profile.id}: profil z automatu bez reference w expected.json"
     required = [k for k in AUTO_REFERENCE_KEYS if k in raw["read"]]
+    assert required, f"{profile.id}: profil z automatu nie czyta żadnego z {list(AUTO_REFERENCE_KEYS)}"
     assert not set(required) - set(reference), \
         f"{profile.id}: reference musi obejmować {required}, brak {sorted(set(required) - set(reference))}"
     for key in AUTO_NONZERO_KEYS:
         if key in reference:
             assert reference[key] != 0, f"{profile.id}: reference {key} = 0 nie sprawdza znaku"
-    assert_model_regexes_anchored(profile)
 
 
-def assert_model_regexes_anchored(profile) -> None:
-    """Regex modelu zakotwiczony na początku i niepasujący do pustego tekstu (`.*` przepuszcza wszystko)."""
-    for rx in profile.raw.get("identify", {}).get("model_regex", []):
+def assert_identify_not_overbroad(profile) -> None:
+    """Identyfikacja wąska dla KAŻDEGO profilu: regex modelu zakotwiczony `^` i niepasujący do pustego
+    modelu (`.*` przepuszcza wszystko); `device_type.expect` bez wartości pustego rejestru."""
+    ident = profile.raw.get("identify", {})
+    for rx in ident.get("model_regex", []):
         assert rx.startswith("^"), f"{profile.id}: model_regex {rx!r} bez kotwicy ^"
         assert re.search(rx, "") is None, f"{profile.id}: model_regex {rx!r} pasuje do pustego modelu"
+    expect = ident.get("registers", {}).get("device_type", {}).get("expect", [])
+    blank = sorted(set(expect) & set(BLANK_REGISTER_VALUES))
+    assert not blank, f"{profile.id}: device_type.expect zawiera wartości pustego rejestru {blank}"
 
 
 def assert_sources_public(raw: dict) -> None:
@@ -132,6 +140,7 @@ def assert_sources_public(raw: dict) -> None:
     for text in texts:
         for marker in NON_PUBLIC_REF_MARKERS:
             assert marker not in text, f"niepubliczny odnośnik ({marker}): {text[:80]}"
+
 
 def assert_identify_matches(profile, image: RegisterImage) -> None:
     info = identity_info(profile, image)

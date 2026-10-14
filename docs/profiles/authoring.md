@@ -338,13 +338,15 @@ golden data next to the profile file instead of under `tests/golden/`:
     fails);
   * an `auto` profile must stay `draft` (both `status` and `modbus.status`) and must have
     `registers.json` (recorded `frames.json` alone is not enough);
-  * its `reference` must cover `soc`, `battery_power_w`, `grid_power_w` and `pv_power_w` (those
-    the profile reads), with non-zero battery and grid power, so a wrong sign cannot pass;
-  * every `identify.model_regex` must start with `^` and must not match an empty model;
+  * it must read at least one of `soc`, `battery_power_w`, `grid_power_w`, `pv_power_w`, and its
+    `reference` must cover every one of them it reads, with non-zero battery and grid power, so a
+    wrong sign cannot pass;
   * a packaged id may omit `origin` (hand-written); any other value than `auto`/`manual` fails.
 
 `tests/core/test_profiles_generic.py` runs every `*.json` in the profile directory through the same
-checks: schema validation, identification of its own golden image, rejection of every other
+checks: schema validation, narrow identification (for every profile, generated or not: each
+`identify.model_regex` starts with `^` and does not match an empty model; `device_type.expect`
+holds no blank-register value `0`/`0xFFFF`), identification of its own golden image, rejection of every other
 profile's golden image (the packaged `tests/golden/*` images and the images beside the other
 profiles in the directory), every `read` key decoding from its own image, the reference state
 decoded key by key (floats with tolerance), intent consistency, capabilities matching the write
