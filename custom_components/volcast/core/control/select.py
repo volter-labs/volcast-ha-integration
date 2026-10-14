@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from ..profile import Profile, writes_allowed
-from ..regex_safety import safe_search
+from ..regex_safety import fits, safe_search
 
 
 @dataclass(frozen=True)
@@ -88,7 +88,12 @@ def _entity_match(p: Profile, hint: InverterHint) -> bool:
 def _eligible(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
     """Ścisłe pierwszeństwo pakietu (feed tylko DODAJE marki): gdy urządzenie konkretnie pasuje do profilu
     z pakietu (domena + model, marka w producencie albo wzorzec `ha.integrations[].model_regex`), profile
-    z feedu odpadają przed jakimkolwiek zawężaniem; w przeciwnym razie biorą udział jak pozostałe."""
+    z feedu odpadają przed jakimkolwiek zawężaniem; w przeciwnym razie biorą udział jak pozostałe.
+    Tekst urządzenia dłuższy niż `INPUT_CAP` nie pasuje do żadnego wzorca — wtedy pakiet nie może się
+    wykazać dopasowaniem, więc feed odpada zachowawczo (nie przesłoni profilu z pakietu)."""
+    text = " ".join(t for t in (hint.manufacturer, hint.model) if t)
+    if not (fits(text) and fits(hint.model or "")):
+        return [p for p in ordered if writes_allowed(p)]
     if any(writes_allowed(p) and (_entity_match(p, hint) or _maker_ok(p, hint) or _ha_text_ok(p, hint))
            for p in ordered):
         return [p for p in ordered if writes_allowed(p)]

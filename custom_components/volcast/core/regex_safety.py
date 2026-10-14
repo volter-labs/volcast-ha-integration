@@ -297,17 +297,24 @@ def regex_problem(rx: Any, *, parse_tree: bool = True) -> str | None:
 
 # --- dopasowanie w czasie działania ---------------------------------------------------------------
 # Każdy wzorzec z danych profilu (pakiet albo feed) trafia do `re` WYŁĄCZNIE tędy (pilnuje test AST).
-# Tekst przycinamy do INPUT_CAP znaków: czas nawrotów wzorca przyjętego przez regułę zależy od długości
-# tekstu, a modele i unique_id encji HA są krótsze. `re` trzyma skompilowane wzorce w swojej pamięci.
+# Tekst dłuższy niż INPUT_CAP znaków = BRAK dopasowania (fail closed), nigdy dopasowanie do jego
+# początku: czas nawrotów wzorca przyjętego przez regułę rośnie z długością tekstu, a przycięcie
+# zmieniłoby znaczenie dopasowania (urządzenie uznane za inne). Modele i unique_id encji HA są
+# wielokrotnie krótsze (test na danych wzorcowych). `re` trzyma skompilowane wzorce w swojej pamięci.
 INPUT_CAP = 128
 
 
+def fits(text: str) -> bool:
+    """Czy tekst urządzenia w ogóle może się dopasować (nie przekracza INPUT_CAP)."""
+    return len(text) <= INPUT_CAP
+
+
 def safe_search(pattern: str | re.Pattern[str], text: str) -> re.Match[str] | None:
-    return re.compile(pattern).search(text[:INPUT_CAP])
+    return re.compile(pattern).search(text) if fits(text) else None
 
 
 def safe_match(pattern: str | re.Pattern[str], text: str) -> re.Match[str] | None:
-    return re.compile(pattern).match(text[:INPUT_CAP])
+    return re.compile(pattern).match(text) if fits(text) else None
 
 
 def iter_regex_fields(node: Any, path: str = "$") -> Iterator[tuple[str, str]]:

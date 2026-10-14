@@ -32,7 +32,7 @@ from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping
 
 from .profile_schema import validate_profile
-from .regex_safety import safe_match, safe_search
+from .regex_safety import fits, safe_match, safe_search
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -273,6 +273,8 @@ def overlaps_packaged(raw: dict, *, only: str | None = None) -> bool:
         model = ref.get("model")
         shared = [d for d in ref.get("domains") or () if d in domains]
         if isinstance(model, str) and shared:
+            if not fits(model):
+                return True   # model za długi do sprawdzenia: zachowawczo nakładanie się
             regexes = own + [rx for d in shared for rx in domains[d]]
             if any(safe_search(rx, model) for rx in regexes):
                 return True

@@ -269,7 +269,8 @@ a `verified` profile.
   private parser module is unavailable or returns a node the rule does not know, the feed profile
   is rejected. Packaged profiles are loaded with the text check only, so they never depend on it.
   At run time every profile pattern is matched through `core/regex_safety.py` (`safe_search` /
-  `safe_match`), which truncates the subject to 128 characters.
+  `safe_match`): a model, device text or unique id longer than 128 characters never matches (it is
+  not truncated), and such a device cannot be claimed by a feed profile instead of a packaged one.
 
   The cases shared with the Volcast profile gates are in `tests/fixtures/regex-safety.json` (the
   generic test reads the Volcast copy from `VOLCAST_PROFILES_DIR/fixtures/` when that is set).
