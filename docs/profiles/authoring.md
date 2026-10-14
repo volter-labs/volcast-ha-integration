@@ -305,6 +305,51 @@ assertions are in `tests/core/profile_golden.py`:
 
 `tests/core/test_profile_template.py` shows the pattern; copy it into the profile's own test.
 
+### Generated profiles: golden files beside the profile
+
+A profile kept outside the package (for example a generated one, before it ships) carries its
+golden data next to the profile file instead of under `tests/golden/`:
+
+```
+<dir>/<id>.json
+<dir>/<id>.golden/registers.json   # or frames.json (recorded AA55 frames, GoodWe)
+<dir>/<id>.golden/expected.json
+<dir>/<id>.golden/README.md        # where the data comes from
+```
+
+`expected.json`:
+
+```json
+{"origin": "auto",
+ "reference": {"<read key>": <value>},
+ "intents": ["<intent>", ...],
+ "modes": ["<mode>", ...]}
+```
+
+* `reference` is the state the golden image encodes, in core conventions (battery positive =
+  discharge, grid positive = import). `null` when there is no register image to decode (recorded
+  frames only, or an image used only for identification).
+* `intents` / `modes` list the profile's keys; they only check that the files agree with each
+  other, they are not an independent oracle.
+* `origin` is `auto` for a generated profile, `manual` (or absent) for a hand-written one. An `auto`
+  profile must stay `draft` (both `status` and `modbus.status`), must have `registers.json` and a
+  non-null `reference`.
+
+`tests/core/test_profiles_generic.py` runs every `*.json` in the profile directory through the same
+checks: schema validation, identification of its own golden image, rejection of a foreign image,
+the reference state decoded key by key (floats with tolerance), intent consistency, HA regexes,
+public sources and the `origin` rules. Point it at another directory with
+`VOLCAST_PROFILES_DIR`:
+
+```bash
+VOLCAST_PROFILES_DIR=/path/to/profiles python -m pytest tests/core/test_profiles_generic.py -q
+```
+
+Without the variable it runs over the packaged profiles with their golden data from
+`tests/golden/` (no `expected.json` there; the per-profile tests hold their reference states).
+`schema-lite.json` in the directory is skipped. The per-profile tests stay: they cover what is
+specific to each brand.
+
 ## 7. Engine limitations
 
 If the vendor's control does not fit the schema (for example two mode registers, 32-bit or float
