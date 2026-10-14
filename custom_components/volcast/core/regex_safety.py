@@ -271,7 +271,7 @@ def tree_problem(rx: str) -> str | None:
         width, _ = _walk(tree, sre)
     except _Reject as rej:
         return rej.code
-    except (re.error, AttributeError, TypeError, ValueError, IndexError, RecursionError):
+    except Exception:  # noqa: BLE001 — każdy błąd parsera (także OverflowError, MemoryError) = odrzucenie
         return "compile"
     return "too_many_quantifiers" if width > MAX_PATH_WIDTH else None
 
@@ -288,7 +288,7 @@ def regex_problem(rx: Any) -> str | None:
         return "nested_quantifier"
     try:
         re.compile(rx)
-    except re.error:
+    except Exception:  # noqa: BLE001 — nie tylko re.error: np. `a{4294967296}` → OverflowError
         return "compile"
     return structure_problem(rx) or tree_problem(rx)
 

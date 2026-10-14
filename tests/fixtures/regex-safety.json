@@ -1,5 +1,5 @@
 {
-  "description": "Wspólne przypadki reguły bezpieczeństwa wzorców *_regex profilu (Volcast: scripts/profiles/regex-safety.mjs, supabase/functions/_shared/profiles/regex-safety.ts; HA: core/profile_feed.py _regex_safe). Stałe: profiles/schema-lite.json x-regex-safety. accepted = obie strony przyjmują; rejected = obie strony odrzucają (reason = powód po stronie Volcast; HA sprawdza tylko odrzucenie). structure: true = odrzuca dopiero reguła struktury (nawroty), której HA z samym _NESTED_QUANTIFIER jeszcze nie ma — HA musi ją przejąć. volcast_only_rejected = Python kompiluje, Volcast odrzuca konstrukcje o znaczeniu zależnym od parsera. Długość liczona w punktach kodowych (len() w Pythonie).",
+  "description": "Wspólne przypadki reguły bezpieczeństwa wzorców *_regex profilu (Volcast: scripts/profiles/regex-safety.mjs, supabase/functions/_shared/profiles/regex-safety.ts; HA: custom_components/volcast/core/regex_safety.py regex_problem). Stałe: profiles/schema-lite.json x-regex-safety. accepted = obie strony przyjmują; rejected = obie strony odrzucają (reason = powód po stronie Volcast; HA sprawdza tylko odrzucenie). structure: true = odrzuca dopiero reguła struktury (nawroty), której HA z samym _NESTED_QUANTIFIER jeszcze nie ma — HA musi ją przejąć. volcast_only_rejected = Python kompiluje, Volcast odrzuca konstrukcje o znaczeniu zależnym od parsera. Długość liczona w punktach kodowych (len() w Pythonie).",
   "accepted": [
     "^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)",
     "^goodwe-battery_soc-",
@@ -275,6 +275,62 @@
       "structure": true
     },
     {
+      "pattern": "(?i)\\(?#",
+      "reason": "compile"
+    },
+    {
+      "pattern": "[(?#]",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(?#c)a",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(?i){,3}",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(?i){,}x",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(?im)*",
+      "reason": "compile"
+    },
+    {
+      "pattern": "a++",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(?>a+)b",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(?i:a)",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(?-i:a)",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(?x)a b",
+      "reason": "compile"
+    },
+    {
+      "pattern": "(a)(?(1)b|c)",
+      "reason": "compile"
+    },
+    {
+      "pattern": "\\N{LATIN SMALL LETTER A}",
+      "reason": "compile"
+    },
+    {
+      "pattern": "a{4294967296}",
+      "reason": "compile"
+    },
+    {
       "pattern": 5,
       "reason": "not_string"
     },
@@ -295,23 +351,11 @@
       "reason": "compile"
     },
     {
-      "pattern": "(?x)a b",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?i:a)",
-      "reason": "compile"
-    },
-    {
       "pattern": "[]a]",
       "reason": "compile"
     },
     {
       "pattern": "(?<=a|b)c",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?#c)a",
       "reason": "compile"
     },
     {

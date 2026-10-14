@@ -211,3 +211,24 @@ def test_unknown_parse_node_fails_closed(monkeypatch):
     sre = regex_safety._SRE
     monkeypatch.setattr(regex_safety, "_SRE", sre._replace(atoms=frozenset()))
     assert profile_schema.regex_problem("^GW") == "compile"
+
+
+@pytest.mark.parametrize("rx", ["a{4294967296}", "a{1,4294967296}", "(?:a){99999999999999999999}"])
+def test_huge_repeat_count_is_rejected_not_raised(rx):
+    assert profile_schema.regex_problem(rx) is not None
+
+
+@pytest.mark.parametrize("exc", [OverflowError, RecursionError, MemoryError, RuntimeError])
+def test_any_compile_failure_rejects(monkeypatch, exc):
+    def boom(*_a, **_k):
+        raise exc("x")
+    monkeypatch.setattr(regex_safety.re, "compile", boom)
+    assert profile_schema.regex_problem("^GW") == "compile"
+
+
+@pytest.mark.parametrize("exc", [OverflowError, RecursionError, MemoryError, RuntimeError, KeyError])
+def test_any_parser_failure_rejects(monkeypatch, exc):
+    def boom(*_a, **_k):
+        raise exc("x")
+    monkeypatch.setattr(regex_safety, "_SRE", regex_safety._SRE._replace(parse=boom))
+    assert profile_schema.regex_problem("^GW") == "compile"
