@@ -140,6 +140,11 @@ class Backend:
         tego adresu w danych parowania, a nowy klucz w `_BACKEND_KEYS` unieważniłby je."""
         return self.schedule.rsplit("/", 1)[0] + "/set-controller"
 
+    @property
+    def discovery_report(self) -> str:
+        """`catalog-discovery-report` obok `get-schedule` (jak `set_controller`, bez nowego klucza w danych)."""
+        return self.schedule.rsplit("/", 1)[0] + "/catalog-discovery-report"
+
 
 class CloudAuthError(Exception):
     """Klucz konta odrzucony (401)."""
@@ -293,6 +298,14 @@ class VolcastCloud:
         status, data = await _post_json(self._s, self._b.set_controller, {"kind": kind, "origin": origin},
                                         self._headers(), "set-controller")
         return _set_controller_result(status, data)
+
+    async def async_post_discovery_report(self, request_id: str, report: dict) -> int:
+        """Raport rozpoznania (już zamaskowany) na żądanie chmury: status HTTP, 0 = brak odpowiedzi.
+        Klucz wyłącznie w nagłówku `X-API-Key`, bez przekierowań; nigdy nie rzuca."""
+        status, _ = await _post_json(self._s, self._b.discovery_report,
+                                     {"request_id": request_id, "report": report},
+                                     self._headers(), "catalog-discovery-report")
+        return status
 
 
 @dataclass(frozen=True)

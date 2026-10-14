@@ -84,3 +84,7 @@ OPT_DIRECT_TRIAL = "direct_trial"
 OPT_DIRECT_POLL_S = "direct_poll_s"
 DIRECT_POLL_S = 10
 DIRECT_SLOW_POLL_S = 60
+
+# Raport rozpoznania na żądanie chmury — pamięć wysłanych `request_id` (lista, max 20) i prób
+DISCOVERY_SENT_STORAGE_KEY = "volcast.discovery_sent"
+DISCOVERY_SENT_STORAGE_VERSION = 1

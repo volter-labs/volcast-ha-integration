@@ -1,6 +1,8 @@
 """Pobieranie planu (pull co 5 min). Błąd sieci nie kasuje planu lokalnego; zły
 plan jest odrzucany w całości; zgoda z tej samej odpowiedzi jest stosowana nawet
 przy odrzuconym planie (cofnięcie zgody nie może czekać na poprawny plan).
+Pole `discovery_request` (raport rozpoznania na żądanie) jest obsługiwane PO planie — wysyłka
+nie opóźnia zgody ani planu, a jej błąd nie wywraca odświeżenia.
 Deduplikacja po `schedule_id` ORAZ treści — id bywa to samo przy innej treści.
 
 Odrzucony plan loguje ostrzeżenie raz na treść (chmura serwuje go co 5 min).
@@ -20,6 +22,7 @@ from ..const import DOMAIN
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from ..version import async_integration_version
 from .client import CloudAuthError
+from .discovery_report import DiscoveryReportSender
 
 try:
     from packaging.version import InvalidVersion, Version
@@ -32,7 +35,8 @@ UPDATE_ISSUE_ID = "update_available"
 # Waga zgłoszeń — z rejestru zgłoszeń (jak w `__init__`).
 _ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 # Pola odpowiedzi poza treścią planu: ich zmiana nie wywołuje ponownej akceptacji planu.
-_NOT_IN_SIGNATURE = ("control_enabled", "signals", "control", "latest_version", "plan_meta")
+_NOT_IN_SIGNATURE = ("control_enabled", "signals", "control", "latest_version", "plan_meta",
+                     "discovery_request")
 
 
 def _is_newer(latest: str, current: str) -> bool:
@@ -51,7 +55,7 @@ class ScheduleFetcher:
                  on_signals: Callable[[dict | None], Awaitable[None]] | None = None,
                  on_control: Callable[[dict | None], Awaitable[None]] | None = None,
                  on_consent_mirror: Callable[[bool], None] | None = None,
-                 hass=None) -> None:
+                 hass=None, discovery_report: Callable[[], dict | None] | None = None) -> None:
         self._hass = hass   # tylko do zgłoszenia „dostępna aktualizacja"
         self._cloud = cloud
         self._on_plan = on_plan
@@ -66,6 +70,9 @@ class ScheduleFetcher:
         self._last_signature: str | None = None
         self._last_rejected: str | None = None
         self._last_error: str | None = None
+        # Ostatni raport wykrywania (bez nowego przebiegu) — wysyłany, gdy plan niesie `discovery_request`.
+        self._discovery = (DiscoveryReportSender(hass, cloud, discovery_report)
+                           if discovery_report is not None else None)
 
     async def async_refresh(self) -> str:
         try:
@@ -98,6 +105,11 @@ class ScheduleFetcher:
         consent = raw.get("control_enabled")
         if isinstance(consent, bool):
             await self._on_consent(consent)
+        result = await self._async_plan(raw)
+        await self._async_discovery(raw)
+        return result
+
+    async def _async_plan(self, raw: dict) -> str:
         body = {k: v for k, v in raw.items() if k not in _NOT_IN_SIGNATURE}
         signature = json.dumps(body, sort_keys=True, default=str)
         if signature == self._last_signature:
@@ -112,10 +124,20 @@ class ScheduleFetcher:
             self._last_rejected = signature
             return "rejected"
         # Bloki `signals` i `control` zostają przy swoich odbiorcach — nie trafiają do planu w magazynie.
-        await self._on_plan({k: v for k, v in raw.items() if k not in ("signals", "control")}, schedule)
+        await self._on_plan({k: v for k, v in raw.items()
+                             if k not in ("signals", "control", "discovery_request")}, schedule)
         self._last_signature = signature
         self._last_rejected = None
         return "accepted"
+
+    async def _async_discovery(self, raw: dict) -> None:
+        """Raport rozpoznania na żądanie chmury; jego błąd (także pamięci w Store) nie wywraca odświeżenia."""
+        if self._discovery is None:
+            return
+        try:
+            await self._discovery.async_handle(raw.get("discovery_request"))
+        except Exception as err:  # noqa: BLE001 — wysyłka raportu nie może zatrzymać planu
+            _LOGGER.debug("Volcast discovery report failed (%s)", type(err).__name__)
 
     def _apply_consent_mirror(self, raw: dict) -> None:
         """Lustro zgody tylko przy jawnym `control.consent_mirror: true`; błąd odbiorcy nie wywraca odświeżenia."""
