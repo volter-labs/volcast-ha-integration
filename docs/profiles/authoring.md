@@ -245,35 +245,47 @@ a `verified` profile.
 * `unique_id_regex` should be broad enough to match the usual unique ids across versions, but must
   compile. `transform` is `negate` or `invert_percent`.
 * Every `*_regex` field of the profile (`identify.model_regex`, `ha.integrations[].model_regex`,
-  `unique_id_regex` of entities and of `work_mode.ha`) runs in the Home Assistant event loop, so it
-  must be safe against catastrophic backtracking. Schema validation enforces one rule
-  (`core/regex_safety.py`, also used by the profile feed loader):
-  * at most 200 characters, and it compiles with Python `re`;
-  * a group under a repeating quantifier (`*`, `+`, `{m,}`, `{m,n}` / `{n}` with a maximum above 1)
-    contains, at no depth, a variable quantifier (`*`, `+`, `?`, `{m,n}` with m < n; a fixed `{n}`
-    is fine) or an alternation `|`: `(a+)+`, `((a+))+`, `(a|aa)+`, `(a?){28}`, `([a-z]|[0-9])+`
-    are rejected, `(a{2})+` is accepted;
-  * the backtracking width of each quantifier is max − min + 1 (unbounded or above 256 counts as
-    256); along one match path the widths multiply, an alternation counts the sum of its branches
-    (each branch is a separate backtracking choice), and the product may not exceed 262144 (four
-    times two unbounded quantifiers): `.*.*=` and `^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)` pass,
-    `.*.*.*=`, `\d*\d*\d*x`, `a{1,99}a{1,99}a{1,99}=` and `(?:.*a|.*b|.*c)(?:.*a|.*b)=` do not;
-  * no backreferences (`\1`..`\9`, `(?P=name)`) or conditionals (`(?(1)a|b)`), no quantifier without
-    an atom and no quantified anchor (`^*`, `a\Z?`);
-  * no constructs outside the shared rule: atomic groups `(?>…)`, possessive quantifiers (`a++`),
-    scoped flags (`(?i:…)`), global flags other than `i`, `m`, `s`, `a`, `u` (so no `(?x)`), comments
-    (any `(?#` in the pattern) and `\N{…}` escapes.
+  `unique_id_regex` of entities and of `work_mode.ha`) runs in the Home Assistant event loop. It must
+  stay inside a small regex subset with limits chosen by measurement, so that every accepted pattern
+  finishes `re.search` within 0.1 s on a hostile 128-character text. Schema validation enforces it
+  (`core/regex_safety.py`, the same rule as the Volcast profile gates):
+  * printable ASCII only (0x20-0x7E), at most 200 characters, and it must compile;
+  * allowed: literals; `\d \D \w \W \s \S` and a backslash before ASCII punctuation (`\. \- \( \\`);
+    classes `[...]` with no `[` inside, no `]` first, no `--`, `&&`, `||`, `~~`, and ranges only
+    between two literals in ascending order; `.`; anchors `^ $ \b`; groups `(...)` and `(?:...)`;
+    alternation `|`;
+  * quantifiers `* + ? {n} {n,m}` (n <= m <= 16) only right after a literal, escape, class or `.`;
+    after a group only `?` (an optional group). Lazy (`*?`) and possessive (`*+`) quantifiers,
+    `{n,}`, `{,m}`, a quantifier after an anchor, `(`, `|`, the start or another quantifier, and an
+    unescaped literal `{ } ]` are rejected;
+  * `(?i)` only at the very start; lookbehind `(?<=...)`/`(?<!...)` only with 1-16 single
+    characters, escapes or classes and no quantifier on it. Anything else after `(?` (lookahead,
+    named groups, flags, comments, conditionals, atomic groups), backreferences and `\N \A \Z \x \u`
+    are rejected;
+  * limits: an open-ended quantifier (max - min + 1 > 4: `*`, `+`, `{0,16}`) counts as wide; at most
+    2 wide ones on one match path (a sequence adds, an alternation takes its largest branch). Choices
+    multiply (branches of each `|`, 2 per optional group, max - min + 1 per small quantifier such as
+    `?` or `{1,3}`) and may be at most 16. Fixed work is the sum of (max - 1) of small quantifiers plus
+    the lookbehind widths; 128^wide x choices x (1 + fixed work) may be at most 393216. Groups nest
+    at most 4 deep.
 
-  The rule checks the pattern text (the same tokenizer the Volcast gates use). For feed profiles and
-  in the generic profile test it also checks the parse tree Python `re` actually executes; if that
-  private parser module is unavailable or returns a node the rule does not know, the feed profile
-  is rejected. Packaged profiles are loaded with the text check only, so they never depend on it.
-  At run time every profile pattern is matched through `core/regex_safety.py` (`safe_search` /
-  `safe_match`): a model, device text or unique id longer than 128 characters never matches (it is
-  not truncated), and such a device cannot be claimed by a feed profile instead of a packaged one.
+  A rejected pattern is reported as `niebezpieczny regex (<code>): <hint>`; the hint says how to fix
+  it, e.g. `quantifier_after_group` → use a class like `[ab]+` instead of `(a|b)+`;
+  `too_many_quantifiers` → keep a fixed literal prefix such as `^goodwe-battery_soc-`;
+  `repeat_too_large` → `{n,m}` with m <= 16 instead of `{n,}`. Prefer an anchored literal prefix and
+  at most one or two `.*`/`\d+`.
 
-  The cases shared with the Volcast profile gates are in `tests/fixtures/regex-safety.json` (the
-  generic test reads the Volcast copy from `VOLCAST_PROFILES_DIR/fixtures/` when that is set).
+  For feed profiles and in the generic profile test, a second guard also checks the parse tree Python
+  `re` actually executes (only the subset's node kinds); if that private parser module is unavailable
+  or returns a node it does not know, the feed profile is rejected. Packaged profiles are loaded with
+  the text rule only, so they never depend on it. At run time every profile pattern is matched through
+  `core/regex_safety.py` (`safe_search` / `safe_match`): a model, device text or unique id longer than
+  128 characters never matches (it is not truncated), and such a device cannot be claimed by a feed
+  profile instead of a packaged one.
+
+  The cases shared with the Volcast profile gates, each rejected one with its code, are in
+  `tests/fixtures/regex-safety.json` (the generic test reads the Volcast copy from
+  `VOLCAST_PROFILES_DIR/fixtures/` when that is set).
 
 **Direct mode (`modbus`).** No integration exists, so the integration talks to the inverter. The
 whole block is required:

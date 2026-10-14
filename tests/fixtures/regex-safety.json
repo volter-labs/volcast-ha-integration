@@ -1,75 +1,325 @@
 {
-  "description": "Wspólne przypadki reguły bezpieczeństwa wzorców *_regex profilu (Volcast: scripts/profiles/regex-safety.mjs, supabase/functions/_shared/profiles/regex-safety.ts; HA: custom_components/volcast/core/regex_safety.py regex_problem). Stałe: profiles/schema-lite.json x-regex-safety. accepted = obie strony przyjmują; rejected = obie strony odrzucają (reason = powód po stronie Volcast; HA sprawdza tylko odrzucenie). structure: true = odrzuca dopiero reguła struktury (nawroty), której HA z samym _NESTED_QUANTIFIER jeszcze nie ma — HA musi ją przejąć. volcast_only_rejected = Python kompiluje, Volcast odrzuca konstrukcje o znaczeniu zależnym od parsera. Długość liczona w punktach kodowych (len() w Pythonie).",
+  "description": "Wspólne przypadki reguły wzorców *_regex (Volcast: scripts/profiles/regex-safety.mjs i supabase/functions/_shared/profiles/regex-safety.ts; HA: custom_components/volcast/core/regex_safety.py). Stałe: profiles/schema-lite.json x-regex-safety. accepted = obie strony przyjmują i każdy kończy re.search w <= 0,1 s na wrogim wejściu długości input_cap; rejected = obie strony odrzucają z tym kodem (reason). Reguła = podzbiór składni + limity; kody i wskazówki: REGEX_HINTS w module odniesienia.",
+  "input_cap": 128,
   "accepted": [
     "^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)",
+    "^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)$",
+    "^(GW|GoodWe)[0-9]+K?-?(ET|EH)$",
     "^goodwe-battery_soc-",
     "^sensor\\.goodwe_.*_battery_soc$",
-    "^GW\\d+K-ET$",
-    "(a{2})+",
     "^([0-9a-z]+_battery_sensor|.+_[0-9]+_Battery SOC)$",
-    "^(?:-[0-9]+)?$",
-    "^[0-9]{2,4}x[a-z]+$",
-    ".*.*=",
-    "a{,}b",
-    "(\\d+)_x",
-    "\\d{2,}",
-    "(?=x)y",
-    "(?!x)y",
-    "[\\w.-]+",
-    "\\u0041\\x41",
-    "a{,5}",
-    "(?i)\\bsofar",
-    "(?im)^HYD[ -]?[0-9]",
-    "^foxess_modbus_(?:.+_)?(?<!eps_)rpower$",
+    "^foxess_modbus_(?:.+_)?(?<!force_charge_)max_soc$",
     "^.+(?<!_m[1-3])_acpower$",
-    "(?<=ab)c",
+    "^(Fronius )?(Primo|Symo) GEN24\\b",
+    "^SUN2000-([2-9]|1[0-2])(\\.[0-9]+)?KTL-(L1|M1)",
+    "(?i)\\bHYD[ -]?[0-9]",
+    "(?i)\\b(solis|ginlong)\\b",
+    "^sg_(battery_)?export_power_raw$",
+    "^(0602|010F|110F|114F|134F|140C|143|160F[345]|2051|6031|6041|1031)",
+    "^[0-9]{4}-[0-9]{2}$",
+    "^[A-Z]{2,4}[0-9]{1,3}$",
+    "[\\w-]+",
     "",
     "^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "^🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂"
+    ".*.*=",
+    "(?:.*a|.*b|.*c)(?:.*a|.*b)=",
+    "\\w+\\w*!"
   ],
   "rejected": [
+    {
+      "pattern": "\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w{50}!",
+      "reason": "too_many_choices"
+    },
+    {
+      "pattern": ".*.*.*.*=",
+      "reason": "too_many_quantifiers"
+    },
+    {
+      "pattern": ".*.*.*=",
+      "reason": "too_many_quantifiers"
+    },
+    {
+      "pattern": "\\d*\\d*\\d*\\d*\\d*\\d*x",
+      "reason": "too_many_quantifiers"
+    },
+    {
+      "pattern": "a{1,99}a{1,99}a{1,99}a{1,99}=",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "a{1,16}a{1,16}a{1,16}=",
+      "reason": "too_many_quantifiers"
+    },
+    {
+      "pattern": "\\w?\\w?\\w?\\w?.*.*(?<=aaaaaaaaaaaaaaaa)\\w{16}!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "[^!]*[^!]+\\S{2,4}_\\w{8}$",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "(?:a.|.a)(?:a.|.a)(?:a.|.a)(?:a.|.a)(?:a.|.a)!",
+      "reason": "too_many_choices"
+    },
+    {
+      "pattern": "^(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16)$",
+      "reason": "too_many_choices"
+    },
+    {
+      "pattern": "^SH\\d+(\\.\\d+)?RT(-V\\d+)?$",
+      "reason": "too_many_quantifiers"
+    },
+    {
+      "pattern": "(a+)+",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "(.*)*",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "^(a|a)+$",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "(a|b)+",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "^(a?){8}a{8}$",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "(ab){2}",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "(?=a)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?!a)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?P<n>a)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?<n>a)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(a)\\1",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(a)(?(1)b|c)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?#c)a",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?i:a)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?-i:a)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?x)a b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?s).",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a(?i)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?>a+)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\N{LATIN SMALL LETTER A}",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\Aa\\Z",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\x41",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\u0041",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\q",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[]a]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[[a]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[a--b]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[\\d-z]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[a-\\w]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[\\b]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a}",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a{",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?<=a+)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?<=a|b)c",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?<=aaaaaaaaaaaaaaaaa)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "()",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a*?",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "a+?",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "(ab)??",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "a*+",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "a++",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "a**",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "*a",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "^*a",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "\\b+",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "(?i)*a",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "(?<!a)*b",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "a{2,}",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "a{,3}",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "a{17}",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "a{4294967296}",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "café",
+      "reason": "non_ascii"
+    },
+    {
+      "pattern": "a\tb",
+      "reason": "non_ascii"
+    },
+    {
+      "pattern": "🙂",
+      "reason": "non_ascii"
+    },
+    {
+      "pattern": "[🙂-￿]",
+      "reason": "non_ascii"
+    },
     {
       "pattern": "^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "reason": "length"
     },
     {
-      "pattern": "^🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
-      "reason": "length"
-    },
-    {
-      "pattern": "(a+)+",
-      "reason": "nested_quantifier"
-    },
-    {
-      "pattern": "(.*)*",
-      "reason": "nested_quantifier"
-    },
-    {
-      "pattern": "([a-z]+){2,}",
-      "reason": "nested_quantifier"
-    },
-    {
-      "pattern": "(?:x+)*",
-      "reason": "nested_quantifier"
-    },
-    {
-      "pattern": "(a{2,3})+",
-      "reason": "nested_quantifier"
-    },
-    {
-      "pattern": "(a+){٣,}",
-      "reason": "nested_quantifier"
-    },
-    {
-      "pattern": "^(?:[0-9a-z]+_)+battery$",
-      "reason": "nested_quantifier"
-    },
-    {
-      "pattern": "(\\(+)+",
-      "reason": "nested_quantifier"
+      "pattern": "(((((a)))))",
+      "reason": "too_deep"
     },
     {
       "pattern": "(",
+      "reason": "compile"
+    },
+    {
+      "pattern": ")",
+      "reason": "compile"
+    },
+    {
+      "pattern": "[a",
       "reason": "compile"
     },
     {
@@ -77,257 +327,11 @@
       "reason": "compile"
     },
     {
-      "pattern": "a{2,1}",
-      "reason": "compile"
-    },
-    {
-      "pattern": "^*",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\q",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\c",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\k<n>",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\p{L}",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\x4",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\u004",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?<n>a)",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\1",
-      "reason": "backreference"
-    },
-    {
-      "pattern": "[a-\\d]",
-      "reason": "compile"
-    },
-    {
-      "pattern": "[\\d-z]",
-      "reason": "compile"
-    },
-    {
-      "pattern": "[\\A]",
+      "pattern": "a{3,2}",
       "reason": "compile"
     },
     {
       "pattern": "a\\",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?<=a+)b",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?<=a|bc)c",
-      "reason": "compile"
-    },
-    {
-      "pattern": "a(?i)",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?L)a",
-      "reason": "compile"
-    },
-    {
-      "pattern": "{,}a",
-      "reason": "compile"
-    },
-    {
-      "pattern": "a+{,}",
-      "reason": "compile"
-    },
-    {
-      "pattern": "a\\Z?",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\A*a",
-      "reason": "compile"
-    },
-    {
-      "pattern": "^(a|a)+$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^(a|aa)+$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "(a|b)+",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^((a+))+$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^(?:(?:a+))+$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^((a)+)+$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^(?:a|a)*$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^(a?){28}a{28}$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^(a|b|ab)*c$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^(a{2}|a)+$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^(?=(a+))+$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": "^([a-z]|[a-z0-9])+$",
-      "reason": "nested_quantifier",
-      "structure": true
-    },
-    {
-      "pattern": ".*.*.*=",
-      "reason": "too_many_quantifiers",
-      "structure": true
-    },
-    {
-      "pattern": ".*.*.*.*=",
-      "reason": "too_many_quantifiers",
-      "structure": true
-    },
-    {
-      "pattern": "\\d*\\d*\\d*\\d*\\d*\\d*x",
-      "reason": "too_many_quantifiers",
-      "structure": true
-    },
-    {
-      "pattern": "a{1,99}a{1,99}a{1,99}a{1,99}=",
-      "reason": "too_many_quantifiers",
-      "structure": true
-    },
-    {
-      "pattern": "a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?aaaaaaaaaaaaaaaaaaaaaaaaa",
-      "reason": "too_many_quantifiers",
-      "structure": true
-    },
-    {
-      "pattern": "[a-z]{,9}(?:[a-z]+.{,9}[a-z]+\\w{2})\\s{2}=",
-      "reason": "too_many_quantifiers",
-      "structure": true
-    },
-    {
-      "pattern": "(?:.*a|.*b|.*c)(?:.*a|.*b)=",
-      "reason": "too_many_quantifiers",
-      "structure": true
-    },
-    {
-      "pattern": "^(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)!",
-      "reason": "too_many_quantifiers",
-      "structure": true
-    },
-    {
-      "pattern": "(a)\\1",
-      "reason": "backreference",
-      "structure": true
-    },
-    {
-      "pattern": "^(a+)\\1*$",
-      "reason": "backreference",
-      "structure": true
-    },
-    {
-      "pattern": "(?i)\\(?#",
-      "reason": "compile"
-    },
-    {
-      "pattern": "[(?#]",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?#c)a",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?i){,3}",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?i){,}x",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?im)*",
-      "reason": "compile"
-    },
-    {
-      "pattern": "a++",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?>a+)b",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?i:a)",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?-i:a)",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?x)a b",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(a)(?(1)b|c)",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\N{LATIN SMALL LETTER A}",
-      "reason": "compile"
-    },
-    {
-      "pattern": "a{4294967296}",
       "reason": "compile"
     },
     {
@@ -343,24 +347,6 @@
         "a": 1
       },
       "reason": "not_string"
-    }
-  ],
-  "volcast_only_rejected": [
-    {
-      "pattern": "(?P<n>a)",
-      "reason": "compile"
-    },
-    {
-      "pattern": "[]a]",
-      "reason": "compile"
-    },
-    {
-      "pattern": "(?<=a|b)c",
-      "reason": "compile"
-    },
-    {
-      "pattern": "\\U00000041",
-      "reason": "compile"
     }
   ]
 }

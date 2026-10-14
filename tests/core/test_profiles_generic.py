@@ -165,11 +165,13 @@ def _regex_safety_cases() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_regex_safety_rejects_shared_cases():
-    cases = _regex_safety_cases()["rejected"]
-    assert cases
-    passed = [c["pattern"] for c in cases if regex_safety.regex_problem(c["pattern"]) is None]
-    assert not passed, f"wzorce przyjęte, a mają być odrzucone: {passed}"
+def test_regex_safety_rejects_shared_cases_with_the_same_code():
+    cases = _regex_safety_cases()
+    assert cases["input_cap"] == regex_safety.INPUT_CAP
+    assert cases["rejected"]
+    wrong = {repr(c["pattern"]): (c["reason"], regex_safety.regex_problem(c["pattern"]))
+             for c in cases["rejected"] if regex_safety.regex_problem(c["pattern"]) != c["reason"]}
+    assert not wrong, f"kod odrzucenia inny niż we wspólnych przypadkach (oczekiwany, otrzymany): {wrong}"
 
 
 def test_regex_safety_accepts_shared_cases():
@@ -185,10 +187,14 @@ def test_regex_safety_constants_match_volcast():
     path = DIR / "schema-lite.json"
     assert path.is_file(), f"brak {path}"
     rules = json.loads(path.read_text(encoding="utf-8"))["x-regex-safety"]
-    assert (rules["key_suffix"], rules["max_length"], rules["unbounded_width"], rules["max_path_width"],
-            rules["nested_quantifier"]) == (
-        regex_safety.REGEX_KEY_SUFFIX, regex_safety.MAX_REGEX_LEN, regex_safety.UNBOUNDED_WIDTH,
-        regex_safety.MAX_PATH_WIDTH, regex_safety.NESTED_QUANTIFIER.pattern)
+    rs = regex_safety
+    assert {k: rules[k] for k in ("key_suffix", "max_length", "input_cap", "max_wide_per_path", "max_narrow_width",
+                                  "max_choices", "max_fixed_repeat", "max_cost", "max_group_depth",
+                                  "max_lookbehind")} == {
+        "key_suffix": rs.REGEX_KEY_SUFFIX, "max_length": rs.MAX_REGEX_LEN, "input_cap": rs.INPUT_CAP,
+        "max_wide_per_path": rs.MAX_WIDE_PER_PATH, "max_narrow_width": rs.MAX_NARROW_WIDTH,
+        "max_choices": rs.MAX_CHOICES, "max_fixed_repeat": rs.MAX_FIXED_REPEAT, "max_cost": rs.MAX_COST,
+        "max_group_depth": rs.MAX_GROUP_DEPTH, "max_lookbehind": rs.MAX_LOOKBEHIND}
 
 
 # --- Środowisko: zmienna dotyczy tylko tego testu, lista profili ---

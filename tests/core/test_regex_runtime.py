@@ -134,10 +134,13 @@ def test_feed_profiles_fail_closed_without_the_private_parser(monkeypatch, break
     assert validate_profile(raw, parse_tree=True)
 
 
-def test_parse_tree_only_constructs_reject_feed_but_not_packaged_validation():
+def test_parse_tree_guard_rejects_feed_but_not_packaged_validation(monkeypatch):
+    # Zapora drzewa (np. przy różnicy tokenizera i parsera) działa tylko na feed i w teście generycznym.
     raw = json.loads((PROFILES_DIR / "sofar-hyd.json").read_text(encoding="utf-8"))
-    raw["ha"]["integrations"][0]["entities"]["soc"]["unique_id_regex"] = "^(?>sofar)_soc"
+    pf._one_profile(raw)
+    monkeypatch.setattr(regex_safety, "tree_problem", lambda rx: "forbidden_construct")
     assert validate_profile(raw) == []
+    assert load_profile(PROFILES_DIR / "sofar-hyd.json").id == "sofar-hyd"
     assert validate_profile(raw, parse_tree=True)
     with pytest.raises(pf.FeedRejected):
         pf._one_profile(raw)

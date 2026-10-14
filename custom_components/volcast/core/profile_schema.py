@@ -14,7 +14,7 @@ from typing import Any
 
 from .control.readings import EXTRA_KEYS, MEASURED_KEYS
 from .params import TOU_FIELDS, WRITE_PARAMS
-from .regex_safety import iter_regex_fields, regex_problem
+from .regex_safety import REGEX_HINTS, iter_regex_fields, regex_problem
 
 # Odczyty pomiarowe, liczniki i limity — ta sama zamknięta lista co mapa źródeł chmury
 # (`core/control/readings.py`, jedno źródło) — plus odczyt nastaw do uzgadniania z falownikiem.
@@ -766,5 +766,5 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
     for path, rx in iter_regex_fields(top):
         problem = regex_problem(rx, parse_tree=parse_tree)
         if problem:
-            v.err(path, f"niebezpieczny regex ({problem})")
+            v.err(path, f"niebezpieczny regex ({problem}): {REGEX_HINTS.get(problem, problem)}")
     return v.errors

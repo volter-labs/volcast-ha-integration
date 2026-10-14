@@ -17,12 +17,13 @@ from custom_components.volcast.core import profile_schema, regex_safety
 from custom_components.volcast.core.profile import PROFILES_DIR
 from custom_components.volcast.core.profile_schema import validate_profile
 
+# Rodzaj → (wzorzec, kod odrzucenia).
 UNSAFE = {
-    "too_long": "^" + "A" * 250,
-    "nested_quantifier": "^(a+)+$",
-    "nested_quantifier_noncapturing": "^(?:[0-9a-z]+_)+soc$",
-    "nested_quantifier_counted": "^([a-z]+){2,}x",
-    "uncompilable": "^(unclosed",
+    "length": ("^" + "A" * 250, "length"),
+    "group_repeat": ("^(a+)+$", "quantifier_after_group"),
+    "noncapturing_group_repeat": ("^(?:[0-9a-z]+_)+soc$", "quantifier_after_group"),
+    "open_repeat": ("^([a-z]+){2,}x", "repeat_too_large"),
+    "uncompilable": ("^(unclosed", "compile"),
 }
 
 # Każde pole `*_regex` schematu → miejsca w profilu pakietu, gdzie występuje (profil bazowy, ścieżka).
@@ -97,7 +98,7 @@ def test_site_exists_and_base_profile_is_accepted(name, base, path):
 @pytest.mark.parametrize("name,base,path", SITES, ids=[_json_path(p) for _, _, p in SITES])
 def test_unsafe_regex_fails_validation_and_the_feed_loader(name, base, path, kind):
     raw = _raw(base)
-    _set(raw, path, UNSAFE[kind])
+    _set(raw, path, UNSAFE[kind][0])
     errors = validate_profile(raw)
     assert any(e.startswith(_json_path(path) + ":") for e in errors), errors
     with pytest.raises(pf.FeedRejected):
@@ -106,7 +107,9 @@ def test_unsafe_regex_fails_validation_and_the_feed_loader(name, base, path, kin
 
 @pytest.mark.parametrize("kind", sorted(UNSAFE))
 def test_shared_rule_flags_unsafe(kind):
-    assert profile_schema.regex_problem(UNSAFE[kind])
+    rx, code = UNSAFE[kind]
+    assert profile_schema.regex_problem(rx) == code
+    assert profile_schema.regex_problem(rx, parse_tree=False) == code
 
 
 def test_shared_rule_accepts_every_packaged_regex():
@@ -130,20 +133,25 @@ def test_regex_fields_found_at_any_depth():
     assert found == {"$.a[0].x_regex[0]": "^a", "$.b.c.y_regex": "^b"}
 
 
-# --- Nawroty: wzorce, które przechodziły sam `NESTED_QUANTIFIER`, a w `re.search` trwają sekundy ---
+# --- Nawroty: wzorce z długim `re.search` na wrogim tekście — wszystkie poza podzbiorem albo limitami ---
 HOSTILE = [
     "^(a|a)+$", "^(a|aa)+$", "^((a+))+$", "^(?:(?:a+))+$", "^((a)+)+$", "^(?:a|a)*$",
     "^(a?){28}a{28}$", ".*.*.*.*=", "a{1,99}a{1,99}a{1,99}a{1,99}=", r"\d*\d*\d*\d*\d*\d*x",
+    r"\w?" * 18 + r"\w{50}!", ".*.*.*=",
 ]
-# Wrogie wejścia do 200 znaków (limit wzorca; nazwy encji i modele HA są krótsze).
-HOSTILE_INPUTS = ["a" * 200, "a" * 199 + "!", "0" * 199 + "!", "a_" * 99 + "!", "A" * 199 + "-",
-                  "=" * 50 + "a" * 149 + "!", "aab" * 66 + "!"]
-SEARCH_BUDGET_S = 0.5
+# Wrogie teksty długości INPUT_CAP (dłuższe nigdy nie są dopasowywane — `safe_search`).
+_N = regex_safety.INPUT_CAP
+HOSTILE_INPUTS = ["a" * _N, "a" * (_N - 1) + "!", "1" * (_N - 1) + "!", ("a1" * _N)[:_N - 1] + "!",
+                  ("aaaa_" * _N)[:_N - 1] + "!", "_" * (_N - 1) + "!", ("ab" * _N)[:_N - 1] + "!",
+                  ("a-" * _N)[:_N - 1] + "!", ("aA1_- " * _N)[:_N - 1] + "!", ("GW1" * _N)[:_N - 1] + "!",
+                  "x" * (_N - 1) + "\x00"]
+SEARCH_BUDGET_S = 0.25   # pomiar Volcast: najgorszy przyjęty wzorzec ~0,04 s; zapas na obciążone CI
 
 
 @pytest.mark.parametrize("rx", HOSTILE)
 def test_hostile_patterns_are_rejected(rx):
     assert profile_schema.regex_problem(rx) is not None
+    assert profile_schema.regex_problem(rx, parse_tree=False) is not None
 
 
 def _accepted_patterns() -> list[str]:
@@ -155,49 +163,51 @@ def _accepted_patterns() -> list[str]:
 
 
 def test_accepted_patterns_search_within_budget():
-    # Każdy wzorzec, który reguła przyjmuje, kończy `re.search` na wrogich wejściach w budżecie czasu.
+    # Każdy wzorzec, który reguła przyjmuje, kończy `re.search` na wrogich tekstach w budżecie czasu.
     slow = {}
     for rx in _accepted_patterns():
         assert profile_schema.regex_problem(rx) is None, rx
-        pattern = re.compile(rx)
         for text in HOSTILE_INPUTS:
             t0 = time.perf_counter()
-            pattern.search(text)
+            regex_safety.safe_search(rx, text)
             if (dt := time.perf_counter() - t0) > SEARCH_BUDGET_S:
                 slow[rx] = dt
     assert not slow, slow
 
 
-# --- Analiza na prawdziwym drzewie parsera `re` (bez różnic między ręcznym tokenizerem a Pythonem) ---
-# Konstrukcje spoza wspólnych przypadków: odrzucane zachowawczo (fail closed).
+# --- Druga zapora: drzewo prywatnego parsera `re` (feed i test generyczny) ---
+# Konstrukcje spoza podzbioru, które Python kompiluje — odrzuca je reguła tekstowa.
 UNMODELLED = [
-    "a++", "(?>a+)b", "(?i:a)", "(?-i:a)", "(?x)a b", "(?#c)a", "(?#a)x+", "(a)(?(1)b|c)",
+    "(?>a+)b", "(?i:a)", "(?-i:a)", "(?x)a b", "(?#c)a", "(?#a)x+", "(a)(?(1)b|c)",
     r"\N{LATIN SMALL LETTER A}", r"x\N{DIGIT ONE}+",
 ]
-# Wzorce, które drzewo parsera odrzuca samo (bez reguły tekstowej). `(a|a)+` parser składa do klasy
-# znaków (bez nawrotów) — tę odrzuca tylko reguła tekstowa, wspólna z Volcast.
-TREE_HOSTILE = [rx for rx in HOSTILE if rx not in ("^(a|a)+$", "^(?:a|a)*$")] + [
-    "(a|bc)+", "^(?=(a+))+$", "(a)\\1", "(?P<n>a)(?P=n)", "(a)(?(1)b)", "^" + "(?:ab|a.|.b|..)" * 10 + "!",
-]
+# To samo drzewo bez reguły tekstowej (zapora na wypadek różnicy tokenizera i parsera): kod drzewa.
+TREE_ONLY = {
+    "(?=a)b": "forbidden_construct", "(a)\\1": "forbidden_construct", "(?P<n>a)(?P=n)": "forbidden_construct",
+    "(a)(?(1)b)": "forbidden_construct", "(?>a)": "forbidden_construct", "(?i:a)": "forbidden_construct",
+    "(?s).": "forbidden_construct", "(?x)a b": "forbidden_construct", "\\Aa": "forbidden_construct",
+    "(?=ab)": "forbidden_construct", "a*?": "lazy_quantifier", "a++": "lazy_quantifier",
+    "(a|bc)+": "quantifier_after_group", "(ab){2}": "quantifier_after_group", "a{17}": "repeat_too_large",
+}
 
 
 def test_parser_is_available_here():
-    # Bez parsera reguła odrzuca wszystko (fail closed) — w CI musi być dostępny.
+    # Bez parsera feed odrzuca każdy profil (fail closed) — w CI musi być dostępny.
     assert regex_safety._SRE is not None
 
 
 @pytest.mark.parametrize("rx", UNMODELLED)
 def test_unmodelled_constructs_are_rejected(rx):
     re.compile(rx)                                   # Python je kompiluje — odrzuca dopiero reguła
-    assert profile_schema.regex_problem(rx) is not None
+    assert profile_schema.regex_problem(rx, parse_tree=False) == "forbidden_construct"
 
 
-@pytest.mark.parametrize("rx", TREE_HOSTILE)
-def test_parse_tree_rule_alone_rejects(rx):
-    assert regex_safety.tree_problem(rx) is not None
+@pytest.mark.parametrize("rx", sorted(TREE_ONLY))
+def test_parse_tree_guard_alone_rejects(rx):
+    assert regex_safety.tree_problem(rx) == TREE_ONLY[rx]
 
 
-def test_parse_tree_rule_alone_accepts_shared_and_packaged():
+def test_parse_tree_guard_accepts_shared_and_packaged():
     for rx in _accepted_patterns():
         assert regex_safety.tree_problem(rx) is None, rx
 
@@ -210,7 +220,8 @@ def test_missing_parser_fails_closed(monkeypatch):
 def test_unknown_parse_node_fails_closed(monkeypatch):
     sre = regex_safety._SRE
     monkeypatch.setattr(regex_safety, "_SRE", sre._replace(atoms=frozenset()))
-    assert profile_schema.regex_problem("^GW") == "compile"
+    assert profile_schema.regex_problem("^GW") == "forbidden_construct"
+    assert profile_schema.regex_problem("^GW", parse_tree=False) is None
 
 
 @pytest.mark.parametrize("rx", ["a{4294967296}", "a{1,4294967296}", "(?:a){99999999999999999999}"])
