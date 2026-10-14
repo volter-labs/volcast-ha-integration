@@ -222,7 +222,7 @@ def _offer(client):
 def _unverified(profile):
     raw = _thaw(profile.raw)
     raw["status"] = "draft"
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 def test_control_mode_choice_offers_both_paths_with_recommendation():

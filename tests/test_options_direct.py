@@ -41,7 +41,7 @@ def verified(pid):
     raw = _thaw(load_builtin(pid).raw)
     raw["status"] = "verified"
     raw["modbus"]["status"] = "verified"
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 def drafted(pid):
@@ -49,7 +49,7 @@ def drafted(pid):
     raw = _thaw(load_builtin(pid).raw)
     raw["status"] = "verified"
     raw["modbus"]["status"] = "draft"
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 GW_V = verified("goodwe-et")

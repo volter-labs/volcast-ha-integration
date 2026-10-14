@@ -5,7 +5,6 @@ wołać przez `hass.async_add_executor_job`.
 """
 from __future__ import annotations
 
-import dataclasses
 import hashlib
 import json
 import re
@@ -102,8 +101,9 @@ class Profile:
     # odczekanie przed ponownym odczytem zwrotnym, gdy pierwszy pokazał wartość sprzed zapisu
     readback_settle_s: float = DEFAULT_READBACK_SETTLE_S
     work_mode: WorkMode | None = None
-    origin: str = ORIGIN_PACKAGE
-    # SHA-256 treści profilu (JSON z kluczami posortowanymi) — wiąże wynik drabiny weryfikacji z treścią.
+    # Domyślnie „feed” (domknięte bezpiecznie): zapis dopuszcza wyłącznie jawne ORIGIN_PACKAGE (`load_profile`).
+    origin: str = ORIGIN_FEED
+    # SHA-256 treści profilu wpływającej na zachowanie (`_fingerprint`) — wiąże wynik drabiny z treścią.
     fingerprint: str = ""
 
     def intent(self, name: str) -> Mapping[str, Any] | None:
@@ -143,7 +143,7 @@ def _work_mode(w: Mapping[str, Any] | None) -> WorkMode | None:
         poll_s=w["poll_s"])
 
 
-def profile_from_dict(raw: dict) -> Profile:
+def profile_from_dict(raw: dict, *, origin: str = ORIGIN_FEED) -> Profile:
     errors = validate_profile(raw)
     if errors:
         raise ProfileError(errors)
@@ -167,12 +167,24 @@ def profile_from_dict(raw: dict) -> Profile:
         nvm_budget=_nvm_budget(wp.get("nvm_budget")),
         readback_settle_s=float(wp.get("readback_settle_s", DEFAULT_READBACK_SETTLE_S)),
         work_mode=_work_mode(raw.get("work_mode")),
+        origin=origin,
         fingerprint=_fingerprint(raw),
     )
 
 
+# Pola opisowe (bez wpływu na rozpoznanie, odczyty, zapisy i zaufanie) — poza odciskiem, żeby poprawka
+# etykiety czy źródeł nie unieważniała drabiny. Odcisk obejmuje WSZYSTKO inne (m.in. identify, transports,
+# unit_id, read, write, write_policy, modes, neutral_mode, intents, baseline, limits, capabilities, tou,
+# control_model, work_mode, modbus, verification, ha, statusy) — także pola dodane w przyszłości.
+_COSMETIC_TOP = ("label", "status_note", "sources")
+_COSMETIC_MODBUS = ("status_note",)
+
+
 def _fingerprint(raw: dict) -> str:
-    text = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    behaviour = {k: v for k, v in raw.items() if k not in _COSMETIC_TOP}
+    if isinstance(behaviour.get("modbus"), dict):
+        behaviour["modbus"] = {k: v for k, v in behaviour["modbus"].items() if k not in _COSMETIC_MODBUS}
+    text = json.dumps(behaviour, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -232,7 +244,7 @@ def load_profile(path: Path) -> Profile:
         raw = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
     except (OSError, ValueError) as err:
         raise ProfileError([f"{path}: nie da się wczytać ({err})"]) from err
-    profile = profile_from_dict(raw)
+    profile = profile_from_dict(raw, origin=ORIGIN_PACKAGE)
     if Path(path).stem != profile.id:
         raise ProfileError([f"{path}: nazwa pliku musi być równa id {profile.id!r}"])
     return profile
@@ -258,7 +270,7 @@ def load_builtin(profile_id: str) -> Profile:
     from_feed = profile_feed.feed_profile(profile_id)
     if from_feed is None or path.is_file():
         return load_profile(path)
-    profile = dataclasses.replace(profile_from_dict(from_feed), origin=ORIGIN_FEED)
+    profile = profile_from_dict(from_feed, origin=ORIGIN_FEED)
     # Bezpiecznik: rejestr feedu przyjmuje tylko zdegradowane profile o tym samym id.
     if profile.id != profile_id or profile.status != "draft" or profile.modbus.status != "draft":
         raise ProfileError([f"$.id: profil z feedu {profile_id!r} odrzucony"])

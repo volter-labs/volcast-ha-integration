@@ -333,9 +333,9 @@ def test_echo_only_optional_subset_of_write():
 def test_echo_only_parsed_into_modbus_spec():
     from custom_components.volcast.core.profile import profile_from_dict
     raw = ms_profile()
-    assert profile_from_dict(raw).modbus.echo_only == ()
+    assert profile_from_dict(raw, origin="package").modbus.echo_only == ()
     raw["modbus"]["echo_only"] = ["mode"]
-    assert profile_from_dict(raw).modbus.echo_only == ("mode",)
+    assert profile_from_dict(raw, origin="package").modbus.echo_only == ("mode",)
 
 
 def test_modbus_unknown_field_and_status_note():
@@ -427,10 +427,10 @@ def test_read_tou_enabled_needs_tou_enable_at_same_address():
 def test_verify_blocks_optional_and_parsed():
     from custom_components.volcast.core.profile import profile_from_dict
     p = ms_profile()
-    assert "verify_blocks" not in p["modbus"] and profile_from_dict(p).modbus.verify_blocks == ()
+    assert "verify_blocks" not in p["modbus"] and profile_from_dict(p, origin="package").modbus.verify_blocks == ()
     p["modbus"]["verify_blocks"] = [{"addr": 47509, "count": 4}, {"addr": 45353, "count": 4}]
     assert validate_profile(p) == []
-    assert profile_from_dict(p).modbus.verify_blocks == ((47509, 4), (45353, 4))
+    assert profile_from_dict(p, origin="package").modbus.verify_blocks == ((47509, 4), (45353, 4))
 
 
 @pytest.mark.parametrize("bad", [
@@ -644,14 +644,14 @@ def test_work_mode_block_accepted_and_accessor():
     p = ms_profile()
     p["work_mode"] = _wm()
     assert validate_profile(p) == []
-    wm = profile_from_dict(p).work_mode
+    wm = profile_from_dict(p, origin="package").work_mode
     assert wm.read_addr == 35000 and wm.neutral_values == (0,) and wm.poll_s == 300
     assert wm.ha_unique_id_regex == "work_mode$" and wm.ha_neutral_options == ("general",)
 
 
 def test_work_mode_absent_accessor_none():
     from custom_components.volcast.core.profile import profile_from_dict
-    assert profile_from_dict(ms_profile()).work_mode is None
+    assert profile_from_dict(ms_profile(), origin="package").work_mode is None
 
 
 def _wm_mut(f):

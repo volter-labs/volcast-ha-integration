@@ -6,7 +6,7 @@ from custom_components.volcast.core.registers import RegisterError, RegisterImag
 from tests.core.profile_fixtures import tw_profile
 
 GW = load_builtin("goodwe-et")
-TW = profile_from_dict(tw_profile())
+TW = profile_from_dict(tw_profile(), origin="package")
 
 
 def test_goodwe_rounding_and_clamping_like_c():

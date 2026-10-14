@@ -60,7 +60,7 @@ def test_temperature_window_from_profile():
     assert temperature_ok(-10.0, GW) is False and temperature_ok(55.0, GW) is False
 
 
-TW = profile_from_dict(tw_profile())
+TW = profile_from_dict(tw_profile(), origin="package")
 
 
 def _tou(*progs):
@@ -98,7 +98,7 @@ def test_i1_never_yields_discharge_below_reserve_even_with_discharge_neutral_mod
     raw = json.loads(json.dumps(dict(GW.raw)))
     raw["neutral_mode"] = "discharge_battery"
     with pytest.raises(ProfileError, match=r"\$\.neutral_mode"):
-        profile_from_dict(raw)
+        profile_from_dict(raw, origin="package")
     # …a z profilem wbudowanym I-1 przy SoC pod rezerwą nie zostawia rozładowania.
     r = apply_guards(Params(mode="sell_power", power_w=3000.0),
                      _ok(soc=5.0, soc_reserve=10.0, action=Action.DISCHARGE), GW)

@@ -36,8 +36,8 @@ def test_schema_rejects_unknown_kind():
 
 
 def test_mapper_treats_live_export_like_slot():
-    live = profile_from_dict(_with_sell(LIVE))
-    plain = profile_from_dict(_with_sell("slot"))
+    live = profile_from_dict(_with_sell(LIVE), origin="package")
+    plain = profile_from_dict(_with_sell("slot"), origin="package")
     for power in (3000.0, 20000.0, 0.0):
         s = Slot(start=T0, end=T0.replace(hour=11), action=Action.DISCHARGE,
                  discharge_purpose="sell", power_w=power)
@@ -45,8 +45,8 @@ def test_mapper_treats_live_export_like_slot():
 
 
 def test_caps_treat_live_export_like_slot():
-    live = profile_from_dict(_with_sell(LIVE))
-    plain = profile_from_dict(_with_sell("slot"))
+    live = profile_from_dict(_with_sell(LIVE), origin="package")
+    plain = profile_from_dict(_with_sell("slot"), origin="package")
     assert capabilities_for(live, ALL) == capabilities_for(plain, ALL)
     no_power = [k for k in ALL if k != "power_w"]
     assert capabilities_for(live, no_power) == capabilities_for(plain, no_power)

@@ -630,15 +630,17 @@ def _copy_as(pid_from: str, pid_to: str) -> dict:
 
 @pytest.mark.parametrize("source, new_id", [("goodwe-et", "goodwe-et-g2"), ("sofar-hyd", "aaa-sofar"),
                                             ("deye-sg", "deye-sg-clone")])
-def test_feed_profile_identifying_a_packaged_device_rejects_the_feed(source, new_id):
-    assert _reason(_body(feed=_feed([_acme(), _copy_as(source, new_id)]))) == "profile_overlap"
+def test_feed_profile_identifying_a_packaged_device_is_skipped(source, new_id):
+    v = pf.verify_feed_body(_body(feed=_feed([_acme(), _copy_as(source, new_id)])), keys=KEYS, held=None)
+    assert list(v.profiles) == ["acme-hybrid"] and v.overlapping == (new_id,)
 
 
-def test_feed_profile_claiming_a_packaged_model_for_the_same_ha_domain_rejects_the_feed():
+def test_feed_profile_claiming_a_packaged_model_for_the_same_ha_domain_is_skipped():
     raw = _acme()
     raw["ha"]["integrations"][0]["domain"] = "solarman"            # domena sofar-hyd (pakiet)
     raw["ha"]["integrations"][0]["model_regex"] = ["^SP"]           # model z obrazu wzorcowego sofar-hyd
-    assert _reason(_body(feed=_feed([raw]))) == "profile_overlap"
+    v = pf.verify_feed_body(_body(feed=_feed([raw, _acme("acme-mini")])), keys=KEYS, held=None)
+    assert list(v.profiles) == ["acme-mini"] and v.overlapping == ("acme-hybrid",)
 
 
 def test_shipped_identity_refs_cover_every_packaged_profile():
@@ -731,3 +733,88 @@ async def test_register_probe_tries_profiles_in_priority_order(monkeypatch):
     cand = identify_mod.Candidate(host="192.0.2.1", source="manual", transports=("goodwe_udp",))
     await identify_mod.identify_detailed(cand, profiles, transport_factory=lambda cfg: _T(), salt=b"s" * 16)
     assert tried == ["goodwe-et", "aaa-first"]
+
+
+# --- runda 2: ścisłe pierwszeństwo pakietu, nakładanie się = pominięcie wpisu -----------------------
+
+def _gw_series(pid="goodwe-gw10k", model_rx="^GW10K", ha_rx="(?i)goodwe gw10k"):
+    raw = _copy_as("goodwe-et", pid)
+    raw["identify"]["model_regex"] = [model_rx]
+    for integ in raw["ha"]["integrations"]:
+        integ["model_regex"] = [ha_rx]
+    return dataclasses.replace(profile_from_dict(pf._as_draft(raw)), origin="feed")
+
+
+@pytest.mark.parametrize("feed", [
+    _gw_series(),
+    _gw_series("goodwe-any", "^GW", "(?i)goodwe"),                      # nadzbiór wzorców pakietu
+    _gw_series("goodwe-et-g2", "^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)", "(?i)goodwe gw"),
+], ids=["series", "superset", "same-regex"])
+def test_packaged_profile_matching_the_device_always_beats_a_feed_profile(feed):
+    hint = InverterHint("goodwe", "GoodWe", "GW10K-ET")
+    choice = select_profile([hint], [load_builtin("goodwe-et"), feed])
+    assert choice.profile.id == "goodwe-et" and choice.integration_domain == "goodwe"
+
+
+def test_feed_profile_selected_when_no_packaged_profile_matches():
+    feed = _gw_series("acme-hyb", "^ACME", "(?i)acme")
+    raw = _thaw_raw(feed)
+    for integ in raw["ha"]["integrations"]:
+        integ["domain"] = "acme_power"
+    feed = dataclasses.replace(profile_from_dict(raw), origin="feed")
+    choice = select_profile([InverterHint("acme_power", "Acme", "ACME-H5")], [load_builtin("goodwe-et"), feed])
+    assert choice is not None and choice.profile.id == "acme-hyb"
+
+
+def _thaw_raw(profile):
+    return json.loads(json.dumps(dict(profile.raw)))
+
+
+@pytest.mark.asyncio
+async def test_register_probe_never_returns_a_feed_profile_when_a_packaged_one_matches(monkeypatch):
+    tried = []
+
+    async def fake_read(transport, prof, left, errors):
+        tried.append(prof.id)
+        return object(), "ok"
+
+    class _T:
+        stats = None
+
+        async def close(self):
+            return None
+    monkeypatch.setattr(identify_mod, "_read_identify", fake_read)
+    monkeypatch.setattr(identify_mod, "identity_info", lambda prof, image: {
+        "matched": True, "model": "M", "rated_power_w": None})
+    monkeypatch.setattr(identify_mod, "device_fingerprint", lambda salt, prof, image: "f" * 16)
+    monkeypatch.setattr(identify_mod, "RegisterClient", lambda *a, **k: object())
+    feed_raw = _copy_as("goodwe-et", "aaa-broad")
+    # Feed obsługuje łącze, które sonda próbuje PIERWSZE, a profil pakietu nie.
+    feed_raw["transports"] = ["solarman_v5"]
+    feed_raw["modbus"]["transport_options"] = {"solarman_v5": {"port": 8899, "timeout_ms": 3000, "gap_ms": 200}}
+    feed = dataclasses.replace(profile_from_dict(pf._as_draft(feed_raw)), origin="feed")
+    cand = identify_mod.Candidate(host="192.0.2.1", source="manual", logger_serial=1234567890,
+                                  transports=("solarman_v5", "goodwe_udp"))
+    ident, _client, _used, _err = await identify_mod.identify_detailed(
+        cand, [feed, load_builtin("goodwe-et")], transport_factory=lambda cfg: _T(), salt=b"s" * 16)
+    assert ident.profile_id == "goodwe-et" and tried == ["goodwe-et"]
+
+
+def test_overlapping_entry_is_skipped_and_the_rest_accepted():
+    v = pf.verify_feed_body(_body(feed=_feed([_acme(), _copy_as("goodwe-et", "goodwe-et-g2")])),
+                            keys=KEYS, held=None)
+    assert list(v.profiles) == ["acme-hybrid"] and v.overlapping == ("goodwe-et-g2",)
+
+
+def test_stored_feed_survives_a_release_whose_packaged_set_overlaps_an_entry(monkeypatch):
+    store = MemStore()
+    body = _body(feed=_feed([_acme(), _acme("zeta-hybrid", label="Zeta")]))
+    _run(_updater(store).async_check(Fetch(_ok(body))))
+    pf.set_feed_profiles({})
+    real = pf.overlaps_packaged
+    monkeypatch.setattr(pf, "overlaps_packaged",                      # nowy profil pakietu = acme
+                        lambda raw, only=None: raw["id"] == "acme-hybrid" or real(raw, only=only))
+    upd = _updater(store)
+    _run(upd.async_load())
+    assert upd.held is not None and upd.held.overlapping == ("acme-hybrid",)
+    assert "zeta-hybrid" in builtin_ids() and "acme-hybrid" not in builtin_ids()

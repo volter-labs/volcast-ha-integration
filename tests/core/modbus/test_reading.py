@@ -123,7 +123,7 @@ def test_reading_takes_input_registers_from_their_own_space():
     from tests.core.profile_fixtures import ms_profile
     raw = ms_profile()
     raw["read"]["soc"] = {"addr": 47511, "type": "u16", "fc": 4}
-    p = profile_from_dict(raw)
+    p = profile_from_dict(raw, origin="package")
     r = _read(p, RegisterImage.from_blocks({47509: [0, 0, 1, 0], (4, 47511): [55]}))
     assert r.values["soc"] == 55
     assert _read(p, RegisterImage.from_blocks({47509: [0, 0, 1, 0]})).values["soc"] is None

@@ -21,10 +21,10 @@ from tests.control.test_verification import P, Env, FakeExecutor, FakeIO, Gate
 GW_FEED = dataclasses.replace(GW_V, origin=ORIGIN_FEED)            # treść zweryfikowana, pochodzenie: feed
 
 
-def _changed(profile, label="Changed label"):
+def _changed(profile):
     raw = _thaw(profile.raw)
-    raw["label"] = label
-    return dataclasses.replace(profile_from_dict(raw), origin=profile.origin)
+    raw["write_policy"]["min_interval_s"] = float(raw["write_policy"]["min_interval_s"]) + 1   # zachowanie
+    return profile_from_dict(raw, origin=profile.origin)
 
 
 # --- pochodzenie i odcisk ---------------------------------------------------------------------------
@@ -168,3 +168,81 @@ def test_ladder_record_round_trips_the_profile_hash():
     assert again.profile_hash == "ab" * 32
     lad.profile_changed("cd" * 32, GW_NOW + timedelta(minutes=1))
     assert lad.profile_hash == "cd" * 32 and lad.state.rung == lad.start_rung
+
+
+# --- runda 2: pochodzenie domyślnie „feed”, ostatnie bramki przypięte testami -----------------------
+
+def test_profile_built_without_an_origin_cannot_write():
+    raw = _thaw(GW_V.raw)
+    p = profile_from_dict(raw)
+    assert p.origin == ORIGIN_FEED and not writes_allowed(p) and not direct_verified(p)
+    assert profile_from_dict(raw, origin=ORIGIN_PACKAGE).origin == ORIGIN_PACKAGE
+
+
+def test_packaged_file_wins_even_if_the_registry_holds_its_id():
+    from custom_components.volcast.core import profile_feed as pf
+    raw = _thaw(load_builtin("sofar-hyd").raw)
+    raw["label"] = "registry copy"
+    pf.set_feed_profiles({"sofar-hyd": raw})
+    try:
+        p = load_builtin("sofar-hyd")
+        assert p.origin == ORIGIN_PACKAGE and p.raw["label"] != "registry copy"
+    finally:
+        pf.set_feed_profiles({})
+
+
+def test_fingerprint_ignores_cosmetic_fields_only():
+    base = load_builtin("sofar-hyd")
+    raw = _thaw(base.raw)
+    raw["label"], raw["status_note"] = "Other label", "other note"
+    raw["sources"] = [{"what": "other", "ref": "https://example.com/doc"}]
+    raw["modbus"]["status_note"] = "other modbus note"
+    assert profile_from_dict(raw, origin=ORIGIN_PACKAGE).fingerprint == base.fingerprint
+    raw["unit_id"] = (raw["unit_id"] % 200) + 1
+    assert profile_from_dict(raw, origin=ORIGIN_PACKAGE).fingerprint != base.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_plan_not_allowed_for_a_verified_ladder_with_a_stale_hash(monkeypatch):
+    env = _env(monkeypatch, GW_DRAFT, _verified_record(GW_DRAFT.fingerprint, start=1), start=1)
+    await env.runner.async_start()
+    env.runner.ladder.profile_hash = "0" * 64                     # bez wiązania przez `_bind_profile`
+    assert env.runner.plan_allowed() is False
+
+
+@pytest.mark.asyncio
+async def test_runner_never_writes_with_a_feed_profile_even_if_the_executor_says_yes(monkeypatch):
+    env = _env(monkeypatch, GW_FEED, None, start=1)
+    assert env.ex.verification_can_write() is True
+    assert env.runner._can_write() is False
+
+
+@pytest.mark.asyncio
+async def test_control_write_refused_for_a_feed_profile(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await Harness(make_hass, GW_FEED, gw_target(goodwe_udp_sim)).start()
+    try:
+        assert await h.ex.async_control_write() is None and goodwe_bank.writes == []
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_state_never_restored_through_a_feed_profile(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Pakiet sterował (własność, migawka), potem wydanie bez profilu w pakiecie, ten sam id w feedzie.
+    target = gw_target(goodwe_udp_sim)
+    h = await Harness(make_hass, GW_V, target).start()
+    h.ex.verification = Gate(True)
+    await h.ex.async_tick()
+    assert h.ex.owned and goodwe_bank.writes
+    store = h.store
+    await h.ex.async_stop()
+    await h.conn.async_stop()
+    before = len(goodwe_bank.writes)
+    h2 = await Harness(make_hass, GW_FEED, target, store=store).start()
+    try:
+        assert not h2.ex.owned and "control_record_dropped" in issues.keys()
+        await h2.ex.async_set_consent(False)
+        await h2.ex.async_tick()
+        assert len(goodwe_bank.writes) == before
+    finally:
+        await h2.close()

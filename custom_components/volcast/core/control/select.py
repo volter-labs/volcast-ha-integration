@@ -81,12 +81,26 @@ def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
     return cands
 
 
+def _entity_match(p: Profile, hint: InverterHint) -> bool:
+    return hint.domain in _domains(p) and _model_ok(p, hint.model)
+
+
+def _eligible(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
+    """Ścisłe pierwszeństwo pakietu (feed tylko DODAJE marki): gdy urządzenie konkretnie pasuje do profilu
+    z pakietu (domena + model albo marka w producencie), profile z feedu odpadają przed jakimkolwiek
+    zawężaniem; w przeciwnym razie biorą udział jak pozostałe."""
+    if any(writes_allowed(p) and (_entity_match(p, hint) or _maker_ok(p, hint)) for p in ordered):
+        return [p for p in ordered if writes_allowed(p)]
+    return list(ordered)
+
+
 def _entity_cands(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
-    return _narrow([p for p in ordered if hint.domain in _domains(p) and _model_ok(p, hint.model)], hint)
+    return _narrow([p for p in _eligible(hint, ordered) if _entity_match(p, hint)], hint)
 
 
 def _read_only_cands(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
-    return _narrow([p for p in ordered if _maker_ok(p, hint) or hint.domain in _domains(p)], hint)
+    return _narrow([p for p in _eligible(hint, ordered) if _maker_ok(p, hint) or hint.domain in _domains(p)],
+                   hint)
 
 
 def select_profile(hints: Sequence[InverterHint], profiles: Sequence[Profile]) -> ProfileChoice | None:

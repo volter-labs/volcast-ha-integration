@@ -447,7 +447,8 @@ class VolcastExecutor:
 
         True = odczyt zwrotny równy, False = różny albo odmowa, None = bez wyniku (brak potwierdzonej
         tożsamości, odczytu trybu albo błąd łącza). Bez własności i migawki — wartość się nie zmienia."""
-        if self._profile is None or self._stopped or self._frozen or self._disabled:
+        if self._profile is None or self._stopped or self._frozen or self._disabled \
+                or not writes_allowed(self._profile):     # profil z feedu: tylko odczyt
             return None
         async with self._lock:
             if self._state.plan_only or self._stopped or self._frozen or self._disabled:
@@ -772,6 +773,22 @@ class VolcastExecutor:
         `mode_uid`) albo ze starym entity_id jest uaktualniany. Zwraca True, gdy stan się zmienił
         i trzeba go zapisać.
         """
+        st = self._state
+        if self._profile is not None and not writes_allowed(self._profile) \
+                and (st.owned or st.snapshot or st.restore_keys or st.tou_snapshot):
+            # Profil spoza pakietu (np. id usunięte z pakietu, obecne w feedzie): przez jego mapę nie
+            # wolno nic oddać ani zapisać — rekord porzucony, właściciel dostaje zgłoszenie.
+            if st.owned:
+                _LOGGER.warning("Volcast control: saved baseline settings cannot be restored with a "
+                                "read-only profile — not reusing them; check the inverter settings")
+                self._create_issue(self._record_dropped_issue_id, "control_record_dropped")
+            st.owned = False
+            st.snapshot = {}
+            st.owner = {}
+            st.restore_keys = None
+            st.taken_over = []
+            st.tou_snapshot = None
+            return True
         if not (self._state.owned or self._state.snapshot) or not self._state.owner:
             return False
         record = self._state.owner

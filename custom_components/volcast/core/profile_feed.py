@@ -138,6 +138,7 @@ class VerifiedFeed:
     generated_at: datetime
     profiles: Mapping[str, dict]          # id → profil po wymuszeniu `draft`
     ignored: tuple[str, ...] = ()         # wpisy o id profilu z pakietu (pominięte)
+    overlapping: tuple[str, ...] = ()     # wpisy rozpoznające urządzenie profilu z pakietu (pominięte)
 
     @property
     def etag(self) -> str:
@@ -322,14 +323,17 @@ def _one_profile(raw: Any) -> dict:
     return draft
 
 
-def _profiles(raw_list: Any) -> tuple[dict[str, dict], tuple[str, ...]]:
-    """(nowe profile, pominięte id pakietu). Etap 1: feed tylko DODAJE marki — wpis o id profilu
-    z pakietu jest pomijany (pakiet wygrywa); każdy inny błąd odrzuca cały feed."""
+def _profiles(raw_list: Any) -> tuple[dict[str, dict], tuple[str, ...], tuple[str, ...]]:
+    """(nowe profile, pominięte id pakietu, pominięte nakładające się). Etap 1: feed tylko DODAJE marki —
+    wpis o id profilu z pakietu albo rozpoznający urządzenie profilu z pakietu jest pomijany (zależy od
+    zestawu pakietu TEJ wersji integracji, więc nie może odrzucać całego feedu); wpis zepsuty albo
+    niebezpieczny odrzuca cały feed."""
     if not isinstance(raw_list, list) or len(raw_list) > FEED_MAX_PROFILES:
         raise FeedRejected("profile_invalid")
     packaged = packaged_refs()
     out: dict[str, dict] = {}
     ignored: list[str] = []
+    overlapping: list[str] = []
     seen: set[str] = set()
     for raw in raw_list:
         draft = _one_profile(raw)
@@ -345,9 +349,10 @@ def _profiles(raw_list: Any) -> tuple[dict[str, dict], tuple[str, ...]]:
         except (TypeError, AttributeError, ValueError, KeyError, re.error) as err:
             raise FeedRejected("profile_invalid") from err
         if overlap:
-            raise FeedRejected("profile_overlap")
+            overlapping.append(pid)
+            continue
         out[pid] = draft
-    return out, tuple(sorted(ignored))
+    return out, tuple(sorted(ignored)), tuple(sorted(overlapping))
 
 
 def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None,
@@ -391,10 +396,10 @@ def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None,
             raise FeedRejected("rollback")
         if generated_at == held.generated_at and doc["signature"] != held.signature:
             raise FeedRejected("replay")
-    profiles, ignored = _profiles(feed.get("profiles"))
+    profiles, ignored, overlapping = _profiles(feed.get("profiles"))
     document = {"feed": copy.deepcopy(feed), "key_id": key_id, "signature": doc["signature"]}
     return VerifiedFeed(document=document, key_id=key_id, signature=doc["signature"],
-                        generated_at=generated_at, profiles=profiles, ignored=ignored)
+                        generated_at=generated_at, profiles=profiles, ignored=ignored, overlapping=overlapping)
 
 
 def verify_feed_body(body: bytes, *, keys: Mapping[str, str], held: VerifiedFeed | None,
@@ -504,6 +509,7 @@ class ProfileFeedUpdater:
             self.held = held
             self._raise_floor(held.generated_at)
             set_feed_profiles(held.profiles)
+            _log_skipped(held)
 
     @staticmethod
     def _stored_floor(raw: Any, now: float) -> datetime | None:
@@ -563,9 +569,7 @@ class ProfileFeedUpdater:
         before = frozenset(held.profiles) if held is not None else frozenset()
         self.held = verified
         set_feed_profiles(verified.profiles)
-        if verified.ignored:
-            _LOGGER.warning("Volcast profile feed: ignored entries for profiles shipped with the integration (%s)",
-                            ", ".join(verified.ignored))
+        _log_skipped(verified)
         new_ids = frozenset(verified.profiles) - before
         if new_ids and self._on_new is not None:
             try:
@@ -582,6 +586,16 @@ class ProfileFeedUpdater:
                                           "floor": _iso(self._floor or feed.generated_at)})
         except Exception as err:  # noqa: BLE001 — feed i tak działa w procesie
             _LOGGER.warning("Volcast profile feed could not be saved (%s)", type(err).__name__)
+
+
+def _log_skipped(feed: VerifiedFeed) -> None:
+    """Pominięte wpisy — wyłącznie ich id (kebab-case ze schematu), bez treści feedu."""
+    if feed.ignored:
+        _LOGGER.warning("Volcast profile feed: ignored entries for profiles shipped with the integration (%s)",
+                        ", ".join(feed.ignored))
+    if feed.overlapping:
+        _LOGGER.warning("Volcast profile feed: ignored entries that match an inverter of a shipped profile (%s)",
+                        ", ".join(feed.overlapping))
 
 
 def _iso(dt: datetime) -> str:

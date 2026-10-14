@@ -40,13 +40,13 @@ def _draft_goodwe():
     """Profil zweryfikowany, ale z niezweryfikowaną ścieżką rejestrów (sam `modbus.status = draft`)."""
     raw = _thaw(load_builtin("goodwe-et").raw)
     raw["modbus"]["status"] = "draft"
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 def _verified_goodwe():
     raw = _thaw(load_builtin("goodwe-et").raw)
     raw["status"] = raw["modbus"]["status"] = "verified"
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 def _target(sim, profile) -> dict:

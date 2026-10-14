@@ -155,7 +155,7 @@ def test_upward_rounding_beyond_entity_max_is_unfit():
     raw = json.loads((PROFILES_DIR / "goodwe-et.json").read_text(encoding="utf-8"))
     for integ in raw["ha"]["integrations"]:
         integ["entities"]["soc_min"].pop("transform", None)
-    plain = profile_from_dict(raw)
+    plain = profile_from_dict(raw, origin="package")
     attrs = {**KW01, "number.dod": {"min": 0, "max": 99.5, "step": 1}}
     p, adjusted, unfit = fit_params(Params(soc_min=99.2), plain, "goodwe", MAPPED, UNITS_KW, attrs)
     assert unfit == ("soc_min",) and adjusted == () and p.soc_min == 99.2

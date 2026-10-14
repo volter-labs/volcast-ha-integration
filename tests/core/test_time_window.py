@@ -14,7 +14,7 @@ from custom_components.volcast.core.slot import Action, parse_schedule
 from tests.core.profile_fixtures import ms_profile, tw_profile
 
 WAW = ZoneInfo("Europe/Warsaw")
-TW = profile_from_dict(tw_profile())
+TW = profile_from_dict(tw_profile(), origin="package")
 # 2026-09-02 00:00 czasu warszawskiego = 2026-09-01 22:00 UTC
 DAY0 = datetime(2026, 9, 1, 22, tzinfo=timezone.utc)
 
@@ -225,7 +225,7 @@ def test_merge_ties_pick_earlier_pair_and_left_program():
     prof["tou"]["programs"] = 4
     prof["write"]["tou_program"]["count"] = 4
     prof["capabilities"]["time_windows"] = 4
-    p4 = profile_from_dict(prof)
+    p4 = profile_from_dict(prof, origin="package")
     hours = [(h, {"mode": "charge", "charge_source": "grid", "power_w": 2000}) if h % 2 else
              (h, {"mode": "self_consume"}) for h in range(24)]
     r1 = _run(_plan(hours), profile=p4)
@@ -246,7 +246,7 @@ def test_priced_merge_keeps_cheaper_program():
     prof["tou"]["programs"] = 4
     prof["write"]["tou_program"]["count"] = 4
     prof["capabilities"]["time_windows"] = 4
-    p4 = profile_from_dict(prof)
+    p4 = profile_from_dict(prof, origin="package")
     ch = {"mode": "charge", "charge_source": "grid", "power_w": 1000, "price_pln_kwh": 0.2}
     hours = [(h, ch if h in (4, 16) else SELF) for h in range(24)]
     r = _run(_plan(hours), profile=p4)
@@ -259,7 +259,7 @@ def test_priced_merge_keeps_cheaper_program():
 def test_rejects_mode_setpoint_profile_and_naive_now():
     sch = _plan([(h, SELF) for h in range(24)])
     with pytest.raises(ValueError):
-        _run(sch, profile=profile_from_dict(ms_profile()))
+        _run(sch, profile=profile_from_dict(ms_profile(), origin="package"))
     with pytest.raises(ValueError):
         _run(sch, now=datetime(2026, 9, 2, 0, 0))
 
@@ -295,7 +295,7 @@ def test_baseline_respects_reserve_and_uneven_n():
     prof["tou"]["time_step_min"] = 60
     prof["write"]["tou_program"]["count"] = 7
     prof["capabilities"]["time_windows"] = 7
-    p7 = profile_from_dict(prof)
+    p7 = profile_from_dict(prof, origin="package")
     base = baseline_programs(p7, 12.0, 4000.0)
     starts = [p.start_min for p in base]
     assert len(base) == 7 and starts == sorted(set(starts)) and all(s % 60 == 0 for s in starts)

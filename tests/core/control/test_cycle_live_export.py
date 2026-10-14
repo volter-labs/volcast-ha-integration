@@ -448,7 +448,7 @@ def test_other_intents_ignore_live_readings(slot_kw):
 def test_sell_with_the_plain_slot_kind_is_not_converted():
     raw = copy.deepcopy(dict(GW.raw))
     raw = {**raw, "intents": {**raw["intents"], "sell": {"mode": "sell_power", "power": "slot"}}}
-    legacy = profile_from_dict(copy.deepcopy(raw))
+    legacy = profile_from_dict(copy.deepcopy(raw), origin="package")
     sched = plan(slot("10:00", "11:00", **SELL, power_w=2000))
     d, _ = tick(schedule=sched, profile=legacy, **FRESH)
     assert power(d) == 2000.0 and not xset_notes(d) and NOTE_SELL_NO_LOAD not in d.notes

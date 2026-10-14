@@ -161,7 +161,7 @@ def _input_profile():
     raw["identify"]["model_register"]["fc"] = 4
     raw["identify"]["registers"]["rated_power_w"]["fc"] = 4
     raw["modbus"]["identify_reads"] = [{"addr": 35000, "count": 33, "fc": 4}]
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 HOLDING = {100: 0xFE0C, 45356: 10, 47509: 0, 47510: 0, 47511: 1, 47512: 0}
@@ -199,7 +199,7 @@ def test_profile_keeps_read_function_of_identify_reads():
     assert p.modbus.identify_reads == ((35000, 33, 4),)
     raw = ms_profile()
     raw["modbus"]["identify_reads"] = [{"addr": 35000, "count": 33, "fc": 3}]
-    assert profile_from_dict(raw).modbus.identify_reads == ((35000, 33),)
+    assert profile_from_dict(raw, origin="package").modbus.identify_reads == ((35000, 33),)
 
 
 def test_read_plan_groups_blocks_per_function():
@@ -210,7 +210,7 @@ def test_read_plan_groups_blocks_per_function():
 
 
 def test_read_plan_without_fc_is_unchanged():
-    p = profile_from_dict(ms_profile())
+    p = profile_from_dict(ms_profile(), origin="package")
     assert all(len(b) == 2 for b in read_plan(p, include_identify=True))
 
 

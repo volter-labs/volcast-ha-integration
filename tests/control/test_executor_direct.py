@@ -53,7 +53,7 @@ def verified(pid: str, *, modbus: str = "verified"):
     raw = _thaw(load_builtin(pid).raw)
     raw["status"] = "verified"
     raw["modbus"]["status"] = modbus
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 GW_V = verified("goodwe-et")

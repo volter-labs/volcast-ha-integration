@@ -61,7 +61,7 @@ def _profile():
     p["work_mode"] = {"read": {"addr": 35000, "type": "u16"}, "neutral_values": [0],
                       "ha": {"domain": "select", "unique_id_regex": "work_mode$", "neutral_options": ["general"]},
                       "poll_s": 300}
-    return profile_from_dict(p)
+    return profile_from_dict(p, origin="package")
 
 
 def test_resolve_finds_the_select_by_unique_id():
@@ -76,7 +76,7 @@ def test_resolve_no_match_or_ambiguous_or_no_block_is_none():
     assert resolve_work_mode_entity(_profile(), "goodwe", []) is None
     two = [EntityCandidate("select.a", "goodwe", "1_work_mode"), EntityCandidate("select.b", "goodwe", "2_work_mode")]
     assert resolve_work_mode_entity(_profile(), "goodwe", two) is None
-    assert resolve_work_mode_entity(profile_from_dict(ms_profile()), "goodwe", two) is None
+    assert resolve_work_mode_entity(profile_from_dict(ms_profile(), origin="package"), "goodwe", two) is None
 
 
 def test_watcher_feeds_tracker_from_raw_state_and_ignores_unusable():

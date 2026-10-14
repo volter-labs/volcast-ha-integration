@@ -61,7 +61,7 @@ def test_live_plan_counts_like_box():
 def test_rejects_time_window_profile():
     sch = parse_schedule(load_golden("plan_live"))
     with pytest.raises(ValueError):
-        map_slot(sch.slots[0], profile_from_dict(tw_profile()), 8000)
+        map_slot(sch.slots[0], profile_from_dict(tw_profile(), origin="package"), 8000)
 
 
 @pytest.mark.parametrize("kw,expected", [

@@ -120,7 +120,7 @@ def test_pause_over_writes_again():
 
 
 def test_time_window_profile_never_writes():
-    d, _ = run(profile=profile_from_dict(tw_profile()))
+    d, _ = run(profile=profile_from_dict(tw_profile(), origin="package"))
     assert (d.status, d.reason, d.writes) == (IDLE, "tou_preview_only", [])
 
 

@@ -32,7 +32,7 @@ def test_profile_without_model_regex_is_read_only_not_error():
     raw["ha"]["integrations"].append({"domain": "solarman", "ems": False, "status": "draft",
                                       "entities": {"soc": {"domain": "sensor",
                                                            "unique_id_regex": "^solarman-soc"}}})
-    deye = profile_from_dict(raw)
+    deye = profile_from_dict(raw, origin="package")
     c = select_profile([InverterHint("solarman", "Solarman", "SUN-10K-SG04LP3-EU")], [deye])
     assert (c.profile.id, c.integration_domain) == ("deye-sg", None)
 
