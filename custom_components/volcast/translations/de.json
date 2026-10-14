@@ -468,6 +468,18 @@
     "inverter_work_mode": {
       "title": "Der Arbeitsmodus des Wechselrichters kann den Akku aus dem Netz laden",
       "description": "Der Wechselrichter hat einen eigenen Arbeitsmodus oder Zeitplan (z. B. Eco oder ein Tarifzeitplan aus der App des Herstellers), der den Akku außerhalb des Volcast-Plans aus dem Netz laden kann. Schalten Sie diesen Modus oder Zeitplan in der Wechselrichter-App des Herstellers aus und lassen Sie den allgemeinen (Standard-)Modus aktiv. Schalten Sie nicht den Wechselrichter selbst aus."
+    },
+    "brand_profile_ready": {
+      "title": "Ein Profil für Ihren Wechselrichter ist verfügbar",
+      "description": "Volcast hat ein neues Wechselrichterprofil erhalten, das zu dieser Installation passt: {label} ({profile}). Es ist ein Testprofil — nichts ändert sich, bis Sie es in der Volcast-Einrichtung auswählen, und die Steuerung startet erst nach der Geräteprüfung. Wählen Sie Beheben, um diesen Hinweis zu schließen.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "OK, verstanden",
+            "description": "Damit wird nur der Hinweis geschlossen. Volcast schaltet keine Steuerung ein und ändert keine Einstellungen des Wechselrichters."
+          }
+        }
+      }
     }
   },
   "services": {

@@ -468,6 +468,18 @@
     "inverter_work_mode": {
       "title": "La modalità di lavoro dell'inverter può caricare la batteria dalla rete",
       "description": "L'inverter ha una propria modalità di lavoro o programmazione (ad esempio Eco o una fascia oraria impostata nell'app del produttore) che può caricare la batteria dalla rete al di fuori del piano Volcast. Disattivi quella modalità o programmazione nell'app del produttore dell'inverter e lasci attiva la modalità generale (standard). Non spenga l'inverter stesso."
+    },
+    "brand_profile_ready": {
+      "title": "È disponibile un profilo per il tuo inverter",
+      "description": "Volcast ha ricevuto un nuovo profilo inverter adatto a questa installazione: {label} ({profile}). È un profilo di prova — non cambia nulla finché non lo scegli nella configurazione di Volcast, e il controllo parte solo dopo la verifica del dispositivo. Seleziona Ripara per chiudere questo avviso.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "OK, ho capito",
+            "description": "Questo chiude solo l'avviso. Volcast non attiva il controllo e non modifica alcuna impostazione dell'inverter."
+          }
+        }
+      }
     }
   },
   "services": {

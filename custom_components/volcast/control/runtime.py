@@ -58,6 +58,7 @@ from ..cloud import control_choice
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
 from ..cloud.signal_channel import SignalChannel
+from ..coordinator import async_get_profile_feed
 from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
@@ -908,12 +909,22 @@ async def _async_compose(hass, entry, profiles, store: ControlStore) -> _Compose
     return back
 
 
+async def _async_profile_feed(hass):
+    """Feed profili marek (wspólny); jego błąd nigdy nie zatrzymuje sterowania — zostają profile pakietu."""
+    try:
+        return await async_get_profile_feed(hass)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Volcast profile feed unavailable (%s) — using packaged profiles", type(err).__name__)
+        return None
+
+
 async def async_setup_control(hass, entry, *, report: Callable[[], dict | None]) -> ControlRuntime | None:
     backend = Backend.from_dict(entry.data.get(CONF_BACKEND))
     if backend is None:
         return None
     opts = entry.options
     cloud = VolcastCloud(async_get_clientsession(hass), entry.data[CONF_API_KEY], backend)
+    feed = await _async_profile_feed(hass)          # podpisany feed z `.storage` PRZED odczytem profili
     profiles = await hass.async_add_executor_job(ds.load_profiles)
     store = ControlStore(hass, entry.entry_id)
     composed = await _async_compose(hass, entry, profiles, store)
@@ -990,7 +1001,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         fetcher = ScheduleFetcher(cloud, on_plan=executor.async_on_plan, on_consent=executor.async_set_consent,
                                   on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply,
                                   on_control=_control, on_consent_mirror=executor.set_consent_mirror, hass=hass,
-                                  discovery_report=report)
+                                  discovery_report=report, profile_feed=feed)
         await telemetry.async_start()
         if choice is not None and not composed.returning:
             # Przed pierwszym cyklem: w trybie bezpośrednim plan czeka na zweryfikowane urządzenie.

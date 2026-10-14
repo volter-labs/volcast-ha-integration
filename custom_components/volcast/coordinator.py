@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -18,10 +19,99 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     FORECAST_HISTORY_RETENTION_DAYS,
     FORECAST_HISTORY_STORAGE_VERSION,
+    ISSUE_BRAND_PROFILE_READY,
+    OPT_PROFILE_ID,
+    PROFILE_FEED_PUBLIC_KEYS,
+    PROFILE_FEED_STORAGE_KEY,
+    PROFILE_FEED_STORAGE_VERSION,
 )
+from .core.profile import packaged_ids
+from .core.profile_feed import ProfileFeedUpdater
 from .http_retry import http_with_retry
 
 _LOGGER = logging.getLogger(__name__)
+# Feed profili jest wspólny dla wszystkich wpisów — osobny klucz w hass.data (nie pod DOMAIN,
+# gdzie leżą wyłącznie wpisy).
+PROFILE_FEED_DATA = "volcast_profile_feed"
+_ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
+_LABEL_MAX = 64
+
+
+async def async_get_profile_feed(hass: HomeAssistant, *, keys: dict[str, str] | None = None
+                                 ) -> ProfileFeedUpdater:
+    """Wspólny feed profili: przy pierwszym wołaniu feed z `.storage` (ponownie zweryfikowany) trafia do
+    rejestru profili — wołać PRZED odczytem profili. Klucze domyślnie z `PROFILE_FEED_PUBLIC_KEYS`;
+    puste = feed bezczynny (bez odczytu magazynu i bez pobierania)."""
+    feed = hass.data.get(PROFILE_FEED_DATA)
+    if feed is None:
+        feed = ProfileFeedUpdater(
+            Store(hass, PROFILE_FEED_STORAGE_VERSION, PROFILE_FEED_STORAGE_KEY),
+            keys=dict(PROFILE_FEED_PUBLIC_KEYS if keys is None else keys),
+            packaged_ids=packaged_ids, run_job=hass.async_add_executor_job,
+            on_new_profiles=lambda ids, profiles: async_profile_ready_issues(hass, ids, profiles))
+        hass.data[PROFILE_FEED_DATA] = feed
+    await feed.async_load()
+    return feed
+
+
+def async_profile_feed_if_loaded(hass: HomeAssistant) -> ProfileFeedUpdater | None:
+    return (getattr(hass, "data", None) or {}).get(PROFILE_FEED_DATA)
+
+
+def _brand(profile_id: str) -> str:
+    return profile_id.split("-", 1)[0]
+
+
+def _install_hints(hass: HomeAssistant) -> tuple[set[str], list[str], set[str]]:
+    """Kandydaci profili i producenci z raportów wykrywania wpisów oraz marki profili z opcji wpisów."""
+    candidates: set[str] = set()
+    makers: list[str] = []
+    brands: set[str] = set()
+    for data in ((getattr(hass, "data", None) or {}).get(DOMAIN) or {}).values():
+        report = getattr(data.get("discovery"), "report", None) if isinstance(data, dict) else None
+        inverters = report.get("inverters") if isinstance(report, dict) else None
+        for inv in inverters if isinstance(inverters, list) else ():
+            if not isinstance(inv, dict):
+                continue
+            cands = inv.get("profile_candidates")
+            candidates.update(c for c in (cands if isinstance(cands, list) else ()) if isinstance(c, str))
+            devices = inv.get("devices")
+            for dev in devices if isinstance(devices, list) else ():
+                maker = dev.get("manufacturer") if isinstance(dev, dict) else None
+                if isinstance(maker, str) and maker.strip():
+                    makers.append(maker.lower())
+    entries = getattr(getattr(hass, "config_entries", None), "async_entries", None)
+    for entry in (entries(DOMAIN) if callable(entries) else ()):
+        pid = (getattr(entry, "options", None) or {}).get(OPT_PROFILE_ID)
+        if isinstance(pid, str) and pid:
+            brands.add(_brand(pid))
+    return candidates, makers, brands
+
+
+def _safe_label(raw: Any, fallback: str) -> str:
+    # Tekst Napraw to markdown: z etykiety feedu tylko litery, cyfry, spacja i myślnik.
+    text = "".join(c if c.isalnum() or c in " -" else " " for c in str(raw or ""))
+    return " ".join(text.split())[:_LABEL_MAX].strip() or fallback
+
+
+def async_profile_ready_issues(hass: HomeAssistant, ids, profiles) -> list[str]:
+    """Naprawa informacyjna dla NOWYCH profili z feedu pasujących do tej instalacji (kandydat z wykrywania,
+    marka producenta urządzenia albo marka profilu wybranego we wpisie). Niczego nie włącza."""
+    candidates, makers, brands = _install_hints(hass)
+    created: list[str] = []
+    for pid in sorted(ids):
+        brand = _brand(pid)
+        if not (pid in candidates or brand in brands or any(brand in m for m in makers)):
+            continue
+        issue_id = f"{ISSUE_BRAND_PROFILE_READY}_{pid}"
+        raw = profiles.get(pid) or {}
+        ir.async_create_issue(
+            hass, DOMAIN, issue_id, is_fixable=True, severity=_ISSUE_WARNING,
+            translation_key=ISSUE_BRAND_PROFILE_READY,
+            translation_placeholders={"profile": pid, "label": _safe_label(raw.get("label"), pid)},
+            data={"profile_id": pid})
+        created.append(issue_id)
+    return created
 
 
 @dataclass

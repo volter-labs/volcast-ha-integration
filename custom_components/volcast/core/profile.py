@@ -12,6 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from . import profile_feed
 from .profile_schema import validate_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
@@ -215,12 +216,32 @@ def load_profile(path: Path) -> Profile:
     return profile
 
 
-def builtin_ids() -> tuple[str, ...]:
+def packaged_ids() -> tuple[str, ...]:
+    """Profile z pakietu integracji (bez feedu)."""
     return tuple(sorted(p.stem for p in PROFILES_DIR.glob("*.json")))
 
 
+def builtin_ids() -> tuple[str, ...]:
+    """Pakiet ∪ podpisany feed profili (`profile_feed`)."""
+    return tuple(sorted(set(packaged_ids()) | profile_feed.feed_ids()))
+
+
 def load_builtin(profile_id: str) -> Profile:
+    """Pakietowy `verified` zawsze wygrywa; profil z feedu (zawsze `draft`) nadpisuje pakietowy
+    `draft` albo dodaje nowe id."""
     # Id trafia do ścieżki pliku — bez tej kontroli "../x" wyszłoby poza katalog profili.
     if not isinstance(profile_id, str) or not _BUILTIN_ID_RE.fullmatch(profile_id):
         raise ProfileError([f"$.id: niedozwolony identyfikator profilu {profile_id!r}"])
-    return load_profile(PROFILES_DIR / f"{profile_id}.json")
+    path = PROFILES_DIR / f"{profile_id}.json"
+    from_feed = profile_feed.feed_profile(profile_id)
+    if from_feed is None:
+        return load_profile(path)
+    if path.is_file():
+        packaged = load_profile(path)
+        if packaged.status == "verified":
+            return packaged
+    profile = profile_from_dict(from_feed)
+    # Bezpiecznik: rejestr feedu przyjmuje tylko zdegradowane profile o tym samym id.
+    if profile.id != profile_id or profile.status != "draft" or direct_verified(profile):
+        raise ProfileError([f"$.id: profil z feedu {profile_id!r} odrzucony"])
+    return profile

@@ -4,6 +4,9 @@ przy odrzuconym planie (cofnięcie zgody nie może czekać na poprawny plan).
 Pole `discovery_request` (raport rozpoznania na żądanie) uruchamia PO planie zadanie w tle
 (najwyżej jedno naraz, twardy limit czasu, anulowane w `async_stop`) — wysyłka nigdy nie
 opóźnia zgody, planu ani cyklu wykonawcy, a jej błąd nie wywraca odświeżenia.
+Tak samo sprawdzenie podpisanego feedu profili (`profile_feed`, najwyżej raz na dobę): po każdym
+odświeżeniu — także nieudanym — gdy należne, jako zadanie w tle (jedno naraz, twardy limit czasu,
+anulowane w `async_stop`).
 Deduplikacja po `schedule_id` ORAZ treści — id bywa to samo przy innej treści.
 
 Odrzucony plan loguje ostrzeżenie raz na treść (chmura serwuje go co 5 min).
@@ -21,6 +24,7 @@ from typing import Awaitable, Callable
 from homeassistant.helpers import issue_registry as ir
 
 from ..const import DOMAIN
+from ..core.profile_feed import async_check_bounded
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from ..version import async_integration_version
 from .client import CloudAuthError
@@ -57,7 +61,8 @@ class ScheduleFetcher:
                  on_signals: Callable[[dict | None], Awaitable[None]] | None = None,
                  on_control: Callable[[dict | None], Awaitable[None]] | None = None,
                  on_consent_mirror: Callable[[bool], None] | None = None,
-                 hass=None, discovery_report: Callable[[], dict | None] | None = None) -> None:
+                 hass=None, discovery_report: Callable[[], dict | None] | None = None,
+                 profile_feed=None) -> None:
         self._hass = hass   # tylko do zgłoszenia „dostępna aktualizacja"
         self._cloud = cloud
         self._on_plan = on_plan
@@ -77,6 +82,9 @@ class ScheduleFetcher:
                            if discovery_report is not None else None)
         self._discovery_task: asyncio.Task | None = None
         self._stopped = False          # po `async_stop` (rozładunek) żadna nowa wysyłka raportu
+        # Feed profili (`ProfileFeedUpdater`, wspólny dla wpisów) — sprawdzenie w tle, gdy należne.
+        self._feed = profile_feed
+        self._feed_task: asyncio.Task | None = None
 
     async def async_refresh(self) -> str:
         try:
@@ -88,8 +96,10 @@ class ScheduleFetcher:
             else:
                 _LOGGER.debug("Volcast plan refresh failed again (%s)", name)
             self._last_error = name
-            return "error"
-        self._last_error = None
+            result = "error"
+        else:
+            self._last_error = None
+        self._start_profile_feed()
         return result
 
     async def _async_refresh(self) -> str:
@@ -158,16 +168,44 @@ class ScheduleFetcher:
         await asyncio.sleep(0)
         await async_send_bounded(self._discovery, block)
 
+    def _start_profile_feed(self) -> None:
+        """Sprawdzenie feedu profili jako zadanie w tle, gdy należne; trwające nie dostaje drugiego.
+        Błąd startu nie wywraca odświeżenia."""
+        if self._stopped or self._feed is None:
+            return
+        if self._feed_task is not None and not self._feed_task.done():
+            return
+        coro = None
+        try:
+            if not self._feed.due():
+                return
+            coro = self._run_profile_feed()
+            if self._hass is not None:
+                self._feed_task = self._hass.async_create_background_task(coro, "volcast_profile_feed")
+            else:
+                self._feed_task = asyncio.get_running_loop().create_task(coro)
+        except Exception as err:  # noqa: BLE001 — feed profili nie może zatrzymać planu
+            if coro is not None:
+                coro.close()
+            _LOGGER.debug("Volcast profile feed check not started (%s)", type(err).__name__)
+
+    async def _run_profile_feed(self) -> None:
+        # Pierwszy krok oddaje sterowanie — odświeżenie i cykl wykonawcy wracają przed pobraniem.
+        await asyncio.sleep(0)
+        await async_check_bounded(self._feed, self._cloud.async_get_profile_feed)
+
     async def async_stop(self) -> None:
-        """Rozładunek wpisu: anuluj trwającą wysyłkę raportu (próba jest już policzona w Store); pobranie
-        planu trwające w chwili rozładunku nie uruchomi już nowej."""
+        """Rozładunek wpisu: anuluj trwającą wysyłkę raportu (próba jest już policzona w Store) i
+        sprawdzenie feedu profili; pobranie planu trwające w chwili rozładunku nie uruchomi już nowych."""
         self._stopped = True
         if self._discovery is not None:
             self._discovery.stop()
-        task, self._discovery_task = self._discovery_task, None
-        if task is not None and not task.done():
+        tasks = [t for t in (self._discovery_task, self._feed_task) if t is not None and not t.done()]
+        self._discovery_task = self._feed_task = None
+        for task in tasks:
             task.cancel()
-            await asyncio.wait([task])
+        if tasks:
+            await asyncio.wait(tasks)
 
     def _apply_consent_mirror(self, raw: dict) -> None:
         """Lustro zgody tylko przy jawnym `control.consent_mirror: true`; błąd odbiorcy nie wywraca odświeżenia."""

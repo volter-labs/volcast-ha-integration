@@ -468,6 +468,18 @@
     "inverter_work_mode": {
       "title": "Pracovný režim meniča môže nabíjať batériu zo siete",
       "description": "Menič má vlastný pracovný režim alebo plán (napríklad Eco alebo tarifný plán nastavený v aplikácii výrobcu), ktorý môže nabíjať batériu zo siete mimo plánu Volcast. Tento režim alebo plán vypnite v aplikácii výrobcu meniča a ponechajte zapnutý všeobecný (štandardný) režim. Nevypínajte samotný menič."
+    },
+    "brand_profile_ready": {
+      "title": "Je k dispozícii profil pre váš striedač",
+      "description": "Volcast získal nový profil striedača, ktorý zodpovedá tejto inštalácii: {label} ({profile}). Ide o testovací profil — nič sa nemení, kým ho nezvolíte v nastavení Volcast, a riadenie sa začne až po overení zariadenia. Zvoľte Opraviť na zatvorenie tohto upozornenia.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "OK, rozumiem",
+            "description": "Tým sa iba zatvorí upozornenie. Volcast nezapína riadenie a nemení žiadne nastavenia striedača."
+          }
+        }
+      }
     }
   },
   "services": {

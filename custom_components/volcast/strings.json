@@ -468,6 +468,18 @@
     "inverter_work_mode": {
       "title": "Inverter work mode may charge the battery from the grid",
       "description": "The inverter has its own work mode or schedule (for example Eco or a time-of-use schedule set in the manufacturer's app) that can charge the battery from the grid outside the Volcast plan. Switch that mode or schedule off in the manufacturer's inverter app and leave the general (standard) mode on. Do not switch the inverter itself off."
+    },
+    "brand_profile_ready": {
+      "title": "A profile for your inverter is available",
+      "description": "Volcast received a new inverter profile that matches this installation: {label} ({profile}). It is a test profile — nothing changes until you choose it in the Volcast setup, and control starts only after the device verification. Select Fix to dismiss this notice.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "OK, understood",
+            "description": "This only closes the notice. Volcast does not switch on control or change any inverter settings."
+          }
+        }
+      }
     }
   },
   "services": {

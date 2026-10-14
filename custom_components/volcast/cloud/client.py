@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
+from ..core.profile_feed import FEED_MAX_BYTES, FeedFetch
 from ..key_format import API_KEY_PATTERN
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ _TIMEOUT = aiohttp.ClientTimeout(total=15)
 _HISTORY_TIMEOUT = aiohttp.ClientTimeout(total=30)
 # Chmura czeka na planer do 45 s i odpowiada dopiero po nim — czekamy dłużej.
 _PLAN_TIMEOUT = aiohttp.ClientTimeout(total=60)
+# Feed profili (do 2 MB) — raz na dobę, w tle.
+_FEED_TIMEOUT = aiohttp.ClientTimeout(total=30)
+_FEED_CHUNK = 64 * 1024
 # Odpowiedzi chmury są małe; większe ciało (zadeklarowane) = błąd, nie czytamy go.
 _MAX_BODY = 256 * 1024
 # ValueError obejmuje błędne JSON-y (json.JSONDecodeError).
@@ -144,6 +148,11 @@ class Backend:
     def discovery_report(self) -> str:
         """`catalog-discovery-report` obok `get-schedule` (jak `set_controller`, bez nowego klucza w danych)."""
         return self.schedule.rsplit("/", 1)[0] + "/catalog-discovery-report"
+
+    @property
+    def profile_feed(self) -> str:
+        """`get-profile-feed` obok `get-schedule` — adres wyłącznie z danych parowania, nigdy z treści planu."""
+        return self.schedule.rsplit("/", 1)[0] + "/get-profile-feed"
 
 
 class CloudAuthError(Exception):
@@ -306,6 +315,34 @@ class VolcastCloud:
                                      {"request_id": request_id, "report": report},
                                      self._headers(), "catalog-discovery-report")
         return status
+
+    async def async_get_profile_feed(self, etag: str | None) -> FeedFetch:
+        """Podpisany feed profili: surowe bajty (weryfikuje `core/profile_feed.py`), 304 albo błąd.
+
+        Limit `FEED_MAX_BYTES` pilnowany w trakcie czytania (zadeklarowana większa długość = nie
+        czytamy wcale); bez przekierowań; nigdy nie rzuca."""
+        headers = self._headers()
+        if etag:
+            headers["If-None-Match"] = etag
+        try:
+            async with self._s.get(self._b.profile_feed, headers=headers, timeout=_FEED_TIMEOUT,
+                                   allow_redirects=False) as resp:
+                if resp.status == 304:
+                    return FeedFetch("not_modified")
+                length = getattr(resp, "content_length", None)
+                if resp.status != 200 or (isinstance(length, int) and length > FEED_MAX_BYTES):
+                    _LOGGER.debug("get-profile-feed HTTP %s", resp.status)
+                    return FeedFetch("error")
+                body = bytearray()
+                async for chunk in resp.content.iter_chunked(_FEED_CHUNK):
+                    body += chunk
+                    if len(body) > FEED_MAX_BYTES:
+                        _LOGGER.debug("get-profile-feed body over the size limit")
+                        return FeedFetch("error")
+        except _NET_ERRORS as err:
+            _LOGGER.debug("get-profile-feed failed: %s", type(err).__name__)
+            return FeedFetch("error")
+        return FeedFetch("ok", bytes(body))
 
 
 @dataclass(frozen=True)

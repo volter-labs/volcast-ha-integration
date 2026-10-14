@@ -468,6 +468,18 @@
     "inverter_work_mode": {
       "title": "Modul de lucru al invertorului poate încărca bateria din rețea",
       "description": "Invertorul are propriul mod de lucru sau program (de exemplu Eco sau un program tarifar setat în aplicația producătorului) care poate încărca bateria din rețea în afara planului Volcast. Dezactivați acel mod sau program în aplicația producătorului invertorului și lăsați activ modul general (standard). Nu opriți invertorul în sine."
+    },
+    "brand_profile_ready": {
+      "title": "Este disponibil un profil pentru invertorul tău",
+      "description": "Volcast a primit un profil nou de invertor care se potrivește cu această instalație: {label} ({profile}). Este un profil de test — nimic nu se schimbă până nu îl alegi în configurarea Volcast, iar controlul pornește doar după verificarea dispozitivului. Selectează Remediază pentru a închide această notificare.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "OK, am înțeles",
+            "description": "Aceasta doar închide notificarea. Volcast nu pornește controlul și nu modifică nicio setare a invertorului."
+          }
+        }
+      }
     }
   },
   "services": {
