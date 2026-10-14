@@ -275,7 +275,7 @@ def test_broad_model_regex_of_auto_profile_fails(tmp_path, regex):
         _run_all(*_external(tmp_path, pid=NEW_ID, profile_edit=broaden, expected_edit=_auto))
 
 
-@pytest.mark.parametrize("regex", [".*", "^.*", "SP1"])
+@pytest.mark.parametrize("regex", [".*", "^.*", "SP1", "^.", "^.+", "^SP1|.", r"^\S", "^[A-Za-z0-9]"])
 def test_broad_model_regex_of_packaged_manual_verified_profile_fails(tmp_path, regex):
     # Id wbudowane, bez origin, verified: regex `.*` nie może przejść tylko dlatego, że to nie automat.
     def broaden(raw):
@@ -292,6 +292,17 @@ def test_device_type_expect_blank_value_fails(tmp_path, value):
     raw = json.loads((PROFILES_DIR / "deye-sg.json").read_text(encoding="utf-8"))
     raw["id"] = NEW_ID
     raw["identify"]["registers"]["device_type"]["expect"] = [5, value]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(AssertionError, match="device_type.expect"):
+        pg.assert_identify_not_overbroad(load_profile(path))
+
+
+def test_device_type_expect_too_broad_fails(tmp_path):
+    # Lista typów obejmująca prawie całą przestrzeń rejestru to nie identyfikacja.
+    path, _ = _external(tmp_path, pid=NEW_ID, expected_edit=_auto)
+    raw = json.loads((PROFILES_DIR / "deye-sg.json").read_text(encoding="utf-8"))
+    raw["id"] = NEW_ID
+    raw["identify"]["registers"]["device_type"]["expect"] = list(range(1, 65535))
     path.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(AssertionError, match="device_type.expect"):
         pg.assert_identify_not_overbroad(load_profile(path))

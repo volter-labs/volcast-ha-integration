@@ -20,6 +20,11 @@ AUTO_REFERENCE_KEYS = ("soc", "battery_power_w", "grid_power_w", "pv_power_w")
 AUTO_NONZERO_KEYS = ("battery_power_w", "grid_power_w")
 # Słowa niezapisanego / nieobsługiwanego rejestru — nie mogą wskazywać typu urządzenia.
 BLANK_REGISTER_VALUES = (0x0000, 0xFFFF)
+# Modele niezwiązane z żadnym falownikiem: regex pasujący do któregokolwiek pasuje do dowolnego modelu
+# (`^.`, `^.+`, `^SP1|.`). `re.match` jak w produkcji (identity.py).
+MODEL_PROBES = ("A", "Q", "z", "0", "7", "-", "QX", "ZZZZZZZZ", "Q0-Q0", "00000000", "xyz123", "NOT-A-MODEL")
+# Górna granica długości `device_type.expect` (dziś najdłuższa lista ma 24 wartości).
+MAX_DEVICE_TYPE_EXPECT = 64
 # Odnośniki, których profil w publicznym repo nie może cytować: załączniki wrzucane na GitHub
 # (user-attachments) i pliki wgrane na fora (iobroker, loxforum) bywają kopiami dokumentów producenta
 # z zakazem redystrybucji; linki do dyskusji są dozwolone.
@@ -122,13 +127,18 @@ def assert_origin_rules(profile, expected: dict, golden_dir: Path, packaged_ids=
 
 
 def assert_identify_not_overbroad(profile) -> None:
-    """Identyfikacja wąska dla KAŻDEGO profilu: regex modelu zakotwiczony `^` i niepasujący do pustego
-    modelu (`.*` przepuszcza wszystko); `device_type.expect` bez wartości pustego rejestru."""
+    """Identyfikacja wąska dla KAŻDEGO profilu: regex modelu zakotwiczony `^`, niepasujący do pustego
+    modelu (`.*` przepuszcza wszystko) ani do żadnego z `MODEL_PROBES` (`^.` przepuszcza wszystko
+    niepuste); `device_type.expect` bez wartości pustego rejestru i najwyżej `MAX_DEVICE_TYPE_EXPECT`."""
     ident = profile.raw.get("identify", {})
     for rx in ident.get("model_regex", []):
         assert rx.startswith("^"), f"{profile.id}: model_regex {rx!r} bez kotwicy ^"
         assert re.search(rx, "") is None, f"{profile.id}: model_regex {rx!r} pasuje do pustego modelu"
+        hits = [p for p in MODEL_PROBES if re.match(rx, p)]
+        assert not hits, f"{profile.id}: model_regex {rx!r} pasuje do dowolnego modelu (np. {hits[0]!r})"
     expect = ident.get("registers", {}).get("device_type", {}).get("expect", [])
+    assert len(expect) <= MAX_DEVICE_TYPE_EXPECT, \
+        f"{profile.id}: device_type.expect ma {len(expect)} wartości (max {MAX_DEVICE_TYPE_EXPECT})"
     blank = sorted(set(expect) & set(BLANK_REGISTER_VALUES))
     assert not blank, f"{profile.id}: device_type.expect zawiera wartości pustego rejestru {blank}"
 

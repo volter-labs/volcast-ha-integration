@@ -345,9 +345,10 @@ golden data next to the profile file instead of under `tests/golden/`:
 
 `tests/core/test_profiles_generic.py` runs every `*.json` in the profile directory through the same
 checks: schema validation, narrow identification (for every profile, generated or not: each
-`identify.model_regex` starts with `^` and does not match an empty model; `device_type.expect`
-holds no blank-register value `0`/`0xFFFF`), identification of its own golden image, rejection of every other
-profile's golden image (the packaged `tests/golden/*` images and the images beside the other
+`identify.model_regex` starts with `^` and matches neither an empty model nor an arbitrary
+unrelated model such as `A`, `0` or `NOT-A-MODEL`, so `^.` or `^SP1|.` fail; `device_type.expect`
+holds no blank-register value `0`/`0xFFFF` and at most 64 values), identification of its own
+golden image, rejection of every other profile's golden image (the packaged `tests/golden/*` images and the images beside the other
 profiles in the directory), every `read` key decoding from its own image, the reference state
 decoded key by key (floats with tolerance), intent consistency, capabilities matching the write
 keys, HA regexes, public sources and the `origin` rules. Point it at another directory with
