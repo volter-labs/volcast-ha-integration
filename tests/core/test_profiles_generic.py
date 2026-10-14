@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from custom_components.volcast.core import profile_feed
+from custom_components.volcast.core import profile_feed, regex_safety
 from custom_components.volcast.core.profile import PROFILES_DIR, builtin_ids, load_profile
 from custom_components.volcast.core.profile_schema import validate_profile
 from tests.core import profile_golden as pg
@@ -148,6 +148,47 @@ def test_origin_rules(case):
     path, profile, golden = case
     if (expected := _expected(path)) is not None:
         pg.assert_origin_rules(profile, expected, golden)
+
+
+# --- Reguła wzorców `*_regex`: przypadki i stałe wspólne z bramami Volcast ---
+# Z `VOLCAST_PROFILES_DIR` czytamy kopię repo Volcast (`fixtures/regex-safety.json`, `schema-lite.json`
+# `x-regex-safety`) — jej brak to błąd, nie pominięcie. Bez zmiennej: kopia w `tests/fixtures/`.
+REGEX_FIXTURE = Path("fixtures") / "regex-safety.json"
+
+
+def _regex_safety_cases() -> dict:
+    if os.environ.get(PROFILES_DIR_ENV):
+        path = DIR / REGEX_FIXTURE
+        assert path.is_file(), f"brak {path}: wspólne przypadki reguły wzorców są wymagane"
+    else:
+        path = Path(__file__).resolve().parents[1] / "fixtures" / "regex-safety.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_regex_safety_rejects_shared_cases():
+    cases = _regex_safety_cases()["rejected"]
+    assert cases
+    passed = [c["pattern"] for c in cases if regex_safety.regex_problem(c["pattern"]) is None]
+    assert not passed, f"wzorce przyjęte, a mają być odrzucone: {passed}"
+
+
+def test_regex_safety_accepts_shared_cases():
+    cases = _regex_safety_cases()["accepted"]
+    assert cases
+    rejected = {rx: regex_safety.regex_problem(rx) for rx in cases if regex_safety.regex_problem(rx)}
+    assert not rejected, f"wzorce odrzucone, a mają przejść: {rejected}"
+
+
+def test_regex_safety_constants_match_volcast():
+    if not os.environ.get(PROFILES_DIR_ENV):
+        pytest.skip("stałe Volcast tylko z VOLCAST_PROFILES_DIR")
+    path = DIR / "schema-lite.json"
+    assert path.is_file(), f"brak {path}"
+    rules = json.loads(path.read_text(encoding="utf-8"))["x-regex-safety"]
+    assert (rules["key_suffix"], rules["max_length"], rules["unbounded_width"], rules["max_path_width"],
+            rules["nested_quantifier"]) == (
+        regex_safety.REGEX_KEY_SUFFIX, regex_safety.MAX_REGEX_LEN, regex_safety.UNBOUNDED_WIDTH,
+        regex_safety.MAX_PATH_WIDTH, regex_safety.NESTED_QUANTIFIER.pattern)
 
 
 # --- Środowisko: zmienna dotyczy tylko tego testu, lista profili ---

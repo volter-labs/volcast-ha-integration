@@ -7,6 +7,8 @@ import ast
 import inspect
 import json
 import re
+import time
+from pathlib import Path
 
 import pytest
 
@@ -126,3 +128,41 @@ def test_regex_fields_found_at_any_depth():
     found = dict(profile_schema.iter_regex_fields(
         {"a": [{"x_regex": ["^a", 5]}], "b": {"c": {"y_regex": "^b"}}, "z_regex": None}))
     assert found == {"$.a[0].x_regex[0]": "^a", "$.b.c.y_regex": "^b"}
+
+
+# --- Nawroty: wzorce, które przechodziły sam `NESTED_QUANTIFIER`, a w `re.search` trwają sekundy ---
+HOSTILE = [
+    "^(a|a)+$", "^(a|aa)+$", "^((a+))+$", "^(?:(?:a+))+$", "^((a)+)+$", "^(?:a|a)*$",
+    "^(a?){28}a{28}$", ".*.*.*.*=", "a{1,99}a{1,99}a{1,99}a{1,99}=", r"\d*\d*\d*\d*\d*\d*x",
+]
+# Wrogie wejścia do 200 znaków (limit wzorca; nazwy encji i modele HA są krótsze).
+HOSTILE_INPUTS = ["a" * 200, "a" * 199 + "!", "0" * 199 + "!", "a_" * 99 + "!", "A" * 199 + "-",
+                  "=" * 50 + "a" * 149 + "!", "aab" * 66 + "!"]
+SEARCH_BUDGET_S = 0.5
+
+
+@pytest.mark.parametrize("rx", HOSTILE)
+def test_hostile_patterns_are_rejected(rx):
+    assert profile_schema.regex_problem(rx) is not None
+
+
+def _accepted_patterns() -> list[str]:
+    fixture = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "regex-safety.json")
+                         .read_text(encoding="utf-8"))
+    packaged = [rx for path in sorted(PROFILES_DIR.glob("*.json"))
+                for _, rx in profile_schema.iter_regex_fields(json.loads(path.read_text(encoding="utf-8")))]
+    return list(fixture["accepted"]) + packaged
+
+
+def test_accepted_patterns_search_within_budget():
+    # Każdy wzorzec, który reguła przyjmuje, kończy `re.search` na wrogich wejściach w budżecie czasu.
+    slow = {}
+    for rx in _accepted_patterns():
+        assert profile_schema.regex_problem(rx) is None, rx
+        pattern = re.compile(rx)
+        for text in HOSTILE_INPUTS:
+            t0 = time.perf_counter()
+            pattern.search(text)
+            if (dt := time.perf_counter() - t0) > SEARCH_BUDGET_S:
+                slow[rx] = dt
+    assert not slow, slow

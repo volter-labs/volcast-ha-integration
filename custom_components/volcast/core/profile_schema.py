@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any, Iterator
+from typing import Any
 
 from .control.readings import EXTRA_KEYS, MEASURED_KEYS
 from .params import TOU_FIELDS, WRITE_PARAMS
+from .regex_safety import iter_regex_fields, regex_problem
 
 # Odczyty pomiarowe, liczniki i limity — ta sama zamknięta lista co mapa źródeł chmury
 # (`core/control/readings.py`, jedno źródło) — plus odczyt nastaw do uzgadniania z falownikiem.
@@ -47,44 +48,6 @@ TRANSPORTS = ("goodwe_udp", "solarman_v5", "modbus_tcp", "modbus_rtu")
 MAX_READBACK_SETTLE_S = 10
 _ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _HA_TOU_KEY = re.compile(r"^tou_[1-9]_(start|power_w|soc|grid_charge)$")
-# Wzorce profilu działają w pętli zdarzeń HA, także te z feedu: krótkie, kompilowalne, bez
-# zagnieżdżonych kwantyfikatorów (katastrofalne nawroty). Jedna reguła dla walidatora i ładowarki
-# feedu — profil przyjęty przez bramy profili nie może odrzucić feedu.
-MAX_REGEX_LEN = 200
-# Grupa z kwantyfikatorem, sama pod kwantyfikatorem: `(a+)+`, `(.*)*`, `([a-z]+){2,}`.
-_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*(?:[*+]|\{\d*,\d*\})(?:[^()\\]|\\.)*\)(?:[*+]|\{\d*,?\d*\})")
-
-
-def regex_problem(rx: str) -> str | None:
-    """Powód odrzucenia wzorca profilu albo None, gdy wzorzec jest bezpieczny."""
-    if len(rx) > MAX_REGEX_LEN:
-        return f"regex dłuższy niż {MAX_REGEX_LEN} znaków"
-    if _NESTED_QUANTIFIER.search(rx):
-        return "zagnieżdżony kwantyfikator (katastrofalne nawroty)"
-    try:
-        re.compile(rx)
-    except re.error as e:
-        return f"zły regex: {e}"
-    return None
-
-
-def iter_regex_fields(node: Any, path: str = "$") -> Iterator[tuple[str, str]]:
-    """(ścieżka, wzorzec) każdego pola `*_regex` — napis albo lista napisów — na każdej głębokości.
-    Po nazwie, nie po liście pól: nowe pole wzorca w schemacie jest objęte regułą od razu.
-    Wartości innego typu zgłasza samo pole schematu (`_V.regex`, `str_list`)."""
-    if isinstance(node, dict):
-        for k, v in node.items():
-            p = f"{path}.{k}"
-            if isinstance(k, str) and k.endswith("_regex"):
-                if isinstance(v, str):
-                    yield p, v
-                elif isinstance(v, list):
-                    yield from ((f"{p}[{i}]", x) for i, x in enumerate(v) if isinstance(x, str))
-            else:
-                yield from iter_regex_fields(v, p)
-    elif isinstance(node, list):
-        for i, v in enumerate(node):
-            yield from iter_regex_fields(v, f"{path}[{i}]")
 # Odczyt włącznika harmonogramu TOU — tylko dostęp bezpośredni, nie encja HA.
 TOU_ENABLED_READ = "tou_enabled"
 WRITE_FUNCTIONS = (6, 16)
@@ -803,5 +766,5 @@ def validate_profile(raw: object) -> list[str]:
     for path, rx in iter_regex_fields(top):
         problem = regex_problem(rx)
         if problem:
-            v.err(path, problem)
+            v.err(path, f"niebezpieczny regex ({problem})")
     return v.errors

@@ -245,9 +245,23 @@ a `verified` profile.
 * `unique_id_regex` should be broad enough to match the usual unique ids across versions, but must
   compile. `transform` is `negate` or `invert_percent`.
 * Every `*_regex` field of the profile (`identify.model_regex`, `ha.integrations[].model_regex`,
-  `unique_id_regex` of entities and of `work_mode.ha`) must compile, be at most 200 characters and
-  have no nested quantifier (a quantified group under a quantifier: `(a+)+`, `(?:[a-z]+_)+`,
-  `([a-z]+){2,}`). Schema validation enforces it, with the same rule the profile feed loader uses.
+  `unique_id_regex` of entities and of `work_mode.ha`) runs in the Home Assistant event loop, so it
+  must be safe against catastrophic backtracking. Schema validation enforces one rule
+  (`core/regex_safety.py`, also used by the profile feed loader):
+  * at most 200 characters, and it compiles with Python `re`;
+  * a group under a repeating quantifier (`*`, `+`, `{m,}`, `{m,n}` / `{n}` with a maximum above 1)
+    contains, at no depth, a variable quantifier (`*`, `+`, `?`, `{m,n}` with m < n; a fixed `{n}`
+    is fine) or an alternation `|`: `(a+)+`, `((a+))+`, `(a|aa)+`, `(a?){28}`, `([a-z]|[0-9])+`
+    are rejected, `(a{2})+` is accepted;
+  * the backtracking width of each quantifier is max − min + 1 (unbounded or above 256 counts as
+    256); along one match path the widths multiply (an alternation takes its widest branch) and the
+    product may not exceed 65536 (two unbounded quantifiers): `.*.*=` passes, `.*.*.*=`,
+    `\d*\d*\d*x` and `a{1,99}a{1,99}a{1,99}=` do not;
+  * no backreferences (`\1`..`\9`, `(?P=name)`), no quantifier without an atom and no quantified
+    anchor (`^*`, `a\Z?`).
+
+  The cases shared with the Volcast profile gates are in `tests/fixtures/regex-safety.json` (the
+  generic test reads the Volcast copy from `VOLCAST_PROFILES_DIR/fixtures/` when that is set).
 
 **Direct mode (`modbus`).** No integration exists, so the integration talks to the inverter. The
 whole block is required:
