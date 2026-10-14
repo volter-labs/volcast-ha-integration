@@ -6,7 +6,8 @@ nie może odrzucić feedu, a wzorzec przyjęty tutaj nie może zawiesić HA nawr
 from __future__ import annotations
 
 import re
-from typing import Any, Iterator
+import warnings
+from typing import Any, Iterator, NamedTuple
 
 REGEX_KEY_SUFFIX = "_regex"
 MAX_REGEX_LEN = 200
@@ -22,13 +23,14 @@ NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*(?:[*+]|\{\d*,\d*\})(?:[^()\\
 #     kwantyfikator o zmiennej liczbie powtórzeń (`*`, `+`, `?`, `{m,n}` z m < n; nie `{n}`) albo `|`
 #     → `nested_quantifier`;
 #   - szerokość kwantyfikatora = max − min + 1 (nieograniczony albo > UNBOUNDED_WIDTH → UNBOUNDED_WIDTH);
-#     na ścieżce dopasowania szerokości się mnożą (alternatywa = maksimum gałęzi, lookaround jak grupa);
-#     iloczyn > MAX_PATH_WIDTH → `too_many_quantifiers`;
+#     na ścieżce dopasowania szerokości się mnożą (alternatywa = SUMA gałęzi, bo każda gałąź to osobne
+#     wybory; lookaround jak grupa); iloczyn > MAX_PATH_WIDTH (= 4 × dwa nieograniczone)
+#     → `too_many_quantifiers`;
 #   - odwołania wsteczne (`\1`–`\9`, `(?P=`) → `backreference`;
 #   - kwantyfikator bez atomu, kwantyfikowana kotwica, nawias bez pary → `compile`.
 # Arytmetyka całkowita, żeby obie kopie liczyły identycznie.
 UNBOUNDED_WIDTH = 256
-MAX_PATH_WIDTH = UNBOUNDED_WIDTH * UNBOUNDED_WIDTH
+MAX_PATH_WIDTH = 4 * UNBOUNDED_WIDTH * UNBOUNDED_WIDTH
 _CAP = MAX_PATH_WIDTH + 1  # iloczyny obcinamy tutaj
 _INF = float("inf")
 _BRACE = re.compile(r"\{([0-9]*)(,?)([0-9]*)\}")
@@ -74,15 +76,15 @@ def _class_end(rx: str, i: int) -> int:
 
 
 class _Frame:
-    """Grupa: q = zawiera kwantyfikator zmienny, alt = zawiera `|`, cur/best = iloczyn szerokości
-    bieżącej gałęzi / największy iloczyn gałęzi już zamkniętych."""
-    __slots__ = ("q", "alt", "cur", "best")
+    """Grupa: q = zawiera kwantyfikator zmienny, alt = zawiera `|`, cur/done = iloczyn szerokości
+    bieżącej gałęzi / SUMA iloczynów gałęzi już zamkniętych."""
+    __slots__ = ("q", "alt", "cur", "done")
 
     def __init__(self) -> None:
         self.q = False
         self.alt = False
         self.cur = 1
-        self.best = 1
+        self.done = 0
 
 
 def structure_problem(rx: str) -> str | None:
@@ -97,7 +99,7 @@ def structure_problem(rx: str) -> str | None:
         if frame is not None:
             top.alt = top.alt or frame.alt
             top.q = top.q or frame.q
-            width = max(frame.best, frame.cur)
+            width = min(frame.done + frame.cur, _CAP)
         q = _quantifier_at(rx, i)
         if q:
             length, lo, hi, qwidth = q
@@ -142,7 +144,7 @@ def structure_problem(rx: str) -> str | None:
         elif c == "|":
             top = stack[-1]
             top.alt = True
-            top.best = max(top.best, top.cur)
+            top.done = min(top.done + top.cur, _CAP)
             top.cur = 1
             i += 1
         else:
@@ -151,12 +153,133 @@ def structure_problem(rx: str) -> str | None:
         return problem
     if len(stack) != 1:
         return "compile"  # grupa bez zamknięcia
-    return "too_many_quantifiers" if max(stack[0].best, stack[0].cur) > MAX_PATH_WIDTH else None
+    return "too_many_quantifiers" if stack[0].done + stack[0].cur > MAX_PATH_WIDTH else None
+
+
+# --- struktura na prawdziwym drzewie parsera `re` ---------------------------------------------------
+# Ręczny tokenizer wyżej jest kopią reguły Volcast (te same wyniki na tych samych wzorcach), ale może
+# czytać składnię inaczej niż Python. O bezpieczeństwie rozstrzyga więc drzewo, które `re` naprawdę
+# wykonuje: te same reguły i kody na węzłach parsera. Parser jest prywatnym API (`re._parser`, dawniej
+# `sre_parse`): brak modułu, nieznany węzeł albo nieoczekiwany kształt = odrzucenie (fail closed).
+# Odrzucane zachowawczo także konstrukcje, których wspólne przypadki nie definiują: grupy atomowe
+# i kwantyfikatory zaborcze, flagi w grupie (`(?i:…)`), flagi globalne inne niż i/m/s/a/u (np. `(?x)`),
+# komentarze `(?#…)`, `\N{…}` (oba niewidoczne w drzewie) i warunki `(?(1)…)` (= odwołanie wsteczne).
+_ALLOWED_FLAGS = int(re.IGNORECASE | re.MULTILINE | re.DOTALL | re.UNICODE | re.ASCII)
+
+
+class _Sre(NamedTuple):
+    parse: Any
+    maxrepeat: int
+    atoms: frozenset         # szerokość 1, bez wyboru
+    repeats: frozenset       # MAX_REPEAT, MIN_REPEAT
+    subpattern: Any
+    branch: Any
+    asserts: frozenset
+    backrefs: frozenset
+    rejected: frozenset      # konstrukcje spoza reguły (POSSESSIVE_REPEAT, ATOMIC_GROUP)
+    failure: Any
+
+
+def _load_sre() -> _Sre | None:
+    try:
+        from re import _constants as c, _parser as parser
+    except ImportError:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                import sre_constants as c
+                import sre_parse as parser
+        except ImportError:
+            return None
+    try:
+        return _Sre(
+            parse=parser.parse, maxrepeat=int(c.MAXREPEAT),
+            atoms=frozenset((c.LITERAL, c.NOT_LITERAL, c.ANY, c.IN, c.AT)),
+            repeats=frozenset((c.MAX_REPEAT, c.MIN_REPEAT)), subpattern=c.SUBPATTERN, branch=c.BRANCH,
+            asserts=frozenset((c.ASSERT, c.ASSERT_NOT)), backrefs=frozenset((c.GROUPREF, c.GROUPREF_EXISTS)),
+            rejected=frozenset(getattr(c, n) for n in ("POSSESSIVE_REPEAT", "ATOMIC_GROUP") if hasattr(c, n)),
+            failure=getattr(c, "FAILURE", None))
+    except AttributeError:
+        return None
+
+
+_SRE = _load_sre()
+
+
+class _Reject(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _walk(nodes: Any, sre: _Sre) -> tuple[int, bool]:
+    """(iloczyn szerokości, zawiera kwantyfikator zmienny albo `|`) sekwencji węzłów."""
+    width, var = 1, False
+    for op, av in nodes:
+        if op in sre.atoms or (sre.failure is not None and op is sre.failure):
+            w, v = 1, False
+        elif op in sre.repeats:
+            lo, hi, item = av
+            iw, iv = _walk(item, sre)
+            if hi > 1 and iv:
+                raise _Reject("nested_quantifier")
+            span = (UNBOUNDED_WIDTH + 1 if hi >= sre.maxrepeat else hi - lo + 1)
+            w = _mul(iw, UNBOUNDED_WIDTH if span > UNBOUNDED_WIDTH else max(span, 1))
+            v = iv or hi != lo
+        elif op is sre.subpattern:
+            _group, add_flags, del_flags, p = av
+            if add_flags or del_flags:
+                raise _Reject("compile")
+            w, v = _walk(p, sre)
+        elif op is sre.branch:
+            w, v = min(sum(_walk(b, sre)[0] for b in av[1]), _CAP), True
+        elif op in sre.asserts:
+            w, v = _walk(av[1], sre)
+        elif op in sre.backrefs:
+            raise _Reject("backreference")
+        else:  # `rejected` i każdy węzeł nieznany tej wersji reguły
+            raise _Reject("compile")
+        width, var = _mul(width, w), var or v
+    return width, var
+
+
+def _invisible_in_tree(rx: str) -> bool:
+    """`(?#…)` i `\\N{…}` znikają w drzewie parsera — odrzucamy je po tekście (zachowawczo)."""
+    if "(?#" in rx:
+        return True
+    i = 0
+    while i < len(rx):
+        if rx[i] == "\\":
+            if rx[i + 1:i + 2] == "N":
+                return True
+            i += 2
+        else:
+            i += 1
+    return False
+
+
+def tree_problem(rx: str) -> str | None:
+    """Reguła struktury na drzewie parsera `re` (wzorzec już się kompiluje)."""
+    sre = _SRE
+    if sre is None or _invisible_in_tree(rx):
+        return "compile"
+    try:
+        tree = sre.parse(rx, 0)
+        state = getattr(tree, "state", None) or getattr(tree, "pattern", None)
+        if int(state.flags) & ~_ALLOWED_FLAGS:
+            return "compile"
+        width, _ = _walk(tree, sre)
+    except _Reject as rej:
+        return rej.code
+    except (re.error, AttributeError, TypeError, ValueError, IndexError, RecursionError):
+        return "compile"
+    return "too_many_quantifiers" if width > MAX_PATH_WIDTH else None
 
 
 def regex_problem(rx: Any) -> str | None:
     """Kod powodu odrzucenia wzorca (`not_string`, `length`, `nested_quantifier`, `compile`,
-    `too_many_quantifiers`, `backreference`) albo None, gdy wzorzec jest bezpieczny."""
+    `too_many_quantifiers`, `backreference`) albo None, gdy wzorzec jest bezpieczny. Wzorzec musi
+    przejść i regułę tekstową (kopia Volcast), i tę samą regułę na drzewie parsera `re`."""
     if not isinstance(rx, str):
         return "not_string"
     if len(rx) > MAX_REGEX_LEN:
@@ -167,7 +290,7 @@ def regex_problem(rx: Any) -> str | None:
         re.compile(rx)
     except re.error:
         return "compile"
-    return structure_problem(rx)
+    return structure_problem(rx) or tree_problem(rx)
 
 
 def iter_regex_fields(node: Any, path: str = "$") -> Iterator[tuple[str, str]]:

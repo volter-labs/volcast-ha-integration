@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from custom_components.volcast.core import profile_feed as pf
-from custom_components.volcast.core import profile_schema
+from custom_components.volcast.core import profile_schema, regex_safety
 from custom_components.volcast.core.profile import PROFILES_DIR
 from custom_components.volcast.core.profile_schema import validate_profile
 
@@ -166,3 +166,48 @@ def test_accepted_patterns_search_within_budget():
             if (dt := time.perf_counter() - t0) > SEARCH_BUDGET_S:
                 slow[rx] = dt
     assert not slow, slow
+
+
+# --- Analiza na prawdziwym drzewie parsera `re` (bez różnic między ręcznym tokenizerem a Pythonem) ---
+# Konstrukcje spoza wspólnych przypadków: odrzucane zachowawczo (fail closed).
+UNMODELLED = [
+    "a++", "(?>a+)b", "(?i:a)", "(?-i:a)", "(?x)a b", "(?#c)a", "(?#a)x+", "(a)(?(1)b|c)",
+    r"\N{LATIN SMALL LETTER A}", r"x\N{DIGIT ONE}+",
+]
+# Wzorce, które drzewo parsera odrzuca samo (bez reguły tekstowej). `(a|a)+` parser składa do klasy
+# znaków (bez nawrotów) — tę odrzuca tylko reguła tekstowa, wspólna z Volcast.
+TREE_HOSTILE = [rx for rx in HOSTILE if rx not in ("^(a|a)+$", "^(?:a|a)*$")] + [
+    "(a|bc)+", "^(?=(a+))+$", "(a)\\1", "(?P<n>a)(?P=n)", "(a)(?(1)b)", "^" + "(?:ab|a.|.b|..)" * 10 + "!",
+]
+
+
+def test_parser_is_available_here():
+    # Bez parsera reguła odrzuca wszystko (fail closed) — w CI musi być dostępny.
+    assert regex_safety._SRE is not None
+
+
+@pytest.mark.parametrize("rx", UNMODELLED)
+def test_unmodelled_constructs_are_rejected(rx):
+    re.compile(rx)                                   # Python je kompiluje — odrzuca dopiero reguła
+    assert profile_schema.regex_problem(rx) is not None
+
+
+@pytest.mark.parametrize("rx", TREE_HOSTILE)
+def test_parse_tree_rule_alone_rejects(rx):
+    assert regex_safety.tree_problem(rx) is not None
+
+
+def test_parse_tree_rule_alone_accepts_shared_and_packaged():
+    for rx in _accepted_patterns():
+        assert regex_safety.tree_problem(rx) is None, rx
+
+
+def test_missing_parser_fails_closed(monkeypatch):
+    monkeypatch.setattr(regex_safety, "_SRE", None)
+    assert profile_schema.regex_problem("^GW") == "compile"
+
+
+def test_unknown_parse_node_fails_closed(monkeypatch):
+    sre = regex_safety._SRE
+    monkeypatch.setattr(regex_safety, "_SRE", sre._replace(atoms=frozenset()))
+    assert profile_schema.regex_problem("^GW") == "compile"

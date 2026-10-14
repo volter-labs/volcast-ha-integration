@@ -255,6 +255,16 @@
       "structure": true
     },
     {
+      "pattern": "(?:.*a|.*b|.*c)(?:.*a|.*b)=",
+      "reason": "too_many_quantifiers",
+      "structure": true
+    },
+    {
+      "pattern": "^(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)(?:ab|a.|.b|..)!",
+      "reason": "too_many_quantifiers",
+      "structure": true
+    },
+    {
       "pattern": "(a)\\1",
       "reason": "backreference",
       "structure": true

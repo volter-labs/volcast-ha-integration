@@ -254,11 +254,19 @@ a `verified` profile.
     is fine) or an alternation `|`: `(a+)+`, `((a+))+`, `(a|aa)+`, `(a?){28}`, `([a-z]|[0-9])+`
     are rejected, `(a{2})+` is accepted;
   * the backtracking width of each quantifier is max − min + 1 (unbounded or above 256 counts as
-    256); along one match path the widths multiply (an alternation takes its widest branch) and the
-    product may not exceed 65536 (two unbounded quantifiers): `.*.*=` passes, `.*.*.*=`,
-    `\d*\d*\d*x` and `a{1,99}a{1,99}a{1,99}=` do not;
-  * no backreferences (`\1`..`\9`, `(?P=name)`), no quantifier without an atom and no quantified
-    anchor (`^*`, `a\Z?`).
+    256); along one match path the widths multiply, an alternation counts the sum of its branches
+    (each branch is a separate backtracking choice), and the product may not exceed 262144 (four
+    times two unbounded quantifiers): `.*.*=` and `^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)` pass,
+    `.*.*.*=`, `\d*\d*\d*x`, `a{1,99}a{1,99}a{1,99}=` and `(?:.*a|.*b|.*c)(?:.*a|.*b)=` do not;
+  * no backreferences (`\1`..`\9`, `(?P=name)`) or conditionals (`(?(1)a|b)`), no quantifier without
+    an atom and no quantified anchor (`^*`, `a\Z?`);
+  * no constructs outside the shared rule: atomic groups `(?>…)`, possessive quantifiers (`a++`),
+    scoped flags (`(?i:…)`), global flags other than `i`, `m`, `s`, `a`, `u` (so no `(?x)`), comments
+    (any `(?#` in the pattern) and `\N{…}` escapes.
+
+  The rule runs twice and a pattern must pass both: on the pattern text (the same tokenizer the
+  Volcast gates use) and on the parse tree Python `re` actually executes. If the private parser
+  module is unavailable or returns a node the rule does not know, the pattern is rejected.
 
   The cases shared with the Volcast profile gates are in `tests/fixtures/regex-safety.json` (the
   generic test reads the Volcast copy from `VOLCAST_PROFILES_DIR/fixtures/` when that is set).
