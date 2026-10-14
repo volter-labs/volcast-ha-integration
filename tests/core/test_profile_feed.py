@@ -818,3 +818,31 @@ def test_stored_feed_survives_a_release_whose_packaged_set_overlaps_an_entry(mon
     _run(upd.async_load())
     assert upd.held is not None and upd.held.overlapping == ("acme-hybrid",)
     assert "zeta-hybrid" in builtin_ids() and "acme-hybrid" not in builtin_ids()
+
+
+# --- runda 3: każda połowa „profil pakietu pasuje do urządzenia” osobno ---------------------------
+
+def _feed_entity(pid, domain, model_rx, ha_rx):
+    """Szkic z feedu dopasowany przez encje (domena + model), z własną identyfikacją."""
+    raw = _copy_as("solis-hybrid", pid)
+    raw["identify"]["model_regex"] = [model_rx]
+    raw["ha"]["integrations"] = [dict(raw["ha"]["integrations"][0], domain=domain, model_regex=[ha_rx])]
+    return dataclasses.replace(profile_from_dict(pf._as_draft(raw)), origin="feed")
+
+
+@pytest.mark.parametrize("hint, feed, expected", [
+    # tylko `ha.integrations[].model_regex` pakietu (bez producenta albo producent spoza id profilu)
+    (InverterHint("solarman", "Ginlong", "S6-EH1P5K-L"),
+     _feed_entity("ginlong-s6", "solarman", "^S6", "(?i)ginlong s6"), "solis-hybrid"),
+    (InverterHint("solax_modbus", None, "HYD 6KTL-3PH"),
+     _feed_entity("acme-hydx", "solax_modbus", "^HYD", "(?i)hyd"), "sofar-hyd"),
+    # tylko domena + model identyfikacji (bez producenta); wzorzec HA feedu zawęziłby do feedu
+    (InverterHint("goodwe", None, "GW10K-ET"), _gw_series(ha_rx="(?i)gw10k"), "goodwe-et"),
+    # tylko marka w producencie (domena feedu, nie pakietu); szkic pakietu przegrałby z dopasowaniem encji
+    (InverterHint("acme_power", "Sofar", "FOO-5"),
+     _feed_entity("acme-foo", "acme_power", "^FOO", "(?i)foo"), "sofar-hyd"),
+], ids=["ha-text-ginlong", "ha-text-no-maker", "entity-no-maker", "maker-only"])
+def test_each_packaged_match_kind_excludes_feed_profiles(hint, feed, expected):
+    packaged = [p for p in ds.load_profiles() if p.origin == "package"]
+    assert select_profile([hint], packaged).profile.id == expected
+    assert select_profile([hint], packaged + [feed]).profile.id == expected

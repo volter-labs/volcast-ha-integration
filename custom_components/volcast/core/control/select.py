@@ -87,9 +87,10 @@ def _entity_match(p: Profile, hint: InverterHint) -> bool:
 
 def _eligible(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
     """Ścisłe pierwszeństwo pakietu (feed tylko DODAJE marki): gdy urządzenie konkretnie pasuje do profilu
-    z pakietu (domena + model albo marka w producencie), profile z feedu odpadają przed jakimkolwiek
-    zawężaniem; w przeciwnym razie biorą udział jak pozostałe."""
-    if any(writes_allowed(p) and (_entity_match(p, hint) or _maker_ok(p, hint)) for p in ordered):
+    z pakietu (domena + model, marka w producencie albo wzorzec `ha.integrations[].model_regex`), profile
+    z feedu odpadają przed jakimkolwiek zawężaniem; w przeciwnym razie biorą udział jak pozostałe."""
+    if any(writes_allowed(p) and (_entity_match(p, hint) or _maker_ok(p, hint) or _ha_text_ok(p, hint))
+           for p in ordered):
         return [p for p in ordered if writes_allowed(p)]
     return list(ordered)
 
