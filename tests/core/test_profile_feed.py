@@ -846,3 +846,9 @@ def test_each_packaged_match_kind_excludes_feed_profiles(hint, feed, expected):
     packaged = [p for p in ds.load_profiles() if p.origin == "package"]
     assert select_profile([hint], packaged).profile.id == expected
     assert select_profile([hint], packaged + [feed]).profile.id == expected
+
+
+def test_feed_limits_match_the_cloud_builder():
+    # Budowa feedu w chmurze (`feed_too_large`) pilnuje tych samych progów — powyżej klient odrzuca cały feed.
+    assert pf.FEED_MAX_PROFILES == 500
+    assert pf.FEED_MAX_BYTES == 2 * 1024 * 1024

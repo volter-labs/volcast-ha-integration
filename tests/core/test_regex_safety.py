@@ -243,3 +243,12 @@ def test_any_parser_failure_rejects(monkeypatch, exc):
         raise exc("x")
     monkeypatch.setattr(regex_safety, "_SRE", regex_safety._SRE._replace(parse=boom))
     assert profile_schema.regex_problem("^GW") == "compile"
+
+
+@pytest.mark.parametrize("rx", ["^(ab)?c", "^(?:ab|cd)?e", r"\bGW\d{1,3}", "(?i)^gw", "(?<=ab)c", "^x(?<!_m[1-3])y",
+                                 "^GW$", r"^[A-Z]{2,4}\d{3,5}"])
+def test_parse_tree_guard_accepts_subset_constructs(rx):
+    # Konstrukcje dozwolone przez regułę tekstową (grupa opcjonalna, \b, (?i) na początku, lookbehind)
+    # przechodzą też zaporę drzewa — inaczej feed odrzucałby profile przyjęte przez bramy Volcast.
+    assert regex_safety.text_problem(rx) is None
+    assert regex_safety.tree_problem(rx) is None

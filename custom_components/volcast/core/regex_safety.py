@@ -3,25 +3,29 @@
 Wzorce profilu działają w pętli zdarzeń HA, także te z feedu: profil przyjęty przez bramy profili
 nie może odrzucić feedu, a wzorzec przyjęty tutaj nie może zawiesić HA nawrotami.
 
-Reguła = OGRANICZONY PODZBIÓR składni + limity dobrane pomiarem, tak by każdy przyjęty wzorzec kończył
-`re.search` w ≤ 0,1 s na wrogim tekście długości INPUT_CAP (dłuższy tekst nie pasuje — `safe_search`).
-Wierna kopia `analyze` z bram Volcast (`scripts/profiles/regex-safety.mjs`; stałe w
+Reguła = OGRANICZONY PODZBIÓR składni + MODEL KOSZTU nawrotów `sre` na tekście długości INPUT_CAP
+(dłuższy tekst nie pasuje — `safe_search`). Wierna kopia bram Volcast (`scripts/profiles/
+regex-safety.mjs`: `parse`, `firstOf`, `groupOwn`, `costOf`, `anchored`, `identifyIssues`; stałe w
 `profiles/schema-lite.json` `x-regex-safety`; wspólne przypadki z kodami w `profiles/fixtures/
-regex-safety.json`, kopia w `tests/fixtures/`):
-  1. Tylko drukowalne ASCII 0x20–0x7E, długość ≤ MAX_REGEX_LEN.
-  2. Dozwolone: literały; `\\d \\D \\w \\W \\s \\S` i `\\` + znak interpunkcji ASCII; klasy `[...]` (bez `[`
-     w środku, bez `]` na początku, bez `--`/`&&`/`||`/`~~`, zakres tylko między dwoma literałami,
-     rosnąco); `.`; kotwice `^ $ \\b`; grupy `(...)`, `(?:...)`; alternatywa `|`.
-  3. Kwantyfikatory `* + ? {n} {n,m}` (n ≤ m ≤ MAX_FIXED_REPEAT) tylko bezpośrednio po atomie; po
-     grupie tylko `?`; leniwe, zaborcze, `{n,}`, `{,m}`, kwantyfikator po kotwicy/`(`/`|`/początku/
-     innym kwantyfikatorze, literał `{ } ]` bez `\\` = odrzucenie.
-  4. `(?i)` tylko na początku; lookbehind `(?<=…)`/`(?<!…)` z 1..MAX_LOOKBEHIND atomami szerokości 1,
-     bez kwantyfikatora; reszta po `(?`, odwołania wsteczne, `\\N \\A \\Z \\x \\u` = odrzucenie.
-  5. Limity: szeroki kwantyfikator (max − min + 1 > MAX_NARROW_WIDTH) ≤ MAX_WIDE_PER_PATH na ścieżce
-     (sekwencja = suma, alternatywa = maksimum); wybory (gałęzie × 2 za grupę opcjonalną × szerokość
-     wąskich kwantyfikatorów) ≤ MAX_CHOICES; praca stała = Σ(max − 1) wąskich + Σ szerokości lookbehind;
-     koszt = INPUT_CAP^szerokie × wybory × (1 + praca stała) ≤ MAX_COST; zagnieżdżenie ≤ MAX_GROUP_DEPTH.
-Na końcu wzorzec musi się skompilować (każdy wyjątek `re` = `compile`).
+regex-safety.json`, kopia w `tests/fixtures/`).
+
+SKŁADNIA: drukowalne ASCII, ≤ MAX_REGEX_LEN; atomy: literał, `\\d \\D \\w \\W \\s \\S`, `\\` + interpunkcja
+ASCII, klasa `[...]` (bez `[` w środku, bez `]` na początku, bez `--`/`&&`/`||`/`~~`, zakres tylko między
+dwoma literałami, rosnąco; `-` po zakresie = literał), `.`; kotwice `^ $ \\b`; grupy `(...)`, `(?:...)`;
+`|`. Kwantyfikatory `* + ? {n} {n,m}` (m ≤ MAX_FIXED_REPEAT) tylko po atomie, po grupie tylko `?`.
+`(?i)` tylko na początku; lookbehind z 1..MAX_LOOKBEHIND atomów szerokości 1. Zagnieżdżenie ≤ MAX_GROUP_DEPTH.
+
+MODEL KOSZTU: zbiór znaków atomu = maska 128 znaków ASCII + „inne” (spoza ASCII: `.`, `\\d \\w \\s` i
+negacje, klasy zanegowane, pod `(?i)` każda litera) + „koniec” (`$` — także przed `\\n`; koniec wzorca =
+koniec tekstu). Atom o zmiennej liczbie powtórzeń: szerokość w = min(max, CAP) − min + 1; rozłączny
+z pierwszym zbiorem dalszej części → praca += w, inaczej liście × w. Grupa: gałęzie o rozłącznych
+pierwszych zbiorach → max liści, inaczej suma (+1 za pominięcie grupy opcjonalnej). Praca na liść =
+Σ długości elementów. Starty = 1, gdy każda gałąź najwyższego poziomu zaczyna się od `^`, inaczej
+CAP + 1. Koszt = starty × liście × praca ≤ MAX_COST (`too_costly_unanchored`, gdy `^` by wystarczył).
+
+IDENTYFIKACJA (`identify_issues`, używa `profile_feed._identify_narrow`): `identify.model_regex` = lista
+wzorców zaczynających się od `^` (nie `(?i)^`), niepasujących do pustego napisu ani IDENTIFY_PROBES;
+`identify.registers.device_type.expect` ≤ MAX_DEVICE_TYPE_EXPECT wartości, bez 0/65535/false.
 """
 from __future__ import annotations
 
@@ -32,47 +36,58 @@ from typing import Any, Iterator, NamedTuple
 REGEX_KEY_SUFFIX = "_regex"
 MAX_REGEX_LEN = 200
 INPUT_CAP = 128
-MAX_WIDE_PER_PATH = 2
-MAX_NARROW_WIDTH = 4
-MAX_CHOICES = 16
 MAX_FIXED_REPEAT = 16
-MAX_COST = INPUT_CAP * INPUT_CAP * 24
 MAX_GROUP_DEPTH = 4
 MAX_LOOKBEHIND = 16
+MAX_COST = 500_000
+IDENTIFY_PROBES = ("A", "Q", "z", "0", "7", "-", "QX", "ZZZZZZZZ", "Q0-Q0", "00000000", "xyz123", "NOT-A-MODEL")
+MAX_DEVICE_TYPE_EXPECT = 64
+BLANK_REGISTER_VALUES = (0, 65535)
 
-# Kod → wskazówka dla autora profilu (te same teksty co w Volcast).
+# Kod → wskazówka naprawy dla autora profilu (te same teksty co w Volcast).
 REGEX_HINTS = {
     "not_string": "a *_regex value must be a string (or a list of strings)",
-    "length": f"keep the pattern at most {MAX_REGEX_LEN} characters",
-    "non_ascii": "use printable ASCII only (0x20-0x7E); write other characters as a class of ASCII or drop them",
+    "length": f"keep the pattern at most {MAX_REGEX_LEN} characters; split alternatives into separate entries of "
+              "the list",
+    "non_ascii": "use printable ASCII only (0x20-0x7E); match other characters with . or a class of ASCII characters",
     "forbidden_construct":
-        "only literals, \\d \\w \\s (and upper-case), escaped punctuation, [classes], ., ^ $ \\b, (groups), "
-        "(?:groups) and | are allowed; no lookahead, named groups, backreferences, comments or inline flags "
-        "((?i) only at the very start; (?<=x)/(?<!x) only with plain single characters inside)",
+        "only literals, \\d \\w \\s (and upper-case), escaped punctuation like \\. \\-, [classes], ., ^ $ \\b, "
+        "(groups), (?:groups) and | are allowed; no lookahead, named groups, backreferences, comments or inline "
+        "flags; (?i) only at the very start; (?<=x)/(?<!x) only with plain single characters inside; escape "
+        "{ } ] as \\{ \\} \\]",
     "quantifier_after_group":
-        "a quantifier after a group is not allowed (only ? for an optional group); use a character class "
-        "like [ab]+ instead of (a|b)+",
+        "only ? may follow a group; write [ab]+ instead of (a|b)+, repeat the group text instead of (ab){2}, "
+        "or split the pattern into several entries of the list",
     "quantifier_position":
-        "a quantifier must follow a single literal, escape, class or . (not an anchor or another quantifier)",
-    "lazy_quantifier": "lazy (*? +? ??) and possessive (*+ ++) quantifiers are not allowed; use the plain quantifier",
+        "a quantifier must directly follow one literal, escape, class or . (not an anchor, ( or | or another "
+        "quantifier)",
+    "lazy_quantifier": "lazy (*? +? ??) and possessive (*+ ++) quantifiers are not allowed; use the plain greedy "
+                       "quantifier",
     "repeat_too_large":
-        f"use {{n}} or {{n,m}} with n <= m <= {MAX_FIXED_REPEAT}; {{n,}} and {{,m}} are not allowed (use * or +)",
-    "too_many_quantifiers":
-        f"at most {MAX_WIDE_PER_PATH} open-ended quantifiers (* + or {{n,m}} with m-n >= {MAX_NARROW_WIDTH}) on "
-        "one match path; prefer a fixed prefix like ^goodwe-battery_soc-",
-    "too_many_choices":
-        "choices multiply: | branches, optional groups (x)?, x? and small {n,m} ranges together at most "
-        f"{MAX_CHOICES} combinations",
-    "too_costly":
-        "too much backtracking work: with two open-ended quantifiers keep alternatives, x? and {n} repeats / "
-        "lookbehinds short; anchor with ^ and use a fixed literal prefix",
+        f"use {{n}} or {{n,m}} with n <= m <= {MAX_FIXED_REPEAT}; {{n,}} and {{,m}} are not allowed (use + or *)",
     "too_deep": f"nest groups at most {MAX_GROUP_DEPTH} deep",
-    "compile": "the pattern does not compile (unbalanced (), [] or an invalid range like [z-a])",
+    "compile": "the pattern does not compile: check unbalanced ( ) or [ ] and ranges like [z-a]",
+    "too_costly":
+        "too much backtracking: use \\d{1,3} instead of \\d+ where the length is known, follow each + or * with a "
+        "character it cannot match (e.g. [0-9]+K, not .+K), avoid two quantifiers over the same characters in a "
+        "row, and split | alternatives into separate entries of the list",
+    "too_costly_unanchored":
+        "anchor the pattern with ^ at the start (unanchored patterns are tried at every position and cost 129x "
+        "more)",
+    "identify_not_anchored":
+        "identify.model_regex must be a list of patterns that each start with ^ (not (?i)^; use [Gg][Ww] for case)",
+    "identify_too_broad":
+        'identify.model_regex must not match an empty or generic model like "A", "0", "QX" or "NOT-A-MODEL"; '
+        "add the brand prefix",
+    "identify_expect":
+        f"identify.registers.device_type.expect: at most {MAX_DEVICE_TYPE_EXPECT} values and never 0 or 65535 "
+        "(blank register)",
 }
 
 _META = frozenset("\\^$.|?*+()[]{}")
 _CLASS_ESCAPES = frozenset("dDwWsS")
 _BRACE = re.compile(r"\{([0-9]*)(,?)([0-9]*)\}")
+_INF = float("inf")
 
 
 class _Reject(Exception):
@@ -90,14 +105,102 @@ def _at(rx: str, i: int) -> str:
     return rx[i] if 0 <= i < len(rx) else ""
 
 
-def _parse_class(rx: str, i: int) -> int:
-    """Klasa od `[` w `i`; indeks za `]`. Python i JS czytają ją tak samo dzięki zakazom z pkt 2."""
+# --- zbiory znaków: (maska 128 bitów ASCII, „inne” spoza ASCII, „koniec” tekstu) ---------------------
+
+class _Set(NamedTuple):
+    a: int
+    other: bool
+    end: bool
+
+
+_ALL_ASCII = (1 << 128) - 1
+_EMPTY = _Set(0, False, False)
+_END_ONLY = _Set(0, False, True)               # koniec wzorca = koniec tekstu (jak `re.fullmatch`)
+_END_SET = _Set(1 << 10, False, True)          # `$`: koniec albo przed `\n`
+
+
+def _union(x: _Set, y: _Set) -> _Set:
+    return _Set(x.a | y.a, x.other or y.other, x.end or y.end)
+
+
+def _disjoint(x: _Set, y: _Set) -> bool:
+    return not (x.a & y.a) and not (x.other and y.other) and not (x.end and y.end)
+
+
+def _complement(s: _Set) -> _Set:
+    return _Set(_ALL_ASCII ^ s.a, True, False)
+
+
+def _range_set(lo: int, hi: int) -> _Set:
+    return _Set(sum(1 << c for c in range(lo, hi + 1)), False, False)
+
+
+_DIGIT = _range_set(48, 57)
+_WORD = _Set(_range_set(48, 57).a | _range_set(65, 90).a | _range_set(97, 122).a | (1 << 95), False, False)
+_SPACE = _Set(_range_set(9, 13).a | _range_set(28, 32).a, False, False)
+# `\d \w \s` w Pythonie (str) obejmują też znaki spoza ASCII; negacje — tym bardziej.
+_CATEGORY = {"d": _DIGIT._replace(other=True), "w": _WORD._replace(other=True), "s": _SPACE._replace(other=True)}
+_CATEGORY_NEG = {"D": "d", "W": "w", "S": "s"}
+
+
+def _category_set(n: str) -> _Set:
+    return _CATEGORY[n] if n in _CATEGORY else _complement(_CATEGORY[_CATEGORY_NEG[n]])
+
+
+def _literal_set(ch: str, fold: bool) -> _Set:
+    a = 1 << ord(ch)
+    if fold and ch.isascii() and ch.isalpha():
+        return _Set(a | 1 << ord(ch.lower()) | 1 << ord(ch.upper()), True, False)   # składanie Unicode
+    return _Set(a, False, False)
+
+
+def _fold_set(s: _Set, fold: bool) -> _Set:
+    if not fold:
+        return s
+    a, other = s.a, s.other
+    for c in range(65, 91):
+        if s.a >> c & 1 or s.a >> (c + 32) & 1:
+            a |= 1 << c | 1 << (c + 32)
+            other = True
+    return _Set(a, other, s.end)
+
+
+# --- składnia → drzewo ------------------------------------------------------------------------------
+# Węzły: _Atom(set, min, max) | _Anchor(k) | _Look(width) | _Group(branches, optional)
+
+class _Atom:
+    __slots__ = ("set", "min", "max")
+
+    def __init__(self, s: _Set) -> None:
+        self.set, self.min, self.max = s, 1, 1
+
+
+class _Anchor(NamedTuple):
+    k: str
+
+
+class _Look(NamedTuple):
+    width: int
+
+
+class _Group:
+    __slots__ = ("branches", "optional")
+
+    def __init__(self) -> None:
+        self.branches: list[list[Any]] = [[]]
+        self.optional = False
+
+
+def _parse_class(rx: str, i: int, fold: bool) -> tuple[int, _Set]:
+    """Klasa od `[` w `i`: (indeks za `]`, zbiór)."""
     j = i + 1
+    negated = False
     if _at(rx, j) == "^":
+        negated = True
         j += 1
     if _at(rx, j) == "]":
-        raise _Reject("forbidden_construct")
-    items: list[tuple[str | None, str | None]] = []   # (literał | None = kategoria, surowy znak | None)
+        raise _Reject("forbidden_construct")   # `[]…]`: Python = literał, JS = pusta klasa
+    items: list[tuple[str | None, _Set, str | None]] = []   # (literał | None = kategoria, zbiór, surowy znak)
     while j < len(rx) and rx[j] != "]":
         c = rx[j]
         if c == "[":
@@ -107,30 +210,37 @@ def _parse_class(rx: str, i: int) -> int:
             if n == "":
                 raise _Reject("compile")
             if n in _CLASS_ESCAPES:
-                items.append((None, None))
+                items.append((None, _category_set(n), None))
             elif _is_punct(n):
-                items.append((n, None))
+                items.append((n, _literal_set(n, False), None))
             else:
                 raise _Reject("forbidden_construct")
             j += 2
         else:
             if c in "-&|~" and _at(rx, j + 1) == c:
                 raise _Reject("forbidden_construct")   # możliwe operacje na zbiorach
-            items.append((c, c))
+            items.append((c, _literal_set(c, False), c))
             j += 1
     if j >= len(rx):
         raise _Reject("compile")
-    k = 1
-    while k < len(items) - 1:   # `-` między dwoma pozycjami łączy literały rosnąco
-        if items[k][1] == "-":
-            lo, hi = items[k - 1][0], items[k + 1][0]
-            if lo is None or hi is None:
+    s = _EMPTY
+    k = 0
+    while k < len(items):
+        lit, iset, _raw = items[k]
+        # `-` między dwoma pozycjami łączy literały w zakres; `-` zaraz po zakresie jest literałem.
+        if k + 2 < len(items) and items[k + 1][2] == "-":
+            hi = items[k + 2][0]
+            if lit is None or hi is None:
                 raise _Reject("forbidden_construct")
-            if lo > hi:
+            if lit > hi:
                 raise _Reject("compile")
-            k += 1
+            s = _union(s, _range_set(ord(lit), ord(hi)))
+            k += 3
+            continue
+        s = _union(s, iset)
         k += 1
-    return j + 1
+    s = _fold_set(s, fold)
+    return j + 1, (_complement(s) if negated else s)
 
 
 def _quantifier_at(rx: str, i: int) -> tuple[int, float, float] | None:
@@ -138,9 +248,9 @@ def _quantifier_at(rx: str, i: int) -> tuple[int, float, float] | None:
     Liczby jak `Number()` w JS (float), żeby ogromne powtórzenia dawały ten sam kod."""
     c = _at(rx, i)
     if c == "*":
-        return 1, 0, float("inf")
+        return 1, 0, _INF
     if c == "+":
-        return 1, 1, float("inf")
+        return 1, 1, _INF
     if c == "?":
         return 1, 0, 1
     if c != "{":
@@ -159,20 +269,7 @@ def _quantifier_at(rx: str, i: int) -> tuple[int, float, float] | None:
     return len(m.group(0)), lo, hi
 
 
-class _Frame:
-    """Grupa (dno = cały wzorzec): gałęzie alternatywy; cur/best = szerokie kwantyfikatory w bieżącej
-    gałęzi / najwięcej w gałęziach zamkniętych."""
-    __slots__ = ("branches", "cur", "best")
-
-    def __init__(self) -> None:
-        self.branches = 1
-        self.cur = 0
-        self.best = 0
-
-
-def _analyze(rx: Any) -> None:
-    """Port `analyze` z Volcast; odrzucenie = `_Reject(kod)`. Bez kroku kompilacji (ten robi
-    `regex_problem` w Pythonie)."""
+def _parse(rx: Any) -> _Group:
     if not isinstance(rx, str):
         raise _Reject("not_string")
     # Długość jak `length` w JS (jednostki UTF-16), żeby kod był ten sam także dla znaków spoza BMP.
@@ -180,18 +277,15 @@ def _analyze(rx: Any) -> None:
         raise _Reject("length")
     if any(not " " <= ch <= "~" for ch in rx):
         raise _Reject("non_ascii")
-    i = 4 if rx.startswith("(?i)") else 0
-    stack = [_Frame()]
-    choices = 1
-    fixed = 0
+    fold = rx.startswith("(?i)")
+    i = 4 if fold else 0
+    root = _Group()
+    stack = [root]
+
+    def seq() -> list[Any]:
+        return stack[-1].branches[-1]
+
     prev = "start"   # atom | group | anchor | quant | start
-
-    def choose(k: int) -> None:
-        nonlocal choices
-        choices *= k
-        if choices > MAX_CHOICES:
-            raise _Reject("too_many_choices")
-
     while i < len(rx):
         c = rx[i]
         q = _quantifier_at(rx, i)
@@ -202,15 +296,9 @@ def _analyze(rx: Any) -> None:
             if prev == "group":
                 if c != "?":
                     raise _Reject("quantifier_after_group")
-                choose(2)
+                seq()[-1].optional = True
             elif prev == "atom":
-                width = hi - lo + 1
-                if width > MAX_NARROW_WIDTH:
-                    stack[-1].cur += 1
-                else:
-                    if width > 1:
-                        choose(int(width))
-                    fixed += int(hi) - 1
+                seq()[-1].min, seq()[-1].max = lo, hi
             else:
                 raise _Reject("quantifier_position")
             i += qlen
@@ -221,19 +309,28 @@ def _analyze(rx: Any) -> None:
             if n == "":
                 raise _Reject("compile")
             if n == "b":
+                seq().append(_Anchor("b"))
                 prev = "anchor"
-            elif n in _CLASS_ESCAPES or _is_punct(n):
+            elif n in _CLASS_ESCAPES:
+                seq().append(_Atom(_category_set(n)))
+                prev = "atom"
+            elif _is_punct(n):
+                seq().append(_Atom(_literal_set(n, fold)))
                 prev = "atom"
             else:
-                raise _Reject("forbidden_construct")   # \1 \N \A \Z \x \u …
+                raise _Reject("forbidden_construct")   # \1 \N \A \Z \x \u \n …
             i += 2
         elif c == "[":
-            i = _parse_class(rx, i)
+            end, s = _parse_class(rx, i, fold)
+            seq().append(_Atom(s))
+            i = end
             prev = "atom"
         elif c == ".":
+            seq().append(_Atom(_complement(_literal_set("\n", False))))
             i += 1
             prev = "atom"
         elif c in "^$":
+            seq().append(_Anchor(c))
             i += 1
             prev = "anchor"
         elif c == "(":
@@ -247,9 +344,9 @@ def _analyze(rx: Any) -> None:
                             raise _Reject("forbidden_construct")
                         j += 2
                     elif rx[j] == "[":
-                        j = _parse_class(rx, j)
+                        j = _parse_class(rx, j, fold)[0]
                     elif rx[j] in _META and rx[j] != ".":
-                        raise _Reject("forbidden_construct")
+                        raise _Reject("forbidden_construct")   # grupa, alternatywa, kwantyfikator, kotwica
                     else:
                         j += 1
                     width += 1
@@ -257,7 +354,7 @@ def _analyze(rx: Any) -> None:
                     raise _Reject("compile")
                 if width == 0 or width > MAX_LOOKBEHIND:
                     raise _Reject("forbidden_construct")
-                fixed += width
+                seq().append(_Look(width))
                 i = j + 1
                 prev = "anchor"   # zerowej szerokości, nie wolno go kwantyfikować
                 continue
@@ -268,49 +365,175 @@ def _analyze(rx: Any) -> None:
                 length = 3
             if len(stack) > MAX_GROUP_DEPTH:
                 raise _Reject("too_deep")
-            stack.append(_Frame())
+            g = _Group()
+            seq().append(g)
+            stack.append(g)
             i += length
             prev = "start"
         elif c == ")":
             if len(stack) == 1:
                 raise _Reject("compile")
-            f = stack.pop()
-            if prev == "start" and f.branches == 1:
+            g = stack.pop()
+            if prev == "start" and len(g.branches) == 1:
                 raise _Reject("forbidden_construct")   # pusta grupa
-            stack[-1].cur += max(f.best, f.cur)
             i += 1
             prev = "group"
         elif c == "|":
-            top = stack[-1]
-            top.best = max(top.best, top.cur)
-            top.cur = 0
-            top.branches += 1
-            choices = choices // (top.branches - 1) * top.branches
-            if choices > MAX_CHOICES:
-                raise _Reject("too_many_choices")
+            stack[-1].branches.append([])
             i += 1
             prev = "start"
         elif c in "]}":
             raise _Reject("forbidden_construct")   # literał trzeba poprzedzić `\`
         else:
+            seq().append(_Atom(_literal_set(c, fold)))
             i += 1
             prev = "atom"
     if len(stack) != 1:
         raise _Reject("compile")
-    wide = max(stack[0].best, stack[0].cur)
-    if wide > MAX_WIDE_PER_PATH:
-        raise _Reject("too_many_quantifiers")
-    if INPUT_CAP ** wide * choices * (1 + fixed) > MAX_COST:
-        raise _Reject("too_costly")
+    # Ostatnia linia obrony: wzorzec musi się skompilować (każdy wyjątek `re`, np. OverflowError).
+    try:
+        re.compile(rx)
+    except Exception:  # noqa: BLE001
+        raise _Reject("compile") from None
+    return root
+
+
+# --- model kosztu ------------------------------------------------------------------------------------
+_CAP = INPUT_CAP
+_LIMIT = MAX_COST * (_CAP + 1) * 4   # obcięcie iloczynów (nadal > każdego progu)
+
+
+def _mul(a: int, b: int) -> int:
+    return min(a * b, _LIMIT)
+
+
+def _add(a: int, b: int) -> int:
+    return min(a + b, _LIMIT)
+
+
+def _first_of(items: list[Any], start: int, after: _Set) -> tuple[_Set, bool]:
+    """(pierwszy zbiór sekwencji od `start`, czy może być pusta); `after` = to, co po sekwencji.
+    `^`, `\\b` i lookbehind są przezroczyste (tylko zawężają)."""
+    s = _EMPTY
+    for n in items[start:]:
+        if isinstance(n, _Atom):
+            s = _union(s, n.set)
+            if n.min >= 1:
+                return s, False
+        elif isinstance(n, _Anchor) and n.k == "$":
+            return _union(s, _END_SET), False
+        elif isinstance(n, _Group):
+            gs, nullable = _group_own(n)
+            s = _union(s, gs)
+            if not nullable:
+                return s, False
+    return _union(s, after), True
+
+
+def _group_own(g: _Group) -> tuple[_Set, bool]:
+    s, nullable = _EMPTY, g.optional
+    for b in g.branches:
+        fs, fn = _first_of(b, 0, _EMPTY)
+        s = _union(s, fs)
+        nullable = nullable or fn
+    return s, nullable
+
+
+def _cost_of(items: list[Any], after: _Set) -> tuple[int, int]:
+    """(liście, praca na liść) sekwencji; `after` = pierwszy zbiór tego, co po sekwencji."""
+    leaves, work = 1, 0
+    for k, n in enumerate(items):
+        if isinstance(n, _Atom):
+            top = int(min(n.max, _CAP))
+            work = _add(work, top)
+            if n.min != n.max:
+                w = max(top - int(n.min) + 1, 1)
+                if _disjoint(n.set, _first_of(items, k + 1, after)[0]):
+                    work = _add(work, w)   # cofanie przejdzie dalej najwyżej z jednej pozycji
+                else:
+                    leaves = _mul(leaves, w)
+        elif isinstance(n, _Look):
+            work = _add(work, n.width)
+        elif isinstance(n, _Anchor):
+            work = _add(work, 1)
+        else:
+            after2 = _first_of(items, k + 1, after)[0]
+            parts = [(_cost_of(b, after2), _first_of(b, 0, after2)) for b in n.branches]
+            exclusive = all(_disjoint(parts[x][1][0], parts[y][1][0])
+                            for x in range(len(parts)) for y in range(x + 1, len(parts)))
+            if exclusive and n.optional:
+                # pominięcie grupy opcjonalnej musi się wykluczać z wejściem do niej
+                exclusive = all(not fn and _disjoint(fs, after2) for _, (fs, fn) in parts)
+            group_leaves = 0 if exclusive else (1 if n.optional else 0)
+            group_work = 0
+            for (pl, pw), _f in parts:
+                group_leaves = max(group_leaves, pl) if exclusive else _add(group_leaves, pl)
+                group_work = max(group_work, pw)
+            leaves = _mul(leaves, max(group_leaves, 1))
+            work = _add(work, _add(group_work, len(n.branches)))
+    return leaves, work
+
+
+def _anchored(root: _Group) -> bool:
+    return all(b and isinstance(b[0], _Anchor) and b[0].k == "^" for b in root.branches)
+
+
+def regex_cost(rx: Any) -> int | None:
+    """Koszt wzorca w modelu albo None (wzorzec spoza podzbioru) — do testów i kalibracji."""
+    try:
+        return _cost_report(_parse(rx))[0]
+    except _Reject:
+        return None
+
+
+def _cost_report(root: _Group) -> tuple[int, int, int]:
+    leaves, work = _cost_of([root], _END_ONLY)
+    per_start = _mul(leaves, max(work, 1))
+    starts = 1 if _anchored(root) else _CAP + 1
+    return _mul(starts, per_start), per_start, starts
 
 
 def text_problem(rx: Any) -> str | None:
-    """Kod odrzucenia wzorca przez regułę tekstową (bez kompilacji) albo None."""
+    """Kod odrzucenia wzorca przez regułę (składnia, kompilacja, koszt) albo None. Port `analyze`."""
     try:
-        _analyze(rx)
+        cost, per_start, starts = _cost_report(_parse(rx))
     except _Reject as rej:
         return rej.code
+    if cost > MAX_COST:
+        return "too_costly_unanchored" if starts > 1 and per_start <= MAX_COST else "too_costly"
     return None
+
+
+def identify_issues(doc: Any) -> list[tuple[str, str]]:
+    """(ścieżka, kod) problemów reguły identyfikacji — port `identifyIssues`; reguła ładowarki feedu."""
+    out: list[tuple[str, str]] = []
+    ident = doc.get("identify") if isinstance(doc, dict) else None
+    if not isinstance(ident, dict):
+        return out
+    mr = ident.get("model_regex")
+    if mr is not None and not isinstance(mr, list):
+        out.append(("$.identify.model_regex", "identify_not_anchored"))
+    elif isinstance(mr, list):
+        for i, rx in enumerate(mr):
+            at = f"$.identify.model_regex[{i}]"
+            if not isinstance(rx, str) or not rx.startswith("^"):
+                out.append((at, "identify_not_anchored"))
+                continue
+            if text_problem(rx) is not None:
+                continue   # zgłasza to reguła wzorców
+            if safe_search(rx, "") is not None or any(safe_search(rx, p) for p in IDENTIFY_PROBES):
+                out.append((at, "identify_too_broad"))
+    regs = ident.get("registers")
+    dt = regs.get("device_type") if isinstance(regs, dict) else None
+    expect = dt.get("expect") if isinstance(dt, dict) else None
+    if expect is not None:
+        # `False` == 0 w zbiorze Pythona, więc też jest „pustym rejestrem”.
+        ok = (isinstance(expect, list) and len(expect) <= MAX_DEVICE_TYPE_EXPECT
+              and not any(v is False or (isinstance(v, (int, float)) and not isinstance(v, bool)
+                                         and v in BLANK_REGISTER_VALUES) for v in expect))
+        if not ok:
+            out.append(("$.identify.registers.device_type.expect", "identify_expect"))
+    return out
 
 
 # --- druga zapora: drzewo prywatnego parsera `re` (tylko feed i test generyczny) ----------------------
@@ -413,16 +636,12 @@ def tree_problem(rx: str) -> str | None:
 
 def regex_problem(rx: Any, *, parse_tree: bool = True) -> str | None:
     """Kod odrzucenia wzorca (kody i wskazówki: `REGEX_HINTS`) albo None, gdy wzorzec jest bezpieczny:
-    reguła tekstowa (kopia Volcast), kompilacja w Pythonie (każdy wyjątek = `compile`) i — przy
+    reguła tekstowa z kompilacją w Pythonie (kopia Volcast; każdy wyjątek = `compile`) i — przy
     `parse_tree` — druga zapora na drzewie prywatnego parsera `re` (fail closed). Profile z pakietu
     sprawdza się bez drzewa (`parse_tree=False`); feed i test generyczny — z drzewem."""
     code = text_problem(rx)
     if code:
         return code
-    try:
-        re.compile(rx)
-    except Exception:  # noqa: BLE001 — nie tylko re.error: np. ogromne powtórzenie → OverflowError
-        return "compile"
     return tree_problem(rx) if parse_tree else None
 
 

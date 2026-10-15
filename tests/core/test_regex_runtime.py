@@ -94,7 +94,10 @@ def test_realistic_subjects_fit_the_cap():
     assert found and max(map(len, found)) * 2 <= INPUT_CAP, max(found, key=len)
 
 
-@pytest.mark.parametrize("rx", [".*.*=", "[a-z]*[a-z]*[a-z]{0,3}x", "^(?:.*a|.*b)(?:.*a|.*b)="])
+_FIXTURE = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "regex-safety.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("rx", _FIXTURE["accepted"])
 def test_hostile_pattern_on_long_subject_is_fast(rx):
     assert regex_safety.regex_problem(rx) is None          # przyjęty przez regułę — limit chroni czas
     t0 = time.perf_counter()

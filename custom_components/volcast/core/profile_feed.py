@@ -32,7 +32,7 @@ from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping
 
 from .profile_schema import validate_profile
-from .regex_safety import fits, safe_match, safe_search
+from .regex_safety import fits, identify_issues, safe_search, text_problem
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,11 +49,6 @@ _MIN_FRACTION = 1e-4
 # Zapis chmury (`toISOString`): RRRR-MM-DDTHH:MM:SS.sssZ; dopuszczamy też bez milisekund.
 _GENERATED_AT_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z")
 _HEX_KEY_RE = re.compile(r"[0-9a-fA-F]{64}")
-# Identyfikacja wąska (jak brama profili w CI): regex modelu zakotwiczony, niepasujący do pustego
-# ani do modeli niezwiązanych z żadnym falownikiem; typ urządzenia bez wartości pustego rejestru.
-_MODEL_PROBES = ("A", "Q", "z", "0", "7", "-", "QX", "ZZZZZZZZ", "Q0-Q0", "00000000", "xyz123", "NOT-A-MODEL")
-_BLANK_REGISTER_VALUES = (0x0000, 0xFFFF)
-_MAX_DEVICE_TYPE_EXPECT = 64
 _FLOOR_MAX_AHEAD_S = 24 * 3600
 
 
@@ -204,21 +199,13 @@ def _parse_generated_at(value: Any) -> datetime:
         raise FeedRejected("generated_at") from err
 
 
-def _regex_ok(rx: Any) -> bool:
-    if not isinstance(rx, str) or not rx.startswith("^"):
-        return False
-    try:
-        return safe_search(rx, "") is None and not any(safe_match(rx, p) for p in _MODEL_PROBES)
-    except re.error:
-        return False
-
-
 def _identify_narrow(raw: dict) -> bool:
-    ident = raw.get("identify") or {}
-    if not all(_regex_ok(rx) for rx in ident.get("model_regex") or ()):
+    """Identyfikacja wąska (te same reguły i kody co bramy Volcast: `regex_safety.identify_issues`);
+    wzorzec identyfikacji spoza reguły wzorców też ją psuje (zachowawczo, niezależnie od schematu)."""
+    patterns = ((raw.get("identify") or {}).get("model_regex")) or ()
+    if isinstance(patterns, list) and any(text_problem(rx) for rx in patterns):
         return False
-    expect = ((ident.get("registers") or {}).get("device_type") or {}).get("expect") or []
-    return len(expect) <= _MAX_DEVICE_TYPE_EXPECT and not set(expect) & set(_BLANK_REGISTER_VALUES)
+    return not identify_issues(raw)
 
 
 def _as_draft(raw: dict) -> dict:

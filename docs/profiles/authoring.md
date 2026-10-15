@@ -246,14 +246,15 @@ a `verified` profile.
   compile. `transform` is `negate` or `invert_percent`.
 * Every `*_regex` field of the profile (`identify.model_regex`, `ha.integrations[].model_regex`,
   `unique_id_regex` of entities and of `work_mode.ha`) runs in the Home Assistant event loop. It must
-  stay inside a small regex subset with limits chosen by measurement, so that every accepted pattern
-  finishes `re.search` within 0.1 s on a hostile 128-character text. Schema validation enforces it
-  (`core/regex_safety.py`, the same rule as the Volcast profile gates):
+  stay inside a small regex subset, and an upper bound of its backtracking work on a 128-character
+  text must stay under a limit chosen by measurement (every accepted pattern finishes `re.search`,
+  `re.match` and `re.fullmatch` in a few milliseconds on hostile texts). Schema validation enforces
+  it (`core/regex_safety.py`, the same rule as the Volcast profile gates):
   * printable ASCII only (0x20-0x7E), at most 200 characters, and it must compile;
   * allowed: literals; `\d \D \w \W \s \S` and a backslash before ASCII punctuation (`\. \- \( \\`);
     classes `[...]` with no `[` inside, no `]` first, no `--`, `&&`, `||`, `~~`, and ranges only
-    between two literals in ascending order; `.`; anchors `^ $ \b`; groups `(...)` and `(?:...)`;
-    alternation `|`;
+    between two literals in ascending order (a `-` right after a range is a literal); `.`; anchors
+    `^ $ \b`; groups `(...)` and `(?:...)`; alternation `|`; groups nest at most 4 deep;
   * quantifiers `* + ? {n} {n,m}` (n <= m <= 16) only right after a literal, escape, class or `.`;
     after a group only `?` (an optional group). Lazy (`*?`) and possessive (`*+`) quantifiers,
     `{n,}`, `{,m}`, a quantifier after an anchor, `(`, `|`, the start or another quantifier, and an
@@ -262,18 +263,26 @@ a `verified` profile.
     characters, escapes or classes and no quantifier on it. Anything else after `(?` (lookahead,
     named groups, flags, comments, conditionals, atomic groups), backreferences and `\N \A \Z \x \u`
     are rejected;
-  * limits: an open-ended quantifier (max - min + 1 > 4: `*`, `+`, `{0,16}`) counts as wide; at most
-    2 wide ones on one match path (a sequence adds, an alternation takes its largest branch). Choices
-    multiply (branches of each `|`, 2 per optional group, max - min + 1 per small quantifier such as
-    `?` or `{1,3}`) and may be at most 16. Fixed work is the sum of (max - 1) of small quantifiers plus
-    the lookbehind widths; 128^wide x choices x (1 + fixed work) may be at most 393216. Groups nest
-    at most 4 deep.
+  * cost model: each atom has a character set (ASCII characters, plus "non-ASCII" for `.`, `\d \w \s`,
+    their negations, negated classes and every letter under `(?i)`, plus "end of text" for `$` and
+    the end of the pattern). A variable quantifier whose set cannot overlap what may follow it only
+    adds work; otherwise it multiplies the backtracking leaves by its width (max - min + 1, at most
+    128). A group whose branches start with disjoint sets counts as its largest branch, otherwise as
+    the sum of its branches (plus one when optional). Work per leaf is the length of the pattern's
+    elements. A pattern whose every top-level branch starts with `^` is tried once, otherwise at all
+    129 positions. Starts x leaves x work may be at most 500000.
+* `identify.model_regex` (needed for feed profiles; the packaged ones follow it too) is a list of
+  patterns that each start with `^` (not `(?i)^`) and match neither an empty model nor any of `A`,
+  `Q`, `z`, `0`, `7`, `-`, `QX`, `ZZZZZZZZ`, `Q0-Q0`, `00000000`, `xyz123`, `NOT-A-MODEL`;
+  `identify.registers.device_type.expect` has at most 64 values and never 0 or 65535. A signed
+  feed holds at most 500 profiles and 2 MiB; over that, clients reject it as a whole.
 
   A rejected pattern is reported as `niebezpieczny regex (<code>): <hint>`; the hint says how to fix
-  it, e.g. `quantifier_after_group` → use a class like `[ab]+` instead of `(a|b)+`;
-  `too_many_quantifiers` → keep a fixed literal prefix such as `^goodwe-battery_soc-`;
-  `repeat_too_large` → `{n,m}` with m <= 16 instead of `{n,}`. Prefer an anchored literal prefix and
-  at most one or two `.*`/`\d+`.
+  it, e.g. `quantifier_after_group` → use a class like `[ab]+` instead of `(a|b)+`; `too_costly` →
+  use `\d{1,3}` instead of `\d+` where the length is known and follow each `+`/`*` with a character
+  it cannot match (`[0-9]+K`, not `.+K`); `too_costly_unanchored` → start the pattern with `^`;
+  `repeat_too_large` → `{n,m}` with m <= 16 instead of `{n,}`. Identification problems use the codes
+  `identify_not_anchored`, `identify_too_broad` and `identify_expect`.
 
   For feed profiles and in the generic profile test, a second guard also checks the parse tree Python
   `re` actually executes (only the subset's node kinds); if that private parser module is unavailable

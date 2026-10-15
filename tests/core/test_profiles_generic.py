@@ -181,6 +181,26 @@ def test_regex_safety_accepts_shared_cases():
     assert not rejected, f"wzorce odrzucone, a mają przejść: {rejected}"
 
 
+def test_regex_safety_identify_cases_match_the_feed_loader():
+    # Reguła identyfikacji ładowarki feedu (`_identify_narrow`) z tymi samymi kodami co bramy Volcast.
+    cases = _regex_safety_cases()["identify"]
+    assert cases
+    wrong = {}
+    for case in cases:
+        codes = sorted({code for _, code in regex_safety.identify_issues(case)})
+        expected = [] if case["reason"] is None else [case["reason"]]
+        if codes != expected or profile_feed._identify_narrow(case) != (case["reason"] is None):
+            wrong[json.dumps(case["identify"])[:120]] = (case["reason"], codes)
+    assert not wrong, f"identyfikacja inna niż we wspólnych przypadkach (oczekiwany, otrzymane): {wrong}"
+
+
+def test_regex_safety_every_code_has_a_hint():
+    cases = _regex_safety_cases()
+    codes = {c["reason"] for c in cases["rejected"]} | {c["reason"] for c in cases["identify"] if c["reason"]}
+    assert codes <= set(regex_safety.REGEX_HINTS)
+    assert len(regex_safety.REGEX_HINTS) == 15
+
+
 def test_regex_safety_constants_match_volcast():
     if not os.environ.get(PROFILES_DIR_ENV):
         pytest.skip("stałe Volcast tylko z VOLCAST_PROFILES_DIR")
@@ -188,13 +208,13 @@ def test_regex_safety_constants_match_volcast():
     assert path.is_file(), f"brak {path}"
     rules = json.loads(path.read_text(encoding="utf-8"))["x-regex-safety"]
     rs = regex_safety
-    assert {k: rules[k] for k in ("key_suffix", "max_length", "input_cap", "max_wide_per_path", "max_narrow_width",
-                                  "max_choices", "max_fixed_repeat", "max_cost", "max_group_depth",
-                                  "max_lookbehind")} == {
+    assert {k: rules[k] for k in ("key_suffix", "max_length", "input_cap", "max_fixed_repeat", "max_cost",
+                                  "max_group_depth", "max_lookbehind", "identify_probes",
+                                  "max_device_type_expect", "blank_register_values")} == {
         "key_suffix": rs.REGEX_KEY_SUFFIX, "max_length": rs.MAX_REGEX_LEN, "input_cap": rs.INPUT_CAP,
-        "max_wide_per_path": rs.MAX_WIDE_PER_PATH, "max_narrow_width": rs.MAX_NARROW_WIDTH,
-        "max_choices": rs.MAX_CHOICES, "max_fixed_repeat": rs.MAX_FIXED_REPEAT, "max_cost": rs.MAX_COST,
-        "max_group_depth": rs.MAX_GROUP_DEPTH, "max_lookbehind": rs.MAX_LOOKBEHIND}
+        "max_fixed_repeat": rs.MAX_FIXED_REPEAT, "max_cost": rs.MAX_COST, "max_group_depth": rs.MAX_GROUP_DEPTH,
+        "max_lookbehind": rs.MAX_LOOKBEHIND, "identify_probes": list(rs.IDENTIFY_PROBES),
+        "max_device_type_expect": rs.MAX_DEVICE_TYPE_EXPECT, "blank_register_values": list(rs.BLANK_REGISTER_VALUES)}
 
 
 # --- Środowisko: zmienna dotyczy tylko tego testu, lista profili ---
