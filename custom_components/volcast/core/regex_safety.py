@@ -39,6 +39,7 @@ INPUT_CAP = 128
 MAX_FIXED_REPEAT = 16
 MAX_GROUP_DEPTH = 4
 MAX_LOOKBEHIND = 16
+MAX_ASSERTIONS = 8
 MAX_COST = 500_000
 IDENTIFY_PROBES = ("A", "Q", "z", "0", "7", "-", "QX", "ZZZZZZZZ", "Q0-Q0", "00000000", "xyz123", "NOT-A-MODEL")
 MAX_DEVICE_TYPE_EXPECT = 64
@@ -66,6 +67,10 @@ REGEX_HINTS = {
     "repeat_too_large":
         f"use {{n}} or {{n,m}} with n <= m <= {MAX_FIXED_REPEAT}; {{n,}} and {{,m}} are not allowed (use + or *)",
     "too_deep": f"nest groups at most {MAX_GROUP_DEPTH} deep",
+    "empty_branch":
+        "write an optional group as (ab)? instead of an empty alternation branch like (ab|) or (|); every branch "
+        "and group must match at least one character",
+    "too_many_assertions": f"use at most {MAX_ASSERTIONS} \\b and lookbehind assertions in one pattern",
     "compile": "the pattern does not compile: check unbalanced ( ) or [ ] and ranges like [z-a]",
     "too_costly":
         "too much backtracking: use \\d{1,3} instead of \\d+ where the length is known, follow each + or * with a "
@@ -269,6 +274,11 @@ def _quantifier_at(rx: str, i: int) -> tuple[int, float, float] | None:
     return len(m.group(0)), lo, hi
 
 
+def _consumes_nothing(branch: list[Any]) -> bool:
+    """Gałąź bez żadnego atomu (pusta albo same asercje/kotwice) — dopasowuje tylko pusty napis."""
+    return not any(isinstance(n, (_Atom, _Group)) for n in branch)
+
+
 def _parse(rx: Any) -> _Group:
     if not isinstance(rx, str):
         raise _Reject("not_string")
@@ -286,6 +296,7 @@ def _parse(rx: Any) -> _Group:
         return stack[-1].branches[-1]
 
     prev = "start"   # atom | group | anchor | quant | start
+    assertions = 0   # \b i lookbehind w całym wzorcu
     while i < len(rx):
         c = rx[i]
         q = _quantifier_at(rx, i)
@@ -310,6 +321,7 @@ def _parse(rx: Any) -> _Group:
                 raise _Reject("compile")
             if n == "b":
                 seq().append(_Anchor("b"))
+                assertions += 1
                 prev = "anchor"
             elif n in _CLASS_ESCAPES:
                 seq().append(_Atom(_category_set(n)))
@@ -355,6 +367,7 @@ def _parse(rx: Any) -> _Group:
                 if width == 0 or width > MAX_LOOKBEHIND:
                     raise _Reject("forbidden_construct")
                 seq().append(_Look(width))
+                assertions += 1
                 i = j + 1
                 prev = "anchor"   # zerowej szerokości, nie wolno go kwantyfikować
                 continue
@@ -374,8 +387,8 @@ def _parse(rx: Any) -> _Group:
             if len(stack) == 1:
                 raise _Reject("compile")
             g = stack.pop()
-            if prev == "start" and len(g.branches) == 1:
-                raise _Reject("forbidden_construct")   # pusta grupa
+            if any(_consumes_nothing(b) for b in g.branches):
+                raise _Reject("empty_branch")
             i += 1
             prev = "group"
         elif c == "|":
@@ -390,6 +403,10 @@ def _parse(rx: Any) -> _Group:
             prev = "atom"
     if len(stack) != 1:
         raise _Reject("compile")
+    if len(root.branches) > 1 and any(_consumes_nothing(b) for b in root.branches):
+        raise _Reject("empty_branch")
+    if assertions > MAX_ASSERTIONS:
+        raise _Reject("too_many_assertions")
     # Ostatnia linia obrony: wzorzec musi się skompilować (każdy wyjątek `re`, np. OverflowError).
     try:
         re.compile(rx)
@@ -411,11 +428,11 @@ def _add(a: int, b: int) -> int:
     return min(a + b, _LIMIT)
 
 
-def _first_of(items: list[Any], start: int, after: _Set) -> tuple[_Set, bool]:
-    """(pierwszy zbiór sekwencji od `start`, czy może być pusta); `after` = to, co po sekwencji.
+def _first_of(items: list[Any], start: int, after: _Set, to: int | None = None) -> tuple[_Set, bool]:
+    """(pierwszy zbiór elementów [start, to), czy mogą nic nie dopasować); `after` = to, co po nich.
     `^`, `\\b` i lookbehind są przezroczyste (tylko zawężają)."""
     s = _EMPTY
-    for n in items[start:]:
+    for n in items[start:len(items) if to is None else to]:
         if isinstance(n, _Atom):
             s = _union(s, n.set)
             if n.min >= 1:
@@ -439,17 +456,46 @@ def _group_own(g: _Group) -> tuple[_Set, bool]:
     return s, nullable
 
 
-def _cost_of(items: list[Any], after: _Set) -> tuple[int, int]:
-    """(liście, praca na liść) sekwencji; `after` = pierwszy zbiór tego, co po sekwencji."""
+def _required_end(items: list[Any], start: int, to: int) -> int:
+    """Indeks pierwszego elementu obowiązkowego od `start` (atom z min ≥ 1, `$`, grupa bez pustej drogi)
+    albo ostatni indeks zakresu."""
+    for k in range(start, to):
+        n = items[k]
+        if ((isinstance(n, _Atom) and n.min >= 1) or (isinstance(n, _Anchor) and n.k == "$")
+                or (isinstance(n, _Group) and not _group_own(n)[1])):
+            return k
+    return to - 1
+
+
+_Memo = dict[tuple[int, int, int], tuple[int, int]]
+
+
+def _prefix_cost(items: list[Any], start: int, to: int, memo: _Memo) -> tuple[int, int]:
+    """Koszt prefiksu dalszej części z `after` = nic — zapamiętany (bez pamięci łańcuch opcjonalnych
+    atomów dawał wykładniczo wiele wywołań walidatora). Klucz: tożsamość listy w obrębie jednej analizy."""
+    key = (id(items), start, to)
+    if key not in memo:
+        memo[key] = _cost_of(items, _EMPTY, memo, start, to)
+    return memo[key]
+
+
+def _cost_of(items: list[Any], after: _Set, memo: _Memo, start: int = 0,
+             to: int | None = None) -> tuple[int, int]:
+    """(liście, praca na liść) elementów [start, to); `after` = pierwszy zbiór tego, co po nich."""
+    end = len(items) if to is None else to
     leaves, work = 1, 0
-    for k, n in enumerate(items):
+    for k in range(start, end):
+        n = items[k]
         if isinstance(n, _Atom):
             top = int(min(n.max, _CAP))
             work = _add(work, top)
             if n.min != n.max:
                 w = max(top - int(n.min) + 1, 1)
-                if _disjoint(n.set, _first_of(items, k + 1, after)[0]):
-                    work = _add(work, w)   # cofanie przejdzie dalej najwyżej z jednej pozycji
+                if _disjoint(n.set, _first_of(items, k + 1, after, end)[0]):
+                    # Dalej przejdzie najwyżej jedna pozycja, ale przy każdym z w cofnięć `sre` wykonuje od
+                    # nowa prefiks dalszej części aż do pierwszego elementu obowiązkowego (tam pada).
+                    pl, pw = _prefix_cost(items, k + 1, min(_required_end(items, k + 1, end) + 1, end), memo)
+                    work = _add(work, _mul(w, _mul(pl, max(pw, 1))))
                 else:
                     leaves = _mul(leaves, w)
         elif isinstance(n, _Look):
@@ -457,8 +503,8 @@ def _cost_of(items: list[Any], after: _Set) -> tuple[int, int]:
         elif isinstance(n, _Anchor):
             work = _add(work, 1)
         else:
-            after2 = _first_of(items, k + 1, after)[0]
-            parts = [(_cost_of(b, after2), _first_of(b, 0, after2)) for b in n.branches]
+            after2 = _first_of(items, k + 1, after, end)[0]
+            parts = [(_cost_of(b, after2, memo), _first_of(b, 0, after2)) for b in n.branches]
             exclusive = all(_disjoint(parts[x][1][0], parts[y][1][0])
                             for x in range(len(parts)) for y in range(x + 1, len(parts)))
             if exclusive and n.optional:
@@ -487,7 +533,7 @@ def regex_cost(rx: Any) -> int | None:
 
 
 def _cost_report(root: _Group) -> tuple[int, int, int]:
-    leaves, work = _cost_of([root], _END_ONLY)
+    leaves, work = _cost_of([root], _END_ONLY, {})
     per_start = _mul(leaves, max(work, 1))
     starts = 1 if _anchored(root) else _CAP + 1
     return _mul(starts, per_start), per_start, starts

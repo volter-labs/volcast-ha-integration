@@ -28,6 +28,8 @@
     "(?i)\\bHYD[ -]?[0-9]",
     "(?i)\\b(solis|ginlong)\\b",
     "[\\w-]+",
+    "^b*(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w)Z",
+    "^b*\\b\\b\\b\\b\\b\\b\\b\\bZ",
     ""
   ],
   "rejected": [
@@ -118,6 +120,78 @@
     {
       "pattern": ".+_soc$",
       "reason": "too_costly_unanchored"
+    },
+    {
+      "pattern": "^b*(|)(|)(|)(|)(|)(|)(|)(|)(|)(|)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w)Z",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^b*(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w)Z",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^b*(|||)(|||)(|||)(|||)(|||)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)Z",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^b*(|)(|)(|)(|)(|)(|)(|)(|)(|)(|)\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\bZ",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^a*(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)Z",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^b*\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\bZ",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "^b*\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\bZ",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "b*\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\bZ",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "^b*(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)Z",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "^b*(?<!a)(?<!a)(?<!a)(?<!a)(?<!a)\\b\\b\\b\\bZ",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "()",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(|)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(a|)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(|a)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(?:|)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(\\b)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "a|",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^GW(-ET|)$",
+      "reason": "empty_branch"
     },
     {
       "pattern": "(a+)+",
@@ -273,10 +347,6 @@
     },
     {
       "pattern": "(?<=aaaaaaaaaaaaaaaaa)b",
-      "reason": "forbidden_construct"
-    },
-    {
-      "pattern": "()",
       "reason": "forbidden_construct"
     },
     {

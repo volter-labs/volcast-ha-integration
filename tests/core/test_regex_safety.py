@@ -252,3 +252,65 @@ def test_parse_tree_guard_accepts_subset_constructs(rx):
     # przechodzą też zaporę drzewa — inaczej feed odrzucałby profile przyjęte przez bramy Volcast.
     assert regex_safety.text_problem(rx) is None
     assert regex_safety.tree_problem(rx) is None
+
+
+
+# Walidator sam nie może się zawiesić: prefiksy modelu kosztu są zapamiętywane (wersja bez pamięci rosła
+# wykładniczo na łańcuchach opcjonalnych atomów).
+_ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+VALIDATOR_STRESS = {
+    "optional_atom_chain": "^" + "a?" * 98 + "b",
+    # różne znaki: każdy opcjonalny atom rozłączny z dalszą częścią → prefiks za prefiksem (bez pamięci 2^n)
+    "distinct_optional_chain": "^" + "".join(c + "?" for c in _ALNUM) + "!",
+    "nested_optional_groups": "^" + "(a(b(c(d)?)?)?)?" * 10 + "x",
+    "alternating_optional_chain": "^" + "x?y?" * 49 + "z",
+    "alternation_of_optionals": "^(?:" + "|".join("a?b?c" for _ in range(15)) + ")" + "d?" * 20 + "e",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(VALIDATOR_STRESS))
+def test_validator_decides_long_optional_chains_quickly(shape):
+    rx = VALIDATOR_STRESS[shape]
+    t0 = time.perf_counter()
+    regex_safety.text_problem(rx)
+    regex_safety.regex_cost(rx)
+    assert len(rx) <= regex_safety.MAX_REGEX_LEN            # ocenia model kosztu, nie limit długości
+    assert time.perf_counter() - t0 < 0.3, shape
+
+
+@pytest.mark.parametrize("rx,code", [("()", "empty_branch"), ("(ab|)", "empty_branch"), ("(|)", "empty_branch"),
+                                     ("(\\b)", "empty_branch"), ("a|", "empty_branch"),
+                                     ("\\ba" * 9, "too_many_assertions")])
+def test_empty_branches_and_assertions(rx, code):
+    assert regex_safety.regex_problem(rx) == code
+
+
+def test_parse_tree_guard_accepts_every_text_accepted_pattern_of_a_corpus():
+    # Ziarnisty korpus z gramatyki podzbioru (grupy opcjonalne, alternatywy, \b, lookbehind, (?i), $):
+    # każdy wzorzec przyjęty przez regułę tekstową przechodzi zaporę drzewa (feed nie odrzuci go dodatkowo).
+    import random
+    rnd = random.Random(7)
+    atoms = ["a", "b", "1", "_", "-", ".", "[a-z]", "[0-9]", "[^_]", r"\d", r"\w", r"\s", r"\W", r"\."]
+    quants = ["", "", "?", "*", "+", "{2}", "{1,3}", "{0,16}"]
+    zero = [r"\b", "(?<=a)", "(?<![a-z])", "^", "$"]
+
+    def seq(depth=0):
+        out = []
+        for _ in range(rnd.randint(1, 5)):
+            r = rnd.random()
+            if r < 0.2 and depth < 4:
+                out.append(rnd.choice(["(", "(?:"]) + "|".join(seq(depth + 1) for _ in range(rnd.randint(1, 3)))
+                           + ")" + rnd.choice(["", "?"]))
+            elif r < 0.35:
+                out.append(rnd.choice(zero))
+            else:
+                out.append(rnd.choice(atoms) + rnd.choice(quants))
+        return "".join(out)
+
+    accepted = 0
+    for _ in range(5000):
+        rx = rnd.choice(["", "^", "(?i)", "(?i)^"]) + seq()
+        if regex_safety.text_problem(rx) is None:
+            accepted += 1
+            assert regex_safety.tree_problem(rx) is None, rx
+    assert accepted > 500

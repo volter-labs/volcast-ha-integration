@@ -263,11 +263,16 @@ a `verified` profile.
     characters, escapes or classes and no quantifier on it. Anything else after `(?` (lookahead,
     named groups, flags, comments, conditionals, atomic groups), backreferences and `\N \A \Z \x \u`
     are rejected;
+  * every alternation branch and every group must contain a character-matching element: an empty
+    branch (`(ab|)`, `(|)`, `()`, `(\b)`, a trailing `a|`) is `empty_branch` — write `(ab)?` instead;
+    at most 8 `\b` and lookbehind assertions in one pattern (`too_many_assertions`; `^` and `$` do
+    not count);
   * cost model: each atom has a character set (ASCII characters, plus "non-ASCII" for `.`, `\d \w \s`,
     their negations, negated classes and every letter under `(?i)`, plus "end of text" for `$` and
-    the end of the pattern). A variable quantifier whose set cannot overlap what may follow it only
-    adds work; otherwise it multiplies the backtracking leaves by its width (max - min + 1, at most
-    128). A group whose branches start with disjoint sets counts as its largest branch, otherwise as
+    the end of the pattern). A variable quantifier whose set cannot overlap what may follow it does
+    not multiply the leaves, but each of its width (max - min + 1, at most 128) backtracking steps
+    re-runs what follows up to the first required element, so it adds width x the cost of that
+    prefix to the work; otherwise it multiplies the backtracking leaves by its width. A group whose branches start with disjoint sets counts as its largest branch, otherwise as
     the sum of its branches (plus one when optional). Work per leaf is the length of the pattern's
     elements. A pattern whose every top-level branch starts with `^` is tried once, otherwise at all
     129 positions. Starts x leaves x work may be at most 500000.
