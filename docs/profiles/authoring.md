@@ -266,7 +266,9 @@ a `verified` profile.
   * every alternation branch and every group must contain a character-matching element: an empty
     branch (`(ab|)`, `(|)`, `()`, `(\b)`, a trailing `a|`) is `empty_branch` — write `(ab)?` instead;
     at most 8 `\b` and lookbehind assertions in one pattern (`too_many_assertions`; `^` and `$` do
-    not count);
+    not count); at most 6 groups `(...)`/`(?:...)` in one pattern (`too_many_groups`; lookbehinds do
+    not count) — merge alternatives into a class like `[ab]` or split the pattern into several list
+    entries;
   * cost model: each atom has a character set (ASCII characters, plus "non-ASCII" for `.`, `\d \w \s`,
     their negations, negated classes and every letter under `(?i)`, plus "end of text" for `$` and
     the end of the pattern). A variable quantifier whose set cannot overlap what may follow it does

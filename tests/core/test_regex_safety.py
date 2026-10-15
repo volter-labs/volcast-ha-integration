@@ -314,3 +314,16 @@ def test_parse_tree_guard_accepts_every_text_accepted_pattern_of_a_corpus():
             accepted += 1
             assert regex_safety.tree_problem(rx) is None, rx
     assert accepted > 500
+
+
+
+@pytest.mark.parametrize("n,code", [(5, None), (6, None), (7, "too_many_groups")])
+def test_group_count_boundary(n, code):
+    assert regex_safety.regex_problem("^" + "(?:a)" * n + "b") == code
+
+
+def test_too_many_groups_wins_over_later_checks():
+    # 7. grupa odrzuca od razu — przed pustą gałęzią, asercjami i modelem kosztu; długość i ASCII są wcześniej.
+    assert regex_safety.regex_problem("^(\\s*)" + "(c?|d?)" * 10 + "(?<=a)" * 8) == "too_many_groups"
+    assert regex_safety.regex_problem("(a)" * 6 + "(|)") == "too_many_groups"
+    assert regex_safety.regex_problem("é" + "(a)" * 7) == "non_ascii"

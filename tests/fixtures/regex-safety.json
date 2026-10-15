@@ -28,6 +28,9 @@
     "(?i)\\bHYD[ -]?[0-9]",
     "(?i)\\b(solis|ginlong)\\b",
     "[\\w-]+",
+    "^(SPH|SPA)( |-)?\\d{4,5}(TL)?( BL)?(-UP)?$",
+    "^(?:SH|SA)(\\d{1,2})(?:\\.\\d)?(?:RS|RT)(?:-20|-V112)?$",
+    "^(SPH|SPA)( |-)?\\d{4,5}(TL)?( BL)?(-UP)?(-EU)?$",
     "^b*(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w)Z",
     "^b*\\b\\b\\b\\b\\b\\b\\b\\bZ",
     ""
@@ -192,6 +195,46 @@
     {
       "pattern": "^GW(-ET|)$",
       "reason": "empty_branch"
+    },
+    {
+      "pattern": "^\\s*(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(\\s*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(?:\\s*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(b*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(?:a(b*))(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "length"
+    },
+    {
+      "pattern": "(?:x|b*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(b*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(?:a(b*))(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "(?:x|b*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(a)(b)(c)(d)(e)(f)(g)$",
+      "reason": "too_many_groups"
     },
     {
       "pattern": "(a+)+",

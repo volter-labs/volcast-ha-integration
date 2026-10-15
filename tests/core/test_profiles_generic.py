@@ -198,7 +198,7 @@ def test_regex_safety_every_code_has_a_hint():
     cases = _regex_safety_cases()
     codes = {c["reason"] for c in cases["rejected"]} | {c["reason"] for c in cases["identify"] if c["reason"]}
     assert codes <= set(regex_safety.REGEX_HINTS)
-    assert len(regex_safety.REGEX_HINTS) == 17
+    assert len(regex_safety.REGEX_HINTS) == 18
 
 
 def test_regex_safety_constants_match_volcast():
@@ -209,11 +209,12 @@ def test_regex_safety_constants_match_volcast():
     rules = json.loads(path.read_text(encoding="utf-8"))["x-regex-safety"]
     rs = regex_safety
     assert {k: rules[k] for k in ("key_suffix", "max_length", "input_cap", "max_fixed_repeat", "max_cost",
-                                  "max_group_depth", "max_lookbehind", "max_assertions", "identify_probes",
+                                  "max_group_depth", "max_lookbehind", "max_assertions", "max_groups",
+                                  "identify_probes",
                                   "max_device_type_expect", "blank_register_values")} == {
         "key_suffix": rs.REGEX_KEY_SUFFIX, "max_length": rs.MAX_REGEX_LEN, "input_cap": rs.INPUT_CAP,
         "max_fixed_repeat": rs.MAX_FIXED_REPEAT, "max_cost": rs.MAX_COST, "max_group_depth": rs.MAX_GROUP_DEPTH,
-        "max_lookbehind": rs.MAX_LOOKBEHIND, "max_assertions": rs.MAX_ASSERTIONS,
+        "max_lookbehind": rs.MAX_LOOKBEHIND, "max_assertions": rs.MAX_ASSERTIONS, "max_groups": rs.MAX_GROUPS,
         "identify_probes": list(rs.IDENTIFY_PROBES),
         "max_device_type_expect": rs.MAX_DEVICE_TYPE_EXPECT, "blank_register_values": list(rs.BLANK_REGISTER_VALUES)}
 

@@ -13,7 +13,8 @@ SKŁADNIA: drukowalne ASCII, ≤ MAX_REGEX_LEN; atomy: literał, `\\d \\D \\w \\
 ASCII, klasa `[...]` (bez `[` w środku, bez `]` na początku, bez `--`/`&&`/`||`/`~~`, zakres tylko między
 dwoma literałami, rosnąco; `-` po zakresie = literał), `.`; kotwice `^ $ \\b`; grupy `(...)`, `(?:...)`;
 `|`. Kwantyfikatory `* + ? {n} {n,m}` (m ≤ MAX_FIXED_REPEAT) tylko po atomie, po grupie tylko `?`.
-`(?i)` tylko na początku; lookbehind z 1..MAX_LOOKBEHIND atomów szerokości 1. Zagnieżdżenie ≤ MAX_GROUP_DEPTH.
+`(?i)` tylko na początku; lookbehind z 1..MAX_LOOKBEHIND atomów szerokości 1. Zagnieżdżenie ≤ MAX_GROUP_DEPTH,
+grup `(…)`/`(?:…)` ≤ MAX_GROUPS, asercji `\\b`/lookbehind ≤ MAX_ASSERTIONS; pusta gałąź = `empty_branch`.
 
 MODEL KOSZTU: zbiór znaków atomu = maska 128 znaków ASCII + „inne” (spoza ASCII: `.`, `\\d \\w \\s` i
 negacje, klasy zanegowane, pod `(?i)` każda litera) + „koniec” (`$` — także przed `\\n`; koniec wzorca =
@@ -40,6 +41,9 @@ MAX_FIXED_REPEAT = 16
 MAX_GROUP_DEPTH = 4
 MAX_LOOKBEHIND = 16
 MAX_ASSERTIONS = 8
+# Grup (przechwytujących i `(?:…)`, bez lookbehind) na wzorzec — osłona niezależna od modelu kosztu
+# (grupy z samymi opcjonalnymi gałęziami mnożą puste drogi szybciej, niż model to liczy).
+MAX_GROUPS = 6
 MAX_COST = 500_000
 IDENTIFY_PROBES = ("A", "Q", "z", "0", "7", "-", "QX", "ZZZZZZZZ", "Q0-Q0", "00000000", "xyz123", "NOT-A-MODEL")
 MAX_DEVICE_TYPE_EXPECT = 64
@@ -71,6 +75,9 @@ REGEX_HINTS = {
         "write an optional group as (ab)? instead of an empty alternation branch like (ab|) or (|); every branch "
         "and group must match at least one character",
     "too_many_assertions": f"use at most {MAX_ASSERTIONS} \\b and lookbehind assertions in one pattern",
+    "too_many_groups":
+        f"use at most {MAX_GROUPS} groups; merge alternatives into character classes (like [ab] instead of (a|b)) "
+        "or split the pattern into several entries of the model_regex list",
     "compile": "the pattern does not compile: check unbalanced ( ) or [ ] and ranges like [z-a]",
     "too_costly":
         "too much backtracking: use \\d{1,3} instead of \\d+ where the length is known, follow each + or * with a "
@@ -297,6 +304,7 @@ def _parse(rx: Any) -> _Group:
 
     prev = "start"   # atom | group | anchor | quant | start
     assertions = 0   # \b i lookbehind w całym wzorcu
+    groups = 0       # grupy (…) i (?:…) w całym wzorcu (bez lookbehind)
     while i < len(rx):
         c = rx[i]
         q = _quantifier_at(rx, i)
@@ -378,6 +386,9 @@ def _parse(rx: Any) -> _Group:
                 length = 3
             if len(stack) > MAX_GROUP_DEPTH:
                 raise _Reject("too_deep")
+            groups += 1
+            if groups > MAX_GROUPS:
+                raise _Reject("too_many_groups")
             g = _Group()
             seq().append(g)
             stack.append(g)
