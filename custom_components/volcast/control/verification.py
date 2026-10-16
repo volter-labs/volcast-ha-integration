@@ -52,7 +52,7 @@ from ..core.control.ladder import (RUNG_CONTROL_WRITE, RUNG_IDENTIFY, RUNG_READ,
                                    RUNNING, STOPPED, VERIFIED, WAITING, Ladder, LadderParams, device_key)
 from ..core.control.select import control_verified
 from ..core.engines.mode_setpoint import SLOT_POWER_KINDS
-from ..core.profile import direct_verified
+from ..core.profile import direct_verified, writes_allowed
 from ..core.slot import Action, Fallback, Schedule, Slot
 
 _LOGGER = logging.getLogger(__name__)
@@ -155,10 +155,36 @@ class VerificationRunner:
         identity = getattr(self._ex.io, "identity", lambda: None)()
         return device_key(self._salt, identity) if identity else None
 
+    def _profile_hash(self) -> str | None:
+        fp = getattr(self._ex.profile, "fingerprint", None)
+        return fp if isinstance(fp, str) and fp else None
+
     def plan_allowed(self) -> bool:
-        """Plan steruje tylko zweryfikowanym urządzeniem — tym, które jest pod adresem teraz."""
+        """Plan steruje tylko zweryfikowanym urządzeniem — tym, które jest pod adresem teraz — z profilem
+        z pakietu, z którym drabina przeszła (profil z feedu: nigdy)."""
         lad = self.ladder
-        return lad is not None and lad.verified and lad.device_key == self._key()
+        return (lad is not None and lad.verified and lad.device_key == self._key()
+                and writes_allowed(self._ex.profile) and lad.profile_hash == self._profile_hash())
+
+    def _bind_profile(self, lad: Ladder, now) -> bool:
+        """Wiąże drabinę z treścią profilu; True = rekord zmieniony (do zapisu).
+
+        * rekord sprzed powiązania (bez odcisku): profil z pakietu — przyjęty z bieżącym odciskiem (nikt
+          nie traci sterowania po aktualizacji); profil spoza pakietu — wynik nieważny, od początku;
+        * inny odcisk: profil z pakietu zweryfikowany dla tej ścieżki przyjmuje nowy bez zmiany stanu (jak
+          dotąd), każdy inny profil zaczyna drabinę od szczebla startowego."""
+        current = self._profile_hash()
+        if current is None or lad.profile_hash == current:
+            return False
+        profile = self._ex.profile
+        # Zweryfikowany dla tej ścieżki = drabina startuje od zapisu kontrolnego (`start_rung_for`).
+        keep = writes_allowed(profile) and (lad.profile_hash is None or self._start == RUNG_CONTROL_WRITE)
+        if keep:
+            lad.profile_hash = current
+        else:
+            lad.profile_changed(current, now)
+            self._last_would = self._seen = None
+        return True
 
     def payload(self) -> dict | None:
         """Blok `driver.control.verification` (None = brak identyfikacji urządzenia)."""
@@ -176,8 +202,10 @@ class VerificationRunner:
                 # Okno przerwane restartem (drabina wraca przed zapis kontrolny): powrót do trybu bazowego
                 # w obu trybach — wymuszone ładowanie z okna nie może zostać na falowniku.
                 await self._ex.async_verification_restore(force=True)
+            if self.ladder is not None and self._bind_profile(self.ladder, self._utcnow()):
+                await self._ex.async_save_verification(self.ladder.to_record())
         if self.ladder is None and key is not None:
-            self.ladder = Ladder(self._start, self._params, device_key=key)
+            self.ladder = Ladder(self._start, self._params, device_key=key, profile_hash=self._profile_hash())
             if not record and self._start == RUNG_CONTROL_WRITE and self._ex.verification_migration_ok():
                 # Pierwszy start po aktualizacji przy trwającym sterowaniu tym urządzeniem (profil i wpis
                 # zweryfikowane): bez odcinania sterowania na czas drabiny.
@@ -304,12 +332,13 @@ class VerificationRunner:
             return                                   # bez identyfikacji urządzenia drabina stoi
         now = self._utcnow()
         if self.ladder is None:
-            self.ladder = Ladder(self._start, self._params, device_key=key)
+            self.ladder = Ladder(self._start, self._params, device_key=key, profile_hash=self._profile_hash())
         lad = self.ladder
         before = self._mark()
         if lad.device_key != key:
             lad.device_changed(key, now)
             self._last_would = self._seen = None
+        self._bind_profile(lad, now)
         lad.consent(self._can_write(), now)
         lad.tick(now)
         rd = self._ex.io.read(now)
@@ -337,7 +366,8 @@ class VerificationRunner:
         await self._after(before)
 
     def _can_write(self) -> bool:
-        return bool(self._ex.verification_can_write()) and writing_supported(self._ex.profile, self._ex.io.kind)
+        return (writes_allowed(self._ex.profile) and bool(self._ex.verification_can_write())
+                and writing_supported(self._ex.profile, self._ex.io.kind))
 
     def _identified(self, rd) -> bool:
         if self._ex.io.kind == "direct":
@@ -401,7 +431,7 @@ class VerificationRunner:
             return None
         s = lad.state
         return (lad.device_key, s.rung, s.state, s.since, s.next_at, s.stop_reason, s.would_write,
-                s.foreign_writes, s.hours_done, s.measured_w)
+                s.foreign_writes, s.hours_done, s.measured_w, lad.profile_hash)
 
     async def _after(self, before: tuple | None) -> None:
         lad = self.ladder

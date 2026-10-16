@@ -28,13 +28,13 @@ def _wm_profile(poll_s: int = WM_POLL_S, neutral=(0,)):
     raw["work_mode"] = {"read": {"addr": WM_ADDR, "type": "u16"}, "neutral_values": list(neutral),
                         "ha": {"domain": "select", "unique_id_regex": "work_mode$", "neutral_options": ["general"]},
                         "poll_s": poll_s}
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 def _without_work_mode_profile():
     raw = _thaw(GW_V.raw)
     raw.pop("work_mode", None)
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 class Spy:

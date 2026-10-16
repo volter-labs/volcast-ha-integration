@@ -195,7 +195,7 @@ def _tw_with_ha():
         "tou_1_soc": {"domain": "number", "unique_id_regex": "_prog1_soc$"},
         "tou_1_grid_charge": {"domain": "switch", "unique_id_regex": "_prog1_charge$"},
     }}]}
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 def test_time_entity_read_as_minutes_of_day():

@@ -24,7 +24,7 @@ def _profile(*, status="verified", entry_status="draft", ems=False, modbus="draf
     integ = raw["ha"]["integrations"][0]
     integ["status"], integ["ems"] = entry_status, ems
     integ["entities"]["mode"] = {"domain": "select", "unique_id_regex": "^goodwe-ems_mode-"}
-    return profile_from_dict(raw)
+    return profile_from_dict(raw, origin="package")
 
 
 def _report(domain="goodwe", model="GW10K-ET", manufacturer="GoodWe"):

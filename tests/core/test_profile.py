@@ -9,7 +9,7 @@ from tests.core.profile_fixtures import ms_profile, tw_profile
 
 
 def test_mode_setpoint_model():
-    p = profile_from_dict(ms_profile())
+    p = profile_from_dict(ms_profile(), origin="package")
     assert p.mode_value("sell_power") == 10
     assert p.mode_by_value(8).name == "battery_standby"
     assert p.mode_by_value(99) is None
@@ -21,7 +21,7 @@ def test_mode_setpoint_model():
 
 
 def test_time_window_model():
-    p = profile_from_dict(tw_profile())
+    p = profile_from_dict(tw_profile(), origin="package")
     assert (p.tou_programs, p.time_step_min) == (6, 5)
     assert p.intent("sell") is None
     assert p.tou_field_order == ("soc", "power_w", "grid_charge", "start")
@@ -31,7 +31,7 @@ def test_invalid_profile_raises_with_paths():
     raw = ms_profile()
     raw["neutral_mode"] = "general"
     with pytest.raises(ProfileError) as ei:
-        profile_from_dict(raw)
+        profile_from_dict(raw, origin="package")
     assert any("$.neutral_mode" in e for e in ei.value.errors)
 
 
@@ -88,19 +88,19 @@ def test_direct_verified_needs_both_statuses(profile_status, modbus_status, expe
     raw = ms_profile()
     raw["status"] = profile_status
     raw["modbus"]["status"] = modbus_status
-    assert direct_verified(profile_from_dict(raw)) is expected
+    assert direct_verified(profile_from_dict(raw, origin="package")) is expected
 
 
 def test_modbus_spec_and_nvm_budget_parsed():
     from custom_components.volcast.core.profile import ModbusSpec, NvmBudget
     raw = ms_profile()
     raw["write_policy"]["nvm_budget"] = {"window_h": 12, "per_key": 10, "total": 30}
-    p = profile_from_dict(raw)
+    p = profile_from_dict(raw, origin="package")
     assert isinstance(p.modbus, ModbusSpec)
     assert p.modbus.transport_options["goodwe_udp"] == {"port": 8899, "timeout_ms": 2000, "gap_ms": 50}
     assert p.modbus.identify_reads == ((35000, 33),)
     assert p.nvm_budget == NvmBudget(window_s=12 * 3600.0, per_key=10, total=30)
-    assert profile_from_dict(ms_profile()).nvm_budget is None
+    assert profile_from_dict(ms_profile(), origin="package").nvm_budget is None
     with pytest.raises(TypeError):
         p.modbus.transport_options["goodwe_udp"]["port"] = 1       # tylko do odczytu
 
@@ -108,9 +108,9 @@ def test_modbus_spec_and_nvm_budget_parsed():
 def test_readback_settle_default_and_override():
     from custom_components.volcast.core.profile import DEFAULT_READBACK_SETTLE_S
     assert DEFAULT_READBACK_SETTLE_S == 1.5
-    assert profile_from_dict(ms_profile()).readback_settle_s == 1.5          # pole nieobecne
+    assert profile_from_dict(ms_profile(), origin="package").readback_settle_s == 1.5          # pole nieobecne
     raw = ms_profile()
     raw["write_policy"]["readback_settle_s"] = 0.4
-    assert profile_from_dict(raw).readback_settle_s == 0.4
+    assert profile_from_dict(raw, origin="package").readback_settle_s == 0.4
     gw = load_builtin("goodwe-et")
     assert gw.raw["write_policy"]["readback_settle_s"] == 1.5 and gw.readback_settle_s == 1.5

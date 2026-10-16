@@ -244,6 +244,64 @@ a `verified` profile.
   `tou_N_power_w` and `tou_N_soc` `number`.
 * `unique_id_regex` should be broad enough to match the usual unique ids across versions, but must
   compile. `transform` is `negate` or `invert_percent`.
+* Every `*_regex` field of the profile (`identify.model_regex`, `ha.integrations[].model_regex`,
+  `unique_id_regex` of entities and of `work_mode.ha`) runs in the Home Assistant event loop. It must
+  stay inside a small regex subset, and an upper bound of its backtracking work on a 128-character
+  text must stay under a limit chosen by measurement (every accepted pattern finishes `re.search`,
+  `re.match` and `re.fullmatch` in a few milliseconds on hostile texts). Schema validation enforces
+  it (`core/regex_safety.py`, the same rule as the Volcast profile gates):
+  * printable ASCII only (0x20-0x7E), at most 200 characters, and it must compile;
+  * allowed: literals; `\d \D \w \W \s \S` and a backslash before ASCII punctuation (`\. \- \( \\`);
+    classes `[...]` with no `[` inside, no `]` first, no `--`, `&&`, `||`, `~~`, and ranges only
+    between two literals in ascending order (a `-` right after a range is a literal); `.`; anchors
+    `^ $ \b`; groups `(...)` and `(?:...)`; alternation `|`; groups nest at most 4 deep;
+  * quantifiers `* + ? {n} {n,m}` (n <= m <= 16) only right after a literal, escape, class or `.`;
+    after a group only `?` (an optional group). Lazy (`*?`) and possessive (`*+`) quantifiers,
+    `{n,}`, `{,m}`, a quantifier after an anchor, `(`, `|`, the start or another quantifier, and an
+    unescaped literal `{ } ]` are rejected;
+  * `(?i)` only at the very start; lookbehind `(?<=...)`/`(?<!...)` only with 1-16 single
+    characters, escapes or classes and no quantifier on it. Anything else after `(?` (lookahead,
+    named groups, flags, comments, conditionals, atomic groups), backreferences and `\N \A \Z \x \u`
+    are rejected;
+  * every alternation branch and every group must contain a character-matching element: an empty
+    branch (`(ab|)`, `(|)`, `()`, `(\b)`, a trailing `a|`) is `empty_branch` — write `(ab)?` instead;
+    at most 8 `\b` and lookbehind assertions in one pattern (`too_many_assertions`; `^` and `$` do
+    not count); at most 6 groups `(...)`/`(?:...)` in one pattern (`too_many_groups`; lookbehinds do
+    not count) — merge alternatives into a class like `[ab]` or split the pattern into several list
+    entries;
+  * cost model: each atom has a character set (ASCII characters, plus "non-ASCII" for `.`, `\d \w \s`,
+    their negations, negated classes and every letter under `(?i)`, plus "end of text" for `$` and
+    the end of the pattern). A variable quantifier whose set cannot overlap what may follow it does
+    not multiply the leaves, but each of its width (max - min + 1, at most 128) backtracking steps
+    re-runs what follows up to the first required element, so it adds width x the cost of that
+    prefix to the work; otherwise it multiplies the backtracking leaves by its width. A group whose branches start with disjoint sets counts as its largest branch, otherwise as
+    the sum of its branches (plus one when optional). Work per leaf is the length of the pattern's
+    elements. A pattern whose every top-level branch starts with `^` is tried once, otherwise at all
+    129 positions. Starts x leaves x work may be at most 500000.
+* `identify.model_regex` (needed for feed profiles; the packaged ones follow it too) is a list of
+  patterns that each start with `^` (not `(?i)^`) and match neither an empty model nor any of `A`,
+  `Q`, `z`, `0`, `7`, `-`, `QX`, `ZZZZZZZZ`, `Q0-Q0`, `00000000`, `xyz123`, `NOT-A-MODEL`;
+  `identify.registers.device_type.expect` has at most 64 values and never 0 or 65535. A signed
+  feed holds at most 500 profiles and 2 MiB; over that, clients reject it as a whole.
+
+  A rejected pattern is reported as `niebezpieczny regex (<code>): <hint>`; the hint says how to fix
+  it, e.g. `quantifier_after_group` → use a class like `[ab]+` instead of `(a|b)+`; `too_costly` →
+  use `\d{1,3}` instead of `\d+` where the length is known and follow each `+`/`*` with a character
+  it cannot match (`[0-9]+K`, not `.+K`); `too_costly_unanchored` → start the pattern with `^`;
+  `repeat_too_large` → `{n,m}` with m <= 16 instead of `{n,}`. Identification problems use the codes
+  `identify_not_anchored`, `identify_too_broad` and `identify_expect`.
+
+  For feed profiles and in the generic profile test, a second guard also checks the parse tree Python
+  `re` actually executes (only the subset's node kinds); if that private parser module is unavailable
+  or returns a node it does not know, the feed profile is rejected. Packaged profiles are loaded with
+  the text rule only, so they never depend on it. At run time every profile pattern is matched through
+  `core/regex_safety.py` (`safe_search` / `safe_match`): a model, device text or unique id longer than
+  128 characters never matches (it is not truncated), and such a device cannot be claimed by a feed
+  profile instead of a packaged one.
+
+  The cases shared with the Volcast profile gates, each rejected one with its code, are in
+  `tests/fixtures/regex-safety.json` (the generic test reads the Volcast copy from
+  `VOLCAST_PROFILES_DIR/fixtures/` when that is set).
 
 **Direct mode (`modbus`).** No integration exists, so the integration talks to the inverter. The
 whole block is required:
@@ -304,6 +362,66 @@ assertions are in `tests/core/profile_golden.py`:
   `assert_capabilities_match_writes(profile)`.
 
 `tests/core/test_profile_template.py` shows the pattern; copy it into the profile's own test.
+
+### Generated profiles: golden files beside the profile
+
+A profile kept outside the package (for example a generated one, before it ships) carries its
+golden data next to the profile file instead of under `tests/golden/`:
+
+```
+<dir>/<id>.json
+<dir>/<id>.golden/registers.json   # or frames.json (recorded AA55 frames, GoodWe)
+<dir>/<id>.golden/expected.json
+<dir>/<id>.golden/README.md        # where the data comes from
+```
+
+`expected.json`:
+
+```json
+{"origin": "auto",
+ "reference": {"<read key>": <value>},
+ "intents": ["<intent>", ...],
+ "modes": ["<mode>", ...]}
+```
+
+* `reference` is the state the golden image encodes, in core conventions (battery positive =
+  discharge, grid positive = import). `null` is accepted only for a hand-written profile whose data
+  is recorded frames or an image without a documented reference state; a generated profile always
+  needs one.
+* `intents` / `modes` list the profile's keys; they only check that the files agree with each
+  other, they are not an independent oracle.
+* `origin` is `auto` for a generated profile and `manual` for a hand-written one. The rules fail
+  closed:
+  * a profile whose id is not already packaged must have `origin: "auto"` (missing or `manual`
+    fails);
+  * an `auto` profile must stay `draft` (both `status` and `modbus.status`) and must have
+    `registers.json` (recorded `frames.json` alone is not enough);
+  * it must read at least one of `soc`, `battery_power_w`, `grid_power_w`, `pv_power_w`, and its
+    `reference` must cover every one of them it reads, with non-zero battery and grid power, so a
+    wrong sign cannot pass;
+  * a packaged id may omit `origin` (hand-written); any other value than `auto`/`manual` fails.
+
+`tests/core/test_profiles_generic.py` runs every `*.json` in the profile directory through the same
+checks: schema validation, narrow identification (for every profile, generated or not: each
+`identify.model_regex` starts with `^` and matches neither an empty model nor an arbitrary
+unrelated model such as `A`, `0` or `NOT-A-MODEL`, so `^.` or `^SP1|.` fail; `device_type.expect`
+holds no blank-register value `0`/`0xFFFF` and at most 64 values), identification of its own
+golden image, rejection of every other profile's golden image (the packaged `tests/golden/*` images and the images beside the other
+profiles in the directory), every `read` key decoding from its own image, the reference state
+decoded key by key (floats with tolerance), intent consistency, capabilities matching the write
+keys, HA regexes, public sources, the `origin` rules, and acceptance by the profile feed loader
+(a profile this test passes can never make clients reject the signed feed). Point it at another directory with
+`VOLCAST_PROFILES_DIR`:
+
+```bash
+VOLCAST_PROFILES_DIR=/path/to/profiles python -m pytest tests/core/test_profiles_generic.py -q
+```
+
+The variable is read by this test only; the integration always loads its packaged profiles.
+Without the variable the test runs over the packaged profiles with their golden data from
+`tests/golden/` (no `expected.json` there; the per-profile tests hold their reference states).
+`schema-lite.json` in the directory is skipped. The per-profile tests stay: they cover what is
+specific to each brand.
 
 ## 7. Engine limitations
 

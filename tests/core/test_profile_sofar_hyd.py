@@ -9,6 +9,8 @@ from custom_components.volcast.core.modbus.identity import identity_info
 from custom_components.volcast.core.profile import load_builtin
 from custom_components.volcast.core.profile_schema import validate_profile
 from tests.core import profile_golden as pg
+# Inne testy per profil biorą tę asercję stąd; definicja jest we wspólnym `profile_golden`.
+from tests.core.profile_golden import assert_sources_public
 from tests.core.modbus.helpers import golden_image, goodwe_image
 
 PID = "sofar-hyd"
@@ -43,26 +45,6 @@ RATED_POWER = 0x06ED
 def _serial_words(text: str) -> dict[str, int]:
     raw = text.encode("ascii").ljust(16, b"\0")
     return {str(SERIAL + i): (raw[2 * i] << 8) | raw[2 * i + 1] for i in range(8)}
-
-
-# Odnośniki, których profil w publicznym repo nie może cytować: załączniki wrzucane na GitHub
-# (user-attachments) i pliki wgrane na fora (iobroker, loxforum) bywają kopiami dokumentów producenta
-# z zakazem redystrybucji; linki do dyskusji są dozwolone.
-NON_PUBLIC_REF_MARKERS = (
-    "user-attachments",
-    "forum.iobroker.net/assets",
-    "loxforum.com/filedata",
-    "/assets/uploads/files",
-)
-
-
-def assert_sources_public(raw: dict) -> None:
-    """Każde `sources[].ref` i oba `status_note` bez odnośników do niepublicznych kopii dokumentów."""
-    texts = [s["ref"] for s in raw["sources"]] + [s["what"] for s in raw["sources"]]
-    texts += [raw.get("status_note", ""), raw.get("modbus", {}).get("status_note", "")]
-    for text in texts:
-        for marker in NON_PUBLIC_REF_MARKERS:
-            assert marker not in text, f"niepubliczny odnośnik ({marker}): {text[:80]}"
 
 
 @pytest.fixture(scope="module")

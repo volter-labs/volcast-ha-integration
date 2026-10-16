@@ -92,6 +92,22 @@ def transport_order(candidate: Candidate) -> tuple[str, ...]:
     return _V5_TRANSPORTS if candidate.logger_serial is not None else _DEFAULT_TRANSPORTS
 
 
+def probe_order(profiles: Sequence[Any]) -> list[Any]:
+    """Kolejność sondy: zweryfikowane profile z pakietu, potem reszta pakietu, na końcu profile z feedu
+    (pierwsze dopasowanie wygrywa, budżet ramek jest wspólny); w obrębie poziomu kolejność wejścia."""
+    def key(p: Any) -> tuple[bool, bool]:
+        packaged = getattr(p, "origin", None) == "package"
+        return (not packaged, not (packaged and getattr(p, "status", None) == "verified"))
+    return sorted(profiles, key=key)
+
+
+def _tiers(profiles: Sequence[Any]) -> list[list[Any]]:
+    ordered = probe_order(profiles)
+    packaged = [p for p in ordered if getattr(p, "origin", None) == "package"]
+    rest = [p for p in ordered if getattr(p, "origin", None) != "package"]
+    return [t for t in (packaged, rest) if t]
+
+
 def _groups(kind: str, profiles: Sequence[Any]) -> list[tuple[tuple[int, int, float, float], list[Any]]]:
     """Profile obsługujące transport, pogrupowane po parametrach łącza (jedno połączenie na grupę)."""
     groups: dict[tuple[int, int, float, float], list[Any]] = {}
@@ -153,49 +169,52 @@ async def identify_detailed(candidate: Candidate, profiles: Sequence[Any], *, tr
         raise ValueError("identification needs the installation salt")
     errors: list[str] = []
     used = 0
-    for kind in transport_order(candidate):
-        if kind == "solarman_v5" and candidate.logger_serial is None:
-            continue
-        for (port, unit, timeout_s, gap_s), profs in _groups(kind, profiles):
-            if used >= budget:
-                _note(errors, "budget")
-                return None, None, used, tuple(errors)
-            cfg = TransportConfig(kind=kind, host=candidate.host, port=port, unit=unit, timeout_s=timeout_s,
-                                  gap_s=gap_s,
-                                  logger_serial=candidate.logger_serial if kind == "solarman_v5" else None)
-            try:
-                transport = transport_factory(cfg)
-            except Exception as err:  # noqa: BLE001 — zła konfiguracja/adres: następny transport
-                _note(errors, type(err).__name__)
+    # Najpierw WYŁĄCZNIE profile z pakietu (wszystkie łącza), dopiero gdy żaden nie pasuje — profile z feedu:
+    # profil z feedu nigdy nie wygrywa z pasującym profilem pakietu, niezależnie od kolejności łączy.
+    for tier in _tiers(profiles):
+        for kind in transport_order(candidate):
+            if kind == "solarman_v5" and candidate.logger_serial is None:
                 continue
-            start = requests_of(transport)
-            found = None
-            try:
-                for prof in profs:
-                    image, state = await _read_identify(
-                        transport, prof, lambda: budget - used - (requests_of(transport) - start), errors)
-                    if state == "ok":
-                        info = identity_info(prof, image)
-                        if not info["matched"]:
-                            continue
-                        fp = device_fingerprint(salt, prof, image)
-                        if fp is None:
-                            _note(errors, "identity_unknown")
-                            continue
-                        found = (Identity(prof.id, kind, port, unit, info["model"], info["rated_power_w"], fp),
-                                 prof)
-                        break
-                    if state in ("dead", "budget"):
-                        break
-            except Exception as err:  # noqa: BLE001 — sonda nigdy nie rzuca poza błędem soli
-                _note(errors, type(err).__name__)
-            finally:
-                used += max(0, requests_of(transport) - start)
-                if found is None:
-                    await close_quietly(transport)
-            if found is not None:
-                ident, prof = found
-                return ident, RegisterClient(transport, prof, salt=bytes(salt)), used, tuple(errors)
+            for (port, unit, timeout_s, gap_s), profs in _groups(kind, tier):
+                if used >= budget:
+                    _note(errors, "budget")
+                    return None, None, used, tuple(errors)
+                cfg = TransportConfig(kind=kind, host=candidate.host, port=port, unit=unit, timeout_s=timeout_s,
+                                      gap_s=gap_s,
+                                      logger_serial=candidate.logger_serial if kind == "solarman_v5" else None)
+                try:
+                    transport = transport_factory(cfg)
+                except Exception as err:  # noqa: BLE001 — zła konfiguracja/adres: następny transport
+                    _note(errors, type(err).__name__)
+                    continue
+                start = requests_of(transport)
+                found = None
+                try:
+                    for prof in profs:
+                        image, state = await _read_identify(
+                            transport, prof, lambda: budget - used - (requests_of(transport) - start), errors)
+                        if state == "ok":
+                            info = identity_info(prof, image)
+                            if not info["matched"]:
+                                continue
+                            fp = device_fingerprint(salt, prof, image)
+                            if fp is None:
+                                _note(errors, "identity_unknown")
+                                continue
+                            found = (Identity(prof.id, kind, port, unit, info["model"], info["rated_power_w"], fp),
+                                     prof)
+                            break
+                        if state in ("dead", "budget"):
+                            break
+                except Exception as err:  # noqa: BLE001 — sonda nigdy nie rzuca poza błędem soli
+                    _note(errors, type(err).__name__)
+                finally:
+                    used += max(0, requests_of(transport) - start)
+                    if found is None:
+                        await close_quietly(transport)
+                if found is not None:
+                    ident, prof = found
+                    return ident, RegisterClient(transport, prof, salt=bytes(salt)), used, tuple(errors)
     return None, None, used, tuple(errors)
 
 

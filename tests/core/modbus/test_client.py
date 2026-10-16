@@ -186,7 +186,7 @@ def test_profile_without_serial_uses_model_and_power(deye_profile):
     raw = __import__("json").loads(__import__("json").dumps(raw, default=dict))
     del raw["identify"]["registers"]["serial"]
     raw["modbus"]["identify_reads"] = [r for r in raw["modbus"]["identify_reads"] if r["addr"] != 3]
-    no_serial = profile_from_dict(raw)
+    no_serial = profile_from_dict(raw, origin="package")
     img = RegisterImage({0: 1280, 20: 34464, 21: 1})
     fp = device_fingerprint(SALT, no_serial, img)
     assert fp is not None and fp == device_fingerprint(SALT, no_serial, RegisterImage({0: 1280, 20: 34464, 21: 1}))

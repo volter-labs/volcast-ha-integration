@@ -9,6 +9,6 @@
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/volter-labs/volcast-ha-integration/issues",
-  "requirements": ["aiohttp>=3.8.0"],
+  "requirements": ["aiohttp>=3.8.0", "cryptography>=42"],
   "version": "2.0.0b10"
 }

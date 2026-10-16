@@ -89,3 +89,18 @@ OPT_DIRECT_TRIAL = "direct_trial"
 OPT_DIRECT_POLL_S = "direct_poll_s"
 DIRECT_POLL_S = 10
 DIRECT_SLOW_POLL_S = 60
+
+# Raport rozpoznania na żądanie chmury — pamięć wysłanych `request_id` (lista, max 20) i prób
+DISCOVERY_SENT_STORAGE_KEY = "volcast.discovery_sent"
+DISCOVERY_SENT_STORAGE_VERSION = 1
+
+# Podpisany feed profili marek (`get-profile-feed`, Ed25519; `core/profile_feed.py`).
+# {key_id: klucz publiczny raw hex (32 bajty)} — para z `scripts/profiles/gen-feed-key.ts` (repo Volcast).
+# CELOWO PUSTE: prawdziwy klucz publiczny dopisujemy przy wydaniu. Bez klucza feed jest bezczynny
+# (nic nie pobiera, nic nie wczytuje z magazynu); testy wstrzykują klucze parametrem/monkeypatch.
+# Rotacja: oba klucze naraz na czas przejścia, stary usuwany w kolejnym wydaniu.
+PROFILE_FEED_PUBLIC_KEYS: dict[str, str] = {}
+PROFILE_FEED_STORAGE_KEY = "volcast_profiles"
+PROFILE_FEED_STORAGE_VERSION = 1
+# Naprawa informacyjna „profil Twojej marki jest gotowy” (`brand_profile_ready_<id profilu>`).
+ISSUE_BRAND_PROFILE_READY = "brand_profile_ready"

@@ -28,7 +28,7 @@ from ..core.control.caps import entity_mode_ready
 from ..core.control.conflict import CONFLICT_DOMAINS, SELF_DOMAIN, static_conflicts
 from ..core.control.recommend import DIRECT, DIRECT_WITH_INTEGRATION_DATA, ENTITIES, REASONS, offer_path
 from ..core.control.select import control_verified
-from ..core.discovery.identify import Candidate, candidates_from
+from ..core.discovery.identify import Candidate, candidates_from, probe_order
 from ..core.discovery.network import probe_udp_48899
 from ..core.discovery.probe import ProbeReport, discover
 from ..core.profile import ProfileError, builtin_ids, direct_verified, load_builtin
@@ -156,14 +156,15 @@ def recommendation_text(rec) -> str:
 
 
 def load_profiles() -> list:
-    """Profile wbudowane (blokujące — wołać przez `async_add_executor_job`)."""
+    """Profile wbudowane i z feedu (blokujące — wołać przez `async_add_executor_job`): najpierw
+    zweryfikowane z pakietu, potem reszta pakietu, na końcu feed (`probe_order`)."""
     out = []
     for pid in builtin_ids():
         try:
             out.append(load_builtin(pid))
         except ProfileError as err:
             _LOGGER.warning("Volcast profile %s rejected: %s", pid, err)
-    return out
+    return probe_order(out)
 
 
 def _default_factory(cfg):

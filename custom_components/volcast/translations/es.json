@@ -468,6 +468,18 @@
     "inverter_work_mode": {
       "title": "El modo de trabajo del inversor puede cargar la batería desde la red",
       "description": "El inversor tiene su propio modo de trabajo o programación (por ejemplo Eco o un horario por tarifa ajustado en la app del fabricante) que puede cargar la batería desde la red fuera del plan de Volcast. Desactive ese modo o programación en la app del fabricante del inversor y deje activo el modo general (estándar). No apague el inversor en sí."
+    },
+    "brand_profile_ready": {
+      "title": "Hay un perfil de prueba disponible para tu inversor",
+      "description": "Volcast ha recibido un nuevo perfil de prueba que coincide con esta instalación: {label} ({profile}). Después de recargar la integración, Volcast puede usarlo para reconocer el inversor y leer sus datos. Volcast nunca controla el inversor con un perfil recibido de esta forma. Selecciona Reparar para cerrar este aviso.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "De acuerdo, entendido",
+            "description": "Esto solo cierra el aviso. Volcast no activa el control ni cambia ningún ajuste del inversor."
+          }
+        }
+      }
     }
   },
   "services": {

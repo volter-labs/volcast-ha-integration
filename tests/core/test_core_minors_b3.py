@@ -21,13 +21,13 @@ def test_core_minors_finite_after_unit_conversion():
 
 
 def test_core_minors_entity_value_finite_after_unit_conversion():
-    p = profile_from_dict(goodwe_raw())
+    p = profile_from_dict(goodwe_raw(), origin="package")
     assert entity_value("power_w", "1e303", p, "goodwe", unit="MW") is None
 
 
 @pytest.mark.parametrize("bad", [math.inf, -math.inf, math.nan])
 def test_core_minors_baseline_rejects_non_finite(bad):
-    p = profile_from_dict(goodwe_raw())
+    p = profile_from_dict(goodwe_raw(), origin="package")
     assert baseline_params(p, {"soc_min": bad}).soc_min is None
 
 
@@ -53,4 +53,4 @@ def test_core_minors_verified_profile_draft_integration_is_false():
     raw = goodwe_raw()
     raw["status"] = "verified"
     raw["ha"]["integrations"][0]["status"] = "draft"
-    assert control_verified(profile_from_dict(raw), "goodwe") is False
+    assert control_verified(profile_from_dict(raw, origin="package"), "goodwe") is False

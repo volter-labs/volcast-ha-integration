@@ -246,7 +246,7 @@ def test_verified_profile_with_draft_integration_entry_is_not_ready():
     import json
     raw = json.loads((PROFILES_DIR / "goodwe-et.json").read_text(encoding="utf-8"))
     raw["ha"]["integrations"][0]["status"] = "draft"
-    assert entity_mode_ready(ProfileChoice(profile_from_dict(raw), "goodwe", None), ALL) is False
+    assert entity_mode_ready(ProfileChoice(profile_from_dict(raw, origin="package"), "goodwe", None), ALL) is False
 
 
 def test_goodwe_et_stays_entity_mode_ready():

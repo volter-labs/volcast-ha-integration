@@ -20,7 +20,7 @@ from tests.sim.fixtures import goodwe_words
 SALT = bytes(range(16))
 GOODWE = load_builtin("goodwe-et")
 # goodwe-et bez bloku work_mode: scenariusze o strumieniu żądań (timeouty) niezwiązane z trybem pracy
-GOODWE_NO_WORK_MODE = profile_from_dict({k: v for k, v in GOODWE.raw.items() if k != "work_mode"})
+GOODWE_NO_WORK_MODE = profile_from_dict({k: v for k, v in GOODWE.raw.items() if k != "work_mode"}, origin="package")
 
 
 def _entry(domain, entry_id, *, data=None, options=None, disabled_by=None):

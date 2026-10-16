@@ -19,7 +19,7 @@ from .ha_fakes import FakeState
 
 
 def _plain():
-    return profile_from_dict(ms_profile())
+    return profile_from_dict(ms_profile(), origin="package")
 
 
 def _direct(profile, **kw):

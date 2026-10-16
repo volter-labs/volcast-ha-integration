@@ -10,10 +10,16 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 = minimum (Home Assistant 2024.4 from hacs.json); the regex rule relies on the private
+        # re parser, whose node shapes are pinned by tests on every supported version.
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - run: pip install -r requirements-test.txt
       - run: python -m pytest -q

@@ -14,6 +14,7 @@ from typing import Any
 
 from .control.readings import EXTRA_KEYS, MEASURED_KEYS
 from .params import TOU_FIELDS, WRITE_PARAMS
+from .regex_safety import REGEX_HINTS, iter_regex_fields, regex_problem
 
 # Odczyty pomiarowe, liczniki i limity — ta sama zamknięta lista co mapa źródeł chmury
 # (`core/control/readings.py`, jedno źródło) — plus odczyt nastaw do uzgadniania z falownikiem.
@@ -121,11 +122,9 @@ class _V:
         return True
 
     def regex(self, v: Any, path: str) -> None:
-        if self.str_(v, path):
-            try:
-                re.compile(v)
-            except re.error as e:
-                self.err(path, f"zły regex: {e}")
+        """Pole wzorca: tu tylko typ. Treść (długość, kwantyfikatory, kompilację) sprawdza
+        `regex_problem` dla każdego pola `*_regex` naraz, na końcu `validate_profile`."""
+        self.str_(v, path)
 
     def str_list(self, v: Any, path: str) -> list | None:
         """Lista samych tekstów — warunek konieczny przed `sorted()`/porównaniem multisetów."""
@@ -573,7 +572,7 @@ def profile_warnings(raw: object) -> list[str]:
             if isinstance(spec, dict) and spec.get("verify") is True]
 
 
-def validate_profile(raw: object) -> list[str]:
+def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
     v = _V()
     top = v.obj(raw, "$", _TOP_REQ, _TOP_OPT)
     if top is None:
@@ -764,4 +763,8 @@ def validate_profile(raw: object) -> list[str]:
         expected = tou.get("programs") if (model == "time_window" and tou) else 0
         if tw != expected:
             v.err("$.capabilities.time_windows", f"oczekiwano {expected}")
+    for path, rx in iter_regex_fields(top):
+        problem = regex_problem(rx, parse_tree=parse_tree)
+        if problem:
+            v.err(path, f"niebezpieczny regex ({problem}): {REGEX_HINTS.get(problem, problem)}")
     return v.errors

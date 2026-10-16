@@ -25,20 +25,20 @@ def _ctx(**kw):
 
 @pytest.mark.parametrize("age", [math.nan, -1.0, math.inf])
 def test_state_age_nan_fails_closed(age):
-    prof = profile_from_dict(ms_profile())
+    prof = profile_from_dict(ms_profile(), origin="package")
     r = apply_guards(Params(mode="auto"), _ctx(soc_age_s=age), prof)
     assert (r.write_allowed, r.invariant) == (False, "I-9")
 
 
 @pytest.mark.parametrize("reserve", [math.nan, -1.0, 101.0])
 def test_soc_reserve_out_of_range_fails_closed(reserve):
-    prof = profile_from_dict(ms_profile())
+    prof = profile_from_dict(ms_profile(), origin="package")
     r = apply_guards(Params(mode="auto"), _ctx(soc_reserve=reserve), prof)
     assert (r.write_allowed, r.invariant) == (False, "I-10")
 
 
 def test_reserve_engaged_overrides_soc_comparison():
-    prof = profile_from_dict(ms_profile())
+    prof = profile_from_dict(ms_profile(), origin="package")
     sell = next(n for n, m in prof.modes.items() if m.direction == "discharge")
     # SoC nad rezerwą, ale zatrzask trzyma → rozładowanie zdjęte
     r = apply_guards(Params(mode=sell, power_w=2000.0), _ctx(soc=12.0, reserve_engaged=True,
@@ -53,7 +53,7 @@ def test_reserve_engaged_overrides_soc_comparison():
 
 def test_reserve_engaged_none_keeps_soc_comparison():
     # Bez stanu zatrzasku (złote wektory) obowiązuje nieostre `soc <= rezerwa`.
-    prof = profile_from_dict(ms_profile())
+    prof = profile_from_dict(ms_profile(), origin="package")
     sell = next(n for n, m in prof.modes.items() if m.direction == "discharge")
     r = apply_guards(Params(mode=sell, power_w=2000.0), _ctx(soc=10.0, action=Action.DISCHARGE), prof)
     assert r.invariant == "I-1" and r.params.mode == prof.neutral_mode
@@ -66,7 +66,7 @@ def test_ref_cycle_rejected():
     raw["read"]["pv_power_w"] = {"sum": [{"ref": "load_power_w"}]}
     raw["read"]["load_power_w"] = {"sum": [{"ref": "pv_power_w"}]}
     with pytest.raises(ProfileError) as exc:
-        profile_from_dict(raw)
+        profile_from_dict(raw, origin="package")
     assert "cykl" in str(exc.value)
 
 
@@ -91,14 +91,14 @@ def test_select_only_for_mode():
     raw = json.loads((PROFILES_DIR / "goodwe-et.json").read_text(encoding="utf-8"))
     raw["ha"]["integrations"][0]["entities"]["power_w"]["domain"] = "select"
     with pytest.raises(ProfileError):
-        profile_from_dict(raw)
+        profile_from_dict(raw, origin="package")
 
 
 def test_direction_budget_at_least_one():
     raw = ms_profile()
     raw["write_policy"]["max_direction_changes_per_hour"] = 0
     with pytest.raises(ProfileError):
-        profile_from_dict(raw)
+        profile_from_dict(raw, origin="package")
 
 
 @pytest.mark.parametrize("key,state,unit,expected", [

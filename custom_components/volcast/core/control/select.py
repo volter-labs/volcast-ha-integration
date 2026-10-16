@@ -15,11 +15,11 @@ Profil bez `identify.model_regex` (identyfikacja po rejestrze) trafia wyłączni
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Sequence
 
-from ..profile import Profile
+from ..profile import Profile, writes_allowed
+from ..regex_safety import fits, safe_search
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,7 @@ def _model_ok(profile: Profile, model: str | None) -> bool:
     if not model:
         return False
     regexes = (profile.raw.get("identify") or {}).get("model_regex") or ()
-    return any(re.search(rx, model) for rx in regexes)
+    return any(safe_search(rx, model) for rx in regexes)
 
 
 def _maker_ok(profile: Profile, hint: InverterHint) -> bool:
@@ -56,13 +56,15 @@ def _ha_text_ok(profile: Profile, hint: InverterHint) -> bool:
     if not text:
         return False
     for integ in (profile.raw.get("ha") or {}).get("integrations") or ():
-        if integ["domain"] == hint.domain and any(re.search(rx, text) for rx in integ.get("model_regex") or ()):
+        if integ["domain"] == hint.domain and any(safe_search(rx, text) for rx in integ.get("model_regex") or ()):
             return True
     return False
 
 
 def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
-    """Zawęża kandydatów po tekście urządzenia; filtr bez trafień pomijamy."""
+    """Zawęża kandydatów po tekście urządzenia; filtr bez trafień pomijamy. Gdy nadal zostaje kilka,
+    rozstrzyga pierwszeństwo: jedyny zweryfikowany profil z pakietu, potem jedyny profil z pakietu —
+    profil z feedu nie przesłoni profilu pakietu."""
     for keep in (lambda p: _maker_ok(p, hint), lambda p: _ha_text_ok(p, hint),
                  lambda p: _model_ok(p, hint.model)):
         if len(cands) <= 1:
@@ -70,15 +72,41 @@ def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
         sub = [p for p in cands if keep(p)]
         if sub:
             cands = sub
+    for preferred in (lambda p: writes_allowed(p) and p.status == "verified", writes_allowed):
+        if len(cands) <= 1:
+            break
+        sub = [p for p in cands if preferred(p)]
+        if len(sub) == 1:
+            cands = sub
     return cands
 
 
+def _entity_match(p: Profile, hint: InverterHint) -> bool:
+    return hint.domain in _domains(p) and _model_ok(p, hint.model)
+
+
+def _eligible(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
+    """Ścisłe pierwszeństwo pakietu (feed tylko DODAJE marki): gdy urządzenie konkretnie pasuje do profilu
+    z pakietu (domena + model, marka w producencie albo wzorzec `ha.integrations[].model_regex`), profile
+    z feedu odpadają przed jakimkolwiek zawężaniem; w przeciwnym razie biorą udział jak pozostałe.
+    Tekst urządzenia dłuższy niż `INPUT_CAP` nie pasuje do żadnego wzorca — wtedy pakiet nie może się
+    wykazać dopasowaniem, więc feed odpada zachowawczo (nie przesłoni profilu z pakietu)."""
+    text = " ".join(t for t in (hint.manufacturer, hint.model) if t)
+    if not (fits(text) and fits(hint.model or "")):
+        return [p for p in ordered if writes_allowed(p)]
+    if any(writes_allowed(p) and (_entity_match(p, hint) or _maker_ok(p, hint) or _ha_text_ok(p, hint))
+           for p in ordered):
+        return [p for p in ordered if writes_allowed(p)]
+    return list(ordered)
+
+
 def _entity_cands(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
-    return _narrow([p for p in ordered if hint.domain in _domains(p) and _model_ok(p, hint.model)], hint)
+    return _narrow([p for p in _eligible(hint, ordered) if _entity_match(p, hint)], hint)
 
 
 def _read_only_cands(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
-    return _narrow([p for p in ordered if _maker_ok(p, hint) or hint.domain in _domains(p)], hint)
+    return _narrow([p for p in _eligible(hint, ordered) if _maker_ok(p, hint) or hint.domain in _domains(p)],
+                   hint)
 
 
 def select_profile(hints: Sequence[InverterHint], profiles: Sequence[Profile]) -> ProfileChoice | None:
@@ -124,7 +152,7 @@ def ambiguous_profiles(hints: Sequence[InverterHint], profiles: Sequence[Profile
 
 
 def control_verified(profile: Profile, integration_domain: str | None) -> bool:
-    if integration_domain is None or profile.status != "verified":
+    if integration_domain is None or profile.status != "verified" or not writes_allowed(profile):
         return False
     return any(i["domain"] == integration_domain and i.get("status") == "verified"
                for i in (profile.raw.get("ha") or {}).get("integrations") or ())

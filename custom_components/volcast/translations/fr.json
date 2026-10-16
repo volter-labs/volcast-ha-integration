@@ -468,6 +468,18 @@
     "inverter_work_mode": {
       "title": "Le mode de fonctionnement de l'onduleur peut charger la batterie depuis le réseau",
       "description": "L'onduleur a son propre mode de fonctionnement ou planning (par exemple Eco ou un planning tarifaire réglé dans l'application du fabricant) qui peut charger la batterie depuis le réseau en dehors du plan Volcast. Désactivez ce mode ou ce planning dans l'application du fabricant de l'onduleur et laissez le mode général (standard) activé. N'éteignez pas l'onduleur lui-même."
+    },
+    "brand_profile_ready": {
+      "title": "Un profil de test pour votre onduleur est disponible",
+      "description": "Volcast a reçu un nouveau profil de test correspondant à cette installation : {label} ({profile}). Après le rechargement de l'intégration, Volcast peut l'utiliser pour reconnaître l'onduleur et lire ses données. Volcast ne pilote jamais l'onduleur avec un profil reçu de cette façon. Sélectionnez Réparer pour fermer cet avis.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "OK, compris",
+            "description": "Cela ferme seulement l'avis. Volcast n'active pas le pilotage et ne modifie aucun réglage de l'onduleur."
+          }
+        }
+      }
     }
   },
   "services": {

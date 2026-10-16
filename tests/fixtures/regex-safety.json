@@ -1,0 +1,746 @@
+{
+  "description": "Wspólne przypadki reguły wzorców *_regex i identify.model_regex (Volcast: scripts/profiles/regex-safety.mjs = supabase/functions/_shared/profiles/regex-safety.ts; HA: custom_components/volcast/core/regex_safety.py + profile_feed._identify_narrow). Stałe: profiles/schema-lite.json x-regex-safety. accepted = obie strony przyjmują (każdy zmierzony: re.search/match/fullmatch na wrogim tekście długości input_cap mieści się w budżecie czasu); rejected = obie strony odrzucają z kodem reason; identify = fragment profilu { identify } z oczekiwanym kodem (null = przechodzi). Kody i wskazówki: REGEX_HINTS.",
+  "input_cap": 128,
+  "accepted": [
+    "^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)",
+    "^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)$",
+    "^(GW|GoodWe)[0-9]+K?-?(ET|EH)$",
+    "^SH\\d+(\\.\\d+)?RT(-V\\d+)?$",
+    "^(SPH|SPA) ?\\d{4,5}(TL)?( BL)?(-UP)?$",
+    "^GW\\d+(\\.\\d+)?K-(ET|EH|BT|BH)(-\\d+)?$",
+    "^(?:SH|SA)\\d{1,2}(?:\\.\\d)?(?:RS|RT)(?:-20|-V112)?$",
+    "^SUN-[0-9]+K-SG[0-9]+LP[0-9]+(-EU)?$",
+    "^SUN2000-([2-9]|1[0-2])(\\.[0-9]+)?KTL-(L1|M1)",
+    "^(Fronius )?(Primo|Symo) GEN24\\b",
+    "^HYD ?[0-9]+(\\.[0-9]+)?K?TL-?(3PH)?$",
+    "^S6-EH[13]P[0-9.]+K(-[A-Z0-9]+)?$",
+    "^(0602|010F|110F|114F|134F|140C|143|160F[345]|2051|6031|6041|1031)",
+    "^[A-Z]{2,4}[0-9]{3,5}[A-Z]?$",
+    "^(?:inverter|battery)_[0-9A-F]{16}_\\w+_\\w+$",
+    "^goodwe-battery_soc-",
+    "^sensor\\.goodwe_.*_battery_soc$",
+    "^([0-9a-z]+_battery_sensor|.+_[0-9]+_Battery SOC)$",
+    "^foxess_modbus_(?:.+_)?(?<!force_charge_)max_soc$",
+    "^.+(?<!_m[1-3])_acpower$",
+    "^sg_(battery_)?export_power_raw$",
+    "^huawei_solar_.*_storage_state_of_capacity$",
+    "_battery_soc$",
+    "(?i)\\bHYD[ -]?[0-9]",
+    "(?i)\\b(solis|ginlong)\\b",
+    "[\\w-]+",
+    "^(SPH|SPA)( |-)?\\d{4,5}(TL)?( BL)?(-UP)?$",
+    "^(?:SH|SA)(\\d{1,2})(?:\\.\\d)?(?:RS|RT)(?:-20|-V112)?$",
+    "^(SPH|SPA)( |-)?\\d{4,5}(TL)?( BL)?(-UP)?(-EU)?$",
+    "^b*(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w)Z",
+    "^b*\\b\\b\\b\\b\\b\\b\\b\\bZ",
+    ""
+  ],
+  "rejected": [
+    {
+      "pattern": "\\w?\\w?\\w?\\w?\\w*\\w*\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "\\w*\\w*\\w?\\w?\\w?\\w?\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "(?i)\\w?\\w?\\w?\\w?\\w*\\w*\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "\\w*\\w*(\\w|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p)\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w?\\w{16}!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "^\\w?\\w?\\w?\\w?\\w*\\w*\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "\\w*\\w*\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": ".?.?.?.?.*.*................................................................................!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "[a1_]?[a1_]?[a1_]*[a1_]*[a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_][a1_]!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "\\S*\\w*\\w?\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\b!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "a*[^!]{0,3}[^!]*\\S\\S\\S\\S\\S\\S\\S\\S\\S\\S\\S\\S\\w\\b!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "[A-Za-z0-9]+.[\\w\\-]{0,3}[A-Za-z0-9]+\\w\\w\\w\\w\\w\\w\\w[a-z0-9_]?\\b!",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": ".*.*.*.*=",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": ".*.*.*=",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "^.*.*.*=",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "\\d*\\d*\\d*\\d*\\d*\\d*x",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "(?:.*a|.*b|.*c)(?:.*a|.*b)=",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "a{1,16}a{1,16}a{1,16}a{1,16}=",
+      "reason": "too_costly_unanchored"
+    },
+    {
+      "pattern": "^.+_.+_.+_soc$",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": ".*_.*_battery_soc$",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": "[a-z0-9_]+_[a-z0-9_]+_battery$",
+      "reason": "too_costly"
+    },
+    {
+      "pattern": ".+_soc$",
+      "reason": "too_costly_unanchored"
+    },
+    {
+      "pattern": "^b*(|)(|)(|)(|)(|)(|)(|)(|)(|)(|)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w)Z",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^b*(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?:|)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w)Z",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^b*(|||)(|||)(|||)(|||)(|||)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)Z",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^b*(|)(|)(|)(|)(|)(|)(|)(|)(|)(|)\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\bZ",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^a*(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?:x?|)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)(?<=\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w\\w)Z",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^b*\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\bZ",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "^b*\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\bZ",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "b*\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\b\\bZ",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "^b*(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)(?<=\\w\\w\\w\\w)Z",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "^b*(?<!a)(?<!a)(?<!a)(?<!a)(?<!a)\\b\\b\\b\\bZ",
+      "reason": "too_many_assertions"
+    },
+    {
+      "pattern": "()",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(|)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(a|)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(|a)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(?:|)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "(\\b)",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "a|",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^GW(-ET|)$",
+      "reason": "empty_branch"
+    },
+    {
+      "pattern": "^\\s*(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(\\s*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(?:\\s*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(b*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(?:a(b*))(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "length"
+    },
+    {
+      "pattern": "(?:x|b*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)(o?|p?)(q?|r?)(s?|t?)(u?|v?)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)(?<=\\W\\W\\W\\W\\W)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(b*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(?:a(b*))(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "(?:x|b*)(c?|d?)(e?|f?)(g?|h?)(i?|j?)(k?|l?)(m?|n?)Z",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "^(a)(b)(c)(d)(e)(f)(g)$",
+      "reason": "too_many_groups"
+    },
+    {
+      "pattern": "(a+)+",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "(.*)*",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "^(a|a)+$",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "(a|b)+",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*$",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "^(a?){8}a{8}$",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "(ab){2}",
+      "reason": "quantifier_after_group"
+    },
+    {
+      "pattern": "(?=a)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?!a)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?P<n>a)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?<n>a)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(a)\\1",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(a)(?(1)b|c)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?#c)a",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?i:a)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?-i:a)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?x)a b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?s).",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a(?i)",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "^(?i)gw",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?>a+)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\N{LATIN SMALL LETTER A}",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\Aa\\Z",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\x41",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\u0041",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "\\q",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[]a]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[[a]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[a--b]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[\\d-z]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[a-\\w]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "[\\b]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a]",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a}",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a{",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?<=a+)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?<=a|b)c",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "(?<=aaaaaaaaaaaaaaaaa)b",
+      "reason": "forbidden_construct"
+    },
+    {
+      "pattern": "a*?",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "a+?",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "(ab)??",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "a*+",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "a++",
+      "reason": "lazy_quantifier"
+    },
+    {
+      "pattern": "a**",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "*a",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "^*a",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "\\b+",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "(?i)*a",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "(?<!a)*b",
+      "reason": "quantifier_position"
+    },
+    {
+      "pattern": "a{2,}",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "a{,3}",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "a{17}",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "a{4294967296}",
+      "reason": "repeat_too_large"
+    },
+    {
+      "pattern": "café",
+      "reason": "non_ascii"
+    },
+    {
+      "pattern": "a\tb",
+      "reason": "non_ascii"
+    },
+    {
+      "pattern": "🙂",
+      "reason": "non_ascii"
+    },
+    {
+      "pattern": "[🙂-￿]",
+      "reason": "non_ascii"
+    },
+    {
+      "pattern": "^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "reason": "length"
+    },
+    {
+      "pattern": "(((((a)))))",
+      "reason": "too_deep"
+    },
+    {
+      "pattern": "(",
+      "reason": "compile"
+    },
+    {
+      "pattern": ")",
+      "reason": "compile"
+    },
+    {
+      "pattern": "[a",
+      "reason": "compile"
+    },
+    {
+      "pattern": "[z-a]",
+      "reason": "compile"
+    },
+    {
+      "pattern": "a{3,2}",
+      "reason": "compile"
+    },
+    {
+      "pattern": "a\\",
+      "reason": "compile"
+    },
+    {
+      "pattern": 5,
+      "reason": "not_string"
+    },
+    {
+      "pattern": null,
+      "reason": "not_string"
+    },
+    {
+      "pattern": {
+        "a": 1
+      },
+      "reason": "not_string"
+    }
+  ],
+  "identify": [
+    {
+      "identify": {
+        "model_regex": [
+          "^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)"
+        ]
+      },
+      "reason": null
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^SUN2000-",
+          "^(Primo|Symo) GEN24\\b"
+        ],
+        "registers": {
+          "device_type": {
+            "expect": [
+              1,
+              2,
+              300
+            ]
+          }
+        }
+      },
+      "reason": null
+    },
+    {
+      "identify": {
+        "registers": {
+          "device_type": {
+            "expect": [
+              4097
+            ]
+          }
+        }
+      },
+      "reason": null
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "GW[0-9]+"
+        ]
+      },
+      "reason": "identify_not_anchored"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "(?i)^gw"
+        ]
+      },
+      "reason": "identify_not_anchored"
+    },
+    {
+      "identify": {
+        "model_regex": "^GW"
+      },
+      "reason": "identify_not_anchored"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          7
+        ]
+      },
+      "reason": "identify_not_anchored"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^"
+        ]
+      },
+      "reason": "identify_too_broad"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^.*"
+        ]
+      },
+      "reason": "identify_too_broad"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^[A-Z]"
+        ]
+      },
+      "reason": "identify_too_broad"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^[0-9]+$"
+        ]
+      },
+      "reason": "identify_too_broad"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^NOT"
+        ]
+      },
+      "reason": "identify_too_broad"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^Q"
+        ]
+      },
+      "reason": "identify_too_broad"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^GW"
+        ],
+        "registers": {
+          "device_type": {
+            "expect": [
+              0,
+              7
+            ]
+          }
+        }
+      },
+      "reason": "identify_expect"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^GW"
+        ],
+        "registers": {
+          "device_type": {
+            "expect": [
+              65535
+            ]
+          }
+        }
+      },
+      "reason": "identify_expect"
+    },
+    {
+      "identify": {
+        "model_regex": [
+          "^GW"
+        ],
+        "registers": {
+          "device_type": {
+            "expect": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64,
+              65
+            ]
+          }
+        }
+      },
+      "reason": "identify_expect"
+    }
+  ]
+}

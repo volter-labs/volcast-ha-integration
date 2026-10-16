@@ -470,7 +470,7 @@ async def test_conditional_restore_of_an_echo_only_key_sends_nothing(goodwe_clie
     from tests.control.test_executor_direct import _thaw
     raw = _thaw(goodwe_client.profile.raw)
     raw["modbus"]["echo_only"] = ["mode"]
-    profile = profile_from_dict(raw)
+    profile = profile_from_dict(raw, origin="package")
     w = RegisterWriter(goodwe_client, profile)
     goodwe_bank.poke(47511, 10)
     # Bez odczytu przed zapisem warunek nie jest potwierdzony — żadnej ramki na ślepo.
