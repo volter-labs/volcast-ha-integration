@@ -193,6 +193,7 @@ _util_mod.slugify = lambda text, *, separator="_": separator.join(
 _util_mod.dt = _make_module("homeassistant.util.dt", {
     "utcnow": lambda: FAKE_UTCNOW,
     "parse_datetime": _fake_parse_datetime,
+    "as_local": lambda moment: moment,
 })
 
 

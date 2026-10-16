@@ -533,6 +533,9 @@
       "control_plan": {
         "name": "План"
       },
+      "control_plan_summary": {
+        "name": "Опис плану"
+      },
       "control_status": {
         "name": "Стан"
       },

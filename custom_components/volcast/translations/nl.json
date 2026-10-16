@@ -533,6 +533,9 @@
       "control_plan": {
         "name": "Plan"
       },
+      "control_plan_summary": {
+        "name": "Planoverzicht"
+      },
       "control_status": {
         "name": "Status"
       },
