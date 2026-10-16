@@ -417,6 +417,24 @@ async def test_repair_only_after_a_new_verified_feed_never_on_rejection(monkeypa
     assert len(issues) == 1
 
 
+@pytest.mark.asyncio
+async def test_profile_withdrawn_by_a_newer_feed_disappears_from_the_registry(monkeypatch):
+    store = _Store()
+    monkeypatch.setattr(coord, "Store", lambda hass, version, key: store)
+    feed = await coord.async_get_profile_feed(_Hass(), keys=KEYS)
+    both = _body([_acme(), _acme("acme-other")], generated_at="2026-10-14T08:00:00.000Z")
+    assert await feed.async_check(_const(pf.FeedFetch("ok", both))) == "updated"
+    assert {"acme-hybrid", "acme-other"} <= set(builtin_ids())
+    only = _body([_acme("acme-other")], generated_at="2026-10-15T08:00:00.000Z")
+    assert await feed.async_check(_const(pf.FeedFetch("ok", only))) == "updated"
+    assert "acme-hybrid" not in builtin_ids() and "acme-other" in builtin_ids()
+    assert pf.feed_profile("acme-hybrid") is None
+    # po restarcie HA z magazynu wraca już tylko zestaw bez wycofanego profilu
+    again = await coord.async_get_profile_feed(_Hass(), keys=KEYS)
+    assert again.held is not None and set(again.held.profiles) == {"acme-other"}
+    assert "acme-hybrid" not in builtin_ids()
+
+
 def _const(result):
     async def fetch(etag):
         return result

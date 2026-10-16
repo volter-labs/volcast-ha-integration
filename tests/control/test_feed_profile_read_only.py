@@ -13,6 +13,7 @@ from custom_components.volcast.core.control.ladder import VERIFIED, Ladder, devi
 from custom_components.volcast.core.control.select import control_verified
 from custom_components.volcast.core.profile import (
     ORIGIN_FEED, ORIGIN_PACKAGE, direct_verified, load_builtin, profile_from_dict, writes_allowed)
+from custom_components.volcast.control.executor import VolcastExecutor
 from custom_components.volcast.control.verification import start_rung_for
 from tests.control.test_executor_direct import (  # noqa: F401 — `issues` to fixture
     GW_DRAFT, GW_NOW, GW_V, SALT, Harness, _thaw, gw_target, issues)
@@ -246,3 +247,29 @@ async def test_owned_state_never_restored_through_a_feed_profile(make_hass, good
         assert len(goodwe_bank.writes) == before
     finally:
         await h2.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_state_dropped_with_a_repair_when_the_profile_is_withdrawn(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Sterowanie przez profil (własność, migawka), potem nowy feed wycofuje profil: nie ma go ani w pakiecie,
+    # ani w feedzie — wykonawca bez profilu nie przejmie rekordu, porzuca go ze zgłoszeniem i nic nie pisze.
+    target = gw_target(goodwe_udp_sim)
+    h = await Harness(make_hass, GW_V, target).start()
+    h.ex.verification = Gate(True)
+    await h.ex.async_tick()
+    assert h.ex.owned and goodwe_bank.writes
+    store = h.store
+    await h.ex.async_stop()
+    await h.conn.async_stop()
+    before = len(goodwe_bank.writes)
+    ex = VolcastExecutor(h.hass, h.entry, choice=None, mapped={}, rated_power_w=8000.0, store=store,
+                         clock=h.clock, utcnow=h.utc)
+    await ex.async_start()
+    try:
+        assert not ex.owned and "control_record_dropped" in issues.keys()
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+        assert len(goodwe_bank.writes) == before
+    finally:
+        await ex.async_stop()
