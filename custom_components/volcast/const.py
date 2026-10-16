@@ -96,10 +96,12 @@ DISCOVERY_SENT_STORAGE_VERSION = 1
 
 # Podpisany feed profili marek (`get-profile-feed`, Ed25519; `core/profile_feed.py`).
 # {key_id: klucz publiczny raw hex (32 bajty)} — para z `scripts/profiles/gen-feed-key.ts` (repo Volcast).
-# CELOWO PUSTE: prawdziwy klucz publiczny dopisujemy przy wydaniu. Bez klucza feed jest bezczynny
-# (nic nie pobiera, nic nie wczytuje z magazynu); testy wstrzykują klucze parametrem/monkeypatch.
+# Bez żadnego klucza feed jest bezczynny (nic nie pobiera, nic nie wczytuje z magazynu); testy
+# wstrzykują własne klucze parametrem/monkeypatch.
 # Rotacja: oba klucze naraz na czas przejścia, stary usuwany w kolejnym wydaniu.
-PROFILE_FEED_PUBLIC_KEYS: dict[str, str] = {}
+PROFILE_FEED_PUBLIC_KEYS: dict[str, str] = {
+    "feed-2026-10": "ae9987520ee23510928c2e1730cad43b4ab3da02a22ff1b62543b33fe3ffd28d",
+}
 PROFILE_FEED_STORAGE_KEY = "volcast_profiles"
 PROFILE_FEED_STORAGE_VERSION = 1
 # Naprawa informacyjna „profil Twojej marki jest gotowy” (`brand_profile_ready_<id profilu>`).

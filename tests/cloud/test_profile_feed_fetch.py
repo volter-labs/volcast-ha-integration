@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import types
 from pathlib import Path
 
@@ -310,8 +311,12 @@ def issues(monkeypatch):
     return made
 
 
-def test_public_keys_ship_empty_and_storage_names():
-    assert PROFILE_FEED_PUBLIC_KEYS == {}
+def test_public_key_is_shipped_and_storage_names():
+    assert list(PROFILE_FEED_PUBLIC_KEYS) == ["feed-2026-10"]
+    for key_id, hexkey in PROFILE_FEED_PUBLIC_KEYS.items():
+        assert re.fullmatch(r"feed-\d{4}-\d{2}", key_id)
+        assert re.fullmatch(r"[0-9a-f]{64}", hexkey)          # raw Ed25519, 32 bajty
+        assert len(bytes.fromhex(hexkey)) == 32
     assert (PROFILE_FEED_STORAGE_KEY, PROFILE_FEED_STORAGE_VERSION) == ("volcast_profiles", 1)
 
 
@@ -321,13 +326,14 @@ def test_manifest_requires_cryptography():
 
 
 @pytest.mark.asyncio
-async def test_glue_is_inert_with_the_shipped_empty_keys(monkeypatch):
+async def test_glue_is_active_with_the_shipped_key_and_rejects_foreign_signature(monkeypatch):
     stores = []
     monkeypatch.setattr(coord, "Store", lambda hass, version, key: stores.append(key) or _Store(
         {"document": json.loads(_body()), "checked_at": 0}))
     hass = _Hass()
     feed = await coord.async_get_profile_feed(hass)
-    assert not feed.active and not feed.due() and "acme-hybrid" not in builtin_ids()
+    # klucz z paczki aktywuje feed; dokument podpisany obcym (testowym) kluczem się nie wczytuje
+    assert feed.active and "acme-hybrid" not in builtin_ids()
 
 
 @pytest.mark.asyncio
