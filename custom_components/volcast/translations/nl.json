@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Omvormerbesturing door Volcast gepauzeerd",
-      "description": "Een omvormerinstelling die door Volcast wordt bestuurd ({entity_id}) is buiten Volcast om gewijzigd. Volcast heeft de besturing 30 minuten gepauzeerd en behoudt de instellingen die je hebt gewijzigd. Daarna wordt de besturing automatisch hervat, of kies Repareren om de besturing nu te hervatten; zet de Volcast-besturingsschakelaar uit om dit te stoppen.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Volcast-besturing nu hervatten",
-            "description": "Volcast beëindigt de pauze en past zijn plan direct toe op de omvormer, waarbij de buiten Volcast om gewijzigde instellingen ({entity_id}) worden overschreven."
+            "description": "Een omvormerinstelling die door Volcast wordt bestuurd ({entity_id}) is buiten Volcast om gewijzigd. Volcast heeft de besturing 30 minuten gepauzeerd en behoudt de instellingen die je hebt gewijzigd. Daarna wordt de besturing automatisch hervat, of kies Repareren om de besturing nu te hervatten; zet de Volcast-besturingsschakelaar uit om dit te stoppen. Volcast beëindigt de pauze en past zijn plan direct toe op de omvormer, waarbij de buiten Volcast om gewijzigde instellingen ({entity_id}) worden overschreven."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Een andere regelaar bestuurt je omvormer",
-      "description": "Een andere regelaar ({kind}: {label}) schrijft naar dezelfde omvormerinstellingen als Volcast. Kies Oplossen om te bepalen wie de omvormer bestuurt: Volcast, of je eigen regelaar (Volcast plant dan alleen).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Wie bestuurt de omvormer?",
-            "description": "Zolang een andere regelaar schrijft, pauzeert Volcast de verificatie. Kies wie de omvormer bestuurt.",
+            "description": "Een andere regelaar ({kind}: {label}) schrijft naar dezelfde omvormerinstellingen als Volcast. Kies Oplossen om te bepalen wie de omvormer bestuurt: Volcast, of je eigen regelaar (Volcast plant dan alleen). Zolang een andere regelaar schrijft, pauzeert Volcast de verificatie. Kies wie de omvormer bestuurt.",
             "menu_options": {
               "volcast": "Volcast bestuurt de omvormer",
               "own_ems": "Mijn eigen regelaar (Volcast plant alleen)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Volcast-apparaatverificatie gestopt",
-      "description": "De verificatie van de omvormer is gestopt ({reason}). Volcast bestuurt de omvormer pas als hij geverifieerd is. Kies Oplossen om het opnieuw te proberen.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Verificatie opnieuw uitvoeren",
-            "description": "Volcast start de verificatie van de omvormer opnieuw vanaf de stap waar die is gestopt."
+            "description": "De verificatie van de omvormer is gestopt ({reason}). Volcast bestuurt de omvormer pas als hij geverifieerd is. Kies Oplossen om het opnieuw te proberen. Volcast start de verificatie van de omvormer opnieuw vanaf de stap waar die is gestopt."
           }
         }
       }

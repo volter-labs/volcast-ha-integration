@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Wechselrichter-Steuerung durch Volcast pausiert",
-      "description": "Eine von Volcast gesteuerte Wechselrichter-Einstellung ({entity_id}) wurde außerhalb von Volcast geändert. Volcast hat die Steuerung für 30 Minuten pausiert und behält deine geänderten Einstellungen bei. Danach läuft die Steuerung automatisch weiter, oder wähle Beheben, um sie jetzt fortzusetzen; um sie zu beenden, schalte den Volcast-Steuerungsschalter aus.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Volcast-Steuerung jetzt fortsetzen",
-            "description": "Volcast beendet die Pause und wendet seinen Plan sofort auf den Wechselrichter an; dabei werden die außerhalb von Volcast geänderten Einstellungen ({entity_id}) überschrieben."
+            "description": "Eine von Volcast gesteuerte Wechselrichter-Einstellung ({entity_id}) wurde außerhalb von Volcast geändert. Volcast hat die Steuerung für 30 Minuten pausiert und behält deine geänderten Einstellungen bei. Danach läuft die Steuerung automatisch weiter, oder wähle Beheben, um sie jetzt fortzusetzen; um sie zu beenden, schalte den Volcast-Steuerungsschalter aus. Volcast beendet die Pause und wendet seinen Plan sofort auf den Wechselrichter an; dabei werden die außerhalb von Volcast geänderten Einstellungen ({entity_id}) überschrieben."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Ein anderer Regler steuert deinen Wechselrichter",
-      "description": "Ein anderer Regler ({kind}: {label}) schreibt dieselben Wechselrichter-Einstellungen wie Volcast. Wähle Beheben, um festzulegen, wer den Wechselrichter steuert: Volcast oder dein eigener Regler (Volcast plant dann nur).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Wer steuert den Wechselrichter?",
-            "description": "Solange ein anderer Regler schreibt, pausiert Volcast die Prüfung. Wähle, wer den Wechselrichter steuert.",
+            "description": "Ein anderer Regler ({kind}: {label}) schreibt dieselben Wechselrichter-Einstellungen wie Volcast. Wähle Beheben, um festzulegen, wer den Wechselrichter steuert: Volcast oder dein eigener Regler (Volcast plant dann nur). Solange ein anderer Regler schreibt, pausiert Volcast die Prüfung. Wähle, wer den Wechselrichter steuert.",
             "menu_options": {
               "volcast": "Volcast steuert den Wechselrichter",
               "own_ems": "Mein eigener Regler (Volcast plant nur)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Volcast-Geräteprüfung gestoppt",
-      "description": "Die Prüfung des Wechselrichters wurde gestoppt ({reason}). Volcast steuert den Wechselrichter erst, wenn er geprüft ist. Wähle Beheben, um es erneut zu versuchen.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Prüfung wiederholen",
-            "description": "Volcast startet die Prüfung des Wechselrichters ab dem Schritt neu, bei dem sie gestoppt wurde."
+            "description": "Die Prüfung des Wechselrichters wurde gestoppt ({reason}). Volcast steuert den Wechselrichter erst, wenn er geprüft ist. Wähle Beheben, um es erneut zu versuchen. Volcast startet die Prüfung des Wechselrichters ab dem Schritt neu, bei dem sie gestoppt wurde."
           }
         }
       }

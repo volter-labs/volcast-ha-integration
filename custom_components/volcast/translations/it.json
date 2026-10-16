@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Controllo dell'inverter da parte di Volcast in pausa",
-      "description": "Un'impostazione dell'inverter controllata da Volcast ({entity_id}) è stata modificata al di fuori di Volcast. Volcast ha messo in pausa il controllo per 30 minuti e mantiene le impostazioni che hai modificato. Poi il controllo riprende automaticamente, oppure seleziona Ripara per riprenderlo subito; per fermarlo, spegni l'interruttore di controllo di Volcast.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Riprendi subito il controllo di Volcast",
-            "description": "Volcast termina la pausa e applica subito il proprio piano all'inverter, sovrascrivendo le impostazioni modificate al di fuori di Volcast ({entity_id})."
+            "description": "Un'impostazione dell'inverter controllata da Volcast ({entity_id}) è stata modificata al di fuori di Volcast. Volcast ha messo in pausa il controllo per 30 minuti e mantiene le impostazioni che hai modificato. Poi il controllo riprende automaticamente, oppure seleziona Ripara per riprenderlo subito; per fermarlo, spegni l'interruttore di controllo di Volcast. Volcast termina la pausa e applica subito il proprio piano all'inverter, sovrascrivendo le impostazioni modificate al di fuori di Volcast ({entity_id})."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Un altro controllore sta controllando il tuo inverter",
-      "description": "Un altro controllore ({kind}: {label}) scrive sulle stesse impostazioni dell'inverter di Volcast. Seleziona Correggi per scegliere chi controlla l'inverter: Volcast, o il tuo controllore (in tal caso Volcast si limita a pianificare).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Chi controlla l'inverter?",
-            "description": "Mentre un altro controllore scrive, Volcast sospende la verifica. Scegli quale controlla l'inverter.",
+            "description": "Un altro controllore ({kind}: {label}) scrive sulle stesse impostazioni dell'inverter di Volcast. Seleziona Correggi per scegliere chi controlla l'inverter: Volcast, o il tuo controllore (in tal caso Volcast si limita a pianificare). Mentre un altro controllore scrive, Volcast sospende la verifica. Scegli quale controlla l'inverter.",
             "menu_options": {
               "volcast": "Volcast controlla l'inverter",
               "own_ems": "Il mio controllore (Volcast solo pianifica)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Verifica del dispositivo Volcast interrotta",
-      "description": "La verifica dell'inverter si è interrotta ({reason}). Volcast non controlla l'inverter finché non è verificato. Seleziona Correggi per riprovare.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Riprova la verifica",
-            "description": "Volcast riavvia la verifica dell'inverter dal passaggio in cui si era interrotta."
+            "description": "La verifica dell'inverter si è interrotta ({reason}). Volcast non controlla l'inverter finché non è verificato. Seleziona Correggi per riprovare. Volcast riavvia la verifica dell'inverter dal passaggio in cui si era interrotta."
           }
         }
       }

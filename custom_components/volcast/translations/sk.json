@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Riadenie striedača cez Volcast je pozastavené",
-      "description": "Nastavenie striedača riadené Volcastom ({entity_id}) bolo zmenené mimo Volcast. Volcast pozastavil riadenie na 30 minút a ponecháva vami zmenené nastavenia. Potom sa riadenie automaticky obnoví, alebo vyberte Opraviť a obnovte ho hneď; ak ho chcete zastaviť, vypnite prepínač riadenia Volcast.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Obnoviť riadenie Volcast hneď",
-            "description": "Volcast ukončí pauzu a okamžite použije svoj plán na striedači, čím prepíše nastavenia zmenené mimo Volcast ({entity_id})."
+            "description": "Nastavenie striedača riadené Volcastom ({entity_id}) bolo zmenené mimo Volcast. Volcast pozastavil riadenie na 30 minút a ponecháva vami zmenené nastavenia. Potom sa riadenie automaticky obnoví, alebo vyberte Opraviť a obnovte ho hneď; ak ho chcete zastaviť, vypnite prepínač riadenia Volcast. Volcast ukončí pauzu a okamžite použije svoj plán na striedači, čím prepíše nastavenia zmenené mimo Volcast ({entity_id})."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Iný regulátor riadi váš striedač",
-      "description": "Iný regulátor ({kind}: {label}) zapisuje do rovnakých nastavení striedača ako Volcast. Vyberte Opraviť a rozhodnite, kto striedač riadi: Volcast, alebo váš vlastný regulátor (Volcast potom iba plánuje).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Kto riadi striedač?",
-            "description": "Kým iný regulátor zapisuje, Volcast overovanie pozastavuje. Vyberte, ktorý z nich striedač riadi.",
+            "description": "Iný regulátor ({kind}: {label}) zapisuje do rovnakých nastavení striedača ako Volcast. Vyberte Opraviť a rozhodnite, kto striedač riadi: Volcast, alebo váš vlastný regulátor (Volcast potom iba plánuje). Kým iný regulátor zapisuje, Volcast overovanie pozastavuje. Vyberte, ktorý z nich striedač riadi.",
             "menu_options": {
               "volcast": "Striedač riadi Volcast",
               "own_ems": "Môj vlastný regulátor (Volcast iba plánuje)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Overovanie zariadenia Volcast sa zastavilo",
-      "description": "Overovanie striedača sa zastavilo ({reason}). Volcast striedač neriadi, kým nie je overený. Vyberte Opraviť a skúste to znova.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Zopakovať overovanie",
-            "description": "Volcast reštartuje overovanie striedača od kroku, v ktorom sa zastavilo."
+            "description": "Overovanie striedača sa zastavilo ({reason}). Volcast striedač neriadi, kým nie je overený. Vyberte Opraviť a skúste to znova. Volcast reštartuje overovanie striedača od kroku, v ktorom sa zastavilo."
           }
         }
       }

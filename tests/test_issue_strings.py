@@ -31,14 +31,22 @@ def test_code_uses_the_known_issue_keys():
                                     "unsupported_setting", "inverter_work_mode"}
 
 
+def _description(issue: dict) -> str:
+    """Opis zgłoszenia; naprawialne (z fix_flow) niosą go w kroku przepływu — hassfest zabrania obu naraz."""
+    if "fix_flow" in issue:
+        assert "description" not in issue
+        return " ".join(st.get("description", "") for st in issue["fix_flow"]["step"].values())
+    return issue.get("description", "")
+
+
 @pytest.mark.parametrize("path", [COMPONENT / "strings.json", COMPONENT / "translations" / "en.json"])
 def test_every_issue_key_has_title_and_description(path):
     issues = json.loads(path.read_text(encoding="utf-8"))["issues"]
     for key in _issue_keys_in_code():
-        assert issues.get(key, {}).get("title") and issues[key].get("description"), key
+        assert issues.get(key, {}).get("title") and _description(issues[key]), key
     # Tekst Napraw podaje encję, którą zmieniono (parametr przekazywany przez wykonawcę).
-    assert "{entity_id}" in issues["foreign_control"]["description"]
-    assert "{entities}" in issues["unsupported_setting"]["description"]
+    assert "{entity_id}" in _description(issues["foreign_control"])
+    assert "{entities}" in _description(issues["unsupported_setting"])
     # Zgłoszenie pauzy przejęcia da się naprawić („Wznów sterowanie teraz").
     confirm = issues["foreign_control"]["fix_flow"]["step"]["confirm"]
     assert confirm["title"] and confirm["description"]

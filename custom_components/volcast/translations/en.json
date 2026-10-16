@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Volcast inverter control paused",
-      "description": "An inverter setting controlled by Volcast ({entity_id}) was changed outside Volcast. Volcast paused control for 30 minutes and keeps the settings you changed. Control resumes automatically afterwards, or select Fix to resume it now; to stop it, turn off the Volcast control switch.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Resume Volcast control now",
-            "description": "Volcast ends the pause and applies its plan to the inverter right away, overwriting the settings changed outside Volcast ({entity_id})."
+            "description": "An inverter setting controlled by Volcast ({entity_id}) was changed outside Volcast. Volcast paused control for 30 minutes and keeps the settings you changed. Control resumes automatically afterwards, or select Fix to resume it now; to stop it, turn off the Volcast control switch. Volcast ends the pause and applies its plan to the inverter right away, overwriting the settings changed outside Volcast ({entity_id})."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Another controller is controlling your inverter",
-      "description": "Another controller ({kind}: {label}) writes to the same inverter settings as Volcast. Select Fix to choose who controls the inverter: Volcast, or your own controller (Volcast then only plans).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Who controls the inverter?",
-            "description": "While another controller writes, Volcast pauses verification. Choose which one controls the inverter.",
+            "description": "Another controller ({kind}: {label}) writes to the same inverter settings as Volcast. Select Fix to choose who controls the inverter: Volcast, or your own controller (Volcast then only plans). While another controller writes, Volcast pauses verification. Choose which one controls the inverter.",
             "menu_options": {
               "volcast": "Volcast controls the inverter",
               "own_ems": "My own controller (Volcast only plans)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Volcast device verification stopped",
-      "description": "Verification of the inverter stopped ({reason}). Volcast does not control the inverter until it is verified. Select Fix to try again.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Retry verification",
-            "description": "Volcast restarts the verification of the inverter from the step where it stopped."
+            "description": "Verification of the inverter stopped ({reason}). Volcast does not control the inverter until it is verified. Select Fix to try again. Volcast restarts the verification of the inverter from the step where it stopped."
           }
         }
       }

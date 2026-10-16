@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Pilotage de l'onduleur par Volcast en pause",
-      "description": "Un réglage de l'onduleur piloté par Volcast ({entity_id}) a été modifié en dehors de Volcast. Volcast a mis le pilotage en pause pendant 30 minutes et conserve les réglages que vous avez modifiés. Le pilotage reprend ensuite automatiquement, ou sélectionnez Réparer pour le reprendre maintenant ; pour l'arrêter, désactivez l'interrupteur de pilotage Volcast.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Reprendre le pilotage Volcast maintenant",
-            "description": "Volcast met fin à la pause et applique aussitôt son plan à l'onduleur, en écrasant les réglages modifiés en dehors de Volcast ({entity_id})."
+            "description": "Un réglage de l'onduleur piloté par Volcast ({entity_id}) a été modifié en dehors de Volcast. Volcast a mis le pilotage en pause pendant 30 minutes et conserve les réglages que vous avez modifiés. Le pilotage reprend ensuite automatiquement, ou sélectionnez Réparer pour le reprendre maintenant ; pour l'arrêter, désactivez l'interrupteur de pilotage Volcast. Volcast met fin à la pause et applique aussitôt son plan à l'onduleur, en écrasant les réglages modifiés en dehors de Volcast ({entity_id})."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Un autre contrôleur pilote votre onduleur",
-      "description": "Un autre contrôleur ({kind} : {label}) écrit dans les mêmes réglages d'onduleur que Volcast. Sélectionnez Corriger pour choisir qui pilote l'onduleur : Volcast, ou votre propre contrôleur (Volcast ne fera alors que planifier).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Qui pilote l'onduleur ?",
-            "description": "Tant qu'un autre contrôleur écrit, Volcast suspend la vérification. Choisissez celui qui pilote l'onduleur.",
+            "description": "Un autre contrôleur ({kind} : {label}) écrit dans les mêmes réglages d'onduleur que Volcast. Sélectionnez Corriger pour choisir qui pilote l'onduleur : Volcast, ou votre propre contrôleur (Volcast ne fera alors que planifier). Tant qu'un autre contrôleur écrit, Volcast suspend la vérification. Choisissez celui qui pilote l'onduleur.",
             "menu_options": {
               "volcast": "Volcast pilote l'onduleur",
               "own_ems": "Mon propre contrôleur (Volcast planifie seulement)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Vérification de l'appareil Volcast arrêtée",
-      "description": "La vérification de l'onduleur s'est arrêtée ({reason}). Volcast ne pilote pas l'onduleur tant qu'il n'est pas vérifié. Sélectionnez Corriger pour réessayer.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Relancer la vérification",
-            "description": "Volcast relance la vérification de l'onduleur à partir de l'étape où elle s'est arrêtée."
+            "description": "La vérification de l'onduleur s'est arrêtée ({reason}). Volcast ne pilote pas l'onduleur tant qu'il n'est pas vérifié. Sélectionnez Corriger pour réessayer. Volcast relance la vérification de l'onduleur à partir de l'étape où elle s'est arrêtée."
           }
         }
       }

@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Sterowanie falownikiem przez Volcast wstrzymane",
-      "description": "Ustawienie falownika sterowane przez Volcast ({entity_id}) zostało zmienione poza Volcast. Volcast wstrzymał sterowanie na 30 minut i zachowuje wprowadzone przez Ciebie zmiany. Sterowanie wznowi się automatycznie albo wybierz Napraw, aby wznowić je teraz; aby je zatrzymać, wyłącz przełącznik sterowania Volcast.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Wznów sterowanie Volcast teraz",
-            "description": "Volcast kończy pauzę i od razu stosuje swój plan na falowniku, nadpisując ustawienia zmienione poza Volcast ({entity_id})."
+            "description": "Ustawienie falownika sterowane przez Volcast ({entity_id}) zostało zmienione poza Volcast. Volcast wstrzymał sterowanie na 30 minut i zachowuje wprowadzone przez Ciebie zmiany. Sterowanie wznowi się automatycznie albo wybierz Napraw, aby wznowić je teraz; aby je zatrzymać, wyłącz przełącznik sterowania Volcast. Volcast kończy pauzę i od razu stosuje swój plan na falowniku, nadpisując ustawienia zmienione poza Volcast ({entity_id})."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Falownikiem steruje inny sterownik",
-      "description": "Inny sterownik ({kind}: {label}) zapisuje te same ustawienia falownika co Volcast. Wybierz Napraw, aby zdecydować, kto steruje falownikiem: Volcast albo Twój własny sterownik (Volcast tylko planuje).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Kto steruje falownikiem?",
-            "description": "Gdy zapisuje inny sterownik, Volcast wstrzymuje weryfikację. Wybierz, który z nich steruje falownikiem.",
+            "description": "Inny sterownik ({kind}: {label}) zapisuje te same ustawienia falownika co Volcast. Wybierz Napraw, aby zdecydować, kto steruje falownikiem: Volcast albo Twój własny sterownik (Volcast tylko planuje). Gdy zapisuje inny sterownik, Volcast wstrzymuje weryfikację. Wybierz, który z nich steruje falownikiem.",
             "menu_options": {
               "volcast": "Falownikiem steruje Volcast",
               "own_ems": "Mój własny sterownik (Volcast tylko planuje)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Weryfikacja urządzenia Volcast zatrzymana",
-      "description": "Weryfikacja falownika zatrzymała się ({reason}). Volcast nie steruje falownikiem, dopóki nie zostanie zweryfikowany. Wybierz Napraw, aby spróbować ponownie.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Ponów weryfikację",
-            "description": "Volcast wznawia weryfikację falownika od kroku, na którym się zatrzymała."
+            "description": "Weryfikacja falownika zatrzymała się ({reason}). Volcast nie steruje falownikiem, dopóki nie zostanie zweryfikowany. Wybierz Napraw, aby spróbować ponownie. Volcast wznawia weryfikację falownika od kroku, na którym się zatrzymała."
           }
         }
       }

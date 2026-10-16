@@ -185,8 +185,10 @@ async def test_issue_translation_keys_exist(hass: HomeAssistant):
     tr = await async_get_translations(hass, "en", "issues", {DOMAIN})
     for key in ("production_tracking_available", "foreign_control", "control_error"):
         assert f"component.{DOMAIN}.issues.{key}.title" in tr, key
-        assert f"component.{DOMAIN}.issues.{key}.description" in tr, key
-    assert "{entity_id}" in tr[f"component.{DOMAIN}.issues.foreign_control.description"]
+        # naprawialne zgłoszenie (fix_flow) niesie opis w kroku przepływu — hassfest zabrania obu naraz
+        assert (f"component.{DOMAIN}.issues.{key}.description" in tr
+                or f"component.{DOMAIN}.issues.{key}.fix_flow.step.confirm.description" in tr), key
+    assert "{entity_id}" in tr[f"component.{DOMAIN}.issues.foreign_control.fix_flow.step.confirm.description"]
 
 
 async def test_live_cycle_writes_through_real_entities_and_echo_is_ours(

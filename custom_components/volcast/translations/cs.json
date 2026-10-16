@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Řízení střídače přes Volcast je pozastaveno",
-      "description": "Nastavení střídače řízené Volcastem ({entity_id}) bylo změněno mimo Volcast. Volcast pozastavil řízení na 30 minut a ponechává vámi změněná nastavení. Poté se řízení automaticky obnoví, nebo vyberte Opravit a obnovte ho hned; chcete-li ho zastavit, vypněte přepínač řízení Volcast.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Obnovit řízení Volcast hned",
-            "description": "Volcast ukončí pauzu a okamžitě použije svůj plán na střídači, čímž přepíše nastavení změněná mimo Volcast ({entity_id})."
+            "description": "Nastavení střídače řízené Volcastem ({entity_id}) bylo změněno mimo Volcast. Volcast pozastavil řízení na 30 minut a ponechává vámi změněná nastavení. Poté se řízení automaticky obnoví, nebo vyberte Opravit a obnovte ho hned; chcete-li ho zastavit, vypněte přepínač řízení Volcast. Volcast ukončí pauzu a okamžitě použije svůj plán na střídači, čímž přepíše nastavení změněná mimo Volcast ({entity_id})."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Jiný regulátor řídí váš střídač",
-      "description": "Jiný regulátor ({kind}: {label}) zapisuje do stejných nastavení střídače jako Volcast. Vyberte Opravit a rozhodněte, kdo střídač řídí: Volcast, nebo váš vlastní regulátor (Volcast pak pouze plánuje).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Kdo řídí střídač?",
-            "description": "Dokud jiný regulátor zapisuje, Volcast ověřování pozastavuje. Vyberte, který z nich střídač řídí.",
+            "description": "Jiný regulátor ({kind}: {label}) zapisuje do stejných nastavení střídače jako Volcast. Vyberte Opravit a rozhodněte, kdo střídač řídí: Volcast, nebo váš vlastní regulátor (Volcast pak pouze plánuje). Dokud jiný regulátor zapisuje, Volcast ověřování pozastavuje. Vyberte, který z nich střídač řídí.",
             "menu_options": {
               "volcast": "Střídač řídí Volcast",
               "own_ems": "Můj vlastní regulátor (Volcast pouze plánuje)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Ověřování zařízení Volcast bylo zastaveno",
-      "description": "Ověřování střídače bylo zastaveno ({reason}). Volcast střídač neřídí, dokud není ověřen. Vyberte Opravit a zkuste to znovu.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Zopakovat ověřování",
-            "description": "Volcast restartuje ověřování střídače od kroku, na kterém se zastavilo."
+            "description": "Ověřování střídače bylo zastaveno ({reason}). Volcast střídač neřídí, dokud není ověřen. Vyberte Opravit a zkuste to znovu. Volcast restartuje ověřování střídače od kroku, na kterém se zastavilo."
           }
         }
       }

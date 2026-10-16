@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Controle do inversor pelo Volcast em pausa",
-      "description": "Uma configuração do inversor controlada pelo Volcast ({entity_id}) foi alterada fora do Volcast. O Volcast pausou o controle por 30 minutos e mantém as configurações que alterou. Depois o controle retoma automaticamente, ou selecione Corrigir para retomá-lo agora; para interrompê-lo, desligue o interruptor de controle do Volcast.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Retomar o controle do Volcast agora",
-            "description": "O Volcast encerra a pausa e aplica imediatamente o seu plano ao inversor, substituindo as configurações alteradas fora do Volcast ({entity_id})."
+            "description": "Uma configuração do inversor controlada pelo Volcast ({entity_id}) foi alterada fora do Volcast. O Volcast pausou o controle por 30 minutos e mantém as configurações que alterou. Depois o controle retoma automaticamente, ou selecione Corrigir para retomá-lo agora; para interrompê-lo, desligue o interruptor de controle do Volcast. O Volcast encerra a pausa e aplica imediatamente o seu plano ao inversor, substituindo as configurações alteradas fora do Volcast ({entity_id})."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Outro controlador está controlando seu inversor",
-      "description": "Outro controlador ({kind}: {label}) grava nas mesmas configurações do inversor que o Volcast. Selecione Corrigir para escolher quem controla o inversor: o Volcast ou seu próprio controlador (nesse caso, o Volcast apenas planeja).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Quem controla o inversor?",
-            "description": "Enquanto outro controlador grava, o Volcast pausa a verificação. Escolha qual deles controla o inversor.",
+            "description": "Outro controlador ({kind}: {label}) grava nas mesmas configurações do inversor que o Volcast. Selecione Corrigir para escolher quem controla o inversor: o Volcast ou seu próprio controlador (nesse caso, o Volcast apenas planeja). Enquanto outro controlador grava, o Volcast pausa a verificação. Escolha qual deles controla o inversor.",
             "menu_options": {
               "volcast": "O Volcast controla o inversor",
               "own_ems": "Meu próprio controlador (o Volcast apenas planeja)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Verificação do dispositivo Volcast interrompida",
-      "description": "A verificação do inversor foi interrompida ({reason}). O Volcast não controla o inversor até que ele seja verificado. Selecione Corrigir para tentar novamente.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Repetir a verificação",
-            "description": "O Volcast reinicia a verificação do inversor a partir da etapa em que ela parou."
+            "description": "A verificação do inversor foi interrompida ({reason}). O Volcast não controla o inversor até que ele seja verificado. Selecione Corrigir para tentar novamente. O Volcast reinicia a verificação do inversor a partir da etapa em que ela parou."
           }
         }
       }

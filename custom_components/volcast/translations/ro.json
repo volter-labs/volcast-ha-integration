@@ -352,12 +352,11 @@
     },
     "foreign_control": {
       "title": "Controlul invertorului de către Volcast este în pauză",
-      "description": "O setare a invertorului controlată de Volcast ({entity_id}) a fost modificată în afara Volcast. Volcast a pus controlul în pauză pentru 30 de minute și păstrează setările pe care le-ai modificat. Apoi controlul se reia automat, sau selectează Remediază pentru a-l relua acum; pentru a-l opri, oprește comutatorul de control Volcast.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Reia acum controlul Volcast",
-            "description": "Volcast încheie pauza și aplică imediat planul său pe invertor, suprascriind setările modificate în afara Volcast ({entity_id})."
+            "description": "O setare a invertorului controlată de Volcast ({entity_id}) a fost modificată în afara Volcast. Volcast a pus controlul în pauză pentru 30 de minute și păstrează setările pe care le-ai modificat. Apoi controlul se reia automat, sau selectează Remediază pentru a-l relua acum; pentru a-l opri, oprește comutatorul de control Volcast. Volcast încheie pauza și aplică imediat planul său pe invertor, suprascriind setările modificate în afara Volcast ({entity_id})."
           }
         },
         "abort": {
@@ -415,12 +414,11 @@
     },
     "controller_conflict": {
       "title": "Un alt controler îți controlează invertorul",
-      "description": "Un alt controler ({kind}: {label}) scrie în aceleași setări ale invertorului ca Volcast. Selectează Remediază pentru a alege cine controlează invertorul: Volcast sau propriul tău controler (atunci Volcast doar planifică).",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Cine controlează invertorul?",
-            "description": "Cât timp un alt controler scrie, Volcast suspendă verificarea. Alege care controlează invertorul.",
+            "description": "Un alt controler ({kind}: {label}) scrie în aceleași setări ale invertorului ca Volcast. Selectează Remediază pentru a alege cine controlează invertorul: Volcast sau propriul tău controler (atunci Volcast doar planifică). Cât timp un alt controler scrie, Volcast suspendă verificarea. Alege care controlează invertorul.",
             "menu_options": {
               "volcast": "Volcast controlează invertorul",
               "own_ems": "Propriul meu controler (Volcast doar planifică)"
@@ -435,12 +433,11 @@
     },
     "verification_stopped": {
       "title": "Verificarea dispozitivului Volcast s-a oprit",
-      "description": "Verificarea invertorului s-a oprit ({reason}). Volcast nu controlează invertorul până când acesta nu este verificat. Selectează Remediază pentru a încerca din nou.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Reia verificarea",
-            "description": "Volcast repornește verificarea invertorului de la pasul în care s-a oprit."
+            "description": "Verificarea invertorului s-a oprit ({reason}). Volcast nu controlează invertorul până când acesta nu este verificat. Selectează Remediază pentru a încerca din nou. Volcast repornește verificarea invertorului de la pasul în care s-a oprit."
           }
         }
       }
