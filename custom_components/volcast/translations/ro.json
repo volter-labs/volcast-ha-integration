@@ -471,12 +471,11 @@
     },
     "brand_profile_ready": {
       "title": "Este disponibil un profil de test pentru invertorul tău",
-      "description": "Volcast a primit un profil de test nou care se potrivește cu această instalație: {label} ({profile}). După reîncărcarea integrării, Volcast îl poate folosi pentru a recunoaște invertorul și a-i citi datele. Volcast nu controlează niciodată invertorul cu un profil primit în acest mod. Selectează Remediază pentru a închide această notificare.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, am înțeles",
-            "description": "Aceasta doar închide notificarea. Volcast nu pornește controlul și nu modifică nicio setare a invertorului."
+            "description": "Volcast a primit un profil de test nou care se potrivește cu această instalație: {label} ({profile}). După reîncărcarea integrării, Volcast îl poate folosi pentru a recunoaște invertorul și a-i citi datele. Volcast nu controlează niciodată invertorul cu un profil primit în acest mod. Selectează Remediază pentru a închide această notificare."
           }
         }
       }

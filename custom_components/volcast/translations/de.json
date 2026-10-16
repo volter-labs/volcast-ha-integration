@@ -471,12 +471,11 @@
     },
     "brand_profile_ready": {
       "title": "Ein Testprofil für Ihren Wechselrichter ist verfügbar",
-      "description": "Volcast hat ein neues Testprofil erhalten, das zu dieser Installation passt: {label} ({profile}). Nach dem Neuladen der Integration kann Volcast es verwenden, um den Wechselrichter zu erkennen und seine Daten zu lesen. Mit einem auf diesem Weg erhaltenen Profil steuert Volcast den Wechselrichter nie. Wählen Sie Beheben, um diesen Hinweis zu schließen.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, verstanden",
-            "description": "Damit wird nur der Hinweis geschlossen. Volcast schaltet keine Steuerung ein und ändert keine Einstellungen des Wechselrichters."
+            "description": "Volcast hat ein neues Testprofil erhalten, das zu dieser Installation passt: {label} ({profile}). Nach dem Neuladen der Integration kann Volcast es verwenden, um den Wechselrichter zu erkennen und seine Daten zu lesen. Mit einem auf diesem Weg erhaltenen Profil steuert Volcast den Wechselrichter nie. Wählen Sie Beheben, um diesen Hinweis zu schließen."
           }
         }
       }

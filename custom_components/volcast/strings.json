@@ -471,12 +471,11 @@
     },
     "brand_profile_ready": {
       "title": "A test profile for your inverter is available",
-      "description": "Volcast received a new test profile that matches this installation: {label} ({profile}). After the integration reloads, Volcast can use it to recognise the inverter and read its data. Volcast never controls the inverter with a profile received this way. Select Fix to dismiss this notice.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, understood",
-            "description": "This only closes the notice. Volcast does not switch on control or change any inverter settings."
+            "description": "Volcast received a new test profile that matches this installation: {label} ({profile}). After the integration reloads, Volcast can use it to recognise the inverter and read its data. Volcast never controls the inverter with a profile received this way. Select Fix to dismiss this notice."
           }
         }
       }

@@ -471,12 +471,11 @@
     },
     "brand_profile_ready": {
       "title": "Há um perfil de teste disponível para o seu inversor",
-      "description": "O Volcast recebeu um novo perfil de teste que corresponde a esta instalação: {label} ({profile}). Depois que a integração for recarregada, o Volcast pode usá-lo para reconhecer o inversor e ler os dados dele. O Volcast nunca controla o inversor com um perfil recebido dessa forma. Selecione Corrigir para fechar este aviso.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, entendi",
-            "description": "Isso apenas fecha o aviso. O Volcast não ativa o controle nem altera nenhuma configuração do inversor."
+            "description": "O Volcast recebeu um novo perfil de teste que corresponde a esta instalação: {label} ({profile}). Depois que a integração for recarregada, o Volcast pode usá-lo para reconhecer o inversor e ler os dados dele. O Volcast nunca controla o inversor com um perfil recebido dessa forma. Selecione Corrigir para fechar este aviso."
           }
         }
       }

@@ -471,12 +471,11 @@
     },
     "brand_profile_ready": {
       "title": "Hay un perfil de prueba disponible para tu inversor",
-      "description": "Volcast ha recibido un nuevo perfil de prueba que coincide con esta instalación: {label} ({profile}). Después de recargar la integración, Volcast puede usarlo para reconocer el inversor y leer sus datos. Volcast nunca controla el inversor con un perfil recibido de esta forma. Selecciona Reparar para cerrar este aviso.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "De acuerdo, entendido",
-            "description": "Esto solo cierra el aviso. Volcast no activa el control ni cambia ningún ajuste del inversor."
+            "description": "Volcast ha recibido un nuevo perfil de prueba que coincide con esta instalación: {label} ({profile}). Después de recargar la integración, Volcast puede usarlo para reconocer el inversor y leer sus datos. Volcast nunca controla el inversor con un perfil recibido de esta forma. Selecciona Reparar para cerrar este aviso."
           }
         }
       }

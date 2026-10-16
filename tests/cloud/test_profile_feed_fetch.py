@@ -453,13 +453,14 @@ async def test_repair_fix_flow_is_a_plain_confirmation():
                          ids=lambda p: p.name)
 def test_repair_texts_present_in_every_language(path):
     issue = json.loads(path.read_text("utf-8"))["issues"][ISSUE_BRAND_PROFILE_READY]
-    assert issue["title"] and "{label}" in issue["description"]
+    # naprawa z fix_flow nie ma opisu na najwyższym poziomie (hassfest) — treść jest w kroku potwierdzenia
+    assert "description" not in issue
+    confirm = issue["fix_flow"]["step"]["confirm"]
+    assert issue["title"] and confirm["title"] and "{label}" in confirm["description"]
     if path.name in ("strings.json", "en.json"):
         # Profil z feedu jest tylko do odczytu — tekst nie może obiecywać sterowania po wyborze.
-        assert "until you choose" not in issue["description"]
-        assert "never controls" in issue["description"]
-    confirm = issue["fix_flow"]["step"]["confirm"]
-    assert confirm["title"] and confirm["description"]
+        assert "until you choose" not in confirm["description"]
+        assert "never controls" in confirm["description"]
 
 
 # --- złożenie sterowania: feed z magazynu przed odczytem profili, sprawdzenie w fetcherze ----------

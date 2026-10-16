@@ -471,12 +471,11 @@
     },
     "brand_profile_ready": {
       "title": "Un profil de test pour votre onduleur est disponible",
-      "description": "Volcast a reçu un nouveau profil de test correspondant à cette installation : {label} ({profile}). Après le rechargement de l'intégration, Volcast peut l'utiliser pour reconnaître l'onduleur et lire ses données. Volcast ne pilote jamais l'onduleur avec un profil reçu de cette façon. Sélectionnez Réparer pour fermer cet avis.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, compris",
-            "description": "Cela ferme seulement l'avis. Volcast n'active pas le pilotage et ne modifie aucun réglage de l'onduleur."
+            "description": "Volcast a reçu un nouveau profil de test correspondant à cette installation : {label} ({profile}). Après le rechargement de l'intégration, Volcast peut l'utiliser pour reconnaître l'onduleur et lire ses données. Volcast ne pilote jamais l'onduleur avec un profil reçu de cette façon. Sélectionnez Réparer pour fermer cet avis."
           }
         }
       }

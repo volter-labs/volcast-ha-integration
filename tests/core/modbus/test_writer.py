@@ -151,7 +151,9 @@ async def test_wrong_echo_value_then_readback_decides(goodwe_writer, goodwe_bank
 async def test_readback_after_timeout_uses_fresh_channel(goodwe_writer, goodwe_bank, sim_faults):
     # Echo obu wysyłek spóźnia się ponad limit czasu; odczyt zwrotny idzie nowym gniazdem,
     # więc spóźnione echa go nie dosięgną (żadnej obcej ramki na nowym kanale).
-    sim_faults.delay_s = 0.25
+    # Zapas 4x względem limitu czasu klienta (0.15 s): na obciążonym runnerze CI pętla zdarzeń potrafi
+    # stać >100 ms, wtedy echo „spóźnione” o 0.25 s wpadało w limit i licznik resetów wychodził 1.
+    sim_faults.delay_s = 0.6
     sim_faults.delay_only_next = 2
     sim_faults.delay_writes_only = True
     t = goodwe_writer.client.transport

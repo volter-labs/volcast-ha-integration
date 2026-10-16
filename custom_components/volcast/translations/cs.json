@@ -471,12 +471,11 @@
     },
     "brand_profile_ready": {
       "title": "Je k dispozici testovací profil pro váš střídač",
-      "description": "Volcast získal nový testovací profil, který odpovídá této instalaci: {label} ({profile}). Po opětovném načtení integrace ho Volcast může použít k rozpoznání střídače a čtení jeho dat. S profilem získaným tímto způsobem Volcast střídač nikdy neřídí. Zvolte Opravit pro zavření tohoto upozornění.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, rozumím",
-            "description": "Tím se pouze zavře upozornění. Volcast nezapíná řízení a nemění žádná nastavení střídače."
+            "description": "Volcast získal nový testovací profil, který odpovídá této instalaci: {label} ({profile}). Po opětovném načtení integrace ho Volcast může použít k rozpoznání střídače a čtení jeho dat. S profilem získaným tímto způsobem Volcast střídač nikdy neřídí. Zvolte Opravit pro zavření tohoto upozornění."
           }
         }
       }

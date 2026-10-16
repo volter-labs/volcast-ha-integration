@@ -471,12 +471,11 @@
     },
     "brand_profile_ready": {
       "title": "Dostępny profil testowy Twojego falownika",
-      "description": "Volcast otrzymał nowy profil testowy pasujący do tej instalacji: {label} ({profile}). Po ponownym wczytaniu integracji Volcast może go użyć do rozpoznania falownika i odczytu jego danych. Volcast nigdy nie steruje falownikiem z profilem otrzymanym w ten sposób. Wybierz Napraw, aby zamknąć to powiadomienie.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, rozumiem",
-            "description": "To tylko zamyka powiadomienie. Volcast nie włącza sterowania i nie zmienia żadnych ustawień falownika."
+            "description": "Volcast otrzymał nowy profil testowy pasujący do tej instalacji: {label} ({profile}). Po ponownym wczytaniu integracji Volcast może go użyć do rozpoznania falownika i odczytu jego danych. Volcast nigdy nie steruje falownikiem z profilem otrzymanym w ten sposób. Wybierz Napraw, aby zamknąć to powiadomienie."
           }
         }
       }
