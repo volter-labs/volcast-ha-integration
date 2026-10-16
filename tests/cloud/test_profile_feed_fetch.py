@@ -320,9 +320,10 @@ def test_public_key_is_shipped_and_storage_names():
     assert (PROFILE_FEED_STORAGE_KEY, PROFILE_FEED_STORAGE_VERSION) == ("volcast_profiles", 1)
 
 
-def test_manifest_requires_cryptography():
+def test_manifest_does_not_list_core_dependencies():
+    # cryptography i aiohttp dostarcza sam Home Assistant — hassfest zabrania ich w manifeście
     manifest = json.loads((COMPONENT / "manifest.json").read_text("utf-8"))
-    assert any(r.replace(" ", "").startswith("cryptography>=") for r in manifest["requirements"])
+    assert manifest["requirements"] == []
 
 
 @pytest.mark.asyncio
