@@ -29,7 +29,7 @@ from .conftest import LIVE_ZERO, MODE_REG, SOC_REG, goodwe_reading
 from .test_cycle import ATTRS, GW, MAPPED, OPEN, SELL, UNITS, at, plan, slot
 
 GRID = dict(mode="charge", charge_source="grid")
-# Poprzedni slot (autokonsumpcja) i slot zakupu z sieci 950 W — jak u testera o 12:00.
+# Poprzedni slot (autokonsumpcja) i slot zakupu z sieci 950 W.
 GRID_950 = plan(slot("09:00", "10:00", mode="self_consume"), slot("10:00", "11:00", **GRID, power_w=950))
 SURPLUS = dict(pv=3500.0, load=500.0)          # nadwyżka 3000 W
 SMALL = dict(pv=1000.0, load=500.0)            # nadwyżka 500 W < moc slotu
