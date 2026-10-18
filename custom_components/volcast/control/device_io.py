@@ -34,8 +34,8 @@ from ..core.write_sequence import ERROR
 from .direct import target_fingerprint
 
 NO_READING = ("unavailable", "unknown", "")
-# Odczyty mocy na żywo z własnym wiekiem (osobno od wieku SoC i guardu I-9).
-LIVE_KEYS = ("pv_power_w", "load_power_w")
+# Odczyty mocy na żywo z własnym wiekiem (osobno od wieku SoC i guardu I-9); brak odczytu niczego nie wstrzymuje.
+LIVE_KEYS = ("pv_power_w", "load_power_w", "battery_power_w")
 
 
 @dataclass(frozen=True)

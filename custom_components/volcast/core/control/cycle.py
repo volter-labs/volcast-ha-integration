@@ -171,6 +171,9 @@ class Telemetry:
     pv_age_s: float | None = None
     load_power_w: float | None = None
     load_age_s: float | None = None
+    # Moc baterii [W], dodatnia = rozładowanie (jak w mapie encji); None = brak odczytu. Nie wchodzi w żadną bramkę.
+    battery_w: float | None = None
+    battery_age_s: float | None = None
 
 
 @dataclass(frozen=True)

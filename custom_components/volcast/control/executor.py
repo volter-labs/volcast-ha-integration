@@ -1295,9 +1295,10 @@ class VolcastExecutor:
         ref = self._soc_reference(soc)
         prev_soc, gap = (ref[0], now_mono - ref[1]) if ref else (None, None)
         (pv, pv_age), (load, load_age) = rd.live("pv_power_w"), rd.live("load_power_w")
+        bat, bat_age = rd.live("battery_power_w")
         return Telemetry(soc=soc, soc_age_s=rd.soc_age_s, battery_temp_c=temp if isinstance(temp, float) else None,
                          previous_soc=prev_soc, previous_soc_gap_s=gap,
-                         pv_power_w=pv, pv_age_s=pv_age, load_power_w=load, load_age_s=load_age)
+                         pv_power_w=pv, pv_age_s=pv_age, load_power_w=load, load_age_s=load_age, battery_w=bat, battery_age_s=bat_age)
 
     def _soc_reference(self, soc: float | None) -> tuple[float, float] | None:
         """Odniesienie skoku SoC: ostatnia przyjęta próbka albo — gdy czeka odrzucona — bliższa z nich.
