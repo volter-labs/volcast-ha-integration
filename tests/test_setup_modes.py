@@ -399,3 +399,108 @@ async def test_discovery_scheduled_as_entry_background_task_after_start(
     await drain(hass)
     assert hass.data[DOMAIN][entry.entry_id]["discovery"].report is not None
     assert hass.task_errors == []
+
+
+# --- źródło produkcji: mapowanie zewnętrzne albo sensory direct (późne wiązanie) ---
+
+class _RecTracker:
+    instances: list = []
+
+    def __init__(self, **kw) -> None:
+        self.kw = kw
+        self._queue: list = []
+        self.bound: list[tuple[str, str]] = []
+        _RecTracker.instances.append(self)
+
+    async def async_start(self) -> None:
+        return None
+
+    async def async_stop(self) -> None:
+        return None
+
+    def async_bind_entities(self, energy, power) -> None:
+        self.bound.append((energy, power))
+
+
+async def _run_production(monkeypatch, *, options, register_direct):
+    """run_setup z nagrywającym trackerem; sensory direct rejestrują się przy forwardzie."""
+    import custom_components.volcast as integ
+    from tests import setup_harness as sh
+
+    _RecTracker.instances = []
+    registry = sh.FakeEntityRegistry()
+    reconciler_energy: list[str] = []
+    real_forward = sh._ConfigEntries.async_forward_entry_setups
+
+    async def forward(self, entry, platforms):
+        await real_forward(self, entry, platforms)
+        if register_direct:
+            for key, eid in (("pv_energy_total_kwh", "sensor.direct_pv_energy"),
+                             ("pv_power_w", "sensor.direct_pv_power")):
+                registry.entities[eid] = SimpleNamespace(
+                    unique_id=f"{entry.entry_id}_control_direct_{key}", entity_id=eid)
+
+    class _Rec(sh.FakeReconciler):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            reconciler_energy.append(kw["energy_entity"])
+
+    monkeypatch.setattr(sh._ConfigEntries, "async_forward_entry_setups", forward)
+
+    def setattr_(obj, name, value):
+        if name == "VolcastProductionTracker":
+            value = _RecTracker
+        elif name == "DailyReconciler":
+            value = _Rec
+        monkeypatch.setattr(obj, name, value)
+
+    issues: list[str] = []
+    monkeypatch.setattr(integ.ir, "async_create_issue", lambda *a, **k: issues.append(a[2]))
+    hass, entry, ok = await sh.run_setup(setattr_, options=options, entity_registry=registry)
+    assert ok is True
+    tracker = _RecTracker.instances[0] if _RecTracker.instances else None
+    return hass, entry, tracker, reconciler_energy, issues
+
+
+@pytest.fixture(autouse=True)
+def _no_probe(monkeypatch):
+    from custom_components.volcast import discovery_runner
+    monkeypatch.setattr(discovery_runner, "probe_udp_48899", AsyncMock(return_value=None))
+
+
+DIRECT = {"control_mode": "direct"}
+
+
+async def test_direct_entry_binds_tracker_to_direct_sensors_after_platforms(monkeypatch):
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=DIRECT, register_direct=True)
+    assert tracker.kw["energy_entity"] == "" and tracker.kw["power_entity"] == ""
+    assert tracker.bound == [("sensor.direct_pv_energy", "sensor.direct_pv_power")]
+    assert rec == ["sensor.direct_pv_energy"]
+    assert hass.data[DOMAIN][entry.entry_id]["reconciler"] is not None
+    assert issues == []
+
+
+async def test_non_direct_entry_without_mapping_keeps_repair_issue(monkeypatch):
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options={}, register_direct=True)
+    assert issues == ["production_tracking_available"]
+    assert tracker is None and rec == []
+    assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
+
+
+async def test_direct_entry_with_external_mapping_uses_external_entities(monkeypatch):
+    opts = {**DIRECT, "pv_energy_entity": "sensor.ext_energy", "pv_power_entity": "sensor.ext_power"}
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=opts, register_direct=True)
+    assert tracker.kw["energy_entity"] == "sensor.ext_energy"
+    assert tracker.bound == []
+    assert rec == ["sensor.ext_energy"] and issues == []
+
+
+async def test_direct_entry_whose_sensors_never_register_stays_unbound(monkeypatch):
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=DIRECT, register_direct=False)
+    assert tracker is not None and tracker.bound == []
+    assert rec == [] and issues == []
+    assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None

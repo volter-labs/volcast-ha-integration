@@ -741,3 +741,22 @@ async def test_reconcile_recent_runs_yesterday_then_today(monkeypatch):
     assert calls == [date(2026, 7, 23), date(2026, 7, 24)]
     assert len(results) == 2
     assert all(r.success for r in results)
+
+
+@pytest.mark.asyncio
+async def test_fetch_ha_statistics_total_increasing_lifetime_meter():
+    """Licznik `total_increasing` (sensor direct): `sum` rośnie monotonicznie, `state` to
+    wartość życiowa falownika — delty godzinowe liczone z `sum`, nie z `state`."""
+    target = date(2026, 5, 10)
+    entries = _build_cumulative_entries(target, kwh_per_hour=0.4, start_cumulative=0.0)
+    for i, e in enumerate(entries):
+        e["state"] = 12345.6 + i * 0.4  # lifetime kWh falownika, nie zerowany o północy
+
+    with patch(
+        "custom_components.volcast.reconciler.statistics_during_period",
+        return_value={"sensor.pv_energy": entries},
+    ):
+        hourly = await _make_reconciler()._fetch_ha_statistics(target)
+
+    assert sorted(hourly) == list(range(24))
+    assert all(abs(v - 0.4) < 1e-6 for v in hourly.values())

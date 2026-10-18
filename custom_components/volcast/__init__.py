@@ -23,13 +23,14 @@ from .const import (
     CONF_BATTERY_SOC_ENTITY,
     CONF_MODE,
     CONF_PV_ENERGY_ENTITY,
-    CONF_PV_POWER_ENTITY,
+    CONTROL_MODE_DIRECT,
     CONF_UPDATE_INTERVAL,
     DEFAULT_API_URL,
     DEFAULT_SUBMIT_URL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     MODE_DISCOVERY_ONLY,
+    OPT_CONTROL_MODE,
     OPT_LOAD_ENERGY,
     SERVICE_RESUME_CONTROL,
     SERVICE_SYNC_PRODUCTION,
@@ -44,6 +45,7 @@ from .discovery_runner import DiscoveryRunner
 from .frontend import async_register_card, async_register_panel, async_remove_panel
 from .key_format import account_unique_id, is_legacy_unique_id
 from .production import VolcastProductionTracker
+from .production_source import resolve_production_entities
 from .reconciler import DailyReconciler
 from .version import async_integration_version
 
@@ -185,28 +187,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # encje prognozy są niedostępne, a koordynator ponawia sam co `update_interval`.
         await coordinator.async_refresh()
 
-    # Production tracker — opcjonalny (wymaga skonfigurowanych sensorów)
-    energy_entity = entry.options.get(CONF_PV_ENERGY_ENTITY, "")
-    power_entity = entry.options.get(CONF_PV_POWER_ENTITY, "")
+    # Źródło produkcji: mapowanie zewnętrzne (zawsze wygrywa) albo, w trybie direct,
+    # własne sensory integracji. Sensory direct istnieją w rejestrze encji dopiero po
+    # załadowaniu platform (pierwszy start) — stąd dwie fazy: tracker powstaje tu, a
+    # wiązanie z encjami direct dochodzi PO `_async_forward_platforms` (patrz niżej).
+    src = resolve_production_entities(hass, entry)
+    direct_mode = entry.options.get(OPT_CONTROL_MODE) == CONTROL_MODE_DIRECT
     battery_soc_entity = entry.options.get(CONF_BATTERY_SOC_ENTITY, "")
     battery_charge_power_entity = entry.options.get(CONF_BATTERY_CHARGE_POWER_ENTITY, "")
 
-    tracker: VolcastProductionTracker | None = None
-    if energy_entity or power_entity:
-        # submit_url z odpowiedzi API (jeśli dostępny) lub domyślny
-        submit_url = DEFAULT_SUBMIT_URL
-        if coordinator.data and coordinator.data.submit_url:
-            submit_url = coordinator.data.submit_url
-        if backend is not None:
-            # Wpis sparowany zawsze woła backend swojego konta.
-            submit_url = backend.submit_production
+    # submit_url z odpowiedzi API (jeśli dostępny) lub domyślny
+    submit_url = DEFAULT_SUBMIT_URL
+    if coordinator.data and coordinator.data.submit_url:
+        submit_url = coordinator.data.submit_url
+    if backend is not None:
+        # Wpis sparowany zawsze woła backend swojego konta.
+        submit_url = backend.submit_production
 
+    tracker: VolcastProductionTracker | None = None
+    # Wpis bez źródła i poza trybem direct nie dostaje trackera (jak dotąd): nie ma czego
+    # śledzić, a diagnostyczny sensor kolejki zmieniałby zestaw encji wpisów prognozy.
+    if src.source is not None or direct_mode:
         tracker = VolcastProductionTracker(
             hass=hass,
             api_key=api_key,
             submit_url=submit_url,
-            energy_entity=energy_entity,
-            power_entity=power_entity,
+            energy_entity=src.energy_entity,
+            power_entity=src.power_entity,
             battery_soc_entity=battery_soc_entity,
             battery_charge_power_entity=battery_charge_power_entity,
             system_capacity_kwp=(
@@ -215,7 +222,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         await tracker.async_start()
 
-        # Wyczyść ewentualny repair issue (użytkownik już skonfigurował)
+    if src.source is not None or direct_mode:
+        # Źródło jest (albo dojdzie po platformach w trybie direct) — bez repair issue.
         ir.async_delete_issue(hass, DOMAIN, "production_tracking_available")
     else:
         ir.async_create_issue(
@@ -233,19 +241,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     # Daily reconciler — tylko jeśli mamy energy_entity (recorder potrzebny).
-    reconciler: DailyReconciler | None = None
-    if energy_entity and tracker is not None:
-        # submit_url już policzone wyżej (linia ~57) — używamy tej samej wartości
-        # zamiast sięgać do tracker._submit_url (private attribute).
-        reconciler = _setup_reconciler(
-            hass=hass,
-            entry=entry,
-            tracker=tracker,
-            energy_entity=energy_entity,
-            api_key=api_key,
-            submit_url=submit_url,
-        )
-        hass.data[DOMAIN][entry.entry_id]["reconciler"] = reconciler
+    if src.energy_entity:
+        _maybe_start_reconciler(hass, entry, tracker, src.energy_entity, api_key, submit_url)
     else:
         _LOGGER.info(
             "Reconciler not started — energy_entity not configured (or tracker missing)"
@@ -281,6 +278,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.warning("Volcast control: cleanup after a failed setup failed (%s)",
                                 type(err).__name__)
         raise
+
+    if tracker is not None and src.source is None and direct_mode:
+        # Faza 2: sensory direct zarejestrowały się podczas forwardu platform.
+        src = resolve_production_entities(hass, entry)
+        if src.source is not None:
+            tracker.async_bind_entities(src.energy_entity, src.power_entity)
+            ir.async_delete_issue(hass, DOMAIN, "production_tracking_available")
+            _LOGGER.info(
+                "Production tracking uses the integration's own inverter readings"
+            )
+            if src.energy_entity:
+                _maybe_start_reconciler(
+                    hass, entry, tracker, src.energy_entity, api_key, submit_url)
 
     if control is not None:
         # Karta i panel to dodatek: błąd tutaj (platformy już załadowane, wykonawca działa)
@@ -384,6 +394,33 @@ def _schedule_discovery(
         entry.async_on_unload(_safe_remove)
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Volcast discovery could not be scheduled")
+
+
+def _maybe_start_reconciler(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    tracker: VolcastProductionTracker | None,
+    energy_entity: str,
+    api_key: str,
+    submit_url: str,
+) -> DailyReconciler | None:
+    """Uruchom reconciler dla `energy_entity` i zapisz go w `hass.data` wpisu.
+
+    Wołane dwa razy: od razu (encja znana z mapowania lub rejestru) oraz po
+    platformach (encja direct pojawia się dopiero wtedy na pierwszym starcie).
+    """
+    if not energy_entity or tracker is None:
+        return None
+    reconciler = _setup_reconciler(
+        hass=hass,
+        entry=entry,
+        tracker=tracker,
+        energy_entity=energy_entity,
+        api_key=api_key,
+        submit_url=submit_url,
+    )
+    hass.data[DOMAIN][entry.entry_id]["reconciler"] = reconciler
+    return reconciler
 
 
 def _setup_reconciler(
