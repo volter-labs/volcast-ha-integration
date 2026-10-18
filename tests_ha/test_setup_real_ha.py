@@ -244,3 +244,23 @@ async def test_device_registry_view_is_read_without_deprecation(hass: HomeAssist
                                                  manufacturer="GoodWe", model="GW10K-ET")
     assert [d.id for d in all_devices(dr.async_get(hass))] == [dev.id]
     assert "device_registry.devices" not in caplog.text
+
+
+async def test_direct_mode_setup_binds_tracker_to_own_sensors(hass: HomeAssistant, network_down, hass_storage,
+                                                             goodwe_sim):
+    """Tryb bezpośredni bez zmapowanych czujników: tracker wiąże się z własnymi czujnikami PV, bez naprawy."""
+    from .test_direct_smoke_real_ha import _setup as _direct_setup
+    from .test_direct_smoke_real_ha import _settle, _target, _verified_goodwe
+
+    options = {"control_mode": "direct", "direct_target": _target(goodwe_sim, _verified_goodwe())}
+    entry, rt = await _direct_setup(hass, hass_storage, options)
+    await _settle(hass, rt)
+    reg = er.async_get(hass)
+    energy = reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_control_direct_pv_energy_total_kwh")
+    power = reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_control_direct_pv_power_w")
+    assert energy and power
+    tracker = hass.data[DOMAIN][entry.entry_id]["tracker"]
+    assert tracker._energy_entity == energy and tracker._power_entity == power
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "production_tracking_available") is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
