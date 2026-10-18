@@ -344,7 +344,7 @@
   "issues": {
     "production_tracking_available": {
       "title": "Improve forecast accuracy with production tracking",
-      "description": "Volcast v1.5.0 can now track your actual PV production and use it to calibrate forecasts. Go to the integration options and select your inverter's energy or power sensor to enable this feature."
+      "description": "Production tracking: in direct control mode the integration tracks PV production from its own inverter readings automatically — nothing to configure. In other modes, pick a PV energy or power sensor in the integration options to enable forecast calibration from measured production."
     },
     "update_available": {
       "title": "A Volcast update is available",

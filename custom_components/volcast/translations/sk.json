@@ -344,7 +344,7 @@
   "issues": {
     "production_tracking_available": {
       "title": "Zlepšite presnosť predpovede sledovaním výroby",
-      "description": "Volcast v1.5.0 teraz vie sledovať vašu skutočnú výrobu FV a použiť ju na kalibráciu predpovedí. Prejdite do možností integrácie a vyberte senzor energie alebo výkonu svojho striedača, čím túto funkciu zapnete."
+      "description": "Sledovanie výroby: v režime priameho riadenia integrácia automaticky sleduje výrobu FV z vlastných odčítaní striedača – nič sa nemusí nastavovať. V ostatných režimoch vyberte v možnostiach integrácie senzor energie alebo výkonu FV, čím zapnete kalibráciu predpovedí podľa nameranej výroby."
     },
     "update_available": {
       "title": "Je k dispozícii aktualizácia Volcast",

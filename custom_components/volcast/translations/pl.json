@@ -344,7 +344,7 @@
   "issues": {
     "production_tracking_available": {
       "title": "Popraw dokładność prognozy dzięki śledzeniu produkcji",
-      "description": "Volcast v1.5.0 potrafi teraz śledzić rzeczywistą produkcję PV i używać jej do kalibracji prognoz. Przejdź do opcji integracji i wybierz czujnik energii lub mocy swojego falownika, aby włączyć tę funkcję."
+      "description": "Śledzenie produkcji: w trybie sterowania bezpośredniego integracja sama śledzi produkcję PV na podstawie odczytów z własnego falownika — nic nie trzeba konfigurować. W pozostałych trybach wybierz w opcjach integracji czujnik energii lub mocy PV, aby włączyć kalibrację prognoz na podstawie zmierzonej produkcji."
     },
     "update_available": {
       "title": "Dostępna aktualizacja Volcast",

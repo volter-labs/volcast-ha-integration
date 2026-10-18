@@ -344,7 +344,7 @@
   "issues": {
     "production_tracking_available": {
       "title": "Améliorez la précision des prévisions grâce au suivi de la production",
-      "description": "Volcast v1.5.0 peut désormais suivre votre production PV réelle et l'utiliser pour étalonner les prévisions. Ouvrez les options de l'intégration et sélectionnez le capteur d'énergie ou de puissance de votre onduleur pour activer cette fonction."
+      "description": "Suivi de la production : en mode de contrôle direct, l'intégration suit automatiquement la production PV à partir des mesures de son propre onduleur, rien à configurer. Dans les autres modes, sélectionnez dans les options de l'intégration un capteur d'énergie ou de puissance PV pour activer l'étalonnage des prévisions à partir de la production mesurée."
     },
     "update_available": {
       "title": "Une mise à jour de Volcast est disponible",

@@ -344,7 +344,7 @@
   "issues": {
     "production_tracking_available": {
       "title": "Melhore a precisão da previsão com o acompanhamento da produção",
-      "description": "O Volcast v1.5.0 já consegue acompanhar a sua produção FV real e usá-la para calibrar as previsões. Aceda às opções da integração e selecione o sensor de energia ou de potência do seu inversor para ativar esta função."
+      "description": "Acompanhamento da produção: no modo de controlo direto, a integração acompanha automaticamente a produção FV a partir das leituras do próprio inversor — não é preciso configurar nada. Nos outros modos, escolha nas opções da integração um sensor de energia ou de potência FV para ativar a calibração das previsões com a produção medida."
     },
     "update_available": {
       "title": "Está disponível uma atualização do Volcast",

@@ -344,7 +344,7 @@
   "issues": {
     "production_tracking_available": {
       "title": "Verbeter de voorspellingsnauwkeurigheid met opbrengstregistratie",
-      "description": "Volcast v1.5.0 kan nu je werkelijke PV-opbrengst registreren en gebruiken om voorspellingen te kalibreren. Ga naar de opties van de integratie en kies de energie- of vermogenssensor van je omvormer om deze functie in te schakelen."
+      "description": "Productiemonitoring: in de directe besturingsmodus volgt de integratie de PV-productie automatisch via de eigen omvormermetingen – er is niets in te stellen. In de andere modi kies je in de opties van de integratie een energie- of vermogenssensor voor PV om de voorspellingskalibratie op basis van gemeten productie in te schakelen."
     },
     "update_available": {
       "title": "Er is een Volcast-update beschikbaar",

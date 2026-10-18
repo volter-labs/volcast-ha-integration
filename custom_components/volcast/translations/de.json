@@ -344,7 +344,7 @@
   "issues": {
     "production_tracking_available": {
       "title": "Prognosegenauigkeit mit Ertragserfassung verbessern",
-      "description": "Volcast v1.5.0 kann jetzt deine tatsächliche PV-Erzeugung erfassen und zur Kalibrierung der Prognosen nutzen. Öffne die Optionen der Integration und wähle den Energie- oder Leistungssensor deines Wechselrichters, um diese Funktion zu aktivieren."
+      "description": "Produktionsverfolgung: Im Direktsteuerungsmodus verfolgt die Integration die PV-Erzeugung automatisch anhand der eigenen Wechselrichterwerte – es ist nichts zu konfigurieren. In den anderen Modi wähle in den Integrationsoptionen einen Energie- oder Leistungssensor der PV-Anlage, um die Prognosekalibrierung anhand der gemessenen Erzeugung zu aktivieren."
     },
     "update_available": {
       "title": "Ein Volcast-Update ist verfügbar",

@@ -344,7 +344,7 @@
   "issues": {
     "production_tracking_available": {
       "title": "Îmbunătățește precizia prognozei cu urmărirea producției",
-      "description": "Volcast v1.5.0 poate urmări acum producția FV reală și o poate folosi pentru calibrarea prognozelor. Mergi la opțiunile integrării și selectează senzorul de energie sau de putere al invertorului tău pentru a activa această funcție."
+      "description": "Urmărirea producției: în modul de control direct, integrarea urmărește automat producția FV din citirile proprii ale invertorului – nu trebuie configurat nimic. În celelalte moduri, alege în opțiunile integrării un senzor de energie sau de putere FV pentru a activa calibrarea prognozelor după producția măsurată."
     },
     "update_available": {
       "title": "Este disponibilă o actualizare Volcast",
