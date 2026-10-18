@@ -40,8 +40,9 @@ class Sim:
     """Cykle co 60 s na jednym falowniku (encje): udany zapis zmienia odczyt urządzenia."""
 
     def __init__(self, schedule=GRID_950, *, start="09:59:00", device=None, memory=None, rated=8000.0,
-                 max_charge=0.0, allowed=True):
+                 max_charge=0.0, allowed=True, count_budget=False):
         self.schedule = schedule
+        self.count_budget = count_budget
         self.max_charge = max_charge
         self.allowed = allowed
         self.now = at(start)
@@ -63,7 +64,8 @@ class Sim:
             gates=gates, memory=self.mem, pv_first_allowed=self.allowed)
         if apply and d.status == WRITE:
             keys = [w.key for w in d.writes]
-            commit(d, WriteReport(written=keys), self.mem, self.mono)
+            commit(d, WriteReport(written=keys), self.mem, self.mono,
+                   now_wall=self.now.timestamp() if self.count_budget else None)
             self.device.update({k: d.flat[k] for k in keys})
         self.now += timedelta(seconds=60)
         self.mono += 60.0
@@ -205,8 +207,9 @@ def test_exhausted_mode_budget_keeps_todays_decision_with_the_device_in_auto():
         assert (a.status, a.reason, a.intent, a.flat, keys(a)) == (b.status, b.reason, b.intent, b.flat, keys(b))
         assert [n for n in a.notes if not n.startswith(NOTE_PV_FIRST)] == list(b.notes)
         assert "nvm_budget" in a.notes and "mode" not in keys(a)
-    assert with_pv.mem.pv_first.phase == PHASE_PV
-    assert cyc.NOTE_PV_FIRST_BUDGET in a.notes and with_pv.device["mode"] == "auto"
+    # Wejście wstrzymane już przez rezerwę planu (udział w budżecie) — moduł zostaje w `grid`.
+    assert with_pv.mem.pv_first.phase == PHASE_GRID
+    assert cyc.NOTE_PV_FIRST_SHARE in a.notes and with_pv.device["mode"] == "auto"
 
 
 def test_exhausted_mode_budget_never_triggers_a_baseline_restore_from_charge_battery():
@@ -219,8 +222,20 @@ def test_exhausted_mode_budget_never_triggers_a_baseline_restore_from_charge_bat
     exhaust(sim, "mode")
     third = sim.tick(**SURPLUS)                      # 10:02 — faza `pv`, ale budżet
     assert (third.status, third.reason, third.intent) == (IDLE, "nothing_to_write", "charge_grid")
-    assert sim.mem.pv_first.phase == PHASE_PV and cyc.NOTE_PV_FIRST_BUDGET in third.notes
+    assert sim.mem.pv_first.phase == PHASE_GRID and cyc.NOTE_PV_FIRST_SHARE in third.notes
     assert sim.device["mode"] == "charge_battery"
+
+
+def test_exhausted_mode_budget_while_in_pv_keeps_the_plan_as_the_last_line():
+    # Już w `pv` (trwanie bez rezerwy), budżet trybu wyczerpany: plan bez podmiany, bez zapisu i bez powrotu
+    # do trybu bazowego — falownik zostaje w neutralnym `auto`.
+    sim = Sim()
+    enter_pv(sim)
+    exhaust(sim, "mode")
+    d = sim.tick(**SURPLUS)
+    assert (d.status, d.intent, d.writes) == (IDLE, "charge_grid", [])
+    assert cyc.NOTE_PV_FIRST_BUDGET in d.notes and "nvm_budget" in d.notes
+    assert sim.mem.pv_first.phase == PHASE_PV and sim.device["mode"] == "auto"
 
 
 def test_exhausted_power_budget_still_allows_the_mode_only_switch():
@@ -487,3 +502,99 @@ def test_threshold_is_the_power_after_the_charge_cap():
     assert first.flat["power_w"] == 600.0
     assert third.intent == "charge_pv"
     assert pv_notes(third) == ["pv_first:surplus=700,slot=600,charged_wh=0,phase=pv"]
+
+
+# ── Udział w budżecie NVM trybu: wejście tylko z rezerwą dla planu ──
+
+ON_PLAN = {"mode": "charge_battery", "power_w": 950.0}     # falownik już wykonuje slot zakupu
+
+
+def _prefill(sim, **counts):
+    for key, n in counts.items():
+        for _ in range(n):
+            sim.mem.budget.note(key, sim.now.timestamp() - 60)
+
+
+def _share_sim(**counts):
+    # Start w slocie bez poprzedniego ticku: wejście na czwartym ticku, bez zapisów przed nim.
+    sim = Sim(start="10:00:00", device=ON_PLAN)
+    _prefill(sim, **counts)
+    return sim
+
+
+def test_entry_allowed_with_room_for_entry_and_return_in_half_the_mode_budget():
+    per_key = GW.nvm_budget.per_key
+    sim = _share_sim(mode=per_key // 2 - 2)
+    d = sim.ticks(4, **SURPLUS)[-1]
+    assert d.status == WRITE and d.intent == "charge_pv" and cyc.NOTE_PV_FIRST_SHARE not in d.notes
+
+
+def test_entry_refused_over_half_the_mode_budget_keeps_the_plan_and_a_consistent_memory():
+    per_key = GW.nvm_budget.per_key
+    sim = _share_sim(mode=per_key // 2 - 1)
+    decisions = sim.ticks(10, **SURPLUS)
+    refused = decisions[3:]
+    for d in refused:
+        assert (d.status, d.reason, d.intent, d.writes) == (IDLE, "nothing_to_write", "charge_grid", [])
+        assert cyc.NOTE_PV_FIRST_SHARE in d.notes and d.flat == ON_PLAN
+    # Moduł nie „wierzy”, że jest w `pv`: bez fazy, bez pv_seen; zegar wejścia trwa (wejście, gdy budżet pozwoli).
+    mem = sim.mem.pv_first
+    assert mem.phase == PHASE_GRID and mem.pv_seen is False and mem.above_since is not None
+    assert sim.device == ON_PLAN
+
+
+def test_entry_refused_over_half_the_total_budget():
+    total = GW.nvm_budget.total
+    ok = _share_sim(soc_min=140, soc_max=140, export_limit_w=total // 2 - 2 - 280)
+    assert ok.ticks(4, **SURPLUS)[-1].intent == "charge_pv"
+    no = _share_sim(soc_min=140, soc_max=140, export_limit_w=total // 2 - 1 - 280)
+    d = no.ticks(4, **SURPLUS)[-1]
+    assert d.intent == "charge_grid" and cyc.NOTE_PV_FIRST_SHARE in d.notes and not d.writes
+
+
+def test_staying_in_pv_and_returning_ignore_the_share():
+    per_key = GW.nvm_budget.per_key
+    sim = Sim()
+    enter_pv(sim)
+    _prefill(sim, mode=per_key - 10)                 # ponad połowę, ale nie wyczerpany
+    stay = sim.ticks(3, **SURPLUS)
+    assert all(d.intent == "charge_pv" and cyc.NOTE_PV_FIRST_SHARE not in d.notes for d in stay)
+    sim.ticks(4, **CLOUD)
+    back = sim.tick(**CLOUD)
+    assert back.status == WRITE and back.intent == "charge_grid" and sim.device == ON_PLAN
+
+
+def test_target_reentry_is_an_entry_too():
+    # Cel energii osiągnięty po fazie `pv` wraca do `pv` z fazy `grid` — to też zapis trybu, więc też rezerwa.
+    per_key = GW.nvm_budget.per_key
+    sim = Sim()
+    enter_pv(sim, battery=-2000.0)                  # 2 kW: cel 950 Wh po ~29 tickach
+    sim.ticks(4, **CLOUD, battery=-2000.0)
+    assert sim.tick(**CLOUD, battery=-2000.0).intent == "charge_grid"
+    _prefill(sim, mode=per_key // 2)
+    decisions = []
+    while sim.now < at("10:59:00"):
+        decisions.append(sim.tick(**CLOUD, battery=-2000.0))
+    assert all(d.intent == "charge_grid" and not d.writes for d in decisions)
+    reached = [d for d in decisions if pvf.NOTE_TARGET in d.notes]
+    assert len(reached) >= 3 and all(cyc.NOTE_PV_FIRST_SHARE in d.notes for d in reached)
+    assert sim.mem.pv_first.phase == PHASE_GRID and sim.device == ON_PLAN
+
+
+@pytest.mark.parametrize("slot_min", [15, 60])
+def test_adversarial_clouds_for_six_hours_spend_at_most_half_the_mode_budget(slot_min):
+    # Najgorsze chmury: słońce, gdy faza `grid`, chmura, gdy `pv` — para wejście/powrót co 8 min.
+    per_key = GW.nvm_budget.per_key
+    start = at("09:00:00")
+    slots = [slot((start + timedelta(minutes=m)).strftime("%H:%M"),
+                  (start + timedelta(minutes=m + slot_min)).strftime("%H:%M"), **GRID, power_w=950)
+             for m in range(0, 360, slot_min)]
+    sim = Sim(plan(*slots), start="09:00:00", count_budget=True)
+    mode_writes = 0
+    for _ in range(360):
+        weather = SURPLUS if sim.mem.pv_first.phase == PHASE_GRID else CLOUD
+        d = sim.tick(**weather)
+        mode_writes += "mode" in keys(d)
+    used = sim.mem.budget.counts(sim.now.timestamp())["mode"]
+    assert used == mode_writes
+    assert per_key // 2 - 4 <= mode_writes <= per_key // 2          # pv-first się zatrzymał na połowie budżetu

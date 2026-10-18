@@ -94,6 +94,8 @@ _BACKOFF_MIN_S = 300.0
 _BACKOFF_MAX_S = 3600.0
 # PV przed siecią: faza `pv`, ale budżet NVM trybu wyczerpany — slot idzie jak w planie
 NOTE_PV_FIRST_BUDGET = "pv_first_nvm_budget"
+# PV przed siecią: wejście w fazę `pv` wstrzymane — zużyta połowa budżetu NVM (rezerwa dla planu)
+NOTE_PV_FIRST_SHARE = "pv_first_nvm_share"
 # PV przed siecią: wyjątek w korekcie — slot idzie jak w planie (z nazwą klasy wyjątku)
 NOTE_PV_FIRST_ERROR = "pv_first_error"
 
@@ -285,7 +287,7 @@ def decide_cycle(*, profile, schedule: Schedule | None, now_utc: datetime, now_m
 
 
 def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTarget, gates,
-            memory, pv_first_allowed: bool = True) -> CycleDecision:
+            memory, pv_first_allowed: bool) -> CycleDecision:
     # Obserwacja poboru domu w KAŻDYM cyklu (każdy tryb, także na sucho i przy blokadzie):
     # ścieżka zapasowa sprzedaży potrzebuje najnowszego ważnego odczytu, nie tego ze sprzedaży.
     memory.live_export = memory.live_export.with_load(
@@ -734,10 +736,33 @@ def _pv_first_step(planned: Params, intent: str, slot, fallback: bool, allowed: 
         # Przetrzymany odczyt w fazie `grid` niczego nie zmienia — bez noty (dom bez czujnika PV).
         informative = left_pv or res.memory.above_since is not None
         return planned, intent, res.notes if informative else ()
+    if not left_pv and not _pv_first_share_left(memory.budget, now_utc.timestamp()):
+        # Wejście (z zegara albo z osiągniętego celu) wstrzymane: pamięć jak przed tym tickiem — faza
+        # `grid`, bez `pv_seen`, zegar wejścia biegnie dalej — tylko czas ticku, energia i licznik
+        # nieważnych odczytów idą naprzód. Moduł nie wierzy w fazę `pv`, której nie wykonano: następny
+        # tick to znów wejście (znów wstrzymane), nie „trwanie w `pv`” omijające rezerwę.
+        base = prev if prev.key == key else PvFirstMemory(key=key)
+        memory.pv_first = replace(base, last_mono=res.memory.last_mono, charged_wh=res.memory.charged_wh,
+                                  invalid_streak=res.memory.invalid_streak)
+        return planned, intent, (*res.notes, NOTE_PV_FIRST_SHARE)
     if memory.budget is not None and memory.budget.would_exceed("mode", now_utc.timestamp()):
         return planned, intent, (*res.notes, NOTE_PV_FIRST_BUDGET)
     pv_intent = "charge_pv"
     return replace(planned, mode=profile.intent(pv_intent)["mode"], power_w=None), pv_intent, res.notes
+
+
+def _pv_first_share_left(budget: WriteBudget | None, now_wall: float) -> bool:
+    """Czy wejście w fazę `pv` mieści się w połowie budżetu NVM (trybu i całkowitego).
+
+    Wejście i powrót to dwa zapisy trybu (stąd +2); druga połowa zostaje dla planu — wieczorna
+    sprzedaż nie może stanąć na `nvm_budget` po pochmurnym dniu zakupów. Trwanie w `pv` i powrót
+    nie są ograniczane (rezerwa już je obejmuje; nie zostawiamy falownika w `auto`).
+    """
+    if budget is None:
+        return True
+    counts = budget.counts(now_wall)
+    return (counts.get("mode", 0) + 2 <= budget.per_key // 2
+            and sum(counts.values()) + 2 <= budget.total // 2)
 
 
 def _below_entity_min(power_w: float, profile, ents: EntityContext) -> bool:
