@@ -1,0 +1,635 @@
+{
+ "comment": "Per-minute averages around a grid-charge slot on a hybrid inverter with a battery; t_s is seconds relative to the slot start; battery_w positive = discharge, negative = charge. PV surplus stays above the slot power after the slot start.",
+ "rows": [
+  {
+   "t_s": -1800,
+   "pv_w": 2441,
+   "load_w": 354,
+   "battery_w": -2133,
+   "soc": 27
+  },
+  {
+   "t_s": -1740,
+   "pv_w": 2467,
+   "load_w": 414,
+   "battery_w": -2109,
+   "soc": 28
+  },
+  {
+   "t_s": -1680,
+   "pv_w": 1743,
+   "load_w": 377,
+   "battery_w": -1445,
+   "soc": 28
+  },
+  {
+   "t_s": -1620,
+   "pv_w": 1326,
+   "load_w": 296,
+   "battery_w": -1087,
+   "soc": 28
+  },
+  {
+   "t_s": -1560,
+   "pv_w": 1791,
+   "load_w": 319,
+   "battery_w": -1488,
+   "soc": 28
+  },
+  {
+   "t_s": -1500,
+   "pv_w": 3322,
+   "load_w": 347,
+   "battery_w": -2990,
+   "soc": 28
+  },
+  {
+   "t_s": -1440,
+   "pv_w": 2904,
+   "load_w": 382,
+   "battery_w": -2583,
+   "soc": 28
+  },
+  {
+   "t_s": -1380,
+   "pv_w": 3326,
+   "load_w": 346,
+   "battery_w": -2959,
+   "soc": 28
+  },
+  {
+   "t_s": -1320,
+   "pv_w": 4483,
+   "load_w": 471,
+   "battery_w": -4103,
+   "soc": 29
+  },
+  {
+   "t_s": -1260,
+   "pv_w": 4100,
+   "load_w": 470,
+   "battery_w": -3705,
+   "soc": 29
+  },
+  {
+   "t_s": -1200,
+   "pv_w": 5493,
+   "load_w": 568,
+   "battery_w": -5053,
+   "soc": 29
+  },
+  {
+   "t_s": -1140,
+   "pv_w": 4412,
+   "load_w": 681,
+   "battery_w": -4003,
+   "soc": 29
+  },
+  {
+   "t_s": -1080,
+   "pv_w": 4347,
+   "load_w": 329,
+   "battery_w": -3981,
+   "soc": 30
+  },
+  {
+   "t_s": -1020,
+   "pv_w": 3865,
+   "load_w": 321,
+   "battery_w": -3457,
+   "soc": 30
+  },
+  {
+   "t_s": -960,
+   "pv_w": 5788,
+   "load_w": 504,
+   "battery_w": -5318,
+   "soc": 30
+  },
+  {
+   "t_s": -900,
+   "pv_w": 5492,
+   "load_w": 422,
+   "battery_w": -5035,
+   "soc": 31
+  },
+  {
+   "t_s": -840,
+   "pv_w": 6079,
+   "load_w": 538,
+   "battery_w": -5669,
+   "soc": 31
+  },
+  {
+   "t_s": -780,
+   "pv_w": 3806,
+   "load_w": 355,
+   "battery_w": -3506,
+   "soc": 31
+  },
+  {
+   "t_s": -720,
+   "pv_w": 4084,
+   "load_w": 391,
+   "battery_w": -3833,
+   "soc": 31
+  },
+  {
+   "t_s": -660,
+   "pv_w": 4656,
+   "load_w": 577,
+   "battery_w": -4263,
+   "soc": 32
+  },
+  {
+   "t_s": -600,
+   "pv_w": 3563,
+   "load_w": 341,
+   "battery_w": -3250,
+   "soc": 32
+  },
+  {
+   "t_s": -540,
+   "pv_w": 4469,
+   "load_w": 457,
+   "battery_w": -4113,
+   "soc": 32
+  },
+  {
+   "t_s": -480,
+   "pv_w": 5959,
+   "load_w": 675,
+   "battery_w": -5536,
+   "soc": 32
+  },
+  {
+   "t_s": -420,
+   "pv_w": 2952,
+   "load_w": 359,
+   "battery_w": -2662,
+   "soc": 32
+  },
+  {
+   "t_s": -360,
+   "pv_w": 2596,
+   "load_w": 326,
+   "battery_w": -2319,
+   "soc": 33
+  },
+  {
+   "t_s": -300,
+   "pv_w": 3029,
+   "load_w": 378,
+   "battery_w": -2704,
+   "soc": 33
+  },
+  {
+   "t_s": -240,
+   "pv_w": 2909,
+   "load_w": 397,
+   "battery_w": -2586,
+   "soc": 33
+  },
+  {
+   "t_s": -180,
+   "pv_w": 2067,
+   "load_w": 346,
+   "battery_w": -1774,
+   "soc": 33
+  },
+  {
+   "t_s": -120,
+   "pv_w": 2116,
+   "load_w": 380,
+   "battery_w": -1794,
+   "soc": 33
+  },
+  {
+   "t_s": -60,
+   "pv_w": 2194,
+   "load_w": 361,
+   "battery_w": -1876,
+   "soc": 33
+  },
+  {
+   "t_s": 0,
+   "pv_w": 1985,
+   "load_w": 358,
+   "battery_w": -1676,
+   "soc": 33
+  },
+  {
+   "t_s": 60,
+   "pv_w": 1919,
+   "load_w": 392,
+   "battery_w": -946,
+   "soc": 33
+  },
+  {
+   "t_s": 120,
+   "pv_w": 2386,
+   "load_w": 372,
+   "battery_w": -946,
+   "soc": 33
+  },
+  {
+   "t_s": 180,
+   "pv_w": 2188,
+   "load_w": 395,
+   "battery_w": -947,
+   "soc": 33
+  },
+  {
+   "t_s": 240,
+   "pv_w": 1995,
+   "load_w": 368,
+   "battery_w": -947,
+   "soc": 34
+  },
+  {
+   "t_s": 300,
+   "pv_w": 2581,
+   "load_w": 367,
+   "battery_w": -946,
+   "soc": 34
+  },
+  {
+   "t_s": 360,
+   "pv_w": 3036,
+   "load_w": 406,
+   "battery_w": -947,
+   "soc": 34
+  },
+  {
+   "t_s": 420,
+   "pv_w": 3324,
+   "load_w": 438,
+   "battery_w": -946,
+   "soc": 34
+  },
+  {
+   "t_s": 480,
+   "pv_w": 2631,
+   "load_w": 424,
+   "battery_w": -950,
+   "soc": 34
+  },
+  {
+   "t_s": 540,
+   "pv_w": 2757,
+   "load_w": 397,
+   "battery_w": -948,
+   "soc": 34
+  },
+  {
+   "t_s": 600,
+   "pv_w": 2724,
+   "load_w": 360,
+   "battery_w": -947,
+   "soc": 34
+  },
+  {
+   "t_s": 660,
+   "pv_w": 3505,
+   "load_w": 398,
+   "battery_w": -950,
+   "soc": 34
+  },
+  {
+   "t_s": 720,
+   "pv_w": 4598,
+   "load_w": 307,
+   "battery_w": -950,
+   "soc": 34
+  },
+  {
+   "t_s": 780,
+   "pv_w": 4066,
+   "load_w": 454,
+   "battery_w": -948,
+   "soc": 34
+  },
+  {
+   "t_s": 840,
+   "pv_w": 3706,
+   "load_w": 479,
+   "battery_w": -947,
+   "soc": 34
+  },
+  {
+   "t_s": 900,
+   "pv_w": 6703,
+   "load_w": 558,
+   "battery_w": -948,
+   "soc": 34
+  },
+  {
+   "t_s": 960,
+   "pv_w": 3681,
+   "load_w": 395,
+   "battery_w": -947,
+   "soc": 34
+  },
+  {
+   "t_s": 1020,
+   "pv_w": 3546,
+   "load_w": 412,
+   "battery_w": -950,
+   "soc": 34
+  },
+  {
+   "t_s": 1080,
+   "pv_w": 3459,
+   "load_w": 358,
+   "battery_w": -946,
+   "soc": 34
+  },
+  {
+   "t_s": 1140,
+   "pv_w": 4796,
+   "load_w": 470,
+   "battery_w": -946,
+   "soc": 34
+  },
+  {
+   "t_s": 1200,
+   "pv_w": 6153,
+   "load_w": 598,
+   "battery_w": -947,
+   "soc": 34
+  },
+  {
+   "t_s": 1260,
+   "pv_w": 6154,
+   "load_w": 461,
+   "battery_w": -947,
+   "soc": 34
+  },
+  {
+   "t_s": 1320,
+   "pv_w": 3921,
+   "load_w": 213,
+   "battery_w": -946,
+   "soc": 34
+  },
+  {
+   "t_s": 1380,
+   "pv_w": 6701,
+   "load_w": 526,
+   "battery_w": -946,
+   "soc": 35
+  },
+  {
+   "t_s": 1440,
+   "pv_w": 6774,
+   "load_w": 524,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 1500,
+   "pv_w": 7236,
+   "load_w": 591,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 1560,
+   "pv_w": 5788,
+   "load_w": 774,
+   "battery_w": -946,
+   "soc": 35
+  },
+  {
+   "t_s": 1620,
+   "pv_w": 3155,
+   "load_w": 453,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 1680,
+   "pv_w": 4233,
+   "load_w": 418,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 1740,
+   "pv_w": 7302,
+   "load_w": 619,
+   "battery_w": -948,
+   "soc": 35
+  },
+  {
+   "t_s": 1800,
+   "pv_w": 3059,
+   "load_w": 413,
+   "battery_w": -948,
+   "soc": 35
+  },
+  {
+   "t_s": 1860,
+   "pv_w": 2876,
+   "load_w": 376,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 1920,
+   "pv_w": 3547,
+   "load_w": 442,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 1980,
+   "pv_w": 5869,
+   "load_w": 437,
+   "battery_w": -948,
+   "soc": 35
+  },
+  {
+   "t_s": 2040,
+   "pv_w": 2478,
+   "load_w": 412,
+   "battery_w": -948,
+   "soc": 35
+  },
+  {
+   "t_s": 2100,
+   "pv_w": 3474,
+   "load_w": 457,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 2160,
+   "pv_w": 7782,
+   "load_w": 604,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 2220,
+   "pv_w": 7563,
+   "load_w": 633,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 2280,
+   "pv_w": 4010,
+   "load_w": 427,
+   "battery_w": -945,
+   "soc": 35
+  },
+  {
+   "t_s": 2340,
+   "pv_w": 4000,
+   "load_w": 561,
+   "battery_w": -948,
+   "soc": 35
+  },
+  {
+   "t_s": 2400,
+   "pv_w": 3938,
+   "load_w": 427,
+   "battery_w": -947,
+   "soc": 35
+  },
+  {
+   "t_s": 2460,
+   "pv_w": 5140,
+   "load_w": 459,
+   "battery_w": -946,
+   "soc": 35
+  },
+  {
+   "t_s": 2520,
+   "pv_w": 3046,
+   "load_w": 388,
+   "battery_w": -947,
+   "soc": 36
+  },
+  {
+   "t_s": 2580,
+   "pv_w": 2606,
+   "load_w": 405,
+   "battery_w": -947,
+   "soc": 36
+  },
+  {
+   "t_s": 2640,
+   "pv_w": 2730,
+   "load_w": 392,
+   "battery_w": -948,
+   "soc": 36
+  },
+  {
+   "t_s": 2700,
+   "pv_w": 2514,
+   "load_w": 381,
+   "battery_w": -947,
+   "soc": 36
+  },
+  {
+   "t_s": 2760,
+   "pv_w": 1957,
+   "load_w": 347,
+   "battery_w": -946,
+   "soc": 36
+  },
+  {
+   "t_s": 2820,
+   "pv_w": 1985,
+   "load_w": 366,
+   "battery_w": -947,
+   "soc": 36
+  },
+  {
+   "t_s": 2880,
+   "pv_w": 2291,
+   "load_w": 372,
+   "battery_w": -948,
+   "soc": 36
+  },
+  {
+   "t_s": 2940,
+   "pv_w": 2327,
+   "load_w": 426,
+   "battery_w": -948,
+   "soc": 36
+  },
+  {
+   "t_s": 3000,
+   "pv_w": 2210,
+   "load_w": 370,
+   "battery_w": -949,
+   "soc": 36
+  },
+  {
+   "t_s": 3060,
+   "pv_w": 3012,
+   "load_w": 390,
+   "battery_w": -949,
+   "soc": 36
+  },
+  {
+   "t_s": 3120,
+   "pv_w": 4145,
+   "load_w": 529,
+   "battery_w": -946,
+   "soc": 36
+  },
+  {
+   "t_s": 3180,
+   "pv_w": 2286,
+   "load_w": 419,
+   "battery_w": -947,
+   "soc": 36
+  },
+  {
+   "t_s": 3240,
+   "pv_w": 2015,
+   "load_w": 340,
+   "battery_w": -948,
+   "soc": 36
+  },
+  {
+   "t_s": 3300,
+   "pv_w": 2131,
+   "load_w": 368,
+   "battery_w": -948,
+   "soc": 36
+  },
+  {
+   "t_s": 3360,
+   "pv_w": 2231,
+   "load_w": 378,
+   "battery_w": -948,
+   "soc": 36
+  },
+  {
+   "t_s": 3420,
+   "pv_w": 2031,
+   "load_w": 383,
+   "battery_w": -947,
+   "soc": 36
+  },
+  {
+   "t_s": 3480,
+   "pv_w": 1787,
+   "load_w": 343,
+   "battery_w": -949,
+   "soc": 36
+  },
+  {
+   "t_s": 3540,
+   "pv_w": 1931,
+   "load_w": 409,
+   "battery_w": -948,
+   "soc": 36
+  }
+ ]
+}
