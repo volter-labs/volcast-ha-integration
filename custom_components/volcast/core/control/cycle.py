@@ -94,6 +94,8 @@ _BACKOFF_MIN_S = 300.0
 _BACKOFF_MAX_S = 3600.0
 # PV przed siecią: faza `pv`, ale budżet NVM trybu wyczerpany — slot idzie jak w planie
 NOTE_PV_FIRST_BUDGET = "pv_first_nvm_budget"
+# PV przed siecią: wyjątek w korekcie — slot idzie jak w planie (z nazwą klasy wyjątku)
+NOTE_PV_FIRST_ERROR = "pv_first_error"
 
 
 @dataclass
@@ -265,20 +267,25 @@ def _gate_reason(g: Gates, memory: ControlMemory, now_mono: float) -> str | None
 
 def decide_cycle(*, profile, schedule: Schedule | None, now_utc: datetime, now_mono: float,
                  tele: Telemetry, limits: Limits, gates: Gates, memory: ControlMemory,
-                 ents: EntityContext | None = None, target: WriteTarget | None = None) -> CycleDecision:
-    """`ents` (tryb encji, jak dotąd) albo `target` (dowolny cel) — dokładnie jedno z nich."""
+                 ents: EntityContext | None = None, target: WriteTarget | None = None,
+                 pv_first_allowed: bool = True) -> CycleDecision:
+    """`ents` (tryb encji, jak dotąd) albo `target` (dowolny cel) — dokładnie jedno z nich.
+
+    `pv_first_allowed=False` wyłącza korektę PV przed siecią (okno próbne weryfikacji urządzenia).
+    """
     try:
         if (ents is None) == (target is None):
             raise TypeError("decide_cycle: podaj dokładnie jedno z ents/target")
         if target is None:
             target = EntityTarget(ents)
-        return _decide(profile, schedule, now_utc, now_mono, tele, limits, target, gates, memory)
+        return _decide(profile, schedule, now_utc, now_mono, tele, limits, target, gates, memory,
+                       pv_first_allowed)
     except Exception as err:  # noqa: BLE001 — każdy błąd decyzji = brak zapisów
         return CycleDecision(ERROR, f"exception:{type(err).__name__}")
 
 
 def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTarget, gates,
-            memory) -> CycleDecision:
+            memory, pv_first_allowed: bool = True) -> CycleDecision:
     # Obserwacja poboru domu w KAŻDYM cyklu (każdy tryb, także na sucho i przy blokadzie):
     # ścieżka zapasowa sprzedaży potrzebuje najnowszego ważnego odczytu, nie tego ze sprzedaży.
     memory.live_export = memory.live_export.with_load(
@@ -333,8 +340,11 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     planned = replace(planned, **{k: None for k in without})
     # Zakup z sieci przy żywej nadwyżce PV ≥ moc slotu: tryb ładowania z PV (po strażnikach
     # i `_degrade`, przed sprzedażą, dopasowaniem i throttlingiem — jak każda inna intencja).
-    planned, common["intent"], pv_notes = _pv_first(planned, mapped_slot.intent, slot, is_fallback, profile,
-                                                    tele, limits, target, memory, now_mono, now_utc)
+    # Każde wejście i powrót to zapis trybu z dobowego budżetu NVM (wspólnego z resztą planu);
+    # I-8 ich nie liczy (`auto` jest neutralne, powrót do ładowania to nie zmiana kierunku).
+    planned, common["intent"], pv_notes = _pv_first(planned, mapped_slot.intent, slot, is_fallback,
+                                                    pv_first_allowed, profile, tele, limits, target, memory,
+                                                    now_mono, now_utc)
     # Sprzedaż: moc baterii → nastawa eksportu z odczytów tego cyklu (po strażnikach, przed
     # dopasowaniem i throttlingiem — histereza i uzgadnianie widzą już nastawę eksportu).
     dry = _gate_reason(gates, memory, now_mono) is not None
@@ -666,23 +676,39 @@ def _live_export_direct(planned: Params, guarded: Params, intent: str, slot, pro
     return replace(planned, power_w=live.xset_w), live, tuple(notes)
 
 
-def _pv_first(planned: Params, intent: str, slot, fallback: bool, profile, tele: Telemetry, limits: Limits,
-              target: WriteTarget, memory: ControlMemory, now_mono: float, now_utc: datetime
+def _pv_first(planned: Params, intent: str, slot, fallback: bool, allowed: bool, profile, tele: Telemetry,
+              limits: Limits, target: WriteTarget, memory: ControlMemory, now_mono: float, now_utc: datetime
               ) -> tuple[Params, str, tuple[str, ...]]:
     """PV przed siecią: slot `charge_grid` w fazie `pv` idzie trybem intencji `charge_pv` bez mocy.
 
-    Zwraca (nastawy, intencję końcową, noty). Korekta tylko dla intencji i profilu z
+    Zwraca (nastawy, intencję końcową, noty). Korekta tylko, gdy wołający jej nie wyłączył (`allowed`
+    — okno próbne weryfikacji mierzy wymuszone ładowanie z sieci), dla intencji i profilu z
     `pv_first.applies`, slotu z planu (zapasowy zmienia klucz co tick) i nastaw, które po
     strażnikach i `_degrade` nadal są ładowaniem z sieci z mocą — inaczej pamięć od zera (zostaje
     tylko czas ticku: pierwszy tick slotu pokrywa przedział od poprzedniego cyklu) i plan bez zmian.
     Moc progu i celu = moc po strażnikach (to, co dziś poszłoby na falownik). PV i pobór walidowane
-    jak w sprzedaży; moc baterii — świeża (I-9) i nie większa niż moc znamionowa, inaczej None
-    (cel energii nieaktywny). Faza `pv` przy wyczerpanym budżecie NVM trybu = plan bez zmian: podmiana
-    nie może kosztować zapisu ponad budżet ani wywołać powrotu do trybu bazowego poza budżetem.
+    jak w sprzedaży; moc baterii — świeża (I-9) i nie większa niż moc znamionowa AC, inaczej None
+    (cel energii nieaktywny). Ładowanie DC z PV ponad moc AC (małe modele) też wyłącza wtedy cel —
+    bezpiecznie: w fazie `grid` zakup i tak nie przekracza mocy slotu. Faza `pv` przy wyczerpanym
+    budżecie NVM trybu = plan bez zmian: podmiana nie może kosztować zapisu ponad budżet ani wywołać
+    powrotu do trybu bazowego poza budżetem.
     Noty tylko, gdy coś mówią: faza `pv` (także przetrzymana), powrót z niej, biegnący zegar wejścia.
     Podmiana na tryb neutralny po strażnikach jest bezpieczna (jak zejście w `_degrade`).
+    Błąd korekty (to tylko optymalizacja) nie zatrzymuje sterowania: plan bez zmian, pamięć od zera
+    i nota z nazwą klasy wyjątku.
     """
-    grid_mode = profile.intent(intent)["mode"] if pv_first.applies(profile, intent) else None
+    try:
+        return _pv_first_step(planned, intent, slot, fallback, allowed, profile, tele, limits, target, memory,
+                              now_mono, now_utc)
+    except Exception as err:  # noqa: BLE001 — błąd korekty = plan, nie cykl bez zapisów
+        memory.pv_first = PvFirstMemory(last_mono=now_mono)
+        return planned, intent, (f"{NOTE_PV_FIRST_ERROR}:{type(err).__name__}",)
+
+
+def _pv_first_step(planned: Params, intent: str, slot, fallback: bool, allowed: bool, profile,
+                   tele: Telemetry, limits: Limits, target: WriteTarget, memory: ControlMemory,
+                   now_mono: float, now_utc: datetime) -> tuple[Params, str, tuple[str, ...]]:
+    grid_mode = profile.intent(intent)["mode"] if allowed and pv_first.applies(profile, intent) else None
     if fallback or grid_mode is None or planned.mode != grid_mode or planned.power_w is None:
         memory.pv_first = PvFirstMemory(last_mono=now_mono)
         return planned, intent, ()

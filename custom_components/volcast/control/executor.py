@@ -1222,7 +1222,9 @@ class VolcastExecutor:
             profile=self._profile, schedule=self._window or self.schedule, now_utc=now_utc, now_mono=now_mono,
             tele=tele,
             limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
-            gates=dgates, memory=self._memory, **cycle_in)
+            gates=dgates, memory=self._memory, **cycle_in,
+            # okno próbne mierzy wymuszone ładowanie z sieci — bez korekty PV przed siecią
+            pv_first_allowed=self._window is None)
         self._warn_sell_suspended(decision)
         if direct is not None:
             self._update_mode_issue(decision, self._control_on(gates))

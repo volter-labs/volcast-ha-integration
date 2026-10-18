@@ -8,7 +8,12 @@ mechanizmów, których korekta nie zmienia (budżet NVM, przejęcie, pauza, pró
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
+
+from custom_components.volcast.control import executor as executor_mod
+from custom_components.volcast.control.verification import window_schedule
 from custom_components.volcast.core.control import cycle as cyc
+from custom_components.volcast.core.control import pv_first as pvf
 from custom_components.volcast.core.control.cycle import (BLOCKED, DRY_RUN, ERROR, IDLE, WRITE, ControlMemory,
                                                           EntityContext, Limits, Telemetry, commit,
                                                           decide_cycle)
@@ -17,6 +22,8 @@ from custom_components.volcast.core.control.pv_first import (NOTE_HELD, NOTE_NO_
 from custom_components.volcast.core.control.target import RegisterTarget
 from custom_components.volcast.core.write_sequence import WriteReport
 from tests.core.golden import T0
+
+from tests.control.test_executor_direct import GW_V, Harness, gw_target, issues  # noqa: F401 — fixture
 
 from .conftest import LIVE_ZERO, MODE_REG, SOC_REG, goodwe_reading
 from .test_cycle import ATTRS, GW, MAPPED, OPEN, SELL, UNITS, at, plan, slot
@@ -32,8 +39,11 @@ CLOUD = dict(pv=1100.0, load=500.0)            # nadwyżka 600 W < 950 − 200
 class Sim:
     """Cykle co 60 s na jednym falowniku (encje): udany zapis zmienia odczyt urządzenia."""
 
-    def __init__(self, schedule=GRID_950, *, start="09:59:00", device=None, memory=None, rated=8000.0):
+    def __init__(self, schedule=GRID_950, *, start="09:59:00", device=None, memory=None, rated=8000.0,
+                 max_charge=0.0, allowed=True):
         self.schedule = schedule
+        self.max_charge = max_charge
+        self.allowed = allowed
         self.now = at(start)
         self.mono = 1000.0
         self.mem = memory or ControlMemory.for_profile(GW)
@@ -47,10 +57,10 @@ class Sim:
             tele=Telemetry(soc=60.0, soc_age_s=soc_age, battery_temp_c=25.0, pv_power_w=pv, pv_age_s=pv_age,
                            load_power_w=load, load_age_s=load_age, battery_w=battery,
                            battery_age_s=battery_age),
-            limits=Limits(rated_power_w=self.rated),
+            limits=Limits(rated_power_w=self.rated, max_charge_w=self.max_charge),
             ents=EntityContext(domain="goodwe", mapped=MAPPED, units=UNITS, attrs=ATTRS,
                                readings=dict(self.device)),
-            gates=gates, memory=self.mem)
+            gates=gates, memory=self.mem, pv_first_allowed=self.allowed)
         if apply and d.status == WRITE:
             keys = [w.key for w in d.writes]
             commit(d, WriteReport(written=keys), self.mem, self.mono)
@@ -370,3 +380,110 @@ def test_error_keeps_the_memory():
 
 def test_new_memory_starts_empty():
     assert ControlMemory.for_profile(GW).pv_first == PvFirstMemory()
+
+
+# ── Okno próbne weryfikacji urządzenia ──
+
+def _window_sims(allowed):
+    window = window_schedule(at("10:00:00"), minutes=15, power_w=1000, base=None)
+    return Sim(window, start="10:00:00", allowed=allowed), Sim(window, start="10:00:00", allowed=allowed)
+
+
+def test_verification_window_is_never_corrected():
+    # Okno mierzy wymuszone ładowanie z sieci (`charge_battery` + moc okna) — PV przed siecią by je zafałszowało.
+    with_pv, baseline = _window_sims(allowed=False)
+    for _ in range(8):
+        a = with_pv.tick(**SURPLUS)
+        b = baseline.tick()
+        assert same_decision(a, b), (a.notes, b.notes)
+        assert a.intent == "charge_grid" and not pv_notes(a)
+    assert with_pv.device == {"mode": "charge_battery", "power_w": 1000.0}
+    assert with_pv.mem.pv_first.key is None and with_pv.mem.pv_first.phase == PHASE_GRID
+
+
+def test_same_window_without_the_flag_switches():
+    sim, _ = _window_sims(allowed=True)
+    assert [d.intent for d in sim.ticks(4, **SURPLUS)] == ["charge_grid"] * 3 + ["charge_pv"]
+
+
+def test_the_flag_resets_the_memory_of_a_running_pv_phase():
+    sim = Sim()
+    enter_pv(sim)
+    sim.allowed = False
+    d = sim.tick(**SURPLUS)
+    assert d.status == WRITE and d.flat == {"mode": "charge_battery", "power_w": 950.0}
+    assert sim.mem.pv_first.key is None
+
+
+@pytest.mark.asyncio
+async def test_executor_disables_pv_first_only_while_a_verification_window_runs(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues, monkeypatch):  # noqa: F811
+    seen = []
+    real = executor_mod.decide_cycle
+
+    def spy(**kw):
+        seen.append(kw["pv_first_allowed"])
+        return real(**kw)
+
+    monkeypatch.setattr(executor_mod, "decide_cycle", spy)
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start()
+    try:
+        await h.ex.async_tick()
+        h.ex.start_verification_window(window_schedule(h.utc(), minutes=15, power_w=500, base=h.ex.schedule))
+        await h.ex.async_tick()
+        assert seen[0] is True and seen[-1] is False
+        await h.ex.async_verification_restore()
+        await h.cycle()
+        assert seen[-1] is True
+    finally:
+        await h.close()
+
+
+# ── Błąd korekty nie zatrzymuje sterowania ──
+
+def test_error_inside_pv_first_falls_back_to_the_plan(monkeypatch):
+    def boom(**_):
+        raise RuntimeError("x")
+
+    with_pv, baseline = Sim(), Sim()
+    enter_pv(with_pv)
+    for _ in range(4):
+        baseline.tick()
+    b = baseline.tick()                               # dziś: plan (bez odczytów — bez korekty)
+    monkeypatch.setattr(pvf, "step", boom)
+    a = with_pv.tick(**SURPLUS)
+    assert a.status == WRITE and a.flat == {"mode": "charge_battery", "power_w": 950.0}
+    assert a.notes == (*b.notes, "pv_first_error:RuntimeError")
+    assert with_pv.mem.pv_first == PvFirstMemory(last_mono=with_pv.mono - 60.0)
+    c = with_pv.tick(**SURPLUS)
+    assert (c.status, c.writes, c.intent) == (IDLE, [], "charge_grid")
+
+
+# ── Korekta po strażnikach ──
+
+def test_slot_whose_mode_changed_upstream_is_not_corrected(monkeypatch):
+    # Coś przed korektą (strażnik) zmieniło tryb slotu zakupu: plan wykonawcy, nie podmiana na `auto`.
+    real = cyc.apply_guards
+
+    def standby(params, ctx, profile):
+        out = real(params, ctx, profile)
+        return replace(out, params=replace(out.params, mode="battery_standby"))
+
+    monkeypatch.setattr(cyc, "apply_guards", standby)
+    sim = Sim()
+    *_, third = enter_pv(sim)
+    fourth = sim.tick(**SURPLUS)
+    for d in (third, fourth):
+        assert d.intent == "charge_grid" and d.flat["mode"] == "battery_standby" and not pv_notes(d)
+    assert sim.mem.pv_first.key is None
+
+
+def test_threshold_is_the_power_after_the_charge_cap():
+    # Limit ładowania BMS 600 W (I-3) — kupujemy najwyżej 600 W, więc nadwyżka 700 W już je pokrywa.
+    sim = Sim(max_charge=600.0)
+    small = dict(pv=1200.0, load=500.0)
+    sim.tick(**small)
+    first, _, third = sim.ticks(3, **small)
+    assert first.flat["power_w"] == 600.0
+    assert third.intent == "charge_pv"
+    assert pv_notes(third) == ["pv_first:surplus=700,slot=600,charged_wh=0,phase=pv"]
