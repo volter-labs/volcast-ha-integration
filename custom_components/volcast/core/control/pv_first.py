@@ -5,23 +5,26 @@ więcej, nadwyżka płynie do sieci, a bateria i tak kupuje prąd. Ten moduł ro
 czy w bieżącym slocie podmienić ładowanie z sieci na tryb ładowania z PV. Czysta logika:
 bez HA i bez I/O; czas monotoniczny podaje wołający.
 
+* Odczyt z ticku pokrywa przedział od poprzedniego ticku (ta sama zasada dla zegarów faz
+  i dla całkowania energii). Po luce (brak poprzedniego ticku, przerwa > `PV_FIRST_GAP_S`,
+  zegar cofnięty) pokrywa tylko chwilę bieżącą.
 * Wejście do `pv`: nadwyżka `pv − load` ≥ moc slotu nieprzerwanie przez ≥ `PV_FIRST_ENTER_S`
-  (licząc od PIERWSZEJ obserwacji; tick co 60 s = 4 odczyty: 0, 60, 120, 180 s). Nieważny
-  odczyt albo przerwa między tickami > `PV_FIRST_GAP_S` liczą zegar wejścia od nowa.
+  — przy ticku co 60 s trzeci tick z rzędu (po restarcie, bez poprzedniego ticku: czwarty).
+  Nieważny odczyt albo luka liczą zegar wejścia od nowa.
 * Powrót do `grid`: nadwyżka < moc slotu − `PV_FIRST_MARGIN_W` nieprzerwanie przez
-  ≥ `PV_FIRST_EXIT_S`. Strefa między tymi progami trzyma fazę i kasuje zegar wyjścia.
+  ≥ `PV_FIRST_EXIT_S` (piąty tick). Strefa między tymi progami trzyma fazę i kasuje zegar
+  wyjścia. Cofnięty zegar kasuje oba zegary.
 * Cel energii: `charged_wh` = całka `max(0, −battery_w)·dt` od początku slotu (moc baterii
-  dodatnia = rozładowanie), wartość z bieżącego ticku × czas od poprzedniego. Przedział
-  > `PV_FIRST_GAP_S` nie jest liczony (luka). Cel = moc slotu × długość slotu. Osiągnięty
-  w fazie `pv` trzyma ją do końca slotu (zakup nigdy ponad plan). W fazie `grid` NIE jest
-  wejściem do `pv` — wejście zawsze wymaga nadwyżki (wątpliwość = intencja planu).
+  dodatnia = rozładowanie), wartość z bieżącego ticku × czas od poprzedniego. Luka i pierwszy
+  tick slotu nie są liczone. Cel = moc slotu × długość slotu. Osiągnięty, gdy slot był już
+  w fazie `pv`, daje fazę `pv` do końca slotu w każdym stanie (zakup nigdy ponad plan).
+  Bez fazy `pv` w slocie cel nic nie zmienia (uzasadnienie w `step`).
   Brak odczytu baterii = cel nieaktywny w tym ticku (nota); logika fazy działa dalej.
   Bezpieczne: w fazie `grid` falownik ładuje co najwyżej mocą slotu.
-* Nieważny lub przestarzały odczyt PV albo poboru (wołający podaje już zwalidowane wartości,
-  None = nieważny): pierwszy z rzędu, nie dalej niż `PV_FIRST_HELD_S` od poprzedniego ticku,
-  trzyma bieżącą fazę (jak przetrzymana para w `live_export`); drugi z rzędu albo po dłuższej
-  ciszy = faza `grid`.
-* Inny klucz slotu `(start, end, intent)` = pamięć od zera. Niepoprawna moc albo długość
+* Nieważny lub przestarzały odczyt PV albo poboru (None albo wartość nieskończona):
+  pierwszy z rzędu, nie dalej niż `PV_FIRST_HELD_S` od poprzedniego ticku, trzyma bieżącą fazę
+  (jak przetrzymana para w `live_export`); drugi z rzędu albo po dłuższej ciszy = faza `grid`.
+* Inny klucz slotu `(start, end, intent)` = liczniki od zera. Niepoprawna moc albo długość
   slotu = faza `grid`.
 
 Pamięć (`PvFirstMemory`) jest niezmienna — `step` zwraca nową. Żyje tylko w RAM: po restarcie
@@ -43,6 +46,10 @@ PV_FIRST_MARGIN_W = 200.0
 PV_FIRST_GAP_S = 150.0
 # najdłuższa przerwa od ostatniego ticku, przez którą jeden nieważny odczyt trzyma fazę
 PV_FIRST_HELD_S = 150.0
+# Moc baterii ponad tyle to błąd czujnika, nie moc: największe domowe falowniki hybrydowe
+# (trójfazowe, do ~30 kW) mieszczą się z zapasem. Bez tej granicy jedna próbka −100 kW dopisuje
+# ~1,7 kWh na minutę i fałszywie kończy zakup. Dokładniejsza granica (moc znamionowa) — u wołającego.
+BATTERY_MAX_W = 50_000.0
 
 PHASE_GRID = "grid"
 PHASE_PV = "pv"
@@ -75,6 +82,8 @@ class PvFirstMemory:
     last_mono: float | None = None
     # kolejne ticki bez ważnej pary (PV, pobór)
     invalid_streak: int = 0
+    # slot był już w fazie `pv` — dopiero wtedy osiągnięty cel energii kończy zakup z sieci
+    pv_seen: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,9 +122,19 @@ def _note(surplus: float | None, power_w: float | None, charged_wh: float, phase
 def step(*, memory: PvFirstMemory, key: SlotKey, power_w: float, duration_s: float,
          pv_w: float | None, load_w: float | None, battery_w: float | None,
          now_mono: float) -> PvFirstStep:
-    """Jeden tick slotu `charge_grid` (`pv_w`/`load_w` już zwalidowane albo None)."""
-    if memory.key != key:
-        memory = PvFirstMemory(key=key)          # nowy slot albo intencja — liczniki od zera
+    """Jeden tick slotu `charge_grid`.
+
+    Kontrakt wołającego (tor sterowania): `pv_w`, `load_w` i `battery_w` muszą być już
+    zwalidowane — skończone, świeże (reguła I-9, `state_fresh` z wiekiem odczytu) i wiarygodne
+    (PV i pobór jak `live_export.valid_reading`/`valid_load`; bateria ze znakiem, |moc| nie
+    większa niż granica z mocy znamionowej) — inaczej None. Sam `step` odrzuca jeszcze wartości
+    nieskończone i baterię ponad `BATTERY_MAX_W`: tania obrona, nie zamiennik tej walidacji.
+    """
+    new_slot = memory.key != key
+    if new_slot:
+        # nowy slot albo intencja — liczniki od zera; czas poprzedniego ticku zostaje, żeby odczyt
+        # z pierwszego ticku slotu pokrywał przedział od poprzedniego cyklu (wejście po 3 tickach)
+        memory = PvFirstMemory(key=key, last_mono=memory.last_mono)
     power = _finite(power_w)
     duration = _finite(duration_s)
     if power is None or power <= 0.0 or duration is None or duration <= 0.0:
@@ -123,48 +142,59 @@ def step(*, memory: PvFirstMemory, key: SlotKey, power_w: float, duration_s: flo
         return PvFirstStep(PHASE_GRID, mem, (_note(None, power, 0.0, PHASE_GRID), NOTE_NO_POWER))
 
     dt = None if memory.last_mono is None else now_mono - memory.last_mono
+    # luka: brak poprzedniego ticku, za długa przerwa albo zegar cofnięty
     gap = dt is None or not 0.0 <= dt <= PV_FIRST_GAP_S
     battery = _finite(battery_w)
+    if battery is not None and abs(battery) > BATTERY_MAX_W:
+        battery = None
     charged = memory.charged_wh
-    if battery is not None and not gap:
+    if battery is not None and not gap and not new_slot:
+        # przedział sprzed pierwszego ticku slotu należy do poprzedniego slotu
         charged += max(0.0, -battery) * dt / 3600.0
     reached = charged >= power * duration / 3600.0
     extra: list[str] = [] if battery is not None else [NOTE_NO_BATTERY]
 
     phase, above, below = memory.phase, memory.above_since, memory.below_since
-    surplus = None if pv_w is None or load_w is None else pv_w - load_w
-    if surplus is None:
-        streak = memory.invalid_streak + 1
+    if dt is not None and dt < 0.0:
+        above = below = None                     # zegar cofnięty — zegary faz od nowa
+    # Odczyt z ticku pokrywa przedział od poprzedniego ticku (jak przy całkowaniu energii);
+    # po luce pokrywa tylko chwilę bieżącą.
+    since = now_mono if gap else memory.last_mono
+    pv, load = _finite(pv_w), _finite(load_w)
+    surplus = None if pv is None or load is None else pv - load
+    streak = 0 if surplus is not None else memory.invalid_streak + 1
+    if reached and memory.pv_seen:
+        # Cel osiągnięty po fazie `pv`: dalszy zakup byłby ponad plan — tryb z PV do końca slotu,
+        # także gdy chmury wróciły fazę do `grid`. Bez fazy `pv` w slocie cel nic nie zmienia:
+        # zwykły slot sieciowy ładuje mocą slotu i dochodzi do celu dopiero pod koniec, a błąd
+        # licznika baterii (np. 980 W przy nastawie 950 W) przełączyłby go na `auto` kilka minut
+        # wcześniej — dodatkowy zapis trybu i zapisy inne niż dziś.
+        phase, above, below = PHASE_PV, None, None
+    elif surplus is None:
         held = streak == 1 and dt is not None and 0.0 <= dt < PV_FIRST_HELD_S
-        if phase == PHASE_PV and reached:
-            pass                                 # cel osiągnięty: odczyt PV już niepotrzebny
-        elif held:
+        if held:
             above = None                         # wejście wymaga nieprzerwanie ważnej nadwyżki
             extra.append(NOTE_HELD)
         else:
             phase, above, below = PHASE_GRID, None, None
             extra.append(NOTE_NO_READING)
-    else:
-        streak = 0
-        if phase == PHASE_GRID:
-            below = None
-            if surplus >= power:
-                above = now_mono if above is None or gap else above
-                if now_mono - above >= PV_FIRST_ENTER_S:
-                    phase, above = PHASE_PV, None
-            else:
-                above = None
+    elif phase == PHASE_GRID:
+        if surplus >= power:
+            above = since if above is None or gap else above
+            if now_mono - above >= PV_FIRST_ENTER_S:
+                phase, above = PHASE_PV, None
         else:
             above = None
-            if surplus < power - PV_FIRST_MARGIN_W and not reached:
-                below = now_mono if below is None else below
-                if now_mono - below >= PV_FIRST_EXIT_S:
-                    phase, below = PHASE_GRID, None
-            else:
-                below = None
+    elif surplus < power - PV_FIRST_MARGIN_W:
+        below = since if below is None else below
+        if now_mono - below >= PV_FIRST_EXIT_S:
+            phase, below = PHASE_GRID, None
+    else:
+        below = None
     if phase == PHASE_PV and reached:
         extra.append(NOTE_TARGET)
 
     mem = replace(memory, phase=phase, above_since=above, below_since=below, charged_wh=charged,
-                  last_mono=now_mono, invalid_streak=streak)
+                  last_mono=now_mono, invalid_streak=streak,
+                  pv_seen=memory.pv_seen or phase == PHASE_PV)
     return PvFirstStep(phase, mem, (_note(surplus, power, charged, phase), *extra))
