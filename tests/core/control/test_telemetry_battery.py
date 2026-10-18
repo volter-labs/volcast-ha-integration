@@ -1,5 +1,4 @@
 """Moc baterii w telemetrii cyklu: wartość i wiek, dodatnia = rozładowanie; brak odczytu nic nie blokuje."""
-import asyncio
 from types import SimpleNamespace
 
 from custom_components.volcast.control.device_io import DirectIO
@@ -34,11 +33,11 @@ def test_direct_io_carries_battery_power_with_reading_age():
     assert rd.live("pv_power_w")[1] == 3.0
 
 
-def _hass(battery=None, battery_at=None):
+def _hass(battery=None):
     h = te._live_hass()
     if battery is not None:
         h.states.set(E_BAT["battery_power_w"], battery, {"unit_of_measurement": "W"},
-                     reported=battery_at or NOW)
+                     reported=NOW)
     return h
 
 
@@ -48,9 +47,25 @@ def test_entity_mode_battery_reaches_telemetry_with_own_age(monkeypatch):
     assert tele.pv_power_w == 513.0 and tele.pv_age_s == 30.0
 
 
+def _tick_with_decision(h, monkeypatch, mapped=te.E_LIVE):
+    """Telemetria i decyzja cyklu z jednego ticku (prawdziwy cykl działa dalej)."""
+    decisions = []
+    real = te.ex_mod.decide_cycle
+
+    def spy(**kw):
+        d = real(**kw)
+        decisions.append(d)
+        return d
+    monkeypatch.setattr(te.ex_mod, "decide_cycle", spy)
+    _, tele = te._tick_live(h, monkeypatch, mapped=mapped)
+    return tele, decisions[-1]
+
+
 def test_entity_mode_missing_battery_changes_nothing_else(monkeypatch):
-    _, with_bat = te._tick_live(_hass("1500"), monkeypatch, mapped=E_BAT)
-    _, without = te._tick_live(te._live_hass(), monkeypatch)
+    with_bat, d_with = _tick_with_decision(_hass("1500"), monkeypatch, mapped=E_BAT)
+    without, d_without = _tick_with_decision(te._live_hass(), monkeypatch)
     assert without.battery_w is None and without.battery_age_s is None
     for f in ("soc", "soc_age_s", "pv_power_w", "pv_age_s", "load_power_w", "load_age_s"):
         assert getattr(without, f) == getattr(with_bat, f)
+    # brak odczytu baterii nie zmienia decyzji cyklu (żadna bramka nie zależy od `battery_w`)
+    assert d_without == d_with

@@ -34,7 +34,8 @@ from ..core.write_sequence import ERROR
 from .direct import target_fingerprint
 
 NO_READING = ("unavailable", "unknown", "")
-# Odczyty mocy na żywo z własnym wiekiem (osobno od wieku SoC i guardu I-9); brak odczytu niczego nie wstrzymuje.
+# Odczyty mocy na żywo z własnym wiekiem (osobno od wieku SoC i guardu I-9);
+# brak odczytu niczego nie wstrzymuje.
 LIVE_KEYS = ("pv_power_w", "load_power_w", "battery_power_w")
 
 
@@ -47,7 +48,7 @@ class Reading:
     attrs: dict[str, dict]                # atrybuty encji, także `options` wyboru trybu
     soc_age_s: float
     source: Any = None                    # tryb bezpośredni: `DirectReading` cyklu (None = brak odczytu)
-    # wiek odczytu kluczy mocy na żywo (PV, pobór) — tylko gdy odczyt jest w `readings`
+    # wiek odczytu kluczy mocy na żywo (PV, pobór, bateria) — tylko gdy odczyt jest w `readings`
     live_ages: dict[str, float] = field(default_factory=dict)
 
     def live(self, key: str) -> tuple[float | None, float | None]:
@@ -349,7 +350,7 @@ class DirectIO:
             v = r.values.get(key)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 readings[key] = float(v)
-        # PV i pobór domu z mapy `read` profilu (pobór liczony: PV + bateria − moc czynna) — dla
+        # PV, pobór domu i moc baterii z mapy `read` profilu (pobór liczony: PV + bateria − moc czynna) — dla
         # nastawy sprzedaży; jeden odczyt bloku, więc wiek = wiek odczytu (jak SoC).
         age = self.conn.age_s()
         live_ages: dict[str, float] = {}
