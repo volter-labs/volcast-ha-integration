@@ -53,7 +53,7 @@ from ..engines.mode_setpoint import map_slot
 from ..engines.sell_xset import sell_ceiling
 from ..entity_map import EntityWrite, entity_value
 from ..guard_state import DirectionLimiter, WriteBudget, WriteThrottle
-from ..guards import GuardContext, GuardResult, apply_guards, temperature_ok
+from ..guards import GuardContext, GuardResult, apply_guards, state_fresh, temperature_ok
 from ..slot import Schedule, effective_action
 from ..write_sequence import WriteReport
 from .caps import REQUIRED_WRITE_KEYS
@@ -63,7 +63,9 @@ from .latch import ReserveLatch
 from .entity_fit import fit_params
 from .target import EntityTarget, WriteTarget, _device_view
 from . import live_export as lx
+from . import pv_first
 from .live_export import LiveExport, LiveExportMemory
+from .pv_first import PvFirstMemory
 
 WRITE, DRY_RUN, IDLE, BLOCKED, ERROR = "write", "dry_run", "idle", "blocked", "error"
 # Powrót do trybu bazowego zamiast wstrzymania (wyczerpany budżet NVM przy trybie wymuszonym):
@@ -90,6 +92,8 @@ _SAFE_WHEN_LOWER = ("power_w", "export_limit_w")
 # Odwrót grupy po cofnięciu: start nie krótszy niż 5 min, podwajany do 1 h.
 _BACKOFF_MIN_S = 300.0
 _BACKOFF_MAX_S = 3600.0
+# PV przed siecią: faza `pv`, ale budżet NVM trybu wyczerpany — slot idzie jak w planie
+NOTE_PV_FIRST_BUDGET = "pv_first_nvm_budget"
 
 
 @dataclass
@@ -136,6 +140,8 @@ class ControlMemory:
     tou_safety_offs: list[float] = field(default_factory=list)
     # sprzedaż z mocą `slot_live_export`: ostatni ważny pobór i nastawa zapisana w slocie
     live_export: LiveExportMemory = field(default_factory=LiveExportMemory)
+    # PV przed siecią w slocie `charge_grid` (`pv_first`): faza i liczniki bieżącego slotu
+    pv_first: PvFirstMemory = field(default_factory=PvFirstMemory)
 
     @classmethod
     def for_profile(cls, profile) -> "ControlMemory":
@@ -325,17 +331,21 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     without = tuple(k for k in _with_pair(missing) if getattr(guard.params, k, None) is not None)
     planned, degraded = _degrade(guard.params, set(without), profile)
     planned = replace(planned, **{k: None for k in without})
+    # Zakup z sieci przy żywej nadwyżce PV ≥ moc slotu: tryb ładowania z PV (po strażnikach
+    # i `_degrade`, przed sprzedażą, dopasowaniem i throttlingiem — jak każda inna intencja).
+    planned, common["intent"], pv_notes = _pv_first(planned, mapped_slot.intent, slot, is_fallback, profile,
+                                                    tele, limits, target, memory, now_mono, now_utc)
     # Sprzedaż: moc baterii → nastawa eksportu z odczytów tego cyklu (po strażnikach, przed
     # dopasowaniem i throttlingiem — histereza i uzgadnianie widzą już nastawę eksportu).
     dry = _gate_reason(gates, memory, now_mono) is not None
-    planned, live, live_notes = _live_export(planned, guard.params, mapped_slot.intent, slot, profile,
+    planned, live, live_notes = _live_export(planned, guard.params, common["intent"], slot, profile,
                                              tele, limits, target, memory, now_mono, keep=dry)
     degraded = degraded or lx.NOTE_SELL_BELOW_MIN in live_notes or (live is not None and live.degraded)
     params, adjusted, unfit = target.fit(planned, profile)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
         # Notatki sprzedaży zostają: bez nich blokada nie mówi, że sprzedaż stoi i dlaczego.
-        return CycleDecision(BLOCKED, "entity_range_unknown", unmapped=unfit, notes=tuple(live_notes),
+        return CycleDecision(BLOCKED, "entity_range_unknown", unmapped=unfit, notes=(*live_notes, *pv_notes),
                              live_export=live, **common)
     flat = params.flatten()
     group_unsupported = _unsupported_group(flat, profile, target, memory)
@@ -362,7 +372,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     due = memory.throttle.filter(flat, now_mono) - settled
     # Do zmiany na falowniku: to, co pójdzie teraz, i to, co czeka w interwale I-6.
     need = due | (memory.throttle.pending(flat, now_mono) - settled)
-    notes: list[str] = (["degraded"] if degraded else []) + list(live_notes)
+    notes: list[str] = (["degraded"] if degraded else []) + list(live_notes) + list(pv_notes)
     unsupported = _with_pair(memory.unsupported)
     refused = set() if _safe_mode(flat.get("mode"), profile) else {
         k for k in due
@@ -654,6 +664,54 @@ def _live_export_direct(planned: Params, guarded: Params, intent: str, slot, pro
     if not keep:
         memory.live_export = mem
     return replace(planned, power_w=live.xset_w), live, tuple(notes)
+
+
+def _pv_first(planned: Params, intent: str, slot, fallback: bool, profile, tele: Telemetry, limits: Limits,
+              target: WriteTarget, memory: ControlMemory, now_mono: float, now_utc: datetime
+              ) -> tuple[Params, str, tuple[str, ...]]:
+    """PV przed siecią: slot `charge_grid` w fazie `pv` idzie trybem intencji `charge_pv` bez mocy.
+
+    Zwraca (nastawy, intencję końcową, noty). Korekta tylko dla intencji i profilu z
+    `pv_first.applies`, slotu z planu (zapasowy zmienia klucz co tick) i nastaw, które po
+    strażnikach i `_degrade` nadal są ładowaniem z sieci z mocą — inaczej pamięć od zera (zostaje
+    tylko czas ticku: pierwszy tick slotu pokrywa przedział od poprzedniego cyklu) i plan bez zmian.
+    Moc progu i celu = moc po strażnikach (to, co dziś poszłoby na falownik). PV i pobór walidowane
+    jak w sprzedaży; moc baterii — świeża (I-9) i nie większa niż moc znamionowa, inaczej None
+    (cel energii nieaktywny). Faza `pv` przy wyczerpanym budżecie NVM trybu = plan bez zmian: podmiana
+    nie może kosztować zapisu ponad budżet ani wywołać powrotu do trybu bazowego poza budżetem.
+    Noty tylko, gdy coś mówią: faza `pv` (także przetrzymana), powrót z niej, biegnący zegar wejścia.
+    Podmiana na tryb neutralny po strażnikach jest bezpieczna (jak zejście w `_degrade`).
+    """
+    grid_mode = profile.intent(intent)["mode"] if pv_first.applies(profile, intent) else None
+    if fallback or grid_mode is None or planned.mode != grid_mode or planned.power_w is None:
+        memory.pv_first = PvFirstMemory(last_mono=now_mono)
+        return planned, intent, ()
+    rated = _rated_or_none(limits)
+    if rated is None and isinstance(target, EntityTarget):
+        rated = _power_entity_max_w(profile, target.ents)
+    max_age = profile.max_state_age_s
+    battery = tele.battery_w
+    if (rated is None or not isinstance(battery, (int, float)) or isinstance(battery, bool)
+            or not math.isfinite(battery) or abs(battery) > rated
+            or not state_fresh(tele.battery_age_s, max_age)):
+        battery = None
+    key = (slot.start, slot.end, intent)
+    prev = memory.pv_first
+    res = pv_first.step(
+        memory=prev, key=key, power_w=planned.power_w, duration_s=(slot.end - slot.start).total_seconds(),
+        pv_w=lx.valid_reading(tele.pv_power_w, tele.pv_age_s, max_age, lx.pv_limit_w(rated)),
+        load_w=lx.valid_load(tele.load_power_w, tele.load_age_s, max_age),
+        battery_w=None if battery is None else float(battery), now_mono=now_mono)
+    memory.pv_first = res.memory
+    left_pv = prev.key == key and prev.phase == pv_first.PHASE_PV
+    if res.phase != pv_first.PHASE_PV:
+        # Przetrzymany odczyt w fazie `grid` niczego nie zmienia — bez noty (dom bez czujnika PV).
+        informative = left_pv or res.memory.above_since is not None
+        return planned, intent, res.notes if informative else ()
+    if memory.budget is not None and memory.budget.would_exceed("mode", now_utc.timestamp()):
+        return planned, intent, (*res.notes, NOTE_PV_FIRST_BUDGET)
+    pv_intent = "charge_pv"
+    return replace(planned, mode=profile.intent(pv_intent)["mode"], power_w=None), pv_intent, res.notes
 
 
 def _below_entity_min(power_w: float, profile, ents: EntityContext) -> bool:
