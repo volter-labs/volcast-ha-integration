@@ -21,6 +21,8 @@ def _make_tracker(
     store: _FakeStore | None = None,
     accepted_store: _FakeStore | None = None,
     baseline_store: _FakeStore | None = None,
+    energy_entity: str = "sensor.pv_energy",
+    power_entity: str = "sensor.pv_power",
 ) -> VolcastProductionTracker:
     """Create a tracker with sensible defaults and injectable Stores."""
     if hass is None:
@@ -29,8 +31,8 @@ def _make_tracker(
         hass=hass,
         api_key="test-key",
         submit_url="https://example.com/api/submit-production",
-        energy_entity="sensor.pv_energy",
-        power_entity="sensor.pv_power",
+        energy_entity=energy_entity,
+        power_entity=power_entity,
         system_capacity_kwp=6.0,
     )
     # Wstrzyknij fake Stores jeśli podane
@@ -826,3 +828,244 @@ class TestChargePowerCarryOver:
         reading = submitted[-1][0]
         assert reading["battery_charge_power_avg"] == 600.0
         assert reading["battery_charge_power_max"] == 800.0
+
+
+# ---------------------------------------------------------------------------
+# Late entity binding and stale-entity warning
+# ---------------------------------------------------------------------------
+
+def _patch_event_helpers(monkeypatch):
+    """Fresh event-helper mocks per test; each subscription gets its own unsub."""
+    from custom_components.volcast import production as production_mod
+
+    unsubs: list[MagicMock] = []
+
+    def _track_state(_hass, entities, _cb):
+        unsub = MagicMock(name=f"unsub_state_{len(unsubs)}")
+        unsub.entities = list(entities)
+        unsubs.append(unsub)
+        return unsub
+
+    track_state = MagicMock(side_effect=_track_state)
+    track_time = MagicMock(return_value=MagicMock(name="unsub_timer"))
+    monkeypatch.setattr(production_mod, "async_track_state_change_event", track_state)
+    monkeypatch.setattr(production_mod, "async_track_time_interval", track_time)
+    return track_state, track_time, unsubs
+
+
+def _state_event(entity_id: str, state: str):
+    st = MagicMock()
+    st.state = state
+    ev = MagicMock()
+    ev.data = {"new_state": st, "entity_id": entity_id}
+    return ev
+
+
+class TestLateBinding:
+    """Production entities may be registered only after the platforms load,
+    so the tracker must exist (and run its timer) before it knows them."""
+
+    @pytest.mark.asyncio
+    async def test_start_without_entities_only_sets_timer(self, monkeypatch, caplog):
+        import logging
+        track_state, track_time, _ = _patch_event_helpers(monkeypatch)
+        t = _make_tracker(energy_entity="", power_entity="")
+        with caplog.at_level(logging.INFO):
+            await t.async_start()
+        track_state.assert_not_called()
+        track_time.assert_called_once()
+        assert t._unsub_timer is not None
+        assert any(
+            "Production tracker waiting for production entities" in r.getMessage()
+            for r in caplog.records if r.levelno == logging.INFO
+        )
+        assert t.stale_entities == []
+
+    @pytest.mark.asyncio
+    async def test_bind_after_start_subscribes_and_samples_reach_bucket(self, monkeypatch):
+        track_state, _, _ = _patch_event_helpers(monkeypatch)
+        t = _make_tracker(energy_entity="", power_entity="")
+        await t.async_start()
+
+        t.async_bind_entities("sensor.direct_energy", "sensor.direct_power")
+
+        track_state.assert_called_once()
+        assert set(track_state.call_args[0][1]) == {"sensor.direct_energy", "sensor.direct_power"}
+        t._async_state_changed(_state_event("sensor.direct_energy", "12.5"))
+        t._async_state_changed(_state_event("sensor.direct_power", "3400"))
+        bucket = t._current_bucket
+        assert bucket is not None
+        assert bucket.energy_start == 12.5
+        assert bucket.energy_latest == 12.5
+        assert bucket.peak_power_w == 3400.0
+
+    @pytest.mark.asyncio
+    async def test_rebind_does_not_duplicate_subscriptions(self, monkeypatch):
+        track_state, _, unsubs = _patch_event_helpers(monkeypatch)
+        t = _make_tracker(energy_entity="", power_entity="")
+        await t.async_start()
+
+        t.async_bind_entities("sensor.a_energy", "sensor.a_power")
+        t.async_bind_entities("sensor.a_energy", "sensor.a_power")
+        t.async_bind_entities("sensor.b_energy", "")
+
+        assert track_state.call_count == 3
+        # Kazda poprzednia subskrypcja odpieta dokladnie raz, aktywna tylko ostatnia
+        assert unsubs[0].call_count == 1
+        assert unsubs[1].call_count == 1
+        assert unsubs[2].call_count == 0
+        assert t._unsub_state is unsubs[2]
+        assert unsubs[2].entities == ["sensor.b_energy"]
+        assert t._energy_entity == "sensor.b_energy"
+        assert t._power_entity == ""
+
+        await t.async_stop()
+        assert unsubs[2].call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_constructor_entities_subscribe_once_as_before(self, monkeypatch, caplog):
+        """Regression guard: entities given up front behave exactly as before."""
+        import logging
+        track_state, track_time, unsubs = _patch_event_helpers(monkeypatch)
+        t = _make_tracker()
+        t._battery_soc_entity = "sensor.batt_soc"
+        with caplog.at_level(logging.INFO):
+            await t.async_start()
+        track_state.assert_called_once()
+        assert track_state.call_args[0][1] == [
+            "sensor.pv_energy", "sensor.pv_power", "sensor.batt_soc",
+        ]
+        track_time.assert_called_once()
+        assert t._unsub_state is unsubs[0]
+        assert any("Production tracker started" in r.getMessage() for r in caplog.records)
+        assert not any("waiting for production entities" in r.getMessage() for r in caplog.records)
+
+
+class TestStaleEntityWarning:
+    """A mapped sensor from another integration can go away silently; that used
+    to pause calibration without a trace. One warning per outage, not per tick."""
+
+    def _setup(self, monkeypatch, clock, hass=None):
+        _patch_event_helpers(monkeypatch)
+        t = _make_tracker(hass=hass)
+        monkeypatch.setattr(t, "_get_local_now", lambda: clock["t"])
+        t._async_submit = AsyncMock(return_value=True)
+        return t
+
+    @staticmethod
+    def _warnings_for(caplog, entity_id):
+        import logging
+        return [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING
+            and "has not reported a valid value" in r.getMessage()
+            and entity_id in r.getMessage()
+        ]
+
+    @pytest.mark.asyncio
+    async def test_unavailable_61_min_warns_once_then_resets(self, monkeypatch, caplog):
+        import logging
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        from custom_components.volcast import production as production_mod
+
+        assert production_mod.STALE_ENTITY_WARN_S == 3600
+        tz = ZoneInfo("Europe/Warsaw")
+        t0 = datetime(2026, 7, 1, 10, 2, tzinfo=tz)
+        clock = {"t": t0}
+        t = self._setup(monkeypatch, clock)
+        caplog.set_level(logging.WARNING)
+        await t.async_start()
+
+        async def _tick(minutes_from_t0: int):
+            clock["t"] = t0 + timedelta(minutes=minutes_from_t0)
+            # moc raportuje poprawnie, licznik energii jest niedostepny
+            t._async_state_changed(_state_event("sensor.pv_power", "1500"))
+            t._async_state_changed(_state_event("sensor.pv_energy", "unavailable"))
+            await t._async_check_flush(None)
+
+        for m in range(5, 60, 5):
+            await _tick(m)
+        assert self._warnings_for(caplog, "sensor.pv_energy") == []
+        assert t.stale_entities == []
+
+        await _tick(61)
+        assert len(self._warnings_for(caplog, "sensor.pv_energy")) == 1
+        assert t.stale_entities == ["sensor.pv_energy"]
+
+        for m in (66, 71, 76, 120):
+            await _tick(m)
+        warns = self._warnings_for(caplog, "sensor.pv_energy")
+        assert len(warns) == 1
+        assert "61 min" in warns[0].getMessage()
+        assert self._warnings_for(caplog, "sensor.pv_power") == []
+
+        # Poprawna probka kasuje stan ostrzezenia
+        clock["t"] = t0 + timedelta(minutes=121)
+        t._async_state_changed(_state_event("sensor.pv_energy", "42.0"))
+        assert t.stale_entities == []
+
+        for m in range(125, 182, 5):
+            await _tick(m)
+        assert len(self._warnings_for(caplog, "sensor.pv_energy")) == 1
+
+        await _tick(183)
+        assert len(self._warnings_for(caplog, "sensor.pv_energy")) == 2
+        assert t.stale_entities == ["sensor.pv_energy"]
+
+    @pytest.mark.asyncio
+    async def test_warning_checked_even_in_first_minutes_of_hour(self, monkeypatch, caplog):
+        """The check runs before the :05 flush gate, so a tick at :01 still warns."""
+        import logging
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Warsaw")
+        t0 = datetime(2026, 7, 1, 10, 0, tzinfo=tz)
+        clock = {"t": t0}
+        t = self._setup(monkeypatch, clock)
+        caplog.set_level(logging.WARNING)
+        await t.async_start()
+
+        clock["t"] = t0 + timedelta(minutes=61)    # 11:01
+        await t._async_check_flush(None)
+        assert t.stale_entities == ["sensor.pv_energy", "sensor.pv_power"]
+        assert len(self._warnings_for(caplog, "sensor.pv_energy")) == 1
+        assert len(self._warnings_for(caplog, "sensor.pv_power")) == 1
+
+    @pytest.mark.asyncio
+    async def test_quiet_but_valid_current_state_does_not_warn(self, monkeypatch, caplog):
+        """HA fires state_changed only on change: at night the power sensor sits
+        at 0 and the energy counter does not move for hours. A valid current
+        state counts as reporting, so the warning does not fire every night."""
+        import logging
+        import types
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Warsaw")
+        t0 = datetime(2026, 7, 1, 22, 2, tzinfo=tz)
+        clock = {"t": t0}
+        states = {
+            "sensor.pv_energy": types.SimpleNamespace(state="1234.5", attributes={}),
+            "sensor.pv_power": types.SimpleNamespace(state="0", attributes={}),
+        }
+        hass = FakeHass()
+        hass.states = types.SimpleNamespace(get=states.get)
+        t = self._setup(monkeypatch, clock, hass=hass)
+        caplog.set_level(logging.WARNING)
+        await t.async_start()
+
+        for m in range(5, 300, 5):
+            clock["t"] = t0 + timedelta(minutes=m)
+            await t._async_check_flush(None)
+        assert t.stale_entities == []
+        assert self._warnings_for(caplog, "sensor.pv_") == []
+
+        # Ta sama encja znika (unavailable) — po godzinie ostrzezenie
+        states["sensor.pv_power"] = types.SimpleNamespace(state="unavailable", attributes={})
+        base = clock["t"]
+        for m in range(5, 70, 5):
+            clock["t"] = base + timedelta(minutes=m)
+            await t._async_check_flush(None)
+        assert t.stale_entities == ["sensor.pv_power"]
+        assert len(self._warnings_for(caplog, "sensor.pv_power")) == 1
+        assert self._warnings_for(caplog, "sensor.pv_energy") == []

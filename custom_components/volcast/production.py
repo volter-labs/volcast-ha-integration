@@ -1,4 +1,17 @@
-"""Production tracker for Volcast — submits hourly PV production to backend."""
+"""Production tracker for Volcast — submits hourly PV production to backend.
+
+Late binding: the production entities are not always known when the tracker
+is created. Entities provided by this integration itself may be registered
+only after its platforms load, while the sensor platform already needs the
+tracker object at that point. The tracker therefore starts its flush timer
+without entities and is bound later with ``async_bind_entities``.
+
+Stale-entity warning: a sensor mapped from another integration can disappear
+or stay unavailable without any error. Before this warning existed, that
+silently paused production tracking (and with it forecast calibration) with
+nothing in the log. The tracker now logs one warning per outage when a bound
+production entity has not reported a valid value for STALE_ENTITY_WARN_S.
+"""
 
 from __future__ import annotations
 
@@ -80,6 +93,21 @@ PERMANENT_SKIP_REASONS = frozenset({
 
 _LOGGER = logging.getLogger(__name__)
 
+# A bound production entity without a valid value for this long gets one
+# warning per outage (see the module docstring).
+STALE_ENTITY_WARN_S = 3600
+
+
+def _is_valid_number(state: Any) -> bool:
+    """True when a state object carries a usable numeric value."""
+    if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        return False
+    try:
+        float(state.state)
+    except (ValueError, TypeError):
+        return False
+    return True
+
 
 def _utcnow_date():
     """Return today's date in UTC. Module-level seam for test monkeypatching."""
@@ -137,6 +165,10 @@ class VolcastProductionTracker:
         self._last_flushed_hour: int = -1
         self._unsub_state: callback | None = None
         self._unsub_timer: callback | None = None
+        # Stale-entity tracking: last valid sample per bound production entity
+        # and the entities already warned about in the current outage.
+        self._last_valid_sample: dict[str, datetime] = {}
+        self._stale_warned: set[str] = set()
 
         # Persystentna kolejka retry — readingi, które nie dotarły do backendu
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
@@ -299,33 +331,31 @@ class VolcastProductionTracker:
         return datetime.now(tz)
 
     async def async_start(self) -> None:
-        """Uruchom nasłuchiwanie na state changes i timer godzinowy."""
-        entities: list[str] = []
-        if self._energy_entity:
-            entities.append(self._energy_entity)
-        if self._power_entity:
-            entities.append(self._power_entity)
-        if self._battery_soc_entity:
-            entities.append(self._battery_soc_entity)
-        if self._battery_charge_power_entity:
-            entities.append(self._battery_charge_power_entity)
+        """Uruchom nasłuchiwanie na state changes i timer godzinowy.
 
-        if not entities:
-            _LOGGER.warning("No production entities configured — tracker idle")
-            return
-
+        Without production entities only the flush timer starts; the entities
+        are bound later with async_bind_entities.
+        """
         # PRZED rejestracja listenerow: _async_state_changed jest synchroniczne
         # i czyta self._baseline z pamieci, wiec musi juz byc wczytany.
         await self._load_baseline()
 
-        self._unsub_state = async_track_state_change_event(
-            self._hass, entities, self._async_state_changed
-        )
+        bound = bool(self._energy_entity or self._power_entity)
+        if bound:
+            # One subscription code path for entities given up front and late.
+            self.async_bind_entities(self._energy_entity, self._power_entity)
+        else:
+            _LOGGER.info("Production tracker waiting for production entities")
 
         # Timer co 5 minut — flush o :05 każdej godziny
+        if self._unsub_timer:
+            self._unsub_timer()
         self._unsub_timer = async_track_time_interval(
             self._hass, self._async_check_flush, timedelta(minutes=5)
         )
+
+        if not bound:
+            return
 
         _LOGGER.info(
             "Production tracker started (energy=%s, power=%s, battery_soc=%s, charge_power=%s, submit_url=%s)",
@@ -335,6 +365,82 @@ class VolcastProductionTracker:
             self._battery_charge_power_entity or "none",
             self._submit_url,
         )
+
+    @callback
+    def async_bind_entities(self, energy_entity: str, power_entity: str) -> None:
+        """Bind (or rebind) the production entities and resubscribe.
+
+        Idempotent: the previous state subscription is always released first,
+        so repeated calls never stack listeners. Callable before or after
+        async_start. The stale-entity clock of a newly bound entity starts now;
+        an entity that stays bound keeps its clock.
+        """
+        self._energy_entity = energy_entity or ""
+        self._power_entity = power_entity or ""
+
+        if self._unsub_state:
+            self._unsub_state()
+            self._unsub_state = None
+
+        production = [e for e in (self._energy_entity, self._power_entity) if e]
+        now = self._get_local_now()
+        self._last_valid_sample = {
+            e: self._last_valid_sample.get(e, now) for e in production
+        }
+        self._stale_warned &= set(production)
+
+        if not production:
+            return
+
+        entities = list(production)
+        if self._battery_soc_entity:
+            entities.append(self._battery_soc_entity)
+        if self._battery_charge_power_entity:
+            entities.append(self._battery_charge_power_entity)
+
+        self._unsub_state = async_track_state_change_event(
+            self._hass, entities, self._async_state_changed
+        )
+        _LOGGER.debug(
+            "Production tracker bound (energy=%s, power=%s)",
+            self._energy_entity or "none",
+            self._power_entity or "none",
+        )
+
+    @property
+    def stale_entities(self) -> list[str]:
+        """Bound production entities currently in a reported stale outage."""
+        return sorted(self._stale_warned)
+
+    def _note_valid_sample(self, entity_id: str, now: datetime) -> None:
+        """Record a valid value for a bound production entity."""
+        self._last_valid_sample[entity_id] = now
+        if entity_id in self._stale_warned:
+            self._stale_warned.discard(entity_id)
+            _LOGGER.info("Production entity %s reports valid values again", entity_id)
+
+    def _check_stale_entities(self, now: datetime) -> None:
+        """Warn once per outage about a bound entity without valid values.
+
+        HA emits state_changed only when a value changes: overnight the power
+        sensor sits at 0 and the energy counter does not move, so events alone
+        would flag healthy sensors every night. A valid current state therefore
+        also counts as a valid sample.
+        """
+        states = getattr(self._hass, "states", None)
+        for entity_id, last in list(self._last_valid_sample.items()):
+            if states is not None and _is_valid_number(states.get(entity_id)):
+                self._note_valid_sample(entity_id, now)
+                continue
+            age_s = (now - last).total_seconds()
+            if age_s > STALE_ENTITY_WARN_S and entity_id not in self._stale_warned:
+                self._stale_warned.add(entity_id)
+                _LOGGER.warning(
+                    "Production entity %s has not reported a valid value for %d min; "
+                    "production tracking is paused until it recovers",
+                    entity_id,
+                    int(age_s // 60),
+                )
 
     async def async_stop(self) -> None:
         """Zatrzymaj nasłuchiwanie."""
@@ -361,6 +467,8 @@ class VolcastProductionTracker:
         now = self._get_local_now()
         current_hour = now.hour
         entity_id = event.data.get("entity_id", "")
+        if entity_id in self._last_valid_sample:
+            self._note_valid_sample(entity_id, now)
 
         # Inicjalizuj bucket jeśli brak lub zmiana godziny
         if self._current_bucket is None or self._current_bucket.hour != current_hour:
@@ -417,6 +525,9 @@ class VolcastProductionTracker:
         # Utrwal baseline PRZED wszystkimi wczesnymi returnami — inaczej zapis
         # dzialby sie raz na godzinę i okno ekspozycji na restart wracaloby do 60 min.
         await self._persist_baseline(now)
+
+        # Before the :05 gate below, otherwise the check would run once an hour.
+        self._check_stale_entities(now)
 
         # Flush raz na godzinę po :05 — flag-based (odporny na timer drift)
         if now.minute < 5:
