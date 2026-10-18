@@ -923,6 +923,38 @@ class TestLateBinding:
         assert unsubs[2].call_count == 1
 
     @pytest.mark.asyncio
+    async def test_bind_with_both_entities_empty_unbinds(self, monkeypatch, caplog):
+        import logging
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        track_state, _, unsubs = _patch_event_helpers(monkeypatch)
+        tz = ZoneInfo("Europe/Warsaw")
+        t0 = datetime(2026, 7, 1, 10, 2, tzinfo=tz)
+        clock = {"t": t0}
+        t = _make_tracker()
+        monkeypatch.setattr(t, "_get_local_now", lambda: clock["t"])
+        t._async_submit = AsyncMock(return_value=True)
+        caplog.set_level(logging.WARNING)
+        await t.async_start()
+        assert track_state.call_count == 1
+
+        t.async_bind_entities("", "")
+
+        assert unsubs[0].call_count == 1
+        assert track_state.call_count == 1          # no new subscription
+        assert t._unsub_state is None
+        assert t._energy_entity == "" and t._power_entity == ""
+        assert t._last_valid_sample == {}
+        # Unbound entities are no longer watched for staleness
+        clock["t"] = t0 + timedelta(minutes=120)
+        await t._async_check_flush(None)
+        assert t.stale_entities == []
+        assert not any("has not reported" in r.getMessage() for r in caplog.records)
+
+        await t.async_stop()
+        assert unsubs[0].call_count == 1            # not released twice
+
+    @pytest.mark.asyncio
     async def test_constructor_entities_subscribe_once_as_before(self, monkeypatch, caplog):
         """Regression guard: entities given up front behave exactly as before."""
         import logging
@@ -1069,3 +1101,46 @@ class TestStaleEntityWarning:
         assert t.stale_entities == ["sensor.pv_power"]
         assert len(self._warnings_for(caplog, "sensor.pv_power")) == 1
         assert self._warnings_for(caplog, "sensor.pv_energy") == []
+
+    async def _run_across_dst(self, monkeypatch, caplog, bind_utc, tick_utc):
+        """Bind at bind_utc, tick at tick_utc; local clock is Europe/Warsaw."""
+        import logging
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Warsaw")
+        clock = {"t": bind_utc.astimezone(tz)}
+        t = self._setup(monkeypatch, clock)
+        caplog.set_level(logging.WARNING)
+        await t.async_start()
+        clock["t"] = tick_utc.astimezone(tz)
+        await t._async_check_flush(None)
+        return t
+
+    @pytest.mark.asyncio
+    async def test_autumn_dst_change_does_not_miss_warning(self, monkeypatch, caplog):
+        """2026-10-25 Warsaw: 03:00 CEST -> 02:00 CET. 61 real minutes pass
+        while the wall clock moves only 1 minute (02:30 CEST -> 02:31 CET)."""
+        from datetime import datetime, timezone
+        t = await self._run_across_dst(
+            monkeypatch, caplog,
+            datetime(2026, 10, 25, 0, 30, tzinfo=timezone.utc),
+            datetime(2026, 10, 25, 1, 31, tzinfo=timezone.utc),
+        )
+        assert t.stale_entities == ["sensor.pv_energy", "sensor.pv_power"]
+        warns = self._warnings_for(caplog, "sensor.pv_energy")
+        assert len(warns) == 1
+        msg = warns[0].getMessage()
+        assert "61 min" in msg
+        assert "remaining entity" in msg and "paused" not in msg
+
+    @pytest.mark.asyncio
+    async def test_spring_dst_change_gives_no_false_warning(self, monkeypatch, caplog):
+        """2026-03-29 Warsaw: 02:00 CET -> 03:00 CEST. 55 real minutes pass
+        while the wall clock moves 115 minutes (01:30 CET -> 03:25 CEST)."""
+        from datetime import datetime, timezone
+        t = await self._run_across_dst(
+            monkeypatch, caplog,
+            datetime(2026, 3, 29, 0, 30, tzinfo=timezone.utc),
+            datetime(2026, 3, 29, 1, 25, tzinfo=timezone.utc),
+        )
+        assert t.stale_entities == []
+        assert self._warnings_for(caplog, "sensor.pv_") == []

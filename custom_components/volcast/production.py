@@ -165,7 +165,7 @@ class VolcastProductionTracker:
         self._last_flushed_hour: int = -1
         self._unsub_state: callback | None = None
         self._unsub_timer: callback | None = None
-        # Stale-entity tracking: last valid sample per bound production entity
+        # Stale-entity tracking: last valid sample (UTC) per bound production entity
         # and the entities already warned about in the current outage.
         self._last_valid_sample: dict[str, datetime] = {}
         self._stale_warned: set[str] = set()
@@ -383,9 +383,9 @@ class VolcastProductionTracker:
             self._unsub_state = None
 
         production = [e for e in (self._energy_entity, self._power_entity) if e]
-        now = self._get_local_now()
+        now_utc = self._get_local_now().astimezone(timezone.utc)
         self._last_valid_sample = {
-            e: self._last_valid_sample.get(e, now) for e in production
+            e: self._last_valid_sample.get(e, now_utc) for e in production
         }
         self._stale_warned &= set(production)
 
@@ -414,7 +414,7 @@ class VolcastProductionTracker:
 
     def _note_valid_sample(self, entity_id: str, now: datetime) -> None:
         """Record a valid value for a bound production entity."""
-        self._last_valid_sample[entity_id] = now
+        self._last_valid_sample[entity_id] = now.astimezone(timezone.utc)
         if entity_id in self._stale_warned:
             self._stale_warned.discard(entity_id)
             _LOGGER.info("Production entity %s reports valid values again", entity_id)
@@ -426,18 +426,24 @@ class VolcastProductionTracker:
         sensor sits at 0 and the energy counter does not move, so events alone
         would flag healthy sensors every night. A valid current state therefore
         also counts as a valid sample.
+
+        The clock is kept in UTC: subtracting two local datetimes that share a
+        ZoneInfo ignores the offset change, so ages would be off by an hour
+        across a DST change.
         """
+        now_utc = now.astimezone(timezone.utc)
         states = getattr(self._hass, "states", None)
         for entity_id, last in list(self._last_valid_sample.items()):
             if states is not None and _is_valid_number(states.get(entity_id)):
-                self._note_valid_sample(entity_id, now)
+                self._note_valid_sample(entity_id, now_utc)
                 continue
-            age_s = (now - last).total_seconds()
+            age_s = (now_utc - last).total_seconds()
             if age_s > STALE_ENTITY_WARN_S and entity_id not in self._stale_warned:
                 self._stale_warned.add(entity_id)
                 _LOGGER.warning(
                     "Production entity %s has not reported a valid value for %d min; "
-                    "production tracking is paused until it recovers",
+                    "hours are computed from the remaining entity or skipped "
+                    "until it recovers",
                     entity_id,
                     int(age_s // 60),
                 )
