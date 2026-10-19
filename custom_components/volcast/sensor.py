@@ -114,6 +114,15 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
         }
 
     @property
+    def available(self) -> bool:
+        """Dostępna, dopóki są dane z ostatniego udanego odświeżenia.
+
+        Odświeżenie, które padło po ponownych próbach, nie może wygaszać
+        Energy Dashboard; stan zdrowia raportuje `integration_healthy`.
+        """
+        return self.coordinator.data is not None
+
+    @property
     def _data(self) -> VolcastData | None:
         """Shortcut to coordinator data."""
         return self.coordinator.data

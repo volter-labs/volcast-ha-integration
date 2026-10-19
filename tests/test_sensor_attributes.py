@@ -738,3 +738,16 @@ class TestDetailedForecastPvEstimate:
         # Tomorrow has no detailed entries in fixture → detailedForecast
         # should be absent (the code skips it when list is empty).
         assert attrs.get("detailedForecast", []) == [] or "detailedForecast" not in attrs
+
+
+class TestAvailabilityKeepsLastData:
+    """Nieudane odświeżenie nie może wygaszać encji, dopóki są dane."""
+
+    def test_available_with_data_after_failed_refresh(self):
+        sensor = _make_sensor(VolcastEnergyTodaySensor, make_sample_data())
+        sensor.coordinator.last_update_success = False
+        assert sensor.available is True
+
+    def test_unavailable_without_data(self):
+        sensor = _make_sensor(VolcastEnergyTodaySensor, None)
+        assert sensor.available is False

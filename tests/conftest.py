@@ -549,6 +549,8 @@ class FakeCoordinator:
     """Minimal coordinator stub for sensor tests."""
     def __init__(self, data: VolcastData | None):
         self.data = data
+        self.last_update_success = True
+        self.last_update_success_time = None
 
 
 class _FakeBus:
