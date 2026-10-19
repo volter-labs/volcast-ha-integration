@@ -80,7 +80,11 @@ async def test_choosing_entities_in_options_leaves_plan_only(hass: HomeAssistant
     rt = control_of(hass, entry)
     assert rt.executor.plan_only is True and "control_mode" not in entry.options
     menu = await _open_control(hass, entry)
-    done = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "control_entities"})
+    info = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "control_entities"})
+    assert (info["type"], info["step_id"]) == (FlowResultType.FORM, "control_telemetry_info")
+    assert info["description_placeholders"] == {"mapped": "-"}
+    assert "control_mode" not in entry.options and rt.executor.plan_only is True   # nic przed potwierdzeniem
+    done = await hass.config_entries.options.async_configure(info["flow_id"], {})
     assert done["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     rt = control_of(hass, entry)

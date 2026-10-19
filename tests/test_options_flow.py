@@ -122,8 +122,34 @@ def test_unpaired_init_also_merges():
 
 
 def test_control_entities_sets_mode_and_profile():
-    r = asyncio.run(flow(runtime=rt()).async_step_control_entities())
+    f = flow(runtime=rt())
+    assert asyncio.run(f.async_step_control_entities())["step_id"] == "control_telemetry_info"
+    r = asyncio.run(f.async_step_control_telemetry_info({}))
     assert r["data"] == {"control_mode": "entities", "profile_id": "goodwe-et", "inverter_domain": "goodwe"}
+
+
+def test_enabling_entities_from_off_shows_telemetry_info_with_mapped_sensors():
+    shown = []
+    runtime = rt()
+    left = []
+
+    async def leave():
+        left.append(True)
+    runtime.async_leave_plan_only = leave
+    f = flow(options={"pv_energy_entity": "sensor.pv_energy"}, runtime=runtime)
+    f.async_show_form = lambda **kw: shown.append(kw) or {"type": "form", "step_id": kw["step_id"]}
+    assert asyncio.run(f.async_step_control_entities())["step_id"] == "control_telemetry_info"
+    assert shown[0]["description_placeholders"] == {"mapped": "sensor.pv_energy"}
+    assert shown[0]["data_schema"].schema == {} and left == []
+    r = asyncio.run(f.async_step_control_telemetry_info({}))
+    assert r["data"]["control_mode"] == "entities" and r["data"]["pv_energy_entity"] == "sensor.pv_energy"
+    assert left == [True]
+
+
+def test_entities_already_on_has_no_telemetry_info():
+    f = flow(options={"control_mode": "direct"}, runtime=rt())
+    r = asyncio.run(f.async_step_control_entities())
+    assert r["type"] == "create_entry" and r["data"]["control_mode"] == "entities"
 
 
 def test_control_entities_unavailable_aborts():
@@ -284,6 +310,9 @@ def test_strings_have_new_steps_and_errors():
         assert "entity_mode_unavailable" in opts["abort"] and "prices_not_usable" in opts["error"]
         assert "currency_invalid" in opts["error"]
         assert "verified" in opts["step"]["control"]["description"]
+        info = opts["step"]["control_telemetry_info"]
+        assert info["title"] == "Forecast calibration now uses inverter telemetry"
+        assert "{mapped}" in info["description"] and "data" not in info
 
 
 # ── pola opcjonalne: wyczyszczone pole zostaje puste ───────────────────────

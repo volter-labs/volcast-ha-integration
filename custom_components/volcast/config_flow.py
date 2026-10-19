@@ -694,15 +694,38 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         if reason is not None:
             return self.async_abort(reason=reason)
         target = ds.target_from_report(report)
-        return await self._finish(self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
-                                                OPT_DIRECT_TRIAL: None}), leave_plan_only=True)
+        return await self._enable_control(self._merged({
+            OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target, OPT_DIRECT_TRIAL: None}))
 
     async def async_step_control_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         rt = self._runtime()
         choice = getattr(rt, "choice", None)
         if not entity_mode_ready(choice, getattr(rt, "mapped", None) or {}):
             return self.async_abort(reason="entity_mode_unavailable")
-        return await self._finish(self._merged(entity_mode_options(choice)), leave_plan_only=True)
+        return await self._enable_control(self._merged(entity_mode_options(choice)))
+
+    async def _enable_control(self, options: dict[str, Any]) -> ConfigFlowResult:
+        """Wybór sterowania. Przy włączaniu z „wyłączone” najpierw informacja: kalibracja idzie odtąd
+        z telemetrii falownika, zmapowane czujniki PV przestają być używane (zapis dopiero po potwierdzeniu)."""
+        if self.config_entry.options.get(OPT_CONTROL_MODE) is not None:
+            return await self._finish(options, leave_plan_only=True)
+        self._pending_control = options
+        return self._show_telemetry_info()
+
+    def _show_telemetry_info(self) -> ConfigFlowResult:
+        mapped = [e for k in (CONF_PV_ENERGY_ENTITY, CONF_PV_POWER_ENTITY)
+                  if (e := self.config_entry.options.get(k))]
+        return self.async_show_form(step_id="control_telemetry_info", data_schema=vol.Schema({}),
+                                    description_placeholders={"mapped": ", ".join(mapped) or "-"})
+
+    async def async_step_control_telemetry_info(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        options = getattr(self, "_pending_control", None)
+        if options is None:                                    # krok bez wcześniejszego wyboru: wróć do menu
+            return await self.async_step_control()
+        if user_input is None:
+            return self._show_telemetry_info()
+        self._pending_control = None
+        return await self._finish(options, leave_plan_only=True)
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._finish(self._merged({OPT_CONTROL_MODE: None}))
