@@ -77,8 +77,6 @@ TELEMETRY_FIELDS = {
     "pv_energy_total_kwh": "pv_energy_total_kwh", "grid_import_total_kwh": "grid_import_total_kwh",
     "grid_export_total_kwh": "grid_export_total_kwh",
 }
-# Klucze produkcji PV — z nich serwer kalibruje prognozę, gdy płyną telemetrią.
-PV_PRODUCTION_KEYS = frozenset({"pv_power_w", "pv_energy_total_kwh"})
 # Liczniki w `extra.counters` (zamknięty zbiór z kontraktu telemetrii dla liczników; podzbiór `EXTRA_KEYS` mapy źródeł).
 COUNTER_KEYS = ("load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_total_kwh",
                 "battery_discharge_total_kwh")
@@ -275,16 +273,18 @@ class TelemetrySender:
 
     @property
     def reports_pv_production(self) -> bool:
-        """Czy ścieżka odczytu ma źródło mocy albo licznika energii PV (wiadomo od złożenia).
+        """Czy ścieżka odczytu ma źródło mocy PV (wiadomo od złożenia) — wtedy serwer liczy z niej produkcję.
 
-        Bezpośrednio: rejestry profilu (`read`) i mapa ręczna (= klucze deklarowane). W trybie encji
-        tylko encje faktycznie zmapowane i mapa ręczna — profil może opisywać encję, której w HA nie ma.
+        Liczy się tylko `pv_power_w`: serwer całkuje moc PV, a sam licznik energii PV bez mocy nie daje
+        mu produkcji (skali licznika nie ma czym potwierdzić). Bezpośrednio: rejestry profilu (`read`)
+        i mapa ręczna (= klucze deklarowane). W trybie encji tylko encje faktycznie zmapowane i mapa
+        ręczna — profil może opisywać encję, której w HA nie ma.
         """
         if self._direct is not None:
             sources = self._declared
         else:
             sources = frozenset(self._profile_map) | frozenset(self._manual_map)
-        return not PV_PRODUCTION_KEYS.isdisjoint(sources)
+        return "pv_power_w" in sources
 
     async def async_start(self) -> None:
         if self._unsub is None:

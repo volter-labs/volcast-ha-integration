@@ -621,10 +621,22 @@ async def test_manual_telemetry_pv_power_drops_the_mapped_tracker(monkeypatch, c
     import logging
     caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(manual={"pv_power_w": "sensor.pv_power"}))
+        monkeypatch, options=MAPPING, data=_PAIRED,
+        control=_runtime(manual={"pv_power_w": "sensor.pv_power"}))
     assert tracker is None and rec == []
     assert issues == ["production_mapping_unused_test_entry_id"]
     assert len(_disabled_logs(caplog)) == 1
+
+
+async def test_pv_energy_counter_alone_keeps_the_mapped_tracker(monkeypatch, caplog):
+    """Sam licznik energii PV w telemetrii (bez mocy PV) — serwer nie wyliczy z niego produkcji."""
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED,
+        control=_runtime(manual={"pv_energy_total_kwh": "sensor.pv_total"}))
+    assert tracker is not None and rec == ["sensor.ext_energy"]
+    assert issues == [] and _disabled_logs(caplog) == []
 
 
 # --- nieudany setup po złożeniu sterowania: nic nie zostaje uruchomione ---

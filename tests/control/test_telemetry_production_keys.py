@@ -1,7 +1,8 @@
 """Czy telemetria sterowania niesie produkcję PV — znane przy złożeniu, przed pierwszą wysyłką.
 
-Od tego zależy jedno źródło produkcji konta: gdy telemetria niesie moc PV albo licznik energii PV,
-serwer kalibruje z niej i lokalny tracker nie działa.
+Od tego zależy jedno źródło produkcji konta: gdy telemetria niesie moc PV, serwer kalibruje z niej
+i lokalny tracker nie działa. Sam licznik energii PV nie wystarcza — serwer bez mocy PV nie wyliczy
+z niego produkcji, więc wtedy tracker zostaje.
 """
 from types import SimpleNamespace
 
@@ -15,6 +16,8 @@ from custom_components.volcast.core.profile import load_builtin
 GW = ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET")
 GW_READ_ONLY = ProfileChoice(load_builtin("goodwe-et"), None, "GW8KN-ET")
 SOLAREDGE = ProfileChoice(load_builtin("solaredge-storedge"), "solaredge_modbus", "SE")
+# Profil, którego rejestry niosą tylko licznik energii PV (bez mocy PV).
+COUNTER_ONLY = ProfileChoice(SimpleNamespace(raw={"read": {"pv_energy_total_kwh": {}, "soc": {}}}), None, "X")
 
 
 def _sender(*, choice, profile_map=None, manual=None, direct=None) -> TelemetrySender:
@@ -31,12 +34,17 @@ def _sender(*, choice, profile_map=None, manual=None, direct=None) -> TelemetryS
     ({"choice": SOLAREDGE, "profile_map": {"soc": "sensor.se_soc"}}, False),
     # profil tylko do odczytu (bez integracji): mapa profilu jest pusta, zostaje ręczna
     ({"choice": GW_READ_ONLY, "profile_map": {"pv_power_w": "sensor.x"}}, False),
-    ({"choice": GW_READ_ONLY, "manual": {"pv_energy_total_kwh": "sensor.pv_total"}}, True),
+    ({"choice": GW_READ_ONLY, "manual": {"pv_power_w": "sensor.pv_power"}}, True),
+    # sam licznik energii PV nie niesie produkcji (serwer potrzebuje mocy PV)
+    ({"choice": GW_READ_ONLY, "manual": {"pv_energy_total_kwh": "sensor.pv_total"}}, False),
+    ({"choice": GW, "profile_map": {"pv_energy_total_kwh": "sensor.gw_pv_total"}}, False),
+    ({"choice": COUNTER_ONLY, "direct": SimpleNamespace()}, False),
     # tryb bezpośredni: rejestry profilu (`read`) niosą moc i licznik PV
     ({"choice": GW, "direct": SimpleNamespace()}, True),
     # bez falownika — tylko mapa ręczna
     ({"choice": None}, False),
     ({"choice": None, "manual": {"pv_power_w": "sensor.pv_power"}}, True),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.p", "pv_energy_total_kwh": "sensor.e"}}, True),
     ({"choice": None, "manual": {"soc": "sensor.soc"}}, False),
 ])
 def test_sender_reports_pv_production_from_its_read_sources(kwargs, expected):
