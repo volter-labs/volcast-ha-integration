@@ -239,6 +239,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             translation_key="production_tracking_available",
         )
 
+    mapping_issue_id = f"production_mapping_unused_{entry.entry_id}"
+    if telemetry_production and mapped:
+        # Zmapowane czujniki są ignorowane — właściciel może je wyczyścić w opcjach prognozy.
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            mapping_issue_id,
+            is_fixable=False,
+            severity=_ISSUE_WARNING,
+            translation_key="production_mapping_unused",
+            translation_placeholders={
+                "entities": ", ".join(e for e in (energy_entity, power_entity) if e)
+            },
+        )
+    else:
+        ir.async_delete_issue(hass, DOMAIN, mapping_issue_id)
+
     tracker: VolcastProductionTracker | None = None
     try:
         # Tracker i reconciler przed platformami — sensory diagnostyczne czytają je przy setupie.
@@ -514,6 +531,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     platforms = _loaded_platforms(hass, entry)
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, platforms):
         entry_data = hass.data[DOMAIN].pop(entry.entry_id)
+        ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
         tracker = entry_data.get("tracker")
         if tracker is not None:
             await tracker.async_stop()

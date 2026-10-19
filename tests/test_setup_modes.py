@@ -521,7 +521,7 @@ async def test_control_with_inverter_telemetry_drops_the_mapped_tracker(monkeypa
         monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(choice=SimpleNamespace()))
     assert tracker is None and rec == []
     assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
-    assert issues == []
+    assert issues == ["production_mapping_unused_test_entry_id"]
     assert len(_disabled_logs(caplog)) == 1
 
 
@@ -530,7 +530,7 @@ async def test_direct_connection_drops_the_mapped_tracker(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
         monkeypatch, options={**DIRECT, **MAPPING}, data=_PAIRED, control=_runtime(direct=_direct_conn()))
-    assert tracker is None and rec == [] and issues == []
+    assert tracker is None and rec == [] and issues == ["production_mapping_unused_test_entry_id"]
     assert len(_disabled_logs(caplog)) == 1
 
 

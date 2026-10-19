@@ -4,7 +4,7 @@ Waga zgłoszenia pochodzi z rejestru zgłoszeń (`issue_registry.IssueSeverity`)
 komponent `repairs` jej nie re-eksportuje, więc import stamtąd po cichu wyłączał zgłoszenie.
 """
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -55,3 +55,87 @@ def test_integration_does_not_import_severity_from_repairs():
 
     src = (Path(__file__).parents[1] / "custom_components" / "volcast" / "__init__.py").read_text(encoding="utf-8")
     assert "components.repairs import" not in src
+
+
+# --- Mapowanie czujników PV nieużywane przy sterowaniu falownikiem ---------------------------
+
+_MAPPED = {"pv_energy_entity": "sensor.pv_e", "pv_power_entity": "sensor.pv_p"}
+
+
+def _unused_calls(mock, _name=None):
+    return [c for c in mock.call_args_list if c.args[2].startswith("production_mapping_unused_")]
+
+
+def _patch_issues(monkeypatch):
+    ir = sys.modules["homeassistant.helpers.issue_registry"]
+    create, delete = MagicMock(), MagicMock()
+    monkeypatch.setattr(ir, "async_create_issue", create)
+    monkeypatch.setattr(ir, "async_delete_issue", delete)
+    return create, delete
+
+
+def _paired(monkeypatch, *, carries: bool):
+    import custom_components.volcast as integ
+    from .test_setup_paired import fake_runtime
+
+    async def setup_control(hass, entry, *, report):
+        rt = fake_runtime()
+        if carries:
+            rt.choice = object()
+        return rt
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+
+
+@pytest.mark.asyncio
+async def test_paired_with_mapping_raises_mapping_unused_issue(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired(monkeypatch, carries=True)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, options=_MAPPED)
+    assert ok
+    calls = _unused_calls(create, "create")
+    assert len(calls) == 1
+    assert calls[0].args[2] == f"production_mapping_unused_{entry.entry_id}"
+    kw = calls[0].kwargs
+    assert kw["translation_key"] == "production_mapping_unused" and kw["is_fixable"] is False
+    assert kw["severity"] == "warning"
+    assert kw["translation_placeholders"] == {"entities": "sensor.pv_e, sensor.pv_p"}
+
+
+@pytest.mark.asyncio
+async def test_paired_without_mapping_has_no_mapping_unused_issue(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired(monkeypatch, carries=True)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and not _unused_calls(create, "create")
+    assert any(c.args[2] == f"production_mapping_unused_{entry.entry_id}" for c in delete.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_forecast_only_with_mapping_has_no_mapping_unused_issue(monkeypatch):
+    create, delete = _patch_issues(monkeypatch)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, options=_MAPPED)
+    assert ok and not _unused_calls(create, "create")
+
+
+@pytest.mark.asyncio
+async def test_paired_without_production_telemetry_keeps_tracker_and_no_issue(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired(monkeypatch, carries=False)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, options=_MAPPED)
+    assert ok and not _unused_calls(create, "create")
+
+
+@pytest.mark.asyncio
+async def test_unload_deletes_mapping_unused_issue(monkeypatch):
+    import custom_components.volcast as integ
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired(monkeypatch, carries=True)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, options=_MAPPED)
+    monkeypatch.setattr(integ, "async_unload_control", AsyncMock())
+    delete.reset_mock()
+    assert await integ.async_unload_entry(hass, entry) is True
+    assert any(c.args[2] == f"production_mapping_unused_{entry.entry_id}" for c in delete.call_args_list)

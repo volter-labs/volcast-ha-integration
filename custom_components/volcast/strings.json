@@ -350,6 +350,10 @@
       "title": "Improve forecast accuracy with production tracking",
       "description": "With inverter control on, calibration uses the inverter telemetry. Otherwise pick a PV energy or power sensor in the Forecast options to calibrate the forecast from measured production."
     },
+    "production_mapping_unused": {
+      "title": "PV sensors are no longer used for calibration",
+      "description": "Inverter control is on, so calibration uses the inverter telemetry. The mapped sensors ({entities}) are ignored. Clear them in the Forecast options to hide this notice."
+    },
     "update_available": {
       "title": "A Volcast update is available",
       "description": "Volcast {latest_version} is available (you have {current_version}). Update Volcast in HACS and restart Home Assistant to get the latest fixes."
