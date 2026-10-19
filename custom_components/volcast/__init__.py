@@ -428,10 +428,10 @@ async def _async_cleanup_failed_setup(
 def _telemetry_carries_production(control: ControlRuntime | None) -> bool:
     """Czy telemetria sterowania niesie produkcję PV (wtedy serwer kalibruje z niej).
 
-    Tylko z wykrytym falownikiem (`choice`) albo połączeniem bezpośrednim (`direct`):
-    sam plan bez falownika wysyła wyłącznie ręczną mapę telemetrii — bez produkcji.
+    Rozstrzyga nadajnik telemetrii z kluczy, które czyta (moc albo licznik energii PV) —
+    falownik tylko do odczytu albo bez encji PV nie niesie produkcji, mapa ręczna może.
     """
-    return control is not None and (control.choice is not None or control.direct is not None)
+    return control is not None and control.telemetry_reports_production
 
 
 def _start_reconciler(

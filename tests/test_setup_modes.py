@@ -438,16 +438,27 @@ def _direct_conn():
                            add_listener=lambda _cb: (lambda: None))
 
 
-def _runtime(*, choice=None, direct=None):
-    """Runtime sterowania; `choice`/`direct` decydują, czy telemetria niesie produkcję."""
+def _gw(domain="goodwe"):
+    from custom_components.volcast.core.control.select import ProfileChoice
+    from custom_components.volcast.core.profile import load_builtin
+    return ProfileChoice(load_builtin("goodwe-et"), domain, "GW8KN-ET")
+
+
+def _runtime(*, choice=None, direct=None, profile_map=None, manual=None):
+    """Runtime sterowania z prawdziwym nadajnikiem telemetrii — to on mówi, czy niesie produkcję PV."""
     from custom_components.volcast.control import runtime as rt_mod
+    from custom_components.volcast.control.telemetry import TelemetrySender
 
     class _Exec:
         raw_plan, schedule, consent, local_switch, paused = None, None, None, False, False
         last_decision = tou_preview = None
 
-    return rt_mod.ControlRuntime(executor=_Exec(), fetcher=None, telemetry=None, cloud=None,
-                                 choice=choice, mapped={}, rated_power_w=None, direct=direct)
+    telemetry = TelemetrySender(SimpleNamespace(), SimpleNamespace(entry_id="e1", options={}), None, None,
+                                choice=choice, profile_map=profile_map or {}, manual_map=manual or {},
+                                grid_negate=False, limits=None, direct=direct)
+    return rt_mod.ControlRuntime(executor=_Exec(), fetcher=None, telemetry=telemetry, cloud=None,
+                                 choice=choice, mapped=dict(profile_map or {}), rated_power_w=None,
+                                 direct=direct)
 
 
 async def _run_production(monkeypatch, *, options, data=None, control=None):
@@ -518,7 +529,7 @@ async def test_control_with_inverter_telemetry_drops_the_mapped_tracker(monkeypa
     import logging
     caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(choice=SimpleNamespace()))
+        monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(choice=_gw(), profile_map={"pv_power_w": "sensor.gw_pv_power"}))
     assert tracker is None and rec == []
     assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
     assert issues == ["production_mapping_unused_test_entry_id"]
@@ -529,7 +540,7 @@ async def test_direct_connection_drops_the_mapped_tracker(monkeypatch, caplog):
     import logging
     caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options={**DIRECT, **MAPPING}, data=_PAIRED, control=_runtime(direct=_direct_conn()))
+        monkeypatch, options={**DIRECT, **MAPPING}, data=_PAIRED, control=_runtime(choice=_gw(), direct=_direct_conn()))
     assert tracker is None and rec == [] and issues == ["production_mapping_unused_test_entry_id"]
     assert len(_disabled_logs(caplog)) == 1
 
@@ -538,7 +549,7 @@ async def test_direct_connection_without_mapping_needs_no_tracker_nor_repair(mon
     import logging
     caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options=DIRECT, data=_PAIRED, control=_runtime(direct=_direct_conn()))
+        monkeypatch, options=DIRECT, data=_PAIRED, control=_runtime(choice=_gw(), direct=_direct_conn()))
     assert tracker is None and rec == [] and issues == []
     # Nic nie zmapowano — nie ma czego "wyłączać", więc bez komunikatu.
     assert _disabled_logs(caplog) == []
@@ -578,6 +589,42 @@ async def test_control_without_inverter_or_mapping_keeps_repair_issue(monkeypatc
         monkeypatch, options={}, data=_PAIRED, control=_runtime())
     assert issues == ["production_tracking_available"]
     assert tracker is None and rec == []
+
+
+async def test_read_only_profile_keeps_the_mapped_tracker(monkeypatch, caplog):
+    """Falownik rozpoznany tylko do odczytu (bez integracji): telemetria nie niesie produkcji PV."""
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(choice=_gw(domain=None)))
+    assert tracker is not None and rec == ["sensor.ext_energy"]
+    assert issues == [] and _disabled_logs(caplog) == []
+
+
+async def test_read_only_profile_without_mapping_raises_repair(monkeypatch):
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options={}, data=_PAIRED, control=_runtime(choice=_gw(domain=None)))
+    assert issues == ["production_tracking_available"]
+    assert tracker is None and rec == []
+
+
+async def test_entity_mode_without_mapped_pv_entities_keeps_the_mapped_tracker(monkeypatch):
+    """Profil opisuje encje PV, ale żadnej nie znaleziono w HA — liczy się to, co faktycznie zmapowane."""
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED,
+        control=_runtime(choice=_gw(), profile_map={"soc": "sensor.gw_soc"}))
+    assert tracker is not None and issues == []
+
+
+async def test_manual_telemetry_pv_power_drops_the_mapped_tracker(monkeypatch, caplog):
+    """Bez falownika, ale ręczna mapa telemetrii ma moc PV — produkcja płynie telemetrią."""
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(manual={"pv_power_w": "sensor.pv_power"}))
+    assert tracker is None and rec == []
+    assert issues == ["production_mapping_unused_test_entry_id"]
+    assert len(_disabled_logs(caplog)) == 1
 
 
 # --- nieudany setup po złożeniu sterowania: nic nie zostaje uruchomione ---
@@ -680,7 +727,7 @@ async def test_stale_repair_deleted_when_sensors_are_mapped(monkeypatch):
 
 async def test_stale_repair_deleted_when_telemetry_carries_production(monkeypatch):
     deleted = await _deleted_issues(monkeypatch, options=DIRECT, data=_PAIRED,
-                                    control=_runtime(direct=_direct_conn()))
+                                    control=_runtime(choice=_gw(), direct=_direct_conn()))
     assert "production_tracking_available" in deleted
 
 

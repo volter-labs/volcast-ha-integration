@@ -4,6 +4,7 @@ Waga zgłoszenia pochodzi z rejestru zgłoszeń (`issue_registry.IssueSeverity`)
 komponent `repairs` jej nie re-eksportuje, więc import stamtąd po cichu wyłączał zgłoszenie.
 """
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -81,7 +82,11 @@ def _paired(monkeypatch, *, carries: bool):
     async def setup_control(hass, entry, *, report):
         rt = fake_runtime()
         if carries:
-            rt.choice = object()
+            # Nadajnik telemetrii z mocą/licznikiem PV — jedyne źródło odpowiedzi „niesie produkcję".
+            from custom_components.volcast.control.telemetry import TelemetrySender
+            rt.telemetry = TelemetrySender(None, SimpleNamespace(entry_id="e1", options={}), None, None,
+                                           choice=None, profile_map={}, grid_negate=False, limits=None,
+                                           manual_map={"pv_power_w": "sensor.pv_power"})
         return rt
     monkeypatch.setattr(integ, "async_setup_control", setup_control)
 
