@@ -30,7 +30,7 @@ IDS_172_NO_OPTIONS = {f"test_entry_id_{k}" for k in (
     "energy_day_3", "energy_day_4", "energy_day_5", "energy_day_6", "energy_day_7",
     "peak_production", "integration_healthy")}
 
-# Diagnostyczny czujnik dodany w 2.0 (decyzja właściciela: zbiory IDS_172_* zostają zamrożone).
+# Diagnostyczny czujnik dodany w 2.0; zbiory IDS_172_* zostają zamrożone (przebieg na 1.7.2).
 DIAGNOSTIC_IDS_2_0 = {"test_entry_id_forecast_age"}
 
 DISCOVERY_IDS = {"test_entry_id_discovery", "test_entry_id_run_discovery"}
