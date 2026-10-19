@@ -578,3 +578,111 @@ async def test_control_without_inverter_or_mapping_keeps_repair_issue(monkeypatc
         monkeypatch, options={}, data=_PAIRED, control=_runtime())
     assert issues == ["production_tracking_available"]
     assert tracker is None and rec == []
+
+
+# --- nieudany setup po złożeniu sterowania: nic nie zostaje uruchomione ---
+
+class _StopTracker(_RecTracker):
+    start_error: BaseException | None = None
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.stopped = 0
+
+    async def async_start(self) -> None:
+        if _StopTracker.start_error is not None:
+            raise _StopTracker.start_error
+
+    async def async_stop(self) -> None:
+        self.stopped += 1
+
+
+async def _run_failing_setup(monkeypatch, *, tracker_error=None, reconciler_error=None,
+                             forward_error=None):
+    """Setup sparowanego wpisu z mapowaniem, w którym zawodzi tracker, reconciler albo forward."""
+    import custom_components.volcast as integ
+    from tests import setup_harness as sh
+
+    _RecTracker.instances = []
+    _StopTracker.start_error = tracker_error
+    control = _runtime()            # bez falownika — tracker z mapowania powstaje
+    unloaded: list = []
+
+    async def setup_control(hass, entry, *, report):
+        return control
+
+    async def unload_control(hass, rt, **_kw):
+        unloaded.append(rt)
+
+    class _Rec(sh.FakeReconciler):
+        def __init__(self, **kw):
+            if reconciler_error is not None:
+                raise reconciler_error
+            super().__init__(**kw)
+
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_unload_control", unload_control)
+    monkeypatch.setattr(integ, "VolcastCoordinator", sh.FakeCoordinator)
+    monkeypatch.setattr(integ, "VolcastProductionTracker", _StopTracker)
+    monkeypatch.setattr(integ, "DailyReconciler", _Rec)
+    hass = sh.SetupHass()
+    if forward_error is not None:
+        async def forward(entry, platforms):
+            raise forward_error
+        monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", forward)
+    entry = sh.FakeEntry(data=_PAIRED, options=MAPPING)
+    with pytest.raises(RuntimeError):
+        await integ.async_setup_entry(hass, entry)
+    tracker = _RecTracker.instances[0] if _RecTracker.instances else None
+    return hass, entry, tracker, control, unloaded
+
+
+async def test_tracker_start_failure_unloads_control_and_stops_the_tracker(monkeypatch):
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, tracker_error=RuntimeError("tracker"))
+    assert unloaded == [control]
+    assert tracker is not None and tracker.stopped == 1
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    assert entry_data["control"] is None and entry_data["tracker"] is None
+
+
+async def test_reconciler_start_failure_unloads_control_and_stops_the_tracker(monkeypatch):
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, reconciler_error=RuntimeError("reconciler"))
+    assert unloaded == [control]
+    assert tracker.stopped == 1
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    assert entry_data["tracker"] is None and entry_data.get("reconciler") is None
+
+
+async def test_platform_forward_failure_stops_the_started_tracker(monkeypatch):
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, forward_error=RuntimeError("platforms"))
+    assert unloaded == [control]
+    assert tracker.stopped == 1
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    assert entry_data["tracker"] is None and entry_data.get("reconciler") is None
+
+
+# --- stare zgłoszenie naprawy znika, gdy pojawia się źródło produkcji ---
+
+async def _deleted_issues(monkeypatch, **kw) -> list[str]:
+    import custom_components.volcast as integ
+    deleted: list[str] = []
+    monkeypatch.setattr(integ.ir, "async_delete_issue", lambda *a, **k: deleted.append(a[2]))
+    await _run_production(monkeypatch, **kw)
+    return deleted
+
+
+async def test_stale_repair_deleted_when_sensors_are_mapped(monkeypatch):
+    assert "production_tracking_available" in await _deleted_issues(monkeypatch, options=MAPPING)
+
+
+async def test_stale_repair_deleted_when_telemetry_carries_production(monkeypatch):
+    deleted = await _deleted_issues(monkeypatch, options=DIRECT, data=_PAIRED,
+                                    control=_runtime(direct=_direct_conn()))
+    assert "production_tracking_available" in deleted
+
+
+async def test_repair_not_deleted_without_any_source(monkeypatch):
+    assert "production_tracking_available" not in await _deleted_issues(monkeypatch, options={})

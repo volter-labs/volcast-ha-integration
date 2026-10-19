@@ -224,31 +224,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Jedno źródło produkcji: gdy telemetria sterowania niesie produkcję, serwer kalibruje
     # z niej i lokalny tracker nie działa; inaczej tracker ze zmapowanych czujników PV.
-    # Przed platformami — sensory diagnostyczne czytają `tracker` przy swoim setupie.
     mapped = bool(energy_entity or power_entity)
     telemetry_production = _telemetry_carries_production(control)
-    tracker: VolcastProductionTracker | None = None
-    if telemetry_production:
-        if mapped:
-            _LOGGER.info(
-                "Production tracking disabled: inverter control reports production through telemetry"
-            )
-    elif mapped:
-        tracker = VolcastProductionTracker(
-            hass=hass,
-            api_key=api_key,
-            submit_url=submit_url,
-            energy_entity=energy_entity,
-            power_entity=power_entity,
-            battery_soc_entity=battery_soc_entity,
-            battery_charge_power_entity=battery_charge_power_entity,
-            system_capacity_kwp=(
-                coordinator.data.system_capacity_kwp if coordinator.data else None
-            ),
-        )
-        await tracker.async_start()
-    hass.data[DOMAIN][entry.entry_id]["tracker"] = tracker
-
     if mapped or telemetry_production:
         ir.async_delete_issue(hass, DOMAIN, "production_tracking_available")
     else:
@@ -262,25 +239,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             translation_key="production_tracking_available",
         )
 
-    # Daily reconciler — tylko z trackerem i energy_entity (recorder potrzebny).
-    if tracker is not None and energy_entity:
-        _start_reconciler(hass, entry, tracker, energy_entity, api_key, submit_url)
-    else:
-        _LOGGER.info(
-            "Reconciler not started — energy_entity not configured (or tracker missing)"
-        )
-
+    tracker: VolcastProductionTracker | None = None
     try:
+        # Tracker i reconciler przed platformami — sensory diagnostyczne czytają je przy setupie.
+        if telemetry_production:
+            if mapped:
+                _LOGGER.info(
+                    "Production tracking disabled: inverter control reports production through telemetry"
+                )
+        elif mapped:
+            tracker = VolcastProductionTracker(
+                hass=hass,
+                api_key=api_key,
+                submit_url=submit_url,
+                energy_entity=energy_entity,
+                power_entity=power_entity,
+                battery_soc_entity=battery_soc_entity,
+                battery_charge_power_entity=battery_charge_power_entity,
+                system_capacity_kwp=(
+                    coordinator.data.system_capacity_kwp if coordinator.data else None
+                ),
+            )
+            hass.data[DOMAIN][entry.entry_id]["tracker"] = tracker
+            await tracker.async_start()
+
+        # Daily reconciler — tylko z trackerem i energy_entity (recorder potrzebny).
+        if tracker is not None and energy_entity:
+            _start_reconciler(hass, entry, tracker, energy_entity, api_key, submit_url)
+        else:
+            _LOGGER.info(
+                "Reconciler not started — energy_entity not configured (or tracker missing)"
+            )
+
         await _async_forward_platforms(hass, entry, PAIRED_PLATFORMS if control else PLATFORMS)
     except BaseException:
-        # HA nie woła `async_unload_entry` po nieudanym setupie — wykonawca nie może zostać.
-        if control is not None:
-            hass.data[DOMAIN][entry.entry_id]["control"] = None
-            try:
-                await async_unload_control(hass, control)
-            except Exception as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
-                _LOGGER.warning("Volcast control: cleanup after a failed setup failed (%s)",
-                                type(err).__name__)
+        # HA nie woła `async_unload_entry` po nieudanym setupie — nic uruchomionego tu nie
+        # może zostać. Timery reconcilera wiszą na `entry.async_on_unload`, które HA zwalnia
+        # sam po nieudanym setupie; tracker i wykonawcę zatrzymujemy jawnie.
+        await _async_cleanup_failed_setup(hass, entry, tracker, control)
         raise
 
     if control is not None:
@@ -385,6 +381,31 @@ def _schedule_discovery(
         entry.async_on_unload(_safe_remove)
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Volcast discovery could not be scheduled")
+
+
+async def _async_cleanup_failed_setup(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    tracker: VolcastProductionTracker | None,
+    control: ControlRuntime | None,
+) -> None:
+    """Zatrzymaj tracker i wykonawcę po nieudanym setupie; błędy sprzątania tylko w logu."""
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data["tracker"] = None
+    entry_data.pop("reconciler", None)
+    if tracker is not None:
+        try:
+            await tracker.async_stop()
+        except Exception as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
+            _LOGGER.warning("Volcast production tracker: cleanup after a failed setup failed (%s)",
+                            type(err).__name__)
+    if control is not None:
+        entry_data["control"] = None
+        try:
+            await async_unload_control(hass, control)
+        except Exception as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
+            _LOGGER.warning("Volcast control: cleanup after a failed setup failed (%s)",
+                            type(err).__name__)
 
 
 def _telemetry_carries_production(control: ControlRuntime | None) -> bool:
