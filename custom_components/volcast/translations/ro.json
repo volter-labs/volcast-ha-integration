@@ -310,6 +310,10 @@
         "data": {
           "confirm": "Salvați aceste entități"
         }
+      },
+      "control_telemetry_info": {
+        "title": "Calibrarea prognozei folosește acum telemetria invertorului",
+        "description": "Cât timp controlul invertorului este activat, Volcast calibrează prognoza pe baza producției citite de la invertor. Senzorii FV asociați în opțiunile prognozei ({mapped}) nu mai sunt folosiți pentru calibrare. Îi poți lăsa sau șterge."
       }
     },
     "abort": {
@@ -344,7 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Îmbunătățește precizia prognozei cu urmărirea producției",
-      "description": "Urmărirea producției: în modul de control direct, integrarea urmărește automat producția FV din citirile proprii ale invertorului – nu trebuie configurat nimic. În celelalte moduri, alege în opțiunile integrării un senzor de energie sau de putere FV pentru a activa calibrarea prognozelor după producția măsurată."
+      "description": "Cu controlul invertorului activat, calibrarea folosește telemetria invertorului. Altfel, alege un senzor de energie sau putere FV din opțiunile prognozei pentru a calibra prognoza pe baza producției măsurate."
+    },
+    "production_mapping_unused": {
+      "title": "Senzorii FV nu mai sunt folosiți pentru calibrare",
+      "description": "Controlul invertorului este activat, deci calibrarea folosește telemetria invertorului. Senzorii asociați ({entities}) sunt ignorați. Șterge-i din opțiunile prognozei pentru a ascunde această notificare."
     },
     "update_available": {
       "title": "Este disponibilă o actualizare Volcast",
@@ -522,6 +530,9 @@
       },
       "api_status": {
         "name": "Stare API"
+      },
+      "forecast_age": {
+        "name": "Vechimea prognozei"
       },
       "discovery": {
         "name": "Detectarea instalației"

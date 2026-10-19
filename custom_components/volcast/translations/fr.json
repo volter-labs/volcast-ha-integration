@@ -310,6 +310,10 @@
         "data": {
           "confirm": "Enregistrer ces entités"
         }
+      },
+      "control_telemetry_info": {
+        "title": "La calibration des prévisions utilise désormais la télémétrie de l'onduleur",
+        "description": "Lorsque le contrôle de l'onduleur est activé, Volcast calibre la prévision à partir de la production lue sur l'onduleur. Les capteurs PV associés dans les options de prévision ({mapped}) ne servent plus à la calibration. Vous pouvez les conserver ou les vider."
       }
     },
     "abort": {
@@ -344,7 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Améliorez la précision des prévisions grâce au suivi de la production",
-      "description": "Suivi de la production : en mode de contrôle direct, l'intégration suit automatiquement la production PV à partir des mesures de son propre onduleur, rien à configurer. Dans les autres modes, sélectionnez dans les options de l'intégration un capteur d'énergie ou de puissance PV pour activer l'étalonnage des prévisions à partir de la production mesurée."
+      "description": "Lorsque le contrôle de l'onduleur est activé, la calibration utilise la télémétrie de l'onduleur. Sinon, choisissez un capteur d'énergie ou de puissance PV dans les options de prévision pour calibrer la prévision à partir de la production mesurée."
+    },
+    "production_mapping_unused": {
+      "title": "Les capteurs PV ne servent plus à la calibration",
+      "description": "Le contrôle de l'onduleur est activé, la calibration utilise donc la télémétrie de l'onduleur. Les capteurs associés ({entities}) sont ignorés. Videz-les dans les options de prévision pour masquer cet avis."
     },
     "update_available": {
       "title": "Une mise à jour de Volcast est disponible",
@@ -522,6 +530,9 @@
       },
       "api_status": {
         "name": "État de l'API"
+      },
+      "forecast_age": {
+        "name": "Âge de la prévision"
       },
       "discovery": {
         "name": "Détection de l'installation"
