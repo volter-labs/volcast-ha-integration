@@ -1,10 +1,8 @@
 """Production tracker for Volcast — submits hourly PV production to backend.
 
-Late binding: the production entities are not always known when the tracker
-is created. Entities provided by this integration itself may be registered
-only after its platforms load, while the sensor platform already needs the
-tracker object at that point. The tracker therefore starts its flush timer
-without entities and is bound later with ``async_bind_entities``.
+The tracker runs only for PV sensors mapped in the entry options; when inverter
+control reports production through telemetry, the server calibrates from it and
+no tracker is created.
 
 Stale-entity warning: a sensor mapped from another integration can disappear
 or stay unavailable without any error. Before this warning existed, that
@@ -187,7 +185,6 @@ class VolcastProductionTracker:
         self._baseline_loaded: bool = False
 
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
-        self.calibration: dict[str, Any] | None = None
         self.last_submission_time: datetime | None = None
         self.submissions_today: int = 0
         self._last_submission_date: str = ""
@@ -331,21 +328,12 @@ class VolcastProductionTracker:
         return datetime.now(tz)
 
     async def async_start(self) -> None:
-        """Uruchom nasłuchiwanie na state changes i timer godzinowy.
-
-        Without production entities only the flush timer starts; the entities
-        are bound later with async_bind_entities.
-        """
+        """Uruchom nasłuchiwanie na state changes i timer godzinowy."""
         # PRZED rejestracja listenerow: _async_state_changed jest synchroniczne
         # i czyta self._baseline z pamieci, wiec musi juz byc wczytany.
         await self._load_baseline()
 
-        bound = bool(self._energy_entity or self._power_entity)
-        if bound:
-            # One subscription code path for entities given up front and late.
-            self.async_bind_entities(self._energy_entity, self._power_entity)
-        else:
-            _LOGGER.info("Production tracker waiting for production entities")
+        self.async_bind_entities(self._energy_entity, self._power_entity)
 
         # Timer co 5 minut — flush o :05 każdej godziny
         if self._unsub_timer:
@@ -353,9 +341,6 @@ class VolcastProductionTracker:
         self._unsub_timer = async_track_time_interval(
             self._hass, self._async_check_flush, timedelta(minutes=5)
         )
-
-        if not bound:
-            return
 
         _LOGGER.info(
             "Production tracker started (energy=%s, power=%s, battery_soc=%s, charge_power=%s, submit_url=%s)",
@@ -368,12 +353,11 @@ class VolcastProductionTracker:
 
     @callback
     def async_bind_entities(self, energy_entity: str, power_entity: str) -> None:
-        """Bind (or rebind) the production entities and resubscribe.
+        """Bind the production entities and subscribe to their state changes.
 
-        Idempotent: the previous state subscription is always released first,
-        so repeated calls never stack listeners. Callable before or after
-        async_start. The stale-entity clock of a newly bound entity starts now;
-        an entity that stays bound keeps its clock.
+        The previous state subscription is released first, so a repeated start
+        never stacks listeners. The stale-entity clock of every bound entity
+        starts now.
         """
         self._energy_entity = energy_entity or ""
         self._power_entity = power_entity or ""
@@ -384,13 +368,8 @@ class VolcastProductionTracker:
 
         production = [e for e in (self._energy_entity, self._power_entity) if e]
         now_utc = self._get_local_now().astimezone(timezone.utc)
-        self._last_valid_sample = {
-            e: self._last_valid_sample.get(e, now_utc) for e in production
-        }
-        self._stale_warned &= set(production)
-
-        if not production:
-            return
+        self._last_valid_sample = {e: now_utc for e in production}
+        self._stale_warned.clear()
 
         entities = list(production)
         if self._battery_soc_entity:
@@ -400,11 +379,6 @@ class VolcastProductionTracker:
 
         self._unsub_state = async_track_state_change_event(
             self._hass, entities, self._async_state_changed
-        )
-        _LOGGER.debug(
-            "Production tracker bound (energy=%s, power=%s)",
-            self._energy_entity or "none",
-            self._power_entity or "none",
         )
 
     @property
@@ -694,7 +668,6 @@ class VolcastProductionTracker:
 
         if result.success:
             data = result.data or {}
-            self.calibration = data.get("calibration")
             self.last_submission_time = datetime.now(timezone.utc)
             self.submissions_today += data.get("accepted", 0)
 
@@ -730,10 +703,9 @@ class VolcastProductionTracker:
                 )
             else:
                 _LOGGER.info(
-                    "Production submitted: accepted=%s rejected=%s calibration=%s",
+                    "Production submitted: accepted=%s rejected=%s",
                     data.get("accepted", 0),
                     data.get("rejected", 0),
-                    self.calibration,
                 )
             return True
 
