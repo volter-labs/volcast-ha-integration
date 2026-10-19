@@ -192,6 +192,41 @@ class TestParseResponse:
 # ---------------------------------------------------------------------------
 
 
+class TestProductionSourceParsing:
+    """Źródło produkcji i kalibracja z serwera."""
+
+    def test_parses_contract_fields(self):
+        import json
+        from tests.conftest import PRODUCTION_SOURCE_CONTRACT_JSON
+
+        contract = json.loads(PRODUCTION_SOURCE_CONTRACT_JSON)
+        raw = _make_api_response(extra_attrs=contract)
+        result = _parse_response(raw, FakeHass())
+        assert result.production_source == "telemetry"
+        assert result.production_source_detail == "cloud:deye"
+        assert result.calibration == contract["calibration"]
+
+    def test_missing_fields_default_to_none(self):
+        result = _parse_response(_make_api_response(), FakeHass())
+        assert result.production_source is None
+        assert result.production_source_detail is None
+        assert result.calibration is None
+
+    def test_null_samples_passed_through_untouched(self):
+        import json
+        from tests.conftest import PRODUCTION_SOURCE_CONTRACT_JSON
+
+        raw = _make_api_response(extra_attrs=json.loads(PRODUCTION_SOURCE_CONTRACT_JSON))
+        result = _parse_response(raw, FakeHass())
+        assert result.calibration["buckets"]["overcast"]["samples"] is None
+
+    def test_error_data_has_no_source(self):
+        result = _error_data("x")
+        assert result.production_source is None
+        assert result.production_source_detail is None
+        assert result.calibration is None
+
+
 class TestBuildWhHours:
     """Tests for _build_wh_hours."""
 

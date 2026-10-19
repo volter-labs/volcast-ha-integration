@@ -168,6 +168,10 @@ class VolcastData:
     nowcast_applied: bool = False
     nowcast_ratio: float | None = None
     submit_url: str = ""
+    # Źródło produkcji i kalibracja liczone po stronie serwera (brak → None)
+    production_source: str | None = None
+    production_source_detail: str | None = None
+    calibration: dict[str, Any] | None = None
 
 
 class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
@@ -414,6 +418,10 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         nowcast_applied=attrs.get("nowcast_applied", False),
         nowcast_ratio=attrs.get("nowcast_ratio"),
         submit_url=attrs.get("submit_url", ""),
+        production_source=attrs.get("production_source"),
+        production_source_detail=attrs.get("production_source_detail"),
+        # kubełki mogą mieć samples: null — przekazujemy bez ingerencji
+        calibration=attrs.get("calibration"),
     )
 
 

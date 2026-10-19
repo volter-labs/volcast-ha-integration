@@ -453,7 +453,17 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
             "api_version": self._data.api_version,
             "nowcast_applied": self._data.nowcast_applied,
             "nowcast_ratio": self._data.nowcast_ratio,
+            "production_source": self._data.production_source,
+            "production_source_detail": self._data.production_source_detail,
         }
+
+        # Kalibracja z serwera (kubełki mogą mieć samples: null — bez ingerencji)
+        cal = self._data.calibration or {}
+        last_hour = cal.get("last_hour")
+        attrs["kalman_bias"] = cal.get("kalman_bias")
+        attrs["kalman_updated_at"] = cal.get("kalman_updated_at")
+        attrs["calibration_buckets"] = cal.get("buckets")
+        attrs["last_production_hour"] = last_hour
 
         # Production tracker info (jeśli aktywny)
         entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {})
@@ -462,8 +472,6 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
             attrs["production_tracking"] = True
             attrs["submissions_today"] = tracker.submissions_today
             attrs["queued_readings"] = tracker.queued_count
-            if tracker.calibration:
-                attrs["kalman_bias"] = tracker.calibration.get("bias")
             if tracker.last_submission_time:
                 attrs["last_submission"] = tracker.last_submission_time.isoformat()
         else:
