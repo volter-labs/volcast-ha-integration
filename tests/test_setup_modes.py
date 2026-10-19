@@ -30,6 +30,9 @@ IDS_172_NO_OPTIONS = {f"test_entry_id_{k}" for k in (
     "energy_day_3", "energy_day_4", "energy_day_5", "energy_day_6", "energy_day_7",
     "peak_production", "integration_healthy")}
 
+# Diagnostyczny czujnik dodany w 2.0 (decyzja właściciela: zbiory IDS_172_* zostają zamrożone).
+DIAGNOSTIC_IDS_2_0 = {"test_entry_id_forecast_age"}
+
 DISCOVERY_IDS = {"test_entry_id_discovery", "test_entry_id_run_discovery"}
 MODES_DATA = [pytest.param(None, id="forecast"), pytest.param({"mode": "discovery_only"}, id="discovery_only")]
 
@@ -37,13 +40,13 @@ MODES_DATA = [pytest.param(None, id="forecast"), pytest.param({"mode": "discover
 async def test_forecast_entry_unique_ids_identical_to_1_7_2(setup_forecast_entry):
     ids = await setup_forecast_entry(options={"pv_energy_entity": "sensor.pv_today"})
     assert IDS_172_WITH_ENERGY <= ids
-    assert ids - IDS_172_WITH_ENERGY == DISCOVERY_IDS
+    assert ids - IDS_172_WITH_ENERGY == DISCOVERY_IDS | DIAGNOSTIC_IDS_2_0
 
 
 async def test_forecast_entry_without_options_identical_to_1_7_2(setup_forecast_entry):
     ids = await setup_forecast_entry(options={})
     assert IDS_172_NO_OPTIONS <= ids
-    assert ids - IDS_172_NO_OPTIONS == DISCOVERY_IDS
+    assert ids - IDS_172_NO_OPTIONS == DISCOVERY_IDS | DIAGNOSTIC_IDS_2_0
 
 
 async def test_forecast_entry_data_unchanged_plus_runner(setup_forecast_entry):

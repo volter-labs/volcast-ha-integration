@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -12,9 +13,10 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower, UnitOfTime
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
@@ -24,6 +26,8 @@ from .control_entities import (VolcastControlStatusSensor, VolcastPlanSensor,
                                VolcastPlanSummarySensor)
 from .discovery_entities import VolcastDiscoverySensor
 from .verification_entities import VolcastVerificationSensor
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -47,6 +51,7 @@ async def async_setup_entry(
             VolcastEnergyTomorrowSensor(coordinator, entry),
             VolcastPowerNowSensor(coordinator, entry),
             VolcastApiStatusSensor(coordinator, entry),
+            VolcastForecastAgeSensor(coordinator, entry),
         ])
 
         # Day 3-7 forecast sensors
@@ -487,6 +492,87 @@ class VolcastApiStatusSensor(VolcastBaseSensor):
             attrs["production_tracking"] = False
 
         return attrs
+
+
+# =============================================================================
+# FORECAST AGE (diagnostic)
+# =============================================================================
+
+
+class VolcastForecastAgeSensor(VolcastBaseSensor):
+    """Wiek prognozy (minuty od `generated_at` serwera), liczony lokalnie.
+
+    Odróżnia zastarzenie po stronie serwera od problemu lokalnej integracji;
+    `cache_age_minutes` z serwera odświeża się tylko przy odpytaniu, ten czujnik
+    przelicza wiek co minutę. Brak lub nieczytelne `generated_at` → None.
+    """
+
+    _SELF_REFRESH_INTERVAL = timedelta(minutes=1)
+
+    def __init__(self, coordinator: VolcastCoordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(
+            coordinator,
+            entry,
+            SensorEntityDescription(
+                key="forecast_age",
+                translation_key="forecast_age",
+                entity_category=EntityCategory.DIAGNOSTIC,
+                native_unit_of_measurement=UnitOfTime.MINUTES,
+                state_class=SensorStateClass.MEASUREMENT,
+                icon="mdi:clock-alert-outline",
+                suggested_display_precision=0,
+            ),
+        )
+        self._unsub_refresh: CALLBACK_TYPE | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Co minutę odśwież stan, by wiek rósł między odpytaniami koordynatora."""
+        await super().async_added_to_hass()
+        self._unsub_refresh = async_track_time_interval(
+            self.hass, self._async_handle_refresh, self._SELF_REFRESH_INTERVAL)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Zdejmij timer odświeżania."""
+        if self._unsub_refresh is not None:
+            self._unsub_refresh()
+            self._unsub_refresh = None
+        await super().async_will_remove_from_hass()
+
+    async def _async_handle_refresh(self, _now) -> None:
+        """Przelicz native_value względem bieżącego czasu."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> int | None:
+        """Minuty od generated_at (Z / offset / bez strefy = UTC), min. 0."""
+        if self._data is None or not self._data.generated_at:
+            return None
+        try:
+            gen_dt = datetime.fromisoformat(self._data.generated_at.replace("Z", "+00:00"))
+        except (ValueError, TypeError, AttributeError):
+            _LOGGER.debug("forecast_age: unparseable generated_at=%r", self._data.generated_at)
+            return None
+        if gen_dt.tzinfo is None:
+            gen_dt = gen_dt.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - gen_dt
+        return max(0, int(delta.total_seconds() // 60))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """generated_at, wiek raportowany przez serwer i diagnostyka lokalna."""
+        if self._data is None:
+            return {}
+        last_ok = self.coordinator.last_update_success_time
+        since_ok = None
+        if last_ok is not None:
+            since_ok = max(0, int((datetime.now(timezone.utc) - last_ok).total_seconds() // 60))
+        return {
+            "generated_at": self._data.generated_at,
+            "server_reported_cache_age_minutes": self._data.cache_age_minutes,
+            "minutes_since_last_success": since_ok,
+            "consecutive_failures": self.coordinator.consecutive_failures,
+        }
 
 
 # =============================================================================

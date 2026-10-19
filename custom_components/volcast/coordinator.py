@@ -196,6 +196,11 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
         self._api_url = api_url
         self._entry_id = entry_id
 
+        # Diagnostyka dla czujnika wieku prognozy: porażki z rzędu i moment
+        # ostatniej odpowiedzi serwera (udanej albo 403 — serwer odpowiedział).
+        self.consecutive_failures = 0
+        self.last_update_success_time: datetime | None = None
+
         # Rolling history of forecast wh_hours, keyed by ISO timestamp, served to
         # the HA Energy Dashboard so past days keep their forecast line. Persisted
         # per-entry; in-memory only when no entry_id (e.g. unit tests).
@@ -270,6 +275,16 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
 
     async def _async_update_data(self) -> VolcastData:
         """Fetch data from Volcast API with retry (5/15/45s) on transient errors."""
+        try:
+            data = await self._async_fetch()
+        except UpdateFailed:
+            self.consecutive_failures += 1
+            raise
+        self.consecutive_failures = 0
+        self.last_update_success_time = datetime.now(timezone.utc)
+        return data
+
+    async def _async_fetch(self) -> VolcastData:
         url = f"{self._api_url}?key={self._api_key}"
         session = async_get_clientsession(self.hass)
 

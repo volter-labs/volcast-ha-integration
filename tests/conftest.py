@@ -54,6 +54,7 @@ _make_module("homeassistant.core", {
     "HomeAssistant": _FakeHomeAssistant,
     "Event": _FakeEvent,
     "callback": _fake_callback,
+    "CALLBACK_TYPE": Any,
     "ServiceCall": MagicMock(),
 })
 
@@ -76,6 +77,7 @@ _make_module("homeassistant.const", {
     "EntityCategory": MagicMock(),
     "UnitOfEnergy": MagicMock(),
     "UnitOfPower": MagicMock(),
+    "UnitOfTime": MagicMock(),
     "STATE_UNAVAILABLE": "unavailable",
     "STATE_UNKNOWN": "unknown",
     "EVENT_HOMEASSISTANT_STARTED": "homeassistant_started",
@@ -204,6 +206,15 @@ class _FakeCoordinatorEntity:
 
     def __class_getitem__(cls, item):
         return cls
+
+    async def async_added_to_hass(self) -> None:
+        """Atrapa — w HA podpina słuchaczy koordynatora."""
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Atrapa — w HA zdejmuje słuchaczy koordynatora."""
+
+    def async_write_ha_state(self) -> None:
+        """Atrapa — w HA wypycha stan do rejestru."""
 
 
 class _FakeDataUpdateCoordinator:

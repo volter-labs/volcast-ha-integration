@@ -227,6 +227,7 @@ Data is submitted to Volcast once per hour (at ~5 minutes past each hour). A qua
 | `sensor.volcast_power_now` | Power (W) | Current estimated power output |
 | `binary_sensor.volcast_peak_production` | Binary | ON when power > threshold % of today's peak |
 | `sensor.volcast_api_status` | Diagnostic | API connection status |
+| `sensor.volcast_forecast_age` | Diagnostic (min) | Minutes since the server generated the forecast, recomputed every minute; attributes `generated_at`, `server_reported_cache_age_minutes`, `minutes_since_last_success`, `consecutive_failures` |
 
 ## Prerequisites
 
