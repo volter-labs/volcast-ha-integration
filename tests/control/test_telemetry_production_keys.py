@@ -4,6 +4,7 @@ Od tego zależy jedno źródło produkcji konta: gdy telemetria niesie moc PV, s
 i lokalny tracker nie działa. Sam licznik energii PV nie wystarcza — serwer bez mocy PV nie wyliczy
 z niego produkcji, więc wtedy tracker zostaje.
 """
+from collections.abc import Mapping
 from types import SimpleNamespace
 
 import pytest
@@ -74,3 +75,45 @@ def test_runtime_asks_its_telemetry_sender():
 
 def test_runtime_without_telemetry_reports_no_production():
     assert _runtime(None).telemetry_reports_production is False
+
+
+def _thaw(v):
+    if isinstance(v, Mapping):
+        return {k: _thaw(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_thaw(x) for x in v]
+    return v
+
+
+def _addrs(spec) -> list[int]:
+    terms = spec["sum"] if isinstance(spec, dict) and "sum" in spec else [spec]
+    return [t["addr"] for t in terms if "addr" in t]
+
+
+def test_direct_pv_power_register_is_always_polled():
+    """Bezpośrednio rejestr `pv_power_w` zawsze jest w planie odczytu klienta, więc reguła może go liczyć
+    bez celu sondy: klient pomija tylko klucze bez odczytu (`unreadable` = `echo_only` sondy) i bez rejestru
+    (`unsupported` = możliwości False), a oba zbiory pochodzą z `modbus.probe_keys`, które schemat ogranicza
+    do kluczy zapisu — `pv_power_w` nim nie jest i nie może być."""
+    import copy
+
+    from custom_components.volcast.core.modbus.blocks import read_plan
+    from custom_components.volcast.core.params import WRITE_PARAMS
+    from custom_components.volcast.core.profile import builtin_ids
+    from custom_components.volcast.core.profile_schema import validate_profile
+    assert "pv_power_w" not in WRITE_PARAMS
+    checked = 0
+    for pid in builtin_ids():
+        p = load_builtin(pid)
+        if "pv_power_w" not in p.raw["read"]:
+            continue
+        skipped = set(p.modbus.probe_keys) | set(p.modbus.echo_only)
+        polled = {a for b in read_plan(p, exclude=skipped) for a in range(b[0], b[0] + b[1])}
+        assert set(_addrs(p.raw["read"]["pv_power_w"])) <= polled, pid
+        checked += 1
+        raw = _thaw(p.raw)
+        for field in ("probe_keys", "echo_only"):
+            bad = copy.deepcopy(raw)
+            bad["modbus"][field] = [*bad["modbus"].get(field, ()), "pv_power_w"]
+            assert any(f"$.modbus.{field}" in e for e in validate_profile(bad)), (pid, field)
+    assert checked >= 5
