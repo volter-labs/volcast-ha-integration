@@ -219,7 +219,7 @@ def test_enabling_direct_from_off_shows_telemetry_info_then_saves(monkeypatch):
     assert shown[0]["description_placeholders"] == {"mapped": "sensor.pv_energy, sensor.pv_power"}
     assert runtime.left == []                                  # nic nie zapisane przed potwierdzeniem
     assert asyncio.run(f.async_step_control_telemetry_info())["step_id"] == "control_telemetry_info"
-    done =asyncio.run(f.async_step_control_telemetry_info({}))
+    done = asyncio.run(f.async_step_control_telemetry_info({}))
     assert done["type"] == "create_entry" and done["data"]["control_mode"] == "direct"
     assert done["data"]["direct_target"]["host"] == HOST
     assert done["data"]["pv_energy_entity"] == "sensor.pv_energy"     # mapowanie zostaje, właściciel decyduje

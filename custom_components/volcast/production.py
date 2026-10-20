@@ -333,7 +333,7 @@ class VolcastProductionTracker:
         # i czyta self._baseline z pamieci, wiec musi juz byc wczytany.
         await self._load_baseline()
 
-        self.async_bind_entities(self._energy_entity, self._power_entity)
+        self._async_subscribe()
 
         # Timer co 5 minut — flush o :05 każdej godziny
         if self._unsub_timer:
@@ -352,16 +352,13 @@ class VolcastProductionTracker:
         )
 
     @callback
-    def async_bind_entities(self, energy_entity: str, power_entity: str) -> None:
-        """Bind the production entities and subscribe to their state changes.
+    def _async_subscribe(self) -> None:
+        """Subscribe to the state changes of the mapped entities.
 
         The previous state subscription is released first, so a repeated start
-        never stacks listeners. The stale-entity clock of every bound entity
-        starts now.
+        never stacks listeners. The stale-entity clock of every production
+        entity starts now.
         """
-        self._energy_entity = energy_entity or ""
-        self._power_entity = power_entity or ""
-
         if self._unsub_state:
             self._unsub_state()
             self._unsub_state = None

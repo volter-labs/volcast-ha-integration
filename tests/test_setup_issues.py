@@ -63,7 +63,7 @@ def test_integration_does_not_import_severity_from_repairs():
 _MAPPED = {"pv_energy_entity": "sensor.pv_e", "pv_power_entity": "sensor.pv_p"}
 
 
-def _unused_calls(mock, _name=None):
+def _unused_calls(mock):
     return [c for c in mock.call_args_list if c.args[2].startswith("production_mapping_unused_")]
 
 
@@ -98,7 +98,7 @@ async def test_paired_with_mapping_raises_mapping_unused_issue(monkeypatch):
     _paired(monkeypatch, carries=True)
     hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, options=_MAPPED)
     assert ok
-    calls = _unused_calls(create, "create")
+    calls = _unused_calls(create)
     assert len(calls) == 1
     assert calls[0].args[2] == f"production_mapping_unused_{entry.entry_id}"
     kw = calls[0].kwargs
@@ -113,7 +113,7 @@ async def test_paired_without_mapping_has_no_mapping_unused_issue(monkeypatch):
     create, delete = _patch_issues(monkeypatch)
     _paired(monkeypatch, carries=True)
     hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
-    assert ok and not _unused_calls(create, "create")
+    assert ok and not _unused_calls(create)
     assert any(c.args[2] == f"production_mapping_unused_{entry.entry_id}" for c in delete.call_args_list)
 
 
@@ -121,7 +121,7 @@ async def test_paired_without_mapping_has_no_mapping_unused_issue(monkeypatch):
 async def test_forecast_only_with_mapping_has_no_mapping_unused_issue(monkeypatch):
     create, delete = _patch_issues(monkeypatch)
     hass, entry, ok = await run_setup(monkeypatch.setattr, options=_MAPPED)
-    assert ok and not _unused_calls(create, "create")
+    assert ok and not _unused_calls(create)
 
 
 @pytest.mark.asyncio
@@ -130,7 +130,7 @@ async def test_paired_without_production_telemetry_keeps_tracker_and_no_issue(mo
     create, delete = _patch_issues(monkeypatch)
     _paired(monkeypatch, carries=False)
     hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, options=_MAPPED)
-    assert ok and not _unused_calls(create, "create")
+    assert ok and not _unused_calls(create)
 
 
 @pytest.mark.asyncio

@@ -207,7 +207,6 @@ class TestApiStatusServerCalibration:
         tracker.submissions_today = 3
         tracker.queued_count = 1
         tracker.last_submission_time = None
-        tracker.calibration = {"bias": 0.5}
         sensor.hass.data = {"volcast": {"test_entry": {"tracker": tracker}}}
         attrs = sensor.extra_state_attributes
         assert attrs["production_tracking"] is True
