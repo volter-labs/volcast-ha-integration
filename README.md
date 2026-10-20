@@ -198,7 +198,7 @@ The integration polls the Volcast cloud API at a configurable interval (default:
 
 ### Production Tracking & Calibration
 
-When you connect your inverter's energy or power sensor, the integration sends **hourly production summaries** to Volcast. This data drives two mechanisms. When inverter control's telemetry reports PV power, production is reported through that telemetry instead, and the mapped PV sensors are not used for calibration (one production source per account):
+When you connect your inverter's energy or power sensor, the integration sends **hourly production summaries** to Volcast. This data drives two mechanisms. When the telemetry of a paired entry reports PV power (`pv_power_w`, with inverter control on or off), production is reported through that telemetry instead, and the mapped PV sensors are not used for calibration (one production source per account):
 
 **Kalman filter calibration** — Volcast maintains a per-user bias estimate that adjusts forecasts based on how your actual production compares to predictions. The filter uses hourly cloud cover to apply different corrections for clear vs. cloudy conditions. This means the forecast learns your system's real-world characteristics (shading, soiling, inverter efficiency) over time. Calibration requires at least 5 days of data to activate and is applied to future days only — today's forecast stays unbiased.
 
@@ -210,7 +210,7 @@ All three mechanisms are optional — the forecast works without production trac
 
 ### How production data is collected
 
-When the mapped PV sensors are the production source (inverter control off, or its telemetry reports no PV power), the integration tracks them via state change events and accumulates data in hourly buckets:
+The integration's own production tracker, fed from the mapped PV sensors, is dropped only when telemetry reports PV power (`pv_power_w`). Otherwise the mapped sensors remain the production source, and the integration tracks them via state change events and accumulates data in hourly buckets:
 
 - **Energy sensor** (preferred): Computes the delta between the first and last reading each hour. Handles counter resets and carries over the last reading to the next hour to avoid gaps.
 - **Power sensor** (fallback): If the energy sensor is unavailable or resets, uses trapezoidal integration of power readings to estimate hourly energy.
