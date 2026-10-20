@@ -556,7 +556,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     platforms = _loaded_platforms(hass, entry)
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, platforms):
         entry_data = hass.data[DOMAIN].pop(entry.entry_id)
-        ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
         tracker = entry_data.get("tracker")
         if tracker is not None:
             await tracker.async_stop()
@@ -582,6 +581,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, SERVICE_SYNC_PRODUCTION)
         if not hass.data[DOMAIN] and hass.services.has_service(DOMAIN, SERVICE_RESUME_CONTROL):
             hass.services.async_remove(DOMAIN, SERVICE_RESUME_CONTROL)
+        # Na końcu i pod strażą — błąd rejestru zgłoszeń nie może pominąć zatrzymania trackera
+        # ani wykonawcy.
+        try:
+            ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Volcast: repair cleanup on unload failed (%s)", type(err).__name__)
     return unload_ok
 
 

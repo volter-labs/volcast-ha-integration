@@ -836,3 +836,28 @@ async def test_stale_repair_deleted_when_telemetry_carries_production(monkeypatc
 
 async def test_repair_not_deleted_without_any_source(monkeypatch):
     assert "production_tracking_available" not in await _deleted_issues(monkeypatch, options={})
+
+
+async def test_unload_with_failing_issue_deletion_still_stops_tracker_and_control(monkeypatch):
+    """Rejestr zgłoszeń, który rzuca przy unloadzie, nie może zostawić trackera ani wykonawcy."""
+    import custom_components.volcast as integ
+    control = _runtime()                                   # bez mocy PV — tracker z mapowania
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED, control=control)
+    assert tracker is not None
+    stopped: list = []
+    unloaded: list = []
+
+    async def stop() -> None:
+        stopped.append(True)
+    tracker.async_stop = stop
+
+    async def unload_control(_hass, rt, **_kw):
+        unloaded.append(rt)
+    monkeypatch.setattr(integ, "async_unload_control", unload_control)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("issue registry")
+    monkeypatch.setattr(integ.ir, "async_delete_issue", boom)
+    assert await integ.async_unload_entry(hass, entry) is True
+    assert stopped == [True] and unloaded == [control]
