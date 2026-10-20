@@ -7,7 +7,7 @@ no tracker is created.
 Stale-entity warning: a sensor mapped from another integration can disappear
 or stay unavailable without any error. Before this warning existed, that
 silently paused production tracking (and with it forecast calibration) with
-nothing in the log. The tracker now logs one warning per outage when a bound
+nothing in the log. The tracker now logs one warning per outage when a mapped
 production entity has not reported a valid value for STALE_ENTITY_WARN_S.
 """
 
@@ -91,7 +91,7 @@ PERMANENT_SKIP_REASONS = frozenset({
 
 _LOGGER = logging.getLogger(__name__)
 
-# A bound production entity without a valid value for this long gets one
+# A mapped production entity without a valid value for this long gets one
 # warning per outage (see the module docstring).
 STALE_ENTITY_WARN_S = 3600
 
@@ -163,7 +163,7 @@ class VolcastProductionTracker:
         self._last_flushed_hour: int = -1
         self._unsub_state: callback | None = None
         self._unsub_timer: callback | None = None
-        # Stale-entity tracking: last valid sample (UTC) per bound production entity
+        # Stale-entity tracking: last valid sample (UTC) per mapped production entity
         # and the entities already warned about in the current outage.
         self._last_valid_sample: dict[str, datetime] = {}
         self._stale_warned: set[str] = set()
@@ -380,18 +380,18 @@ class VolcastProductionTracker:
 
     @property
     def stale_entities(self) -> list[str]:
-        """Bound production entities currently in a reported stale outage."""
+        """Mapped production entities currently in a reported stale outage."""
         return sorted(self._stale_warned)
 
     def _note_valid_sample(self, entity_id: str, now: datetime) -> None:
-        """Record a valid value for a bound production entity."""
+        """Record a valid value for a mapped production entity."""
         self._last_valid_sample[entity_id] = now.astimezone(timezone.utc)
         if entity_id in self._stale_warned:
             self._stale_warned.discard(entity_id)
             _LOGGER.info("Production entity %s reports valid values again", entity_id)
 
     def _check_stale_entities(self, now: datetime) -> None:
-        """Warn once per outage about a bound entity without valid values.
+        """Warn once per outage about a mapped entity without valid values.
 
         HA emits state_changed only when a value changes: overnight the power
         sensor sits at 0 and the energy counter does not move, so events alone
