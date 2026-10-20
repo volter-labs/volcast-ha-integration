@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta
 import logging
 
@@ -222,42 +224,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             control = None
     hass.data[DOMAIN][entry.entry_id]["control"] = control
 
-    # Jedno źródło produkcji: gdy telemetria sterowania niesie produkcję, serwer kalibruje
-    # z niej i lokalny tracker nie działa; inaczej tracker ze zmapowanych czujników PV.
-    mapped = bool(energy_entity or power_entity)
-    telemetry_production = _telemetry_carries_production(control)
-    if mapped or telemetry_production:
-        ir.async_delete_issue(hass, DOMAIN, "production_tracking_available")
-    else:
-        # Brak jakiegokolwiek źródła produkcji — prognoza bez kalibracji.
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            "production_tracking_available",
-            is_fixable=False,
-            severity=_ISSUE_WARNING,
-            translation_key="production_tracking_available",
-        )
-
-    mapping_issue_id = f"production_mapping_unused_{entry.entry_id}"
-    if telemetry_production and mapped:
-        # Zmapowane czujniki są ignorowane — właściciel może je wyczyścić w opcjach prognozy.
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            mapping_issue_id,
-            is_fixable=False,
-            severity=_ISSUE_WARNING,
-            translation_key="production_mapping_unused",
-            translation_placeholders={
-                "entities": ", ".join(e for e in (energy_entity, power_entity) if e)
-            },
-        )
-    else:
-        ir.async_delete_issue(hass, DOMAIN, mapping_issue_id)
-
     tracker: VolcastProductionTracker | None = None
     try:
+        # Jedno źródło produkcji: gdy telemetria sterowania niesie produkcję, serwer kalibruje
+        # z niej i lokalny tracker nie działa; inaczej tracker ze zmapowanych czujników PV.
+        # Wszystko po złożeniu sterowania jest w `try` — błąd nie może zostawić wykonawcy.
+        mapped = bool(energy_entity or power_entity)
+        telemetry_production = _telemetry_carries_production(control)
+        _sync_production_issues(hass, entry, energy_entity, power_entity,
+                                telemetry_production=telemetry_production)
+
         # Tracker i reconciler przed platformami — sensory diagnostyczne czytają je przy setupie.
         if telemetry_production:
             if mapped:
@@ -400,34 +376,78 @@ def _schedule_discovery(
         _LOGGER.exception("Volcast discovery could not be scheduled")
 
 
+def _sync_production_issues(hass: HomeAssistant, entry: ConfigEntry, energy_entity: str,
+                            power_entity: str, *, telemetry_production: bool) -> None:
+    """Zgłoszenia naprawy źródła produkcji: brak źródła albo zmapowane czujniki nieużywane."""
+    mapped = bool(energy_entity or power_entity)
+    if mapped or telemetry_production:
+        ir.async_delete_issue(hass, DOMAIN, "production_tracking_available")
+    else:
+        # Brak jakiegokolwiek źródła produkcji — prognoza bez kalibracji.
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            "production_tracking_available",
+            is_fixable=False,
+            severity=_ISSUE_WARNING,
+            translation_key="production_tracking_available",
+        )
+
+    mapping_issue_id = f"production_mapping_unused_{entry.entry_id}"
+    if telemetry_production and mapped:
+        # Zmapowane czujniki są ignorowane — właściciel może je wyczyścić w opcjach prognozy.
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            mapping_issue_id,
+            is_fixable=False,
+            severity=_ISSUE_WARNING,
+            translation_key="production_mapping_unused",
+            translation_placeholders={
+                "entities": ", ".join(e for e in (energy_entity, power_entity) if e)
+            },
+        )
+    else:
+        ir.async_delete_issue(hass, DOMAIN, mapping_issue_id)
+
+
 async def _async_cleanup_failed_setup(
     hass: HomeAssistant,
     entry: ConfigEntry,
     tracker: VolcastProductionTracker | None,
     control: ControlRuntime | None,
 ) -> None:
-    """Zatrzymaj tracker i wykonawcę po nieudanym setupie; błędy sprzątania tylko w logu.
+    """Zatrzymaj tracker i wykonawcę po nieudanym setupie, na końcu zdejmij zgłoszenie wpisu.
 
-    Każdy krok łapie także `BaseException` (np. `CancelledError`): wołający i tak podnosi
-    pierwotny błąd, a przerwany krok nie może pominąć kolejnych — wykonawca musi stanąć.
+    Zwykły błąd kroku tylko w logu (wołający podnosi pierwotny). Anulowanie (`CancelledError`)
+    nie przerywa sprzątania — wykonawca musi oddać falownik — i jest podnoszone na końcu
+    (pierwotny błąd zostaje w `__context__`).
     """
-    ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
     entry_data = hass.data[DOMAIN][entry.entry_id]
     entry_data["tracker"] = None
     entry_data.pop("reconciler", None)
+    steps: list[tuple[str, Callable[[], Awaitable[None]]]] = []
     if tracker is not None:
-        try:
-            await tracker.async_stop()
-        except BaseException as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
-            _LOGGER.warning("Volcast production tracker: cleanup after a failed setup failed (%s)",
-                            type(err).__name__)
+        steps.append(("production tracker", tracker.async_stop))
     if control is not None:
         entry_data["control"] = None
+        steps.append(("control", lambda: async_unload_control(hass, control)))
+
+    async def _delete_mapping_issue() -> None:
+        ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
+    steps.append(("repair", _delete_mapping_issue))
+
+    cancelled: asyncio.CancelledError | None = None
+    for label, step in steps:
         try:
-            await async_unload_control(hass, control)
-        except BaseException as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
-            _LOGGER.warning("Volcast control: cleanup after a failed setup failed (%s)",
-                            type(err).__name__)
+            await step()
+        except asyncio.CancelledError as err:
+            cancelled = err
+        except Exception as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
+            _LOGGER.warning("Volcast %s: cleanup after a failed setup failed (%s)",
+                            label, type(err).__name__)
+    if cancelled is not None:
+        raise cancelled
 
 
 def _telemetry_carries_production(control: ControlRuntime | None) -> bool:
@@ -595,9 +615,12 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Usunięcie wpisu: sterowanie oddaje falownik w tryb bazowy (jeśli je przejęło)."""
-    # Zgłoszenie wpisu nie może przeżyć wpisu (np. po nieudanym setupie nie było unloadu).
-    ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
     try:
         await async_remove_control(hass, entry)
     except Exception as err:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić
         _LOGGER.error("Volcast: control cleanup on removal failed (%s)", type(err).__name__)
+    # Zgłoszenie wpisu nie może przeżyć wpisu (np. po nieudanym setupie nie było unloadu).
+    try:
+        ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Volcast: repair cleanup on removal failed (%s)", type(err).__name__)
