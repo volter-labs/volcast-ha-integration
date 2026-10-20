@@ -80,14 +80,30 @@ async def test_choosing_entities_in_options_leaves_plan_only(hass: HomeAssistant
     rt = control_of(hass, entry)
     assert rt.executor.plan_only is True and "control_mode" not in entry.options
     menu = await _open_control(hass, entry)
-    info = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "control_entities"})
-    assert (info["type"], info["step_id"]) == (FlowResultType.FORM, "control_telemetry_info")
-    assert info["description_placeholders"] == {"mapped": "-"}
-    assert "control_mode" not in entry.options and rt.executor.plan_only is True   # nic przed potwierdzeniem
-    done = await hass.config_entries.options.async_configure(info["flow_id"], {})
-    assert done["type"] is FlowResultType.CREATE_ENTRY
+    done = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "control_entities"})
+    assert done["type"] is FlowResultType.CREATE_ENTRY            # bez zmapowanych czujników PV: bez kroku info
     await hass.async_block_till_done()
     rt = control_of(hass, entry)
     assert rt.executor.plan_only is False and entry.options["control_mode"] == "entities"
     assert rt.executor._gates().control_mode == "entities"
     assert hass_storage["volcast.control.paired01"]["data"]["plan_only"] is False
+
+
+async def test_enabling_entities_with_mapped_pv_sensor_explains_telemetry(hass: HomeAssistant, network_down,
+                                                                         hass_storage):
+    """Moc PV z encji falownika + czujnik PV w opcjach prognozy: krok info, zapis dopiero po potwierdzeniu."""
+    await async_setup_inverter(hass)
+    store_state(hass_storage, "paired01", dict(GATES))
+    entry = make_entry(hass, options={"profile_id": "goodwe-et", "inverter_domain": "goodwe",
+                                      "pv_energy_entity": "sensor.house_pv_energy"})
+    await setup_entry(hass, entry)
+    assert "pv_power_w" in control_of(hass, entry).mapped
+    menu = await _open_control(hass, entry)
+    info = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "control_entities"})
+    assert (info["type"], info["step_id"]) == (FlowResultType.FORM, "control_telemetry_info")
+    assert info["description_placeholders"] == {"mapped": "sensor.house_pv_energy"}
+    assert "control_mode" not in entry.options                    # nic przed potwierdzeniem
+    done = await hass.config_entries.options.async_configure(info["flow_id"], {})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.options["control_mode"] == "entities"

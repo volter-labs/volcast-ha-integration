@@ -122,15 +122,33 @@ def test_unpaired_init_also_merges():
 
 
 def test_control_entities_sets_mode_and_profile():
-    f = flow(runtime=rt())
-    assert asyncio.run(f.async_step_control_entities())["step_id"] == "control_telemetry_info"
-    r = asyncio.run(f.async_step_control_telemetry_info({}))
+    r = asyncio.run(flow(runtime=rt()).async_step_control_entities())
     assert r["data"] == {"control_mode": "entities", "profile_id": "goodwe-et", "inverter_domain": "goodwe"}
+
+
+MAPPED_PV = {"pv_energy_entity": "sensor.pv_energy"}
+WITH_PV = (*WRITE_KEYS, "pv_power_w")
+
+
+def test_entities_without_pv_power_entity_skip_telemetry_info():
+    # Encja mocy PV niezmapowana — telemetria nie poniesie produkcji, czujniki z opcji dalej kalibrują.
+    r = asyncio.run(flow(options=MAPPED_PV, runtime=rt()).async_step_control_entities())
+    assert r["type"] == "create_entry" and r["data"]["control_mode"] == "entities"
+
+
+def test_entities_with_pv_power_but_nothing_mapped_skip_telemetry_info():
+    r = asyncio.run(flow(runtime=rt(mapped=WITH_PV)).async_step_control_entities())
+    assert r["type"] == "create_entry" and r["data"]["control_mode"] == "entities"
+
+
+def test_entities_manual_pv_power_shows_telemetry_info():
+    f = flow(options={**MAPPED_PV, "telemetry_map": {"pv_power_w": "sensor.inv_pv"}}, runtime=rt())
+    assert asyncio.run(f.async_step_control_entities())["step_id"] == "control_telemetry_info"
 
 
 def test_enabling_entities_from_off_shows_telemetry_info_with_mapped_sensors():
     shown = []
-    runtime = rt()
+    runtime = rt(mapped=WITH_PV)
     left = []
 
     async def leave():
@@ -147,7 +165,7 @@ def test_enabling_entities_from_off_shows_telemetry_info_with_mapped_sensors():
 
 
 def test_entities_already_on_has_no_telemetry_info():
-    f = flow(options={"control_mode": "direct"}, runtime=rt())
+    f = flow(options={"control_mode": "direct", **MAPPED_PV}, runtime=rt(mapped=WITH_PV))
     r = asyncio.run(f.async_step_control_entities())
     assert r["type"] == "create_entry" and r["data"]["control_mode"] == "entities"
 

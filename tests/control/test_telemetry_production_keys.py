@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.volcast.control.runtime import ControlRuntime
-from custom_components.volcast.control.telemetry import TelemetrySender
+from custom_components.volcast.control.telemetry import TelemetrySender, telemetry_carries_pv_power
 from custom_components.volcast.core.control.select import ProfileChoice
 from custom_components.volcast.core.profile import load_builtin
 
@@ -27,7 +27,7 @@ def _sender(*, choice, profile_map=None, manual=None, direct=None) -> TelemetryS
                            limits=None, direct=direct)
 
 
-@pytest.mark.parametrize("kwargs, expected", [
+CASES = [
     # tryb encji: liczą się encje faktycznie zmapowane, nie wszystko, co opisuje profil
     ({"choice": GW, "profile_map": {"pv_power_w": "sensor.gw_pv_power"}}, True),
     ({"choice": GW, "profile_map": {"soc": "sensor.gw_soc"}}, False),
@@ -46,9 +46,20 @@ def _sender(*, choice, profile_map=None, manual=None, direct=None) -> TelemetryS
     ({"choice": None, "manual": {"pv_power_w": "sensor.pv_power"}}, True),
     ({"choice": None, "manual": {"pv_power_w": "sensor.p", "pv_energy_total_kwh": "sensor.e"}}, True),
     ({"choice": None, "manual": {"soc": "sensor.soc"}}, False),
-])
+]
+
+
+@pytest.mark.parametrize("kwargs, expected", CASES)
 def test_sender_reports_pv_production_from_its_read_sources(kwargs, expected):
     assert _sender(**kwargs).reports_pv_production is expected
+
+
+@pytest.mark.parametrize("kwargs, expected", CASES)
+def test_prediction_before_composing_uses_the_same_rule(kwargs, expected):
+    # Opcje (przed złożeniem sterowania) przewidują to samo, co nadajnik powie po złożeniu.
+    assert telemetry_carries_pv_power(kwargs["choice"], profile_map=kwargs.get("profile_map") or {},
+                                      manual_map=kwargs.get("manual") or {},
+                                      direct=kwargs.get("direct") is not None) is expected
 
 
 def _runtime(telemetry) -> ControlRuntime:
