@@ -348,11 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Verbeter de voorspellingsnauwkeurigheid met opbrengstregistratie",
-      "description": "Met inverterregeling aan gebruikt de kalibratie de inverter-telemetrie. Kies anders in de voorspellingsopties een PV-energie- of vermogenssensor om de voorspelling op gemeten productie te kalibreren."
+      "description": "Als je omvormer de PV-productie via inverter-telemetrie aan Volcast meldt, gebruikt de kalibratie die. Kies anders in de voorspellingsopties een PV-energie- of vermogenssensor om de voorspelling op gemeten productie te kalibreren."
     },
     "production_mapping_unused": {
       "title": "PV-sensoren worden niet meer voor kalibratie gebruikt",
-      "description": "Inverterregeling staat aan, dus de kalibratie gebruikt de inverter-telemetrie. De gekoppelde sensoren ({entities}) worden genegeerd. Maak ze leeg in de voorspellingsopties om deze melding te verbergen."
+      "description": "Inverter-telemetrie meldt nu de PV-productie, dus de kalibratie gebruikt die. De gekoppelde sensoren ({entities}) worden genegeerd. Maak ze leeg in de voorspellingsopties om deze melding te verbergen."
     },
     "update_available": {
       "title": "Er is een Volcast-update beschikbaar",

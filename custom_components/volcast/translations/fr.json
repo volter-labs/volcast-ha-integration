@@ -348,11 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Améliorez la précision des prévisions grâce au suivi de la production",
-      "description": "Lorsque le contrôle de l'onduleur est activé, la calibration utilise la télémétrie de l'onduleur. Sinon, choisissez un capteur d'énergie ou de puissance PV dans les options de prévision pour calibrer la prévision à partir de la production mesurée."
+      "description": "Si votre onduleur transmet la production PV à Volcast par la télémétrie de l'onduleur, la calibration utilise celle-ci. Sinon, choisissez un capteur d'énergie ou de puissance PV dans les options de prévision pour calibrer la prévision à partir de la production mesurée."
     },
     "production_mapping_unused": {
       "title": "Les capteurs PV ne servent plus à la calibration",
-      "description": "Le contrôle de l'onduleur est activé, la calibration utilise donc la télémétrie de l'onduleur. Les capteurs associés ({entities}) sont ignorés. Videz-les dans les options de prévision pour masquer cet avis."
+      "description": "La télémétrie de l'onduleur transmet désormais la production PV, la calibration l'utilise donc. Les capteurs associés ({entities}) sont ignorés. Videz-les dans les options de prévision pour masquer cet avis."
     },
     "update_available": {
       "title": "Une mise à jour de Volcast est disponible",

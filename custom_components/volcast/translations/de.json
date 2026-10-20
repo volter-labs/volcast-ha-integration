@@ -348,11 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Prognosegenauigkeit mit Ertragserfassung verbessern",
-      "description": "Bei aktiver Wechselrichtersteuerung nutzt die Kalibrierung die Wechselrichter-Telemetrie. Andernfalls wähle in den Prognoseoptionen einen PV-Energie- oder Leistungssensor, um die Prognose anhand der gemessenen Produktion zu kalibrieren."
+      "description": "Wenn dein Wechselrichter die PV-Produktion über die Wechselrichter-Telemetrie an Volcast meldet, nutzt die Kalibrierung diese. Andernfalls wähle in den Prognoseoptionen einen PV-Energie- oder Leistungssensor, um die Prognose anhand der gemessenen Produktion zu kalibrieren."
     },
     "production_mapping_unused": {
       "title": "PV-Sensoren werden nicht mehr zur Kalibrierung genutzt",
-      "description": "Die Wechselrichtersteuerung ist aktiv, daher nutzt die Kalibrierung die Wechselrichter-Telemetrie. Die zugeordneten Sensoren ({entities}) werden ignoriert. Leere sie in den Prognoseoptionen, um diesen Hinweis auszublenden."
+      "description": "Die Wechselrichter-Telemetrie meldet jetzt die PV-Produktion, daher nutzt die Kalibrierung sie. Die zugeordneten Sensoren ({entities}) werden ignoriert. Leere sie in den Prognoseoptionen, um diesen Hinweis auszublenden."
     },
     "update_available": {
       "title": "Ein Volcast-Update ist verfügbar",

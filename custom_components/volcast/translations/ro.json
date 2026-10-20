@@ -348,11 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Îmbunătățește precizia prognozei cu urmărirea producției",
-      "description": "Cu controlul invertorului activat, calibrarea folosește telemetria invertorului. Altfel, alege un senzor de energie sau putere FV din opțiunile prognozei pentru a calibra prognoza pe baza producției măsurate."
+      "description": "Dacă invertorul transmite producția FV către Volcast prin telemetria invertorului, calibrarea folosește aceste date. Altfel, alege un senzor de energie sau putere FV din opțiunile prognozei pentru a calibra prognoza pe baza producției măsurate."
     },
     "production_mapping_unused": {
       "title": "Senzorii FV nu mai sunt folosiți pentru calibrare",
-      "description": "Controlul invertorului este activat, deci calibrarea folosește telemetria invertorului. Senzorii asociați ({entities}) sunt ignorați. Șterge-i din opțiunile prognozei pentru a ascunde această notificare."
+      "description": "Telemetria invertorului raportează acum producția FV, așa că calibrarea o folosește. Senzorii asociați ({entities}) sunt ignorați. Șterge-i din opțiunile prognozei pentru a ascunde această notificare."
     },
     "update_available": {
       "title": "Este disponibilă o actualizare Volcast",

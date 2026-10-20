@@ -348,11 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Popraw dokładność prognozy dzięki śledzeniu produkcji",
-      "description": "Przy włączonym sterowaniu falownikiem kalibracja korzysta z telemetrii falownika. W przeciwnym razie wybierz w opcjach prognozy czujnik energii lub mocy PV, aby kalibrować prognozę na podstawie zmierzonej produkcji."
+      "description": "Jeśli falownik przekazuje produkcję PV do Volcast przez telemetrię falownika, kalibracja korzysta z tych danych. W przeciwnym razie wybierz w opcjach prognozy czujnik energii lub mocy PV, aby kalibrować prognozę na podstawie zmierzonej produkcji."
     },
     "production_mapping_unused": {
       "title": "Czujniki PV nie są już używane do kalibracji",
-      "description": "Sterowanie falownikiem jest włączone, więc kalibracja korzysta z telemetrii falownika. Przypisane czujniki ({entities}) są ignorowane. Wyczyść je w opcjach prognozy, aby ukryć to powiadomienie."
+      "description": "Telemetria falownika przekazuje teraz produkcję PV, więc kalibracja z niej korzysta. Przypisane czujniki ({entities}) są ignorowane. Wyczyść je w opcjach prognozy, aby ukryć to powiadomienie."
     },
     "update_available": {
       "title": "Dostępna aktualizacja Volcast",

@@ -348,11 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Zlepšete přesnost předpovědi sledováním výroby",
-      "description": "Při zapnutém řízení střídače kalibrace využívá telemetrii střídače. Jinak v možnostech předpovědi vyberte senzor energie nebo výkonu fotovoltaiky a kalibrujte předpověď podle naměřené výroby."
+      "description": "Pokud střídač hlásí výrobu fotovoltaiky službě Volcast prostřednictvím telemetrie střídače, kalibrace ji využije. Jinak v možnostech předpovědi vyberte senzor energie nebo výkonu fotovoltaiky a kalibrujte předpověď podle naměřené výroby."
     },
     "production_mapping_unused": {
       "title": "Fotovoltaické senzory se již ke kalibraci nepoužívají",
-      "description": "Řízení střídače je zapnuté, takže kalibrace využívá telemetrii střídače. Přiřazené senzory ({entities}) se ignorují. Chcete-li toto upozornění skrýt, vymažte je v možnostech předpovědi."
+      "description": "Telemetrie střídače nyní hlásí výrobu fotovoltaiky, takže ji kalibrace využívá. Přiřazené senzory ({entities}) se ignorují. Chcete-li toto upozornění skrýt, vymažte je v možnostech předpovědi."
     },
     "update_available": {
       "title": "Je k dispozici aktualizace Volcast",
