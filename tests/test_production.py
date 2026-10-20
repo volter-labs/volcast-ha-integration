@@ -861,98 +861,8 @@ def _state_event(entity_id: str, state: str):
     return ev
 
 
-class TestLateBinding:
-    """Production entities may be registered only after the platforms load,
-    so the tracker must exist (and run its timer) before it knows them."""
-
-    @pytest.mark.asyncio
-    async def test_start_without_entities_only_sets_timer(self, monkeypatch, caplog):
-        import logging
-        track_state, track_time, _ = _patch_event_helpers(monkeypatch)
-        t = _make_tracker(energy_entity="", power_entity="")
-        with caplog.at_level(logging.INFO):
-            await t.async_start()
-        track_state.assert_not_called()
-        track_time.assert_called_once()
-        assert t._unsub_timer is not None
-        assert any(
-            "Production tracker waiting for production entities" in r.getMessage()
-            for r in caplog.records if r.levelno == logging.INFO
-        )
-        assert t.stale_entities == []
-
-    @pytest.mark.asyncio
-    async def test_bind_after_start_subscribes_and_samples_reach_bucket(self, monkeypatch):
-        track_state, _, _ = _patch_event_helpers(monkeypatch)
-        t = _make_tracker(energy_entity="", power_entity="")
-        await t.async_start()
-
-        t.async_bind_entities("sensor.direct_energy", "sensor.direct_power")
-
-        track_state.assert_called_once()
-        assert set(track_state.call_args[0][1]) == {"sensor.direct_energy", "sensor.direct_power"}
-        t._async_state_changed(_state_event("sensor.direct_energy", "12.5"))
-        t._async_state_changed(_state_event("sensor.direct_power", "3400"))
-        bucket = t._current_bucket
-        assert bucket is not None
-        assert bucket.energy_start == 12.5
-        assert bucket.energy_latest == 12.5
-        assert bucket.peak_power_w == 3400.0
-
-    @pytest.mark.asyncio
-    async def test_rebind_does_not_duplicate_subscriptions(self, monkeypatch):
-        track_state, _, unsubs = _patch_event_helpers(monkeypatch)
-        t = _make_tracker(energy_entity="", power_entity="")
-        await t.async_start()
-
-        t.async_bind_entities("sensor.a_energy", "sensor.a_power")
-        t.async_bind_entities("sensor.a_energy", "sensor.a_power")
-        t.async_bind_entities("sensor.b_energy", "")
-
-        assert track_state.call_count == 3
-        # Kazda poprzednia subskrypcja odpieta dokladnie raz, aktywna tylko ostatnia
-        assert unsubs[0].call_count == 1
-        assert unsubs[1].call_count == 1
-        assert unsubs[2].call_count == 0
-        assert t._unsub_state is unsubs[2]
-        assert unsubs[2].entities == ["sensor.b_energy"]
-        assert t._energy_entity == "sensor.b_energy"
-        assert t._power_entity == ""
-
-        await t.async_stop()
-        assert unsubs[2].call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_bind_with_both_entities_empty_unbinds(self, monkeypatch, caplog):
-        import logging
-        from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
-        track_state, _, unsubs = _patch_event_helpers(monkeypatch)
-        tz = ZoneInfo("Europe/Warsaw")
-        t0 = datetime(2026, 7, 1, 10, 2, tzinfo=tz)
-        clock = {"t": t0}
-        t = _make_tracker()
-        monkeypatch.setattr(t, "_get_local_now", lambda: clock["t"])
-        t._async_submit = AsyncMock(return_value=True)
-        caplog.set_level(logging.WARNING)
-        await t.async_start()
-        assert track_state.call_count == 1
-
-        t.async_bind_entities("", "")
-
-        assert unsubs[0].call_count == 1
-        assert track_state.call_count == 1          # no new subscription
-        assert t._unsub_state is None
-        assert t._energy_entity == "" and t._power_entity == ""
-        assert t._last_valid_sample == {}
-        # Unbound entities are no longer watched for staleness
-        clock["t"] = t0 + timedelta(minutes=120)
-        await t._async_check_flush(None)
-        assert t.stale_entities == []
-        assert not any("has not reported" in r.getMessage() for r in caplog.records)
-
-        await t.async_stop()
-        assert unsubs[0].call_count == 1            # not released twice
+class TestSubscription:
+    """The tracker subscribes to its mapped entities at start — one subscription path."""
 
     @pytest.mark.asyncio
     async def test_constructor_entities_subscribe_once_as_before(self, monkeypatch, caplog):
@@ -970,7 +880,18 @@ class TestLateBinding:
         track_time.assert_called_once()
         assert t._unsub_state is unsubs[0]
         assert any("Production tracker started" in r.getMessage() for r in caplog.records)
-        assert not any("waiting for production entities" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_restart_does_not_duplicate_subscriptions(self, monkeypatch):
+        track_state, track_time, unsubs = _patch_event_helpers(monkeypatch)
+        t = _make_tracker()
+        await t.async_start()
+        await t.async_start()
+        assert track_state.call_count == 2
+        assert unsubs[0].call_count == 1 and unsubs[1].call_count == 0
+        assert t._unsub_state is unsubs[1]
+        await t.async_stop()
+        assert unsubs[1].call_count == 1
 
 
 class TestStaleEntityWarning:

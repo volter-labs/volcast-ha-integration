@@ -310,6 +310,10 @@
         "data": {
           "confirm": "Uložiť tieto entity"
         }
+      },
+      "control_telemetry_info": {
+        "title": "Kalibrácia predpovede teraz využíva telemetriu invertora",
+        "description": "Keď je riadenie invertora zapnuté, Volcast kalibruje predpoveď podľa výroby, ktorú číta z invertora. Fotovoltaické senzory priradené v možnostiach predpovede ({mapped}) sa na kalibráciu už nepoužívajú. Môžete ich ponechať alebo vymazať."
       }
     },
     "abort": {
@@ -344,7 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Zlepšite presnosť predpovede sledovaním výroby",
-      "description": "Sledovanie výroby: v režime priameho riadenia integrácia automaticky sleduje výrobu FV z vlastných odčítaní striedača – nič sa nemusí nastavovať. V ostatných režimoch vyberte v možnostiach integrácie senzor energie alebo výkonu FV, čím zapnete kalibráciu predpovedí podľa nameranej výroby."
+      "description": "Ak váš invertor hlási výrobu fotovoltiky spoločnosti Volcast prostredníctvom telemetrie invertora, kalibrácia ju využije. Inak vyberte v možnostiach predpovede senzor energie alebo výkonu fotovoltiky, aby sa predpoveď kalibrovala podľa nameranej výroby."
+    },
+    "production_mapping_unused": {
+      "title": "Fotovoltaické senzory sa už na kalibráciu nepoužívajú",
+      "description": "Telemetria invertora teraz hlási výrobu fotovoltiky, takže ju kalibrácia využíva. Priradené senzory ({entities}) sa ignorujú. Ak chcete toto upozornenie skryť, vymažte ich v možnostiach predpovede."
     },
     "update_available": {
       "title": "Je k dispozícii aktualizácia Volcast",
@@ -522,6 +530,9 @@
       },
       "api_status": {
         "name": "Stav API"
+      },
+      "forecast_age": {
+        "name": "Vek predpovede"
       },
       "discovery": {
         "name": "Zisťovanie inštalácie"

@@ -34,8 +34,9 @@ except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w for
 from .cloud.client import Backend, ClientOutdated, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control import direct_search as ds
 from .control.runtime import async_control_change_allowed, async_direct_search, map_entities, mapped_with_overrides
-from .control.telemetry import TELEMETRY_FIELDS
+from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_pv_power
 from .core.control.caps import entity_mode_options, entity_mode_ready
+from .core.control.select import ProfileChoice
 from .core.entity_map import KEY_DESCRIPTORS, field_group, preview_entity
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
 from .core.discovery.identify import Candidate
@@ -687,22 +688,61 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         clash: tuple[str, ...] = ()
         if report is not None and report.candidate is not None:
             clash = await ds.async_clash(self.hass, self.config_entry.entry_id, report.candidate.host)
-        reason = ds.offer_reason(report, await self._async_profiles(), clash)
+        profiles = await self._async_profiles()
+        reason = ds.offer_reason(report, profiles, clash)
         if reason == ds.CONFLICT:
             other = next((d for d in clash if d != "volcast"), "unknown")
             return self.async_abort(reason=reason, description_placeholders={"integration": other})
         if reason is not None:
             return self.async_abort(reason=reason)
         target = ds.target_from_report(report)
-        return await self._finish(self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
-                                                OPT_DIRECT_TRIAL: None}), leave_plan_only=True)
+        options = self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
+                                OPT_DIRECT_TRIAL: None})
+        # Jak przy złożeniu (`compose_direct`): profil celu; bez niego sterowanie bezpośrednie nie wstanie,
+        # więc telemetria nie poniesie produkcji (krok info się nie pokaże).
+        profile = next((p for p in profiles if p.id == target.get("profile_id")), None)
+        carries = profile is not None and telemetry_carries_pv_power(
+            ProfileChoice(profile, None, None), profile_map={},
+            manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
+        return await self._enable_control(options, carries_pv_power=carries)
 
     async def async_step_control_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         rt = self._runtime()
         choice = getattr(rt, "choice", None)
-        if not entity_mode_ready(choice, getattr(rt, "mapped", None) or {}):
+        mapped = getattr(rt, "mapped", None) or {}
+        if not entity_mode_ready(choice, mapped):
             return self.async_abort(reason="entity_mode_unavailable")
-        return await self._finish(self._merged(entity_mode_options(choice)), leave_plan_only=True)
+        options = self._merged(entity_mode_options(choice))
+        # Ten sam wybór i ta sama mapa encji, z których złożenie zbuduje nadajnik telemetrii.
+        carries = telemetry_carries_pv_power(choice, profile_map=mapped,
+                                             manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=False)
+        return await self._enable_control(options, carries_pv_power=carries)
+
+    def _mapped_pv_sensors(self) -> list[str]:
+        return [e for k in (CONF_PV_ENERGY_ENTITY, CONF_PV_POWER_ENTITY) if (e := self.config_entry.options.get(k))]
+
+    async def _enable_control(self, options: dict[str, Any], *, carries_pv_power: bool) -> ConfigFlowResult:
+        """Wybór sterowania. Przy włączaniu z „wyłączone”, gdy telemetria poniesie moc PV, a w opcjach prognozy
+        są zmapowane czujniki PV, najpierw informacja: kalibracja idzie odtąd z telemetrii falownika, a te
+        czujniki przestają być używane (zapis dopiero po potwierdzeniu). W każdym innym razie zapis od razu."""
+        if (self.config_entry.options.get(OPT_CONTROL_MODE) is not None or not carries_pv_power
+                or not self._mapped_pv_sensors()):
+            return await self._finish(options, leave_plan_only=True)
+        self._pending_control = options
+        return self._show_telemetry_info()
+
+    def _show_telemetry_info(self) -> ConfigFlowResult:
+        return self.async_show_form(step_id="control_telemetry_info", data_schema=vol.Schema({}),
+                                    description_placeholders={"mapped": ", ".join(self._mapped_pv_sensors())})
+
+    async def async_step_control_telemetry_info(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        options = getattr(self, "_pending_control", None)
+        if options is None:                                    # krok bez wcześniejszego wyboru: wróć do menu
+            return await self.async_step_control()
+        if user_input is None:
+            return self._show_telemetry_info()
+        self._pending_control = None
+        return await self._finish(options, leave_plan_only=True)
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._finish(self._merged({OPT_CONTROL_MODE: None}))

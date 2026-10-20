@@ -27,8 +27,9 @@ def _issue_keys_in_code() -> set[str]:
 
 
 def test_code_uses_the_known_issue_keys():
-    assert _issue_keys_in_code() >= {"production_tracking_available", "foreign_control", "control_error",
-                                    "unsupported_setting", "inverter_work_mode"}
+    assert _issue_keys_in_code() >= {"production_tracking_available", "production_mapping_unused",
+                                    "foreign_control", "control_error", "unsupported_setting",
+                                    "inverter_work_mode"}
 
 
 def _description(issue: dict) -> str:

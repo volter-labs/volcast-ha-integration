@@ -51,7 +51,7 @@ async def test_paired_entry_adds_control_platforms_and_prefixed_ids(monkeypatch)
     assert all(i.startswith("test_entry_id_control_") or i in {
         "test_entry_id_discovery", "test_entry_id_run_discovery", "test_entry_id_sync_now",
         "test_entry_id_submit_queue_depth", "test_entry_id_last_reconciliation",
-        "test_entry_id_integration_healthy"} for i in new)
+        "test_entry_id_integration_healthy", "test_entry_id_forecast_age"} for i in new)
 
 
 @pytest.mark.asyncio

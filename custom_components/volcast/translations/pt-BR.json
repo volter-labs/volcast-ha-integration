@@ -310,6 +310,10 @@
         "data": {
           "confirm": "Salvar estas entidades"
         }
+      },
+      "control_telemetry_info": {
+        "title": "A calibração da previsão agora usa a telemetria do inversor",
+        "description": "Com o controle do inversor ativado, a Volcast calibra a previsão com a produção que lê do inversor. Os sensores FV associados nas opções de previsão ({mapped}) não são mais usados na calibração. Você pode mantê-los ou limpá-los."
       }
     },
     "abort": {
@@ -344,7 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Melhore a precisão da previsão com o acompanhamento da produção",
-      "description": "Acompanhamento da produção: no modo de controle direto, a integração acompanha automaticamente a produção FV a partir das leituras do próprio inversor — não é preciso configurar nada. Nos outros modos, escolha nas opções da integração um sensor de energia ou de potência FV para ativar a calibração das previsões com a produção medida."
+      "description": "Se o seu inversor informar a produção FV à Volcast pela telemetria do inversor, a calibração usa essa informação. Caso contrário, escolha um sensor de energia ou potência FV nas opções de previsão para calibrar a previsão com a produção medida."
+    },
+    "production_mapping_unused": {
+      "title": "Os sensores FV não são mais usados na calibração",
+      "description": "A telemetria do inversor agora informa a produção FV, então a calibração a utiliza. Os sensores associados ({entities}) são ignorados. Limpe-os nas opções de previsão para ocultar este aviso."
     },
     "update_available": {
       "title": "Há uma atualização do Volcast disponível",
@@ -522,6 +530,9 @@
       },
       "api_status": {
         "name": "Status da API"
+      },
+      "forecast_age": {
+        "name": "Idade da previsão"
       },
       "discovery": {
         "name": "Detecção da instalação"

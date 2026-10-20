@@ -227,6 +227,11 @@ class ControlRuntime:
     loads_executor: object | None = None
     _meta_dirty: bool = False
 
+    @property
+    def telemetry_reports_production(self) -> bool:
+        """Czy telemetria tego sterowania niesie produkcję PV (wtedy serwer kalibruje z niej)."""
+        return self.telemetry is not None and self.telemetry.reports_pv_production
+
     def control_state_payload(self) -> dict:
         """Stan sterowania dla chmury: `recommendation`, `verification` (gdy są) i `conflicts` (zawsze)."""
         out: dict = {}

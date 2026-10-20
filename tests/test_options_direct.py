@@ -123,7 +123,7 @@ def test_control_direct_draft_profile_is_offered_for_the_verification_ladder(mon
     rec = recommend(None, [GW, DEYE], report(), None)
     assert (rec.path, rec.ladder_start) == (DIRECT, 1)
     f = flow(runtime=rt(reports=[report()]), profiles=(GW, DEYE), monkeypatch=monkeypatch)
-    done = asyncio.run(f.async_step_control_direct())
+    done = asyncio.run(f.async_step_control_direct())          # bez zmapowanych czujników PV: bez kroku info
     assert done["type"] == "create_entry" and done["data"]["control_mode"] == "direct"
     assert ds_mod.offer_reason(report(identity=False), [GW, DEYE], ()) == "direct_not_found"
 
@@ -184,7 +184,120 @@ def test_switch_to_direct_restores_entities_first(monkeypatch):
     f = flow(options={"control_mode": "entities", "profile_id": "goodwe-et", "inverter_domain": "goodwe"},
              runtime=runtime, monkeypatch=monkeypatch)
     r = asyncio.run(f.async_step_control_direct())
-    assert calls == ["restore"] and r["data"]["control_mode"] == "direct"
+    assert calls == ["restore"] and r["data"]["control_mode"] == "direct"   # sterowanie już włączone: bez kroku info
+
+
+# ── krok informacyjny przy włączaniu sterowania ───────────────────────────
+
+
+def _forms(f):
+    shown = []
+    f.async_show_form = lambda **kw: shown.append(kw) or {"type": "form", "step_id": kw["step_id"]}
+    return shown
+
+
+def _plan_only_rt(**kw):
+    runtime = rt(**kw)
+    runtime.left = []
+
+    async def leave():
+        runtime.left.append(True)
+    runtime.async_leave_plan_only = leave
+    return runtime
+
+
+def test_enabling_direct_from_off_shows_telemetry_info_then_saves(monkeypatch):
+    runtime = _plan_only_rt(reports=[report()])
+    f = flow(options={"pv_energy_entity": "sensor.pv_energy", "pv_power_entity": "sensor.pv_power"},
+             runtime=runtime, monkeypatch=monkeypatch)
+    shown = _forms(f)
+    r = asyncio.run(f.async_step_control_direct())
+    assert r["step_id"] == "control_telemetry_info"
+    assert shown[0]["data_schema"].schema == {}
+    assert shown[0]["description_placeholders"] == {"mapped": "sensor.pv_energy, sensor.pv_power"}
+    assert runtime.left == []                                  # nic nie zapisane przed potwierdzeniem
+    assert asyncio.run(f.async_step_control_telemetry_info())["step_id"] == "control_telemetry_info"
+    done = asyncio.run(f.async_step_control_telemetry_info({}))
+    assert done["type"] == "create_entry" and done["data"]["control_mode"] == "direct"
+    assert done["data"]["direct_target"]["host"] == HOST
+    assert done["data"]["pv_energy_entity"] == "sensor.pv_energy"     # mapowanie zostaje, właściciel decyduje
+    assert runtime.left == [True]                              # „tylko plan” kończy się jak dotąd
+
+
+def test_telemetry_info_skipped_without_mapped_sensors(monkeypatch):
+    # Moc PV z rejestrów, ale nic nie zmapowane w opcjach prognozy: krok nie ma czego powiedzieć.
+    f = flow(runtime=rt(reports=[report()]), monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct())["type"] == "create_entry"
+    f = flow(options={"pv_power_entity": "sensor.pv_power"}, runtime=rt(reports=[report()]), monkeypatch=monkeypatch)
+    shown = _forms(f)
+    asyncio.run(f.async_step_control_direct())
+    assert shown[0]["description_placeholders"] == {"mapped": "sensor.pv_power"}
+
+
+def _without_pv_register(profile):
+    import json
+    raw = _thaw(profile.raw)
+    # bez rejestru mocy PV i bez odczytów z niego liczonych (np. zużycie jako suma)
+    raw["read"] = {k: v for k, v in raw["read"].items() if k != "pv_power_w" and '"pv_power_w"' not in json.dumps(v)}
+    return profile_from_dict(raw, origin="package")
+
+
+MAPPED_PV = {"pv_energy_entity": "sensor.pv_energy"}
+
+
+def test_direct_profile_without_pv_power_skips_telemetry_info(monkeypatch):
+    # Telemetria nie poniesie mocy PV — śledzenie z czujników zostaje, więc nie mówimy, że jest nieużywane.
+    f = flow(options=MAPPED_PV, runtime=rt(reports=[report()]), profiles=(_without_pv_register(GW_V), DEYE),
+             monkeypatch=monkeypatch)
+    r = asyncio.run(f.async_step_control_direct())
+    assert r["type"] == "create_entry" and r["data"]["control_mode"] == "direct"
+
+
+def test_direct_manual_pv_power_shows_telemetry_info(monkeypatch):
+    f = flow(options={**MAPPED_PV, "telemetry_map": {"pv_power_w": "sensor.inv_pv"}}, runtime=rt(reports=[report()]),
+             profiles=(_without_pv_register(GW_V), DEYE), monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct())["step_id"] == "control_telemetry_info"
+
+
+def test_direct_already_on_has_no_telemetry_info(monkeypatch):
+    f = flow(options={"control_mode": "direct", **MAPPED_PV}, runtime=rt(reports=[report()]), monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct())["type"] == "create_entry"
+
+
+def test_direct_aborts_come_before_telemetry_info(monkeypatch):
+    goodwe = SimpleNamespace(domain="goodwe", entry_id="g", data={"host": HOST}, options={}, disabled_by=None)
+    f = flow(options=MAPPED_PV, runtime=rt(reports=[report()]), entries=[goodwe], monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct())["type"] == "abort"
+    f = flow(options=MAPPED_PV, runtime=rt(reports=[]), monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct())["reason"] == "direct_not_found"
+
+
+def _stuck_rt():
+    async def stuck():
+        return None                                            # powrót nie doszedł — falownik dalej przejęty
+    runtime = _plan_only_rt(reports=[report()])
+    runtime.executor = SimpleNamespace(owned=True, async_restore_now=stuck)
+    return runtime
+
+
+def test_telemetry_info_restore_failed_aborts_without_saving(monkeypatch):
+    runtime = _stuck_rt()
+    f = flow(options={"profile_id": "goodwe-et", "inverter_domain": "goodwe", **MAPPED_PV}, runtime=runtime,
+             monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct())["step_id"] == "control_telemetry_info"
+    assert asyncio.run(f.async_step_control_telemetry_info({})) == {"type": "abort", "reason": "restore_failed"}
+    assert runtime.left == []
+    runtime = _stuck_rt()                                      # bez kroku info: przerwanie od razu, jak dotąd
+    f = flow(options={"profile_id": "goodwe-et", "inverter_domain": "goodwe"}, runtime=runtime,
+             monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct()) == {"type": "abort", "reason": "restore_failed"}
+    assert runtime.left == []
+
+
+def test_telemetry_info_without_pending_choice_returns_to_control_menu(monkeypatch):
+    f = flow(runtime=rt(reports=[report()]), monkeypatch=monkeypatch)
+    r = asyncio.run(f.async_step_control_telemetry_info({}))
+    assert (r["type"], r["step_id"]) == ("menu", "control")
 
 
 # ── wyszukiwanie i cel ręczny ─────────────────────────────────────────────

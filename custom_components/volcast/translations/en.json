@@ -310,6 +310,10 @@
         "data": {
           "confirm": "Save these entities"
         }
+      },
+      "control_telemetry_info": {
+        "title": "Forecast calibration now uses inverter telemetry",
+        "description": "While inverter control is on, Volcast calibrates the forecast from the production it reads from the inverter. The PV sensors mapped in the Forecast options ({mapped}) are no longer used for calibration. You can leave them or clear them."
       }
     },
     "abort": {
@@ -344,7 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Improve forecast accuracy with production tracking",
-      "description": "Production tracking: in direct control mode the integration tracks PV production from its own inverter readings automatically — nothing to configure. In other modes, pick a PV energy or power sensor in the integration options to enable forecast calibration from measured production."
+      "description": "If your inverter reports PV production to Volcast through inverter telemetry, calibration uses that. Otherwise pick a PV energy or power sensor in the Forecast options to calibrate the forecast from measured production."
+    },
+    "production_mapping_unused": {
+      "title": "PV sensors are no longer used for calibration",
+      "description": "Inverter telemetry now reports PV production, so calibration uses it. The mapped sensors ({entities}) are ignored. Clear them in the Forecast options to hide this notice."
     },
     "update_available": {
       "title": "A Volcast update is available",
@@ -522,6 +530,9 @@
       },
       "api_status": {
         "name": "API status"
+      },
+      "forecast_age": {
+        "name": "Forecast age"
       },
       "discovery": {
         "name": "Installation discovery"

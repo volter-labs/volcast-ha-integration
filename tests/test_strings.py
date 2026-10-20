@@ -29,6 +29,11 @@ def test_required_keys_present():
     assert "control_switch" in s["entity"]["switch"]
 
 
+def test_production_tracking_notice_names_inverter_telemetry():
+    text = _load("strings.json")["issues"]["production_tracking_available"]["description"]
+    assert "inverter telemetry" in text and "own inverter readings" not in text
+
+
 def test_no_internal_identifiers_in_user_texts():
     import re
     text = (ROOT / "strings.json").read_text(encoding="utf-8")

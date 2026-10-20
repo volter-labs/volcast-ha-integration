@@ -150,6 +150,24 @@ def _declared_keys(choice: ProfileChoice | None, manual_keys: Iterable[str], *, 
     return frozenset(keys | set(manual_keys))
 
 
+def telemetry_carries_pv_power(choice: ProfileChoice | None, *, profile_map: Mapping[str, str],
+                               manual_map: Mapping[str, str], direct: bool) -> bool:
+    """Czy ścieżka odczytu ma źródło mocy PV — wtedy serwer liczy z niej produkcję.
+
+    Liczy się tylko `pv_power_w`: serwer całkuje moc PV, a sam licznik energii PV bez mocy nie daje
+    mu produkcji (skali licznika nie ma czym potwierdzić). Bezpośrednio: rejestry profilu (`read`)
+    i mapa ręczna (= klucze deklarowane). W trybie encji tylko encje faktycznie zmapowane (mapa profilu
+    liczy się tylko przy wybranej integracji) i mapa ręczna — profil może opisywać encję, której w HA nie ma.
+    Jedna reguła dla nadajnika i dla opcji, które przewidują ją przed złożeniem sterowania.
+    """
+    if direct:
+        sources = _declared_keys(choice, manual_map, direct=True)
+    else:
+        profile_keys = profile_map if choice and choice.integration_domain else {}
+        sources = frozenset(profile_keys) | frozenset(manual_map)
+    return "pv_power_w" in sources
+
+
 
 
 def control_block(payload: Mapping, ack: Mapping | None, meta: dict, now_s: float) -> dict:
@@ -270,6 +288,12 @@ class TelemetrySender:
         # Jednorazowy hak (ustawia runtime): pierwsza przyjęta telemetria z choć jednym odczytem.
         self.on_first_success: Callable[[], None] | None = None
         self._first_success_done = False
+
+    @property
+    def reports_pv_production(self) -> bool:
+        """Czy ścieżka odczytu ma źródło mocy PV (wiadomo od złożenia) — reguła `telemetry_carries_pv_power`."""
+        return telemetry_carries_pv_power(self._choice, profile_map=self._profile_map, manual_map=self._manual_map,
+                                          direct=self._direct is not None)
 
     async def async_start(self) -> None:
         if self._unsub is None:

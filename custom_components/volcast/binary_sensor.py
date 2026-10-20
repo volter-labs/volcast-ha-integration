@@ -72,6 +72,15 @@ class VolcastPeakProductionSensor(
         }
 
     @property
+    def available(self) -> bool:
+        """Dostępna, dopóki są dane z ostatniego udanego odświeżenia.
+
+        Odświeżenie, które padło po ponownych próbach, nie może wygaszać
+        Energy Dashboard; stan zdrowia raportuje `integration_healthy`.
+        """
+        return self.coordinator.data is not None
+
+    @property
     def is_on(self) -> bool | None:
         """Return True if current power > threshold of today's peak."""
         data = self.coordinator.data

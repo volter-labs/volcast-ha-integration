@@ -156,6 +156,64 @@ class TestExistingAttributesRegression:
         assert "detailedHourly" not in attrs
 
 
+class TestApiStatusServerCalibration:
+    """api_status: źródło produkcji i kalibracja pochodzą z serwera."""
+
+    @staticmethod
+    def _data():
+        import json
+        from tests.conftest import PRODUCTION_SOURCE_CONTRACT_JSON
+
+        contract = json.loads(PRODUCTION_SOURCE_CONTRACT_JSON)
+        return make_sample_data(**contract), contract
+
+    def test_attributes_from_server(self):
+        data, contract = self._data()
+        attrs = _make_sensor(VolcastApiStatusSensor, data).extra_state_attributes
+        cal = contract["calibration"]
+        assert attrs["production_source"] == "telemetry"
+        assert attrs["production_source_detail"] == "cloud:deye"
+        assert attrs["kalman_bias"] == cal["kalman_bias"]
+        assert attrs["kalman_updated_at"] == cal["kalman_updated_at"]
+        assert attrs["calibration_buckets"] == cal["buckets"]
+        assert attrs["last_production_hour"] == cal["last_hour"]
+
+    def test_null_samples_tolerated(self):
+        data, _ = self._data()
+        attrs = _make_sensor(VolcastApiStatusSensor, data).extra_state_attributes
+        assert attrs["calibration_buckets"]["overcast"]["samples"] is None
+
+    def test_no_tracker_still_has_calibration(self):
+        data, _ = self._data()
+        sensor = _make_sensor(VolcastApiStatusSensor, data)
+        attrs = sensor.extra_state_attributes
+        assert attrs["production_tracking"] is False
+        assert attrs["kalman_bias"] == 0.9313
+
+    def test_calibration_none_keys_present_with_none(self):
+        attrs = _make_sensor(VolcastApiStatusSensor, make_sample_data()).extra_state_attributes
+        for key in (
+            "production_source", "production_source_detail", "kalman_bias",
+            "kalman_updated_at", "calibration_buckets", "last_production_hour",
+        ):
+            assert key in attrs and attrs[key] is None
+
+    def test_tracker_does_not_supply_calibration(self):
+        from unittest.mock import MagicMock
+
+        data, _ = self._data()
+        sensor = _make_sensor(VolcastApiStatusSensor, data)
+        tracker = MagicMock()
+        tracker.submissions_today = 3
+        tracker.queued_count = 1
+        tracker.last_submission_time = None
+        sensor.hass.data = {"volcast": {"test_entry": {"tracker": tracker}}}
+        attrs = sensor.extra_state_attributes
+        assert attrs["production_tracking"] is True
+        assert attrs["submissions_today"] == 3
+        assert attrs["kalman_bias"] == 0.9313
+
+
 # ---------------------------------------------------------------------------
 # NEW: detailedHourly attribute
 # ---------------------------------------------------------------------------
@@ -679,3 +737,16 @@ class TestDetailedForecastPvEstimate:
         # Tomorrow has no detailed entries in fixture → detailedForecast
         # should be absent (the code skips it when list is empty).
         assert attrs.get("detailedForecast", []) == [] or "detailedForecast" not in attrs
+
+
+class TestAvailabilityKeepsLastData:
+    """Nieudane odświeżenie nie może wygaszać encji, dopóki są dane."""
+
+    def test_available_with_data_after_failed_refresh(self):
+        sensor = _make_sensor(VolcastEnergyTodaySensor, make_sample_data())
+        sensor.coordinator.last_update_success = False
+        assert sensor.available is True
+
+    def test_unavailable_without_data(self):
+        sensor = _make_sensor(VolcastEnergyTodaySensor, None)
+        assert sensor.available is False

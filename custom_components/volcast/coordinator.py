@@ -168,6 +168,10 @@ class VolcastData:
     nowcast_applied: bool = False
     nowcast_ratio: float | None = None
     submit_url: str = ""
+    # Źródło produkcji i kalibracja liczone po stronie serwera (brak → None)
+    production_source: str | None = None
+    production_source_detail: str | None = None
+    calibration: dict[str, Any] | None = None
 
 
 class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
@@ -191,6 +195,11 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
         self._api_key = api_key
         self._api_url = api_url
         self._entry_id = entry_id
+
+        # Diagnostyka dla czujnika wieku prognozy: porażki z rzędu i moment
+        # ostatniej odpowiedzi serwera (udanej albo 403 — serwer odpowiedział).
+        self.consecutive_failures = 0
+        self.last_update_success_time: datetime | None = None
 
         # Rolling history of forecast wh_hours, keyed by ISO timestamp, served to
         # the HA Energy Dashboard so past days keep their forecast line. Persisted
@@ -266,6 +275,16 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
 
     async def _async_update_data(self) -> VolcastData:
         """Fetch data from Volcast API with retry (5/15/45s) on transient errors."""
+        try:
+            data = await self._async_fetch()
+        except UpdateFailed:
+            self.consecutive_failures += 1
+            raise
+        self.consecutive_failures = 0
+        self.last_update_success_time = datetime.now(timezone.utc)
+        return data
+
+    async def _async_fetch(self) -> VolcastData:
         url = f"{self._api_url}?key={self._api_key}"
         session = async_get_clientsession(self.hass)
 
@@ -414,6 +433,10 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         nowcast_applied=attrs.get("nowcast_applied", False),
         nowcast_ratio=attrs.get("nowcast_ratio"),
         submit_url=attrs.get("submit_url", ""),
+        production_source=attrs.get("production_source"),
+        production_source_detail=attrs.get("production_source_detail"),
+        # kubełki mogą mieć samples: null — przekazujemy bez ingerencji
+        calibration=attrs.get("calibration"),
     )
 
 

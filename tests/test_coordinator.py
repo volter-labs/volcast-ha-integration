@@ -192,6 +192,41 @@ class TestParseResponse:
 # ---------------------------------------------------------------------------
 
 
+class TestProductionSourceParsing:
+    """Źródło produkcji i kalibracja z serwera."""
+
+    def test_parses_contract_fields(self):
+        import json
+        from tests.conftest import PRODUCTION_SOURCE_CONTRACT_JSON
+
+        contract = json.loads(PRODUCTION_SOURCE_CONTRACT_JSON)
+        raw = _make_api_response(extra_attrs=contract)
+        result = _parse_response(raw, FakeHass())
+        assert result.production_source == "telemetry"
+        assert result.production_source_detail == "cloud:deye"
+        assert result.calibration == contract["calibration"]
+
+    def test_missing_fields_default_to_none(self):
+        result = _parse_response(_make_api_response(), FakeHass())
+        assert result.production_source is None
+        assert result.production_source_detail is None
+        assert result.calibration is None
+
+    def test_null_samples_passed_through_untouched(self):
+        import json
+        from tests.conftest import PRODUCTION_SOURCE_CONTRACT_JSON
+
+        raw = _make_api_response(extra_attrs=json.loads(PRODUCTION_SOURCE_CONTRACT_JSON))
+        result = _parse_response(raw, FakeHass())
+        assert result.calibration["buckets"]["overcast"]["samples"] is None
+
+    def test_error_data_has_no_source(self):
+        result = _error_data("x")
+        assert result.production_source is None
+        assert result.production_source_detail is None
+        assert result.calibration is None
+
+
 class TestBuildWhHours:
     """Tests for _build_wh_hours."""
 
@@ -443,3 +478,61 @@ class TestForecastHistory:
         merged = coord.get_solar_forecast_wh_hours()
         assert merged is not None
         assert 3800 in merged.values()
+
+
+# ---------------------------------------------------------------------------
+# consecutive_failures / last_update_success_time
+# ---------------------------------------------------------------------------
+
+
+def _failure_coord() -> VolcastCoordinator:
+    return VolcastCoordinator(
+        hass=FakeHass(), api_key="k",
+        api_url="http://stub/forecast", update_interval_minutes=15,
+    )
+
+
+async def _run_update(coord, result: RetryResult):
+    with patch("custom_components.volcast.coordinator.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.coordinator.async_get_clientsession"):
+        mock_http.return_value = result
+        return await coord._async_update_data()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,last_error", [
+    (401, "x"), (503, "x"), (429, "x"), (500, "x"), (None, "timeout"),
+])
+async def test_consecutive_failures_counts_every_raise_site(status, last_error):
+    coord = _failure_coord()
+    assert coord.consecutive_failures == 0
+    fail = RetryResult(success=False, status=status, attempts=4,
+                       last_error=last_error, retriable=True)
+    for expected in (1, 2):
+        with pytest.raises(Exception):
+            await _run_update(coord, fail)
+        assert coord.consecutive_failures == expected
+
+
+@pytest.mark.asyncio
+async def test_consecutive_failures_reset_after_success_and_403():
+    coord = _failure_coord()
+    fail = RetryResult(success=False, status=503, attempts=4, last_error="x", retriable=True)
+    with pytest.raises(Exception):
+        await _run_update(coord, fail)
+    assert coord.consecutive_failures == 1
+    assert coord.last_update_success_time is None
+
+    await _run_update(coord, RetryResult(success=True, status=200, data={}, attempts=1))
+    assert coord.consecutive_failures == 0
+    first_ok = coord.last_update_success_time
+    assert first_ok is not None and first_ok.tzinfo is not None
+
+    with pytest.raises(Exception):
+        await _run_update(coord, fail)
+    assert coord.consecutive_failures == 1
+    assert coord.last_update_success_time == first_ok  # porażka nie rusza znacznika
+
+    await _run_update(coord, RetryResult(success=False, status=403, attempts=1,
+                                         last_error="x", retriable=False))
+    assert coord.consecutive_failures == 0

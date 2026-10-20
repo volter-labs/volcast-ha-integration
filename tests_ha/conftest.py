@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -89,6 +91,103 @@ def network_down(aioclient_mock, monkeypatch):
     for method in ("get", "post", "put", "delete"):
         getattr(aioclient_mock, method)(anything, exc=aiohttp.ClientConnectionError())
     return aioclient_mock
+
+
+FORECAST_ONLY_DATA = {"api_key": API_KEY, "api_url": BACKEND["forecast"]}
+
+
+def forecast_payload(hass: HomeAssistant, *, energy_today: float = 12.5, generated_at: str = "",
+                     cache_age_minutes: int = 5) -> dict:
+    """Odpowiedź get-forecast-api (format v1) z dzisiejszym dniem w strefie HA."""
+    import homeassistant.util.dt as dt_util
+
+    tz = dt_util.get_time_zone(hass.config.time_zone)
+    today = dt_util.now(tz).date()
+    days = [{"date": (today + timedelta(days=i)).isoformat(), "energy_kwh": energy_today + i,
+             "peak_power_kw": 4.0, "confidence": 80} for i in range(2)]
+    return {"state": energy_today, "attributes": {
+        "api_version": 1, "forecast": days, "hourly": {}, "system_capacity_kwp": 6.5,
+        "location": "Test", "generated_at": generated_at, "cache_age_minutes": cache_age_minutes}}
+
+
+class _Response(AiohttpClientMockResponse):
+    """Odpowiedź atrapy z `ok` jak `aiohttp.ClientResponse` (z niego korzysta moduł ponowień)."""
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status < 400
+
+
+class ForecastApi:
+    """Sterowalny get-forecast-api: kod odpowiedzi zmieniany w trakcie testu, licznik żądań."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+        self.status = 200
+        self.payload: dict = forecast_payload(hass)
+        self.requests = 0
+
+    async def respond(self, method, url, data):
+        self.requests += 1
+        body = self.payload if self.status == 200 else {"error": "unavailable"}
+        return _Response(method, url, status=self.status, json=body)
+
+
+@pytest.fixture
+def forecast_api(hass, aioclient_mock, monkeypatch) -> ForecastApi:
+    """get-forecast-api z atrapą odpowiedzi; reszta żądań (telemetria, plan…) — brak sieci.
+
+    Ponowienia (5/15/45 s) bez realnych przerw.
+    """
+    from custom_components.volcast import http_retry
+
+    monkeypatch.setattr(http_retry, "asyncio", _NoWaitAsyncio())
+    api = ForecastApi(hass)
+    aioclient_mock.get(re.compile(re.escape(BACKEND["forecast"])), side_effect=api.respond)
+    anything = re.compile(r".*")
+    for method in ("get", "post", "put", "delete"):
+        getattr(aioclient_mock, method)(anything, exc=aiohttp.ClientConnectionError())
+    return api
+
+
+def _volcast_name(obj) -> str | None:
+    """`moduł.qualname` obiektu z kodu integracji (funkcja, metoda albo instancja), inaczej None."""
+    owner = getattr(obj, "__self__", None)
+    for cand in (obj, owner):
+        if cand is None:
+            continue
+        # funkcja/metoda: moduł definicji; instancja (np. koordynator): moduł jej klasy
+        mod = getattr(cand, "__module__", None) if callable(cand) else type(cand).__module__
+        if mod and mod.startswith("custom_components.volcast"):
+            return f"{mod}.{getattr(obj, '__qualname__', type(obj).__qualname__)}"
+    return None
+
+
+def volcast_timers(hass: HomeAssistant) -> list[str]:
+    """Aktywne timery pętli HA prowadzące do kodu integracji (także przez `async_track_time_interval`
+    i harmonogram koordynatora) — opis `moduł.qualname` celu każdego z nich.
+
+    Harness HA pomija timery z `cancel_on_shutdown`, więc zostawiony interwał encji sam testu nie wywróci.
+    """
+    from homeassistant.core import HassJob
+    from homeassistant.util.async_ import get_scheduled_timer_handles
+
+    out = []
+    for handle in get_scheduled_timer_handles(hass.loop):
+        if handle.cancelled():
+            continue
+        cb = handle._callback
+        targets = [cb, *(handle._args or ())]
+        owner = getattr(cb, "__self__", None)
+        for attr in ("action", "_run_job", "job", "target"):
+            targets.append(getattr(owner, attr, None))
+        for t in targets:
+            if isinstance(t, HassJob):
+                t = t.target
+            if t is not None and (name := _volcast_name(t)):
+                out.append(name)
+                break
+    return out
 
 
 class InverterServices:

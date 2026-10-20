@@ -310,6 +310,10 @@
         "data": {
           "confirm": "Deze entiteiten opslaan"
         }
+      },
+      "control_telemetry_info": {
+        "title": "Kalibratie van de voorspelling gebruikt nu inverter-telemetrie",
+        "description": "Zolang inverterregeling aan staat, kalibreert Volcast de voorspelling op basis van de productie die het van de omvormer leest. De PV-sensoren die in de voorspellingsopties zijn gekoppeld ({mapped}) worden niet meer voor de kalibratie gebruikt. Je kunt ze laten staan of leegmaken."
       }
     },
     "abort": {
@@ -344,7 +348,11 @@
   "issues": {
     "production_tracking_available": {
       "title": "Verbeter de voorspellingsnauwkeurigheid met opbrengstregistratie",
-      "description": "Productiemonitoring: in de directe besturingsmodus volgt de integratie de PV-productie automatisch via de eigen omvormermetingen – er is niets in te stellen. In de andere modi kies je in de opties van de integratie een energie- of vermogenssensor voor PV om de voorspellingskalibratie op basis van gemeten productie in te schakelen."
+      "description": "Als je omvormer de PV-productie via inverter-telemetrie aan Volcast meldt, gebruikt de kalibratie die. Kies anders in de voorspellingsopties een PV-energie- of vermogenssensor om de voorspelling op gemeten productie te kalibreren."
+    },
+    "production_mapping_unused": {
+      "title": "PV-sensoren worden niet meer voor kalibratie gebruikt",
+      "description": "Inverter-telemetrie meldt nu de PV-productie, dus de kalibratie gebruikt die. De gekoppelde sensoren ({entities}) worden genegeerd. Maak ze leeg in de voorspellingsopties om deze melding te verbergen."
     },
     "update_available": {
       "title": "Er is een Volcast-update beschikbaar",
@@ -522,6 +530,9 @@
       },
       "api_status": {
         "name": "API-status"
+      },
+      "forecast_age": {
+        "name": "Leeftijd voorspelling"
       },
       "discovery": {
         "name": "Installatiedetectie"

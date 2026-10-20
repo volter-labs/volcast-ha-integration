@@ -54,6 +54,7 @@ _make_module("homeassistant.core", {
     "HomeAssistant": _FakeHomeAssistant,
     "Event": _FakeEvent,
     "callback": _fake_callback,
+    "CALLBACK_TYPE": Any,
     "ServiceCall": MagicMock(),
 })
 
@@ -76,6 +77,7 @@ _make_module("homeassistant.const", {
     "EntityCategory": MagicMock(),
     "UnitOfEnergy": MagicMock(),
     "UnitOfPower": MagicMock(),
+    "UnitOfTime": MagicMock(),
     "STATE_UNAVAILABLE": "unavailable",
     "STATE_UNKNOWN": "unknown",
     "EVENT_HOMEASSISTANT_STARTED": "homeassistant_started",
@@ -204,6 +206,15 @@ class _FakeCoordinatorEntity:
 
     def __class_getitem__(cls, item):
         return cls
+
+    async def async_added_to_hass(self) -> None:
+        """Atrapa — w HA podpina słuchaczy koordynatora."""
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Atrapa — w HA zdejmuje słuchaczy koordynatora."""
+
+    def async_write_ha_state(self) -> None:
+        """Atrapa — w HA wypycha stan do rejestru."""
 
 
 class _FakeDataUpdateCoordinator:
@@ -392,8 +403,35 @@ from custom_components.volcast.coordinator import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+# Kontrakt serwera (źródło produkcji + kalibracja) — kopiowany DOSŁOWNIE z testu
+# kontraktu backendu. Zmiana kształtu = zmiana kontraktu po obu stronach.
+PRODUCTION_SOURCE_CONTRACT_JSON = """{
+  "production_source": "telemetry",
+  "production_source_detail": "cloud:deye",
+  "calibration": {
+    "kalman_bias": 0.9313,
+    "kalman_updated_at": "2026-10-19T12:05:13.123+00:00",
+    "buckets": {
+      "clear": { "bias": 0.9123, "covariance": 0.0041, "samples": 57 },
+      "partly_cloudy": { "bias": 1.0412, "covariance": 0.0051, "samples": 23 },
+      "overcast": { "bias": 1, "covariance": 0.1, "samples": null }
+    },
+    "last_hour": {
+      "date": "2026-10-19",
+      "hour": 13,
+      "actual_kwh": 2.4567,
+      "forecast_kwh": 2.31,
+      "reported_by": "vendor_cloud"
+    }
+  }
+}"""
+
+
 def make_sample_data(
     *,
+    production_source: str | None = None,
+    production_source_detail: str | None = None,
+    calibration: dict | None = None,
     energy_today: float = 25.5,
     energy_tomorrow: float = 30.1,
     date_today: str = "2026-03-20",
@@ -481,6 +519,9 @@ def make_sample_data(
         cache_age_minutes=5,
         api_version=2 if include_detailed else 1,
         api_status="Active",
+        production_source=production_source,
+        production_source_detail=production_source_detail,
+        calibration=calibration,
     )
 
 
@@ -519,6 +560,8 @@ class FakeCoordinator:
     """Minimal coordinator stub for sensor tests."""
     def __init__(self, data: VolcastData | None):
         self.data = data
+        self.last_update_success = True
+        self.last_update_success_time = None
 
 
 class _FakeBus:

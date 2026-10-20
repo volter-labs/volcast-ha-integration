@@ -246,9 +246,9 @@ async def test_device_registry_view_is_read_without_deprecation(hass: HomeAssist
     assert "device_registry.devices" not in caplog.text
 
 
-async def test_direct_mode_setup_binds_tracker_to_own_sensors(hass: HomeAssistant, network_down, hass_storage,
-                                                             goodwe_sim):
-    """Tryb bezpośredni bez zmapowanych czujników: tracker wiąże się z własnymi czujnikami PV, bez naprawy."""
+async def test_direct_mode_setup_runs_no_production_tracker(hass: HomeAssistant, network_down, hass_storage,
+                                                            goodwe_sim):
+    """Tryb bezpośredni: produkcja płynie telemetrią — bez lokalnego trackera i bez naprawy."""
     from .test_direct_smoke_real_ha import _setup as _direct_setup
     from .test_direct_smoke_real_ha import _settle, _target, _verified_goodwe
 
@@ -259,8 +259,9 @@ async def test_direct_mode_setup_binds_tracker_to_own_sensors(hass: HomeAssistan
     energy = reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_control_direct_pv_energy_total_kwh")
     power = reg.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_control_direct_pv_power_w")
     assert energy and power
-    tracker = hass.data[DOMAIN][entry.entry_id]["tracker"]
-    assert tracker._energy_entity == energy and tracker._power_entity == power
+    assert rt.direct is not None
+    assert hass.data[DOMAIN][entry.entry_id]["tracker"] is None
+    assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
     assert ir.async_get(hass).async_get_issue(DOMAIN, "production_tracking_available") is None
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

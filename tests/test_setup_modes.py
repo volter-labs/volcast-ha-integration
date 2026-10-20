@@ -30,6 +30,9 @@ IDS_172_NO_OPTIONS = {f"test_entry_id_{k}" for k in (
     "energy_day_3", "energy_day_4", "energy_day_5", "energy_day_6", "energy_day_7",
     "peak_production", "integration_healthy")}
 
+# Diagnostyczny czujnik dodany w 2.0; zbiory IDS_172_* zostają zamrożone (przebieg na 1.7.2).
+DIAGNOSTIC_IDS_2_0 = {"test_entry_id_forecast_age"}
+
 DISCOVERY_IDS = {"test_entry_id_discovery", "test_entry_id_run_discovery"}
 MODES_DATA = [pytest.param(None, id="forecast"), pytest.param({"mode": "discovery_only"}, id="discovery_only")]
 
@@ -37,13 +40,13 @@ MODES_DATA = [pytest.param(None, id="forecast"), pytest.param({"mode": "discover
 async def test_forecast_entry_unique_ids_identical_to_1_7_2(setup_forecast_entry):
     ids = await setup_forecast_entry(options={"pv_energy_entity": "sensor.pv_today"})
     assert IDS_172_WITH_ENERGY <= ids
-    assert ids - IDS_172_WITH_ENERGY == DISCOVERY_IDS
+    assert ids - IDS_172_WITH_ENERGY == DISCOVERY_IDS | DIAGNOSTIC_IDS_2_0
 
 
 async def test_forecast_entry_without_options_identical_to_1_7_2(setup_forecast_entry):
     ids = await setup_forecast_entry(options={})
     assert IDS_172_NO_OPTIONS <= ids
-    assert ids - IDS_172_NO_OPTIONS == DISCOVERY_IDS
+    assert ids - IDS_172_NO_OPTIONS == DISCOVERY_IDS | DIAGNOSTIC_IDS_2_0
 
 
 async def test_forecast_entry_data_unchanged_plus_runner(setup_forecast_entry):
@@ -401,7 +404,17 @@ async def test_discovery_scheduled_as_entry_background_task_after_start(
     assert hass.task_errors == []
 
 
-# --- źródło produkcji: mapowanie zewnętrzne albo sensory direct (późne wiązanie) ---
+# --- źródło produkcji: jedno na konto — telemetria sterowania albo zmapowane czujniki ---
+
+_BASE = "https://s.example.test"
+_BACKEND = {"base_url": _BASE, **{k: f"{_BASE}/functions/v1/{k}" for k in (
+    "forecast", "submit_production", "telemetry", "schedule", "history_import", "pairing")}}
+_PAIRED = {"api_key": "vk_" + "a" * 64, "api_url": _BACKEND["forecast"], "backend": _BACKEND,
+           "user_id": "u1"}
+MAPPING = {"pv_energy_entity": "sensor.ext_energy", "pv_power_entity": "sensor.ext_power"}
+DIRECT = {"control_mode": "direct"}
+DISABLED_LOG = "Production tracking disabled: inverter control reports production through telemetry"
+
 
 class _RecTracker:
     instances: list = []
@@ -409,7 +422,6 @@ class _RecTracker:
     def __init__(self, **kw) -> None:
         self.kw = kw
         self._queue: list = []
-        self.bound: list[tuple[str, str]] = []
         _RecTracker.instances.append(self)
 
     async def async_start(self) -> None:
@@ -418,34 +430,55 @@ class _RecTracker:
     async def async_stop(self) -> None:
         return None
 
-    def async_bind_entities(self, energy, power) -> None:
-        self.bound.append((energy, power))
+
+def _direct_conn():
+    """Połączenie bezpośrednie w minimalnym kształcie, którego potrzebuje platforma czujników."""
+    return SimpleNamespace(profile=SimpleNamespace(raw={"read": {}}, modes=()),
+                           stats=SimpleNamespace(timeouts=0, requests=0),
+                           add_listener=lambda _cb: (lambda: None))
 
 
-async def _run_production(monkeypatch, *, options, register_direct):
-    """run_setup z nagrywającym trackerem; sensory direct rejestrują się przy forwardzie."""
+def _gw(domain="goodwe"):
+    from custom_components.volcast.core.control.select import ProfileChoice
+    from custom_components.volcast.core.profile import load_builtin
+    return ProfileChoice(load_builtin("goodwe-et"), domain, "GW8KN-ET")
+
+
+def _runtime(*, choice=None, direct=None, profile_map=None, manual=None):
+    """Runtime sterowania z prawdziwym nadajnikiem telemetrii — to on mówi, czy niesie produkcję PV."""
+    from custom_components.volcast.control import runtime as rt_mod
+    from custom_components.volcast.control.telemetry import TelemetrySender
+
+    class _Exec:
+        raw_plan, schedule, consent, local_switch, paused = None, None, None, False, False
+        last_decision = tou_preview = None
+
+    telemetry = TelemetrySender(SimpleNamespace(), SimpleNamespace(entry_id="e1", options={}), None, None,
+                                choice=choice, profile_map=profile_map or {}, manual_map=manual or {},
+                                grid_negate=False, limits=None, direct=direct)
+    return rt_mod.ControlRuntime(executor=_Exec(), fetcher=None, telemetry=telemetry, cloud=None,
+                                 choice=choice, mapped=dict(profile_map or {}), rated_power_w=None,
+                                 direct=direct)
+
+
+async def _run_production(monkeypatch, *, options, data=None, control=None):
+    """run_setup z nagrywającym trackerem; `control` — wynik (albo wyjątek) `async_setup_control`."""
     import custom_components.volcast as integ
     from tests import setup_harness as sh
 
     _RecTracker.instances = []
-    registry = sh.FakeEntityRegistry()
     reconciler_energy: list[str] = []
-    real_forward = sh._ConfigEntries.async_forward_entry_setups
-
-    async def forward(self, entry, platforms):
-        await real_forward(self, entry, platforms)
-        if register_direct:
-            for key, eid in (("pv_energy_total_kwh", "sensor.direct_pv_energy"),
-                             ("pv_power_w", "sensor.direct_pv_power")):
-                registry.entities[eid] = SimpleNamespace(
-                    unique_id=f"{entry.entry_id}_control_direct_{key}", entity_id=eid)
 
     class _Rec(sh.FakeReconciler):
         def __init__(self, **kw):
             super().__init__(**kw)
             reconciler_energy.append(kw["energy_entity"])
 
-    monkeypatch.setattr(sh._ConfigEntries, "async_forward_entry_setups", forward)
+    async def setup_control(hass, entry, *, report):
+        if isinstance(control, BaseException):
+            raise control
+        return control
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
 
     def setattr_(obj, name, value):
         if name == "VolcastProductionTracker":
@@ -456,10 +489,16 @@ async def _run_production(monkeypatch, *, options, register_direct):
 
     issues: list[str] = []
     monkeypatch.setattr(integ.ir, "async_create_issue", lambda *a, **k: issues.append(a[2]))
-    hass, entry, ok = await sh.run_setup(setattr_, options=options, entity_registry=registry)
+    hass, entry, ok = await sh.run_setup(setattr_, options=options, data=data)
     assert ok is True
     tracker = _RecTracker.instances[0] if _RecTracker.instances else None
+    assert hass.data[DOMAIN][entry.entry_id]["tracker"] is tracker
     return hass, entry, tracker, reconciler_energy, issues
+
+
+def _disabled_logs(caplog) -> list:
+    import logging
+    return [r for r in caplog.records if r.levelno == logging.INFO and r.getMessage() == DISABLED_LOG]
 
 
 @pytest.fixture(autouse=True)
@@ -468,39 +507,357 @@ def _no_probe(monkeypatch):
     monkeypatch.setattr(discovery_runner, "probe_udp_48899", AsyncMock(return_value=None))
 
 
-DIRECT = {"control_mode": "direct"}
-
-
-async def test_direct_entry_binds_tracker_to_direct_sensors_after_platforms(monkeypatch):
-    hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options=DIRECT, register_direct=True)
-    assert tracker.kw["energy_entity"] == "" and tracker.kw["power_entity"] == ""
-    assert tracker.bound == [("sensor.direct_pv_energy", "sensor.direct_pv_power")]
-    assert rec == ["sensor.direct_pv_energy"]
+async def test_mapping_without_control_keeps_tracker_and_reconciler(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(monkeypatch, options=MAPPING)
+    assert tracker.kw["energy_entity"] == "sensor.ext_energy"
+    assert tracker.kw["power_entity"] == "sensor.ext_power"
+    assert rec == ["sensor.ext_energy"]
     assert hass.data[DOMAIN][entry.entry_id]["reconciler"] is not None
-    assert issues == []
+    assert issues == [] and _disabled_logs(caplog) == []
 
 
-async def test_non_direct_entry_without_mapping_keeps_repair_issue(monkeypatch):
-    hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options={}, register_direct=True)
+async def test_entry_without_mapping_or_control_keeps_repair_issue(monkeypatch):
+    hass, entry, tracker, rec, issues = await _run_production(monkeypatch, options={})
     assert issues == ["production_tracking_available"]
     assert tracker is None and rec == []
     assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
 
 
-async def test_direct_entry_with_external_mapping_uses_external_entities(monkeypatch):
-    opts = {**DIRECT, "pv_energy_entity": "sensor.ext_energy", "pv_power_entity": "sensor.ext_power"}
+async def test_control_with_inverter_telemetry_drops_the_mapped_tracker(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options=opts, register_direct=True)
-    assert tracker.kw["energy_entity"] == "sensor.ext_energy"
-    assert tracker.bound == []
-    assert rec == ["sensor.ext_energy"] and issues == []
-
-
-async def test_direct_entry_whose_sensors_never_register_stays_unbound(monkeypatch):
-    hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options=DIRECT, register_direct=False)
-    assert tracker is not None and tracker.bound == []
-    assert rec == [] and issues == []
+        monkeypatch, options=MAPPING, data=_PAIRED,
+        control=_runtime(choice=_gw(), profile_map={"pv_power_w": "sensor.gw_pv_power"}))
+    assert tracker is None and rec == []
     assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
+    assert issues == ["production_mapping_unused_test_entry_id"]
+    assert len(_disabled_logs(caplog)) == 1
+
+
+async def test_direct_connection_drops_the_mapped_tracker(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options={**DIRECT, **MAPPING}, data=_PAIRED, control=_runtime(choice=_gw(), direct=_direct_conn()))
+    assert tracker is None and rec == [] and issues == ["production_mapping_unused_test_entry_id"]
+    assert len(_disabled_logs(caplog)) == 1
+
+
+async def test_direct_connection_without_mapping_needs_no_tracker_nor_repair(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=DIRECT, data=_PAIRED, control=_runtime(choice=_gw(), direct=_direct_conn()))
+    assert tracker is None and rec == [] and issues == []
+    # Nic nie zmapowano — nie ma czego "wyłączać", więc bez komunikatu.
+    assert _disabled_logs(caplog) == []
+
+
+async def test_failed_control_setup_falls_back_to_the_mapped_tracker(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED, control=RuntimeError("x"))
+    assert tracker is not None and tracker.kw["energy_entity"] == "sensor.ext_energy"
+    assert rec == ["sensor.ext_energy"] and issues == []
+    assert _disabled_logs(caplog) == []
+
+
+async def test_direct_mode_without_runtime_or_mapping_raises_repair_like_forecast_only(monkeypatch):
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=DIRECT, data=_PAIRED, control=None)
+    assert issues == ["production_tracking_available"]
+    assert tracker is None and rec == []
+
+
+async def test_control_without_inverter_keeps_the_mapped_tracker(monkeypatch, caplog):
+    """Plan bez wykrytego falownika (choice i direct puste): telemetria nie niesie produkcji."""
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime())
+    assert tracker is not None and tracker.kw["energy_entity"] == "sensor.ext_energy"
+    assert rec == ["sensor.ext_energy"]
+    assert hass.data[DOMAIN][entry.entry_id]["reconciler"] is not None
+    assert issues == [] and _disabled_logs(caplog) == []
+
+
+async def test_control_without_inverter_or_mapping_keeps_repair_issue(monkeypatch):
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options={}, data=_PAIRED, control=_runtime())
+    assert issues == ["production_tracking_available"]
+    assert tracker is None and rec == []
+
+
+async def test_read_only_profile_keeps_the_mapped_tracker(monkeypatch, caplog):
+    """Falownik rozpoznany tylko do odczytu (bez integracji): telemetria nie niesie produkcji PV."""
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(choice=_gw(domain=None)))
+    assert tracker is not None and rec == ["sensor.ext_energy"]
+    assert issues == [] and _disabled_logs(caplog) == []
+
+
+async def test_read_only_profile_without_mapping_raises_repair(monkeypatch):
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options={}, data=_PAIRED, control=_runtime(choice=_gw(domain=None)))
+    assert issues == ["production_tracking_available"]
+    assert tracker is None and rec == []
+
+
+async def test_entity_mode_without_mapped_pv_entities_keeps_the_mapped_tracker(monkeypatch):
+    """Profil opisuje encje PV, ale żadnej nie znaleziono w HA — liczy się to, co faktycznie zmapowane."""
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED,
+        control=_runtime(choice=_gw(), profile_map={"soc": "sensor.gw_soc"}))
+    assert tracker is not None and issues == []
+
+
+async def test_manual_telemetry_pv_power_drops_the_mapped_tracker(monkeypatch, caplog):
+    """Bez falownika, ale ręczna mapa telemetrii ma moc PV — produkcja płynie telemetrią."""
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED,
+        control=_runtime(manual={"pv_power_w": "sensor.pv_power"}))
+    assert tracker is None and rec == []
+    assert issues == ["production_mapping_unused_test_entry_id"]
+    assert len(_disabled_logs(caplog)) == 1
+
+
+async def test_pv_energy_counter_alone_keeps_the_mapped_tracker(monkeypatch, caplog):
+    """Sam licznik energii PV w telemetrii (bez mocy PV) — serwer nie wyliczy z niego produkcji."""
+    import logging
+    caplog.set_level(logging.INFO)
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED,
+        control=_runtime(manual={"pv_energy_total_kwh": "sensor.pv_total"}))
+    assert tracker is not None and rec == ["sensor.ext_energy"]
+    assert issues == [] and _disabled_logs(caplog) == []
+
+
+# --- nieudany setup po złożeniu sterowania: nic nie zostaje uruchomione ---
+
+class _StopTracker(_RecTracker):
+    """Tracker liczący zatrzymania; błędy startu/stopu ustawia podklasa z `_stop_tracker()`."""
+
+    start_error: BaseException | None = None
+    stop_error: BaseException | None = None
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.stopped = 0
+
+    async def async_start(self) -> None:
+        if self.start_error is not None:
+            raise self.start_error
+
+    async def async_stop(self) -> None:
+        self.stopped += 1
+        if self.stop_error is not None:
+            raise self.stop_error
+
+
+def _stop_tracker(start_error=None, stop_error=None) -> type[_StopTracker]:
+    return type("_Tracker", (_StopTracker,), {"start_error": start_error, "stop_error": stop_error})
+
+
+async def _run_failing_setup(monkeypatch, *, tracker_error=None, reconciler_error=None,
+                             forward_error=None, stop_error=None, control=None, delete_error=None,
+                             raises=RuntimeError):
+    """Setup sparowanego wpisu z mapowaniem, w którym zawodzi tracker, reconciler, forward
+    albo usuwanie zgłoszeń naprawy (`delete_error`).
+
+    `hass.created_issues` / `hass.open_issues` — zgłoszenia utworzone w setupie i te, które
+    zostały po nim; `hass.setup_error` — wyjątek, którym setup się skończył (typu `raises`).
+    """
+    import custom_components.volcast as integ
+    from tests import setup_harness as sh
+
+    _RecTracker.instances = []
+    if control is None:
+        control = _runtime()        # bez falownika — tracker z mapowania powstaje
+    unloaded: list = []
+    created: list[str] = []
+    open_issues: set[str] = set()
+
+    def create_issue(*a, **_k):
+        created.append(a[2])
+        open_issues.add(a[2])
+
+    def delete_issue(*a, **_k):
+        if delete_error is not None:
+            raise delete_error
+        open_issues.discard(a[2])
+
+    monkeypatch.setattr(integ.ir, "async_create_issue", create_issue)
+    monkeypatch.setattr(integ.ir, "async_delete_issue", delete_issue)
+
+    async def setup_control(hass, entry, *, report):
+        return control
+
+    async def unload_control(hass, rt, **_kw):
+        unloaded.append(rt)
+
+    class _Rec(sh.FakeReconciler):
+        def __init__(self, **kw):
+            if reconciler_error is not None:
+                raise reconciler_error
+            super().__init__(**kw)
+
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    monkeypatch.setattr(integ, "async_unload_control", unload_control)
+    monkeypatch.setattr(integ, "VolcastCoordinator", sh.FakeCoordinator)
+    monkeypatch.setattr(integ, "VolcastProductionTracker", _stop_tracker(tracker_error, stop_error))
+    monkeypatch.setattr(integ, "DailyReconciler", _Rec)
+    hass = sh.SetupHass()
+    if forward_error is not None:
+        async def forward(entry, platforms):
+            raise forward_error
+        monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", forward)
+    hass.created_issues, hass.open_issues = created, open_issues
+    entry = sh.FakeEntry(data=_PAIRED, options=MAPPING)
+    with pytest.raises(raises) as exc:
+        await integ.async_setup_entry(hass, entry)
+    hass.setup_error = exc.value
+    tracker = _RecTracker.instances[0] if _RecTracker.instances else None
+    return hass, entry, tracker, control, unloaded
+
+
+async def test_tracker_start_failure_unloads_control_and_stops_the_tracker(monkeypatch):
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, tracker_error=RuntimeError("tracker"))
+    assert unloaded == [control]
+    assert tracker is not None and tracker.stopped == 1
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    assert entry_data["control"] is None and entry_data["tracker"] is None
+
+
+async def test_reconciler_start_failure_unloads_control_and_stops_the_tracker(monkeypatch):
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, reconciler_error=RuntimeError("reconciler"))
+    assert unloaded == [control]
+    assert tracker.stopped == 1
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    assert entry_data["tracker"] is None and entry_data.get("reconciler") is None
+
+
+async def test_platform_forward_failure_stops_the_started_tracker(monkeypatch):
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, forward_error=RuntimeError("platforms"))
+    assert unloaded == [control]
+    assert tracker.stopped == 1
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    assert entry_data["tracker"] is None and entry_data.get("reconciler") is None
+
+
+async def test_failed_setup_leaves_no_mapping_unused_issue(monkeypatch):
+    """Zgłoszenie „czujniki nieużywane” powstaje przed platformami — nieudany setup je zdejmuje."""
+    control = _runtime(manual={"pv_power_w": "sensor.pv_power"})      # telemetria niesie moc PV
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, forward_error=RuntimeError("platforms"), control=control)
+    issue_id = f"production_mapping_unused_{entry.entry_id}"
+    assert issue_id in hass.created_issues            # było utworzone przed porażką…
+    assert issue_id not in hass.open_issues           # …i zniknęło po niej
+    assert unloaded == [control]
+
+
+async def test_cancelled_tracker_stop_still_unloads_control_and_propagates_cancellation(monkeypatch):
+    import asyncio
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, forward_error=RuntimeError("platforms"), stop_error=asyncio.CancelledError(),
+        raises=asyncio.CancelledError)
+    assert tracker.stopped == 1
+    assert unloaded == [control]                      # falownik oddany mimo anulowania
+    assert isinstance(hass.setup_error.__context__, RuntimeError)
+    assert str(hass.setup_error.__context__) == "platforms"
+
+
+async def test_ordinary_cleanup_error_does_not_mask_the_original_error(monkeypatch):
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, forward_error=RuntimeError("platforms"), stop_error=ValueError("stop"))
+    assert str(hass.setup_error) == "platforms"
+    assert tracker.stopped == 1 and unloaded == [control]
+
+
+async def test_failing_issue_deletion_never_skips_control_unload(monkeypatch):
+    """Rejestr zgłoszeń, który rzuca, nie może zostawić wykonawcy (ani trackera) w ruchu."""
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, delete_error=RuntimeError("issue registry"))
+    assert unloaded == [control]
+    assert tracker is None or tracker.stopped == 1
+    assert str(hass.setup_error) == "issue registry"
+
+
+async def test_remove_entry_deletes_the_mapping_unused_issue_even_when_control_removal_fails(monkeypatch):
+    import custom_components.volcast as integ
+    deleted: list[str] = []
+    monkeypatch.setattr(integ, "async_remove_control", AsyncMock(side_effect=RuntimeError("x")))
+    monkeypatch.setattr(integ.ir, "async_delete_issue", lambda *a, **k: deleted.append(a[2]))
+    await integ.async_remove_entry(SimpleNamespace(), SimpleNamespace(entry_id="e1"))
+    assert "production_mapping_unused_e1" in deleted
+
+
+async def test_remove_entry_removes_control_even_when_issue_deletion_fails(monkeypatch):
+    import custom_components.volcast as integ
+    remove_control = AsyncMock()
+    monkeypatch.setattr(integ, "async_remove_control", remove_control)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("issue registry")
+    monkeypatch.setattr(integ.ir, "async_delete_issue", boom)
+    await integ.async_remove_entry(SimpleNamespace(), SimpleNamespace(entry_id="e1"))   # nie rzuca
+    remove_control.assert_awaited_once()
+
+
+# --- stare zgłoszenie naprawy znika, gdy pojawia się źródło produkcji ---
+
+async def _deleted_issues(monkeypatch, **kw) -> list[str]:
+    import custom_components.volcast as integ
+    deleted: list[str] = []
+    monkeypatch.setattr(integ.ir, "async_delete_issue", lambda *a, **k: deleted.append(a[2]))
+    await _run_production(monkeypatch, **kw)
+    return deleted
+
+
+async def test_stale_repair_deleted_when_sensors_are_mapped(monkeypatch):
+    assert "production_tracking_available" in await _deleted_issues(monkeypatch, options=MAPPING)
+
+
+async def test_stale_repair_deleted_when_telemetry_carries_production(monkeypatch):
+    deleted = await _deleted_issues(monkeypatch, options=DIRECT, data=_PAIRED,
+                                    control=_runtime(choice=_gw(), direct=_direct_conn()))
+    assert "production_tracking_available" in deleted
+
+
+async def test_repair_not_deleted_without_any_source(monkeypatch):
+    assert "production_tracking_available" not in await _deleted_issues(monkeypatch, options={})
+
+
+async def test_unload_with_failing_issue_deletion_still_stops_tracker_and_control(monkeypatch):
+    """Rejestr zgłoszeń, który rzuca przy unloadzie, nie może zostawić trackera ani wykonawcy."""
+    import custom_components.volcast as integ
+    control = _runtime()                                   # bez mocy PV — tracker z mapowania
+    hass, entry, tracker, rec, issues = await _run_production(
+        monkeypatch, options=MAPPING, data=_PAIRED, control=control)
+    assert tracker is not None
+    stopped: list = []
+    unloaded: list = []
+
+    async def stop() -> None:
+        stopped.append(True)
+    tracker.async_stop = stop
+
+    async def unload_control(_hass, rt, **_kw):
+        unloaded.append(rt)
+    monkeypatch.setattr(integ, "async_unload_control", unload_control)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("issue registry")
+    monkeypatch.setattr(integ.ir, "async_delete_issue", boom)
+    assert await integ.async_unload_entry(hass, entry) is True
+    assert stopped == [True] and unloaded == [control]
