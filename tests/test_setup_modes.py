@@ -529,7 +529,8 @@ async def test_control_with_inverter_telemetry_drops_the_mapped_tracker(monkeypa
     import logging
     caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
-        monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(choice=_gw(), profile_map={"pv_power_w": "sensor.gw_pv_power"}))
+        monkeypatch, options=MAPPING, data=_PAIRED,
+        control=_runtime(choice=_gw(), profile_map={"pv_power_w": "sensor.gw_pv_power"}))
     assert tracker is None and rec == []
     assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
     assert issues == ["production_mapping_unused_test_entry_id"]
@@ -643,6 +644,7 @@ async def test_pv_energy_counter_alone_keeps_the_mapped_tracker(monkeypatch, cap
 
 class _StopTracker(_RecTracker):
     start_error: BaseException | None = None
+    stop_error: BaseException | None = None
 
     def __init__(self, **kw) -> None:
         super().__init__(**kw)
@@ -654,18 +656,28 @@ class _StopTracker(_RecTracker):
 
     async def async_stop(self) -> None:
         self.stopped += 1
+        if _StopTracker.stop_error is not None:
+            raise _StopTracker.stop_error
 
 
 async def _run_failing_setup(monkeypatch, *, tracker_error=None, reconciler_error=None,
-                             forward_error=None):
-    """Setup sparowanego wpisu z mapowaniem, w którym zawodzi tracker, reconciler albo forward."""
+                             forward_error=None, stop_error=None, control=None):
+    """Setup sparowanego wpisu z mapowaniem, w którym zawodzi tracker, reconciler albo forward.
+
+    `hass.open_issues` — zgłoszenia naprawy, które zostały po nieudanym setupie.
+    """
     import custom_components.volcast as integ
     from tests import setup_harness as sh
 
     _RecTracker.instances = []
     _StopTracker.start_error = tracker_error
-    control = _runtime()            # bez falownika — tracker z mapowania powstaje
+    _StopTracker.stop_error = stop_error
+    if control is None:
+        control = _runtime()        # bez falownika — tracker z mapowania powstaje
     unloaded: list = []
+    open_issues: set[str] = set()
+    monkeypatch.setattr(integ.ir, "async_create_issue", lambda *a, **k: open_issues.add(a[2]))
+    monkeypatch.setattr(integ.ir, "async_delete_issue", lambda *a, **k: open_issues.discard(a[2]))
 
     async def setup_control(hass, entry, *, report):
         return control
@@ -689,6 +701,7 @@ async def _run_failing_setup(monkeypatch, *, tracker_error=None, reconciler_erro
         async def forward(entry, platforms):
             raise forward_error
         monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", forward)
+    hass.open_issues = open_issues
     entry = sh.FakeEntry(data=_PAIRED, options=MAPPING)
     with pytest.raises(RuntimeError):
         await integ.async_setup_entry(hass, entry)
@@ -721,6 +734,32 @@ async def test_platform_forward_failure_stops_the_started_tracker(monkeypatch):
     assert tracker.stopped == 1
     entry_data = hass.data[DOMAIN][entry.entry_id]
     assert entry_data["tracker"] is None and entry_data.get("reconciler") is None
+
+
+async def test_failed_setup_leaves_no_mapping_unused_issue(monkeypatch):
+    """Zgłoszenie „czujniki nieużywane” powstaje przed platformami — nieudany setup je zdejmuje."""
+    control = _runtime(manual={"pv_power_w": "sensor.pv_power"})      # telemetria niesie moc PV
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, forward_error=RuntimeError("platforms"), control=control)
+    assert unloaded == [control]
+    assert not any(i.startswith("production_mapping_unused_") for i in hass.open_issues)
+
+
+async def test_cancelled_tracker_stop_still_unloads_control_and_keeps_the_original_error(monkeypatch):
+    import asyncio
+    hass, entry, tracker, control, unloaded = await _run_failing_setup(
+        monkeypatch, forward_error=RuntimeError("platforms"), stop_error=asyncio.CancelledError())
+    assert tracker.stopped == 1
+    assert unloaded == [control]
+
+
+async def test_remove_entry_deletes_the_mapping_unused_issue(monkeypatch):
+    import custom_components.volcast as integ
+    deleted: list[str] = []
+    monkeypatch.setattr(integ, "async_remove_control", AsyncMock())
+    monkeypatch.setattr(integ.ir, "async_delete_issue", lambda *a, **k: deleted.append(a[2]))
+    await integ.async_remove_entry(SimpleNamespace(), SimpleNamespace(entry_id="e1"))
+    assert "production_mapping_unused_e1" in deleted
 
 
 # --- stare zgłoszenie naprawy znika, gdy pojawia się źródło produkcji ---

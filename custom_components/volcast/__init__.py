@@ -406,21 +406,26 @@ async def _async_cleanup_failed_setup(
     tracker: VolcastProductionTracker | None,
     control: ControlRuntime | None,
 ) -> None:
-    """Zatrzymaj tracker i wykonawcę po nieudanym setupie; błędy sprzątania tylko w logu."""
+    """Zatrzymaj tracker i wykonawcę po nieudanym setupie; błędy sprzątania tylko w logu.
+
+    Każdy krok łapie także `BaseException` (np. `CancelledError`): wołający i tak podnosi
+    pierwotny błąd, a przerwany krok nie może pominąć kolejnych — wykonawca musi stanąć.
+    """
+    ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
     entry_data = hass.data[DOMAIN][entry.entry_id]
     entry_data["tracker"] = None
     entry_data.pop("reconciler", None)
     if tracker is not None:
         try:
             await tracker.async_stop()
-        except Exception as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
+        except BaseException as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
             _LOGGER.warning("Volcast production tracker: cleanup after a failed setup failed (%s)",
                             type(err).__name__)
     if control is not None:
         entry_data["control"] = None
         try:
             await async_unload_control(hass, control)
-        except Exception as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
+        except BaseException as err:  # noqa: BLE001 — pierwotny błąd jest ważniejszy
             _LOGGER.warning("Volcast control: cleanup after a failed setup failed (%s)",
                             type(err).__name__)
 
@@ -590,6 +595,8 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Usunięcie wpisu: sterowanie oddaje falownik w tryb bazowy (jeśli je przejęło)."""
+    # Zgłoszenie wpisu nie może przeżyć wpisu (np. po nieudanym setupie nie było unloadu).
+    ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
     try:
         await async_remove_control(hass, entry)
     except Exception as err:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić
