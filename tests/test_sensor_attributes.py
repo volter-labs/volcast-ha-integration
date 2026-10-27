@@ -584,6 +584,7 @@ class TestIntegrationHealthyBinarySensor:
 
         coord = MagicMock()
         coord.last_update_success = True
+        coord.consecutive_failures = 0
         tracker = MagicMock()
         tracker._queue = []
         reconciler = MagicMock()
@@ -597,6 +598,7 @@ class TestIntegrationHealthyBinarySensor:
 
         coord = MagicMock()
         coord.last_update_success = True
+        coord.consecutive_failures = 0
         tracker = MagicMock()
         tracker._queue = [{} for _ in range(30)]
         reconciler = None  # power-only user
@@ -610,6 +612,7 @@ class TestIntegrationHealthyBinarySensor:
 
         coord = MagicMock()
         coord.last_update_success = True
+        coord.consecutive_failures = 0
         tracker = MagicMock()
         tracker._queue = []
 
@@ -635,6 +638,7 @@ class TestIntegrationHealthyBinarySensor:
 
         coord = MagicMock()
         coord.last_update_success = True
+        coord.consecutive_failures = 0
         tracker = MagicMock()
         tracker._queue = []
         reconciler = MagicMock()
@@ -649,6 +653,7 @@ class TestIntegrationHealthyBinarySensor:
 
         coord = MagicMock()
         coord.last_update_success = True
+        coord.consecutive_failures = 0
         tracker = MagicMock()
         tracker._queue = []
         reconciler = MagicMock()

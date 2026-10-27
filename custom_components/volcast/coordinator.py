@@ -27,7 +27,7 @@ from .const import (
     PROFILE_FEED_STORAGE_VERSION,
 )
 from .core.profile_feed import ProfileFeedUpdater, packaged_verified_ids
-from .http_retry import http_with_retry
+from .http_retry import RETRIABLE_STATUSES, http_with_retry
 
 _LOGGER = logging.getLogger(__name__)
 # Feed profili jest wspólny dla wszystkich wpisów — osobny klucz w hass.data (nie pod DOMAIN,
@@ -35,6 +35,13 @@ _LOGGER = logging.getLogger(__name__)
 PROFILE_FEED_DATA = "volcast_profile_feed"
 _ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 _LABEL_MAX = 64
+# Tolerancja chwilowej awarii sieci/serwera: tyle nieudanych cykli z rzędu (każdy po wyczerpaniu retry
+# w http_with_retry) zachowujemy ostatnie dane, zanim encje przejdą w unavailable.
+TRANSIENT_FAILURE_GRACE_CYCLES = 3
+
+
+class TransientUpdateFailed(UpdateFailed):
+    """Błąd przejściowy (sieć/DNS, 429, 5xx) — kwalifikuje się do okresu karencji z ostatnimi danymi."""
 
 
 async def async_get_profile_feed(hass: HomeAssistant, *, keys: dict[str, str] | None = None
@@ -277,6 +284,15 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
         """Fetch data from Volcast API with retry (5/15/45s) on transient errors."""
         try:
             data = await self._async_fetch()
+        except TransientUpdateFailed as err:
+            self.consecutive_failures += 1
+            if (self.data is not None
+                    and self.consecutive_failures <= TRANSIENT_FAILURE_GRACE_CYCLES):
+                _LOGGER.warning(
+                    "Volcast update failed (%s); keeping last data (failure %d/%d)",
+                    err, self.consecutive_failures, TRANSIENT_FAILURE_GRACE_CYCLES)
+                return self.data
+            raise
         except UpdateFailed:
             self.consecutive_failures += 1
             raise
@@ -306,16 +322,19 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
         if result.status == 403:
             return _error_data("Premium required")
         if result.status == 503:
-            raise UpdateFailed("Forecast not yet available — cache being populated")
+            raise TransientUpdateFailed("Forecast not yet available — cache being populated")
         if result.status == 429:
-            raise UpdateFailed(
+            raise TransientUpdateFailed(
                 f"Rate limit exceeded — retry later (after {result.attempts} attempts)"
             )
         if result.status is not None:
-            raise UpdateFailed(
+            error_cls = (TransientUpdateFailed
+                         if result.status >= 500 or result.status in RETRIABLE_STATUSES
+                         else UpdateFailed)
+            raise error_cls(
                 f"Volcast API error: {result.status} (after {result.attempts} attempts)"
             )
-        raise UpdateFailed(
+        raise TransientUpdateFailed(
             f"Connection error: {result.last_error} (after {result.attempts} attempts)"
         )
 
