@@ -41,8 +41,9 @@ async def _tick(hass, freezer, delta: timedelta) -> None:
 
 
 async def test_failed_refreshes_keep_last_values_and_count_failures(hass: HomeAssistant, forecast_api, freezer):
-    """503 po udanym starcie: wartości i dostępność zostają, zdrowie gaśnie, licznik porażek rośnie
-    o jeden na odświeżenie i wraca do zera po pierwszym sukcesie."""
+    """503 po udanym starcie: przez okno łaski (3 nieudane cykle) wartości i dostępność zostają,
+    zdrowie gaśnie, licznik porażek rośnie o jeden na odświeżenie; czwarta porażka z rzędu robi
+    odświeżenie nieudanym (wartości dalej widoczne); licznik wraca do zera po pierwszym sukcesie."""
     freezer.move_to(T0)
     forecast_api.payload = forecast_payload(hass, energy_today=12.5, generated_at="2026-06-15T11:50:00Z")
     entry = _forecast_only_entry(hass)
@@ -58,18 +59,29 @@ async def test_failed_refreshes_keep_last_values_and_count_failures(hass: HomeAs
     assert coord.consecutive_failures == 0 and coord.last_update_success_time == T0
 
     forecast_api.status = 503
-    for failures in (1, 2):
+    for failures in (1, 2, 3):
         requests = forecast_api.requests
         await _tick(hass, freezer, HOUR)
         await _tick(hass, freezer, POLL)
         assert forecast_api.requests - requests == 4          # 1 + 3 ponowienia (bez realnych przerw)
-        assert coord.consecutive_failures == failures and coord.last_update_success is False
+        assert coord.consecutive_failures == failures
+        assert coord.last_update_success is True               # okno łaski: ostatnie dane zamiast błędu
         for eid, value in before.items():
             st = hass.states.get(eid)
             assert st.state == value, (eid, st.state)          # ostatnia wartość, dalej dostępna
         assert hass.states.get(healthy).state == STATE_OFF
         assert hass.states.get(healthy).attributes["forecast_ok"] is False
     assert coord.last_update_success_time == T0                # czas ostatniego sukcesu bez zmian
+
+    # czwarta porażka z rzędu przekracza okno łaski: odświeżenie liczy się jako nieudane,
+    # ale encje prognozy zachowują ostatnie dane (nie wygaszamy Energy Dashboard)
+    await _tick(hass, freezer, HOUR)
+    await _tick(hass, freezer, POLL)
+    assert coord.consecutive_failures == 4 and coord.last_update_success is False
+    for eid, value in before.items():
+        assert hass.states.get(eid).state == value, eid
+    assert hass.states.get(healthy).state == STATE_OFF
+    assert coord.last_update_success_time == T0
 
     forecast_api.status = 200
     forecast_api.payload = forecast_payload(hass, energy_today=13.0, generated_at="2026-06-15T13:55:00Z")
@@ -78,6 +90,27 @@ async def test_failed_refreshes_keep_last_values_and_count_failures(hass: HomeAs
     assert coord.consecutive_failures == 0 and coord.last_update_success is True
     assert hass.states.get(today).state == "13.0"
     assert hass.states.get(healthy).state == STATE_ON
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_auth_failure_has_no_grace_window(hass: HomeAssistant, forecast_api, freezer):
+    """401 po udanym starcie nie dostaje okna łaski: już pierwsze odświeżenie jest nieudane,
+    zdrowie gaśnie, a ostatnie wartości zostają."""
+    freezer.move_to(T0)
+    forecast_api.payload = forecast_payload(hass, energy_today=12.5, generated_at="2026-06-15T11:50:00Z")
+    entry = _forecast_only_entry(hass)
+    await setup_entry(hass, entry)
+    coord = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    today = _eid(hass, "sensor", entry, "energy_today")
+    healthy = _eid(hass, "binary_sensor", entry, "integration_healthy")
+
+    forecast_api.status = 401
+    await _tick(hass, freezer, HOUR)
+    await _tick(hass, freezer, POLL)
+    assert coord.consecutive_failures == 1 and coord.last_update_success is False
+    assert hass.states.get(today).state == "12.5"
+    assert hass.states.get(healthy).state == STATE_OFF
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 

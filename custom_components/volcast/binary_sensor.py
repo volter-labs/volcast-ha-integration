@@ -168,7 +168,11 @@ class IntegrationHealthyBinarySensor(BinarySensorEntity):
         }
 
     def _forecast_ok(self) -> bool:
-        return self._coord is None or self._coord.last_update_success
+        if self._coord is None:
+            return True
+        # W oknie łaski last_update_success zostaje True mimo nieudanych cykli.
+        return (self._coord.last_update_success
+                and getattr(self._coord, "consecutive_failures", 0) == 0)
 
     def _submit_ok(self) -> bool:
         if self._tracker is None:

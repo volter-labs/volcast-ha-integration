@@ -7,6 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.volcast.coordinator import (
     DailyForecast,
@@ -536,3 +537,56 @@ async def test_consecutive_failures_reset_after_success_and_403():
     await _run_update(coord, RetryResult(success=False, status=403, attempts=1,
                                          last_error="x", retriable=False))
     assert coord.consecutive_failures == 0
+
+
+# ---------------------------------------------------------------------------
+# Karencja po błędach przejściowych (ostatnie dane zamiast unavailable)
+# ---------------------------------------------------------------------------
+
+_TRANSIENT = RetryResult(success=False, status=None, attempts=4,
+                         last_error="network: DNS timeout", retriable=True)
+
+
+def _fail(status):
+    return RetryResult(success=False, status=status, attempts=4,
+                       last_error="x", retriable=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [None, 408, 429, 500, 502, 503, 504])
+async def test_grace_window_for_transient_statuses(status):
+    coord = _failure_coord()
+    coord.data = object()
+    for _ in range(3):
+        assert await _run_update(coord, _fail(status)) is coord.data
+    assert coord.consecutive_failures == 3
+    with pytest.raises(UpdateFailed):
+        await _run_update(coord, _fail(status))
+    assert coord.consecutive_failures == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 401, 404])
+async def test_no_grace_for_auth_and_client_errors(status):
+    coord = _failure_coord()
+    coord.data = object()
+    with pytest.raises(UpdateFailed):
+        await _run_update(coord, _fail(status))
+
+
+@pytest.mark.asyncio
+async def test_no_grace_without_previous_data():
+    coord = _failure_coord()
+    with pytest.raises(UpdateFailed):
+        await _run_update(coord, _TRANSIENT)
+
+
+@pytest.mark.asyncio
+async def test_success_resets_grace_window():
+    coord = _failure_coord()
+    coord.data = object()
+    for _ in range(3):
+        await _run_update(coord, _TRANSIENT)
+    await _run_update(coord, RetryResult(success=True, status=200, data={}, attempts=1))
+    assert coord.consecutive_failures == 0
+    assert await _run_update(coord, _TRANSIENT) is coord.data
