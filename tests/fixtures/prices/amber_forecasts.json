@@ -1,42 +1,53 @@
 {
   "attributes": {
-    "unit_of_measurement": "AUD/kWh",
-    "currency": "AUD",
+    "unit_of_measurement": "$/kWh",
     "forecasts": [
       {
-        "start_time": "2026-09-15T00:00:00+02:00",
-        "end_time": "2026-09-15T00:30:00+02:00",
+        "start_time": "2026-09-15T00:00:01+10:00",
+        "end_time": "2026-09-15T00:30:00+10:00",
         "duration": 30,
+        "date": "2026-09-15",
+        "nem_date": "2026-09-15T00:30:00+10:00",
         "per_kwh": 0.2,
         "spot_per_kwh": 0.1,
         "renewables": 40.0,
+        "spike_status": "none",
         "descriptor": "neutral"
       },
       {
-        "start_time": "2026-09-15T00:30:00+02:00",
-        "end_time": "2026-09-15T01:00:00+02:00",
+        "start_time": "2026-09-15T00:30:01+10:00",
+        "end_time": "2026-09-15T01:00:00+10:00",
         "duration": 30,
-        "per_kwh": 0.21000000000000002,
+        "date": "2026-09-15",
+        "nem_date": "2026-09-15T01:00:00+10:00",
+        "per_kwh": 0.21,
         "spot_per_kwh": 0.1,
         "renewables": 40.0,
+        "spike_status": "none",
         "descriptor": "neutral"
       },
       {
-        "start_time": "2026-09-15T01:00:00+02:00",
-        "end_time": "2026-09-15T01:30:00+02:00",
+        "start_time": "2026-09-15T01:00:01+10:00",
+        "end_time": "2026-09-15T01:30:00+10:00",
         "duration": 30,
+        "date": "2026-09-15",
+        "nem_date": "2026-09-15T01:30:00+10:00",
         "per_kwh": 0.22,
         "spot_per_kwh": 0.1,
         "renewables": 40.0,
+        "spike_status": "none",
         "descriptor": "neutral"
       },
       {
-        "start_time": "2026-09-15T01:30:00+02:00",
-        "end_time": "2026-09-15T02:00:00+02:00",
+        "start_time": "2026-09-15T01:30:01+10:00",
+        "end_time": "2026-09-15T02:00:00+10:00",
         "duration": 30,
+        "date": "2026-09-15",
+        "nem_date": "2026-09-15T02:00:00+10:00",
         "per_kwh": 0.23,
         "spot_per_kwh": 0.1,
         "renewables": 40.0,
+        "spike_status": "none",
         "descriptor": "neutral"
       }
     ]
@@ -44,7 +55,7 @@
   "expect": {
     "minutes": 30,
     "count": 4,
-    "first_start": "2026-09-14T22:00:00Z",
+    "first_start": "2026-09-14T14:00:00Z",
     "buy0": 0.2,
     "currency": "AUD"
   }

@@ -53,6 +53,13 @@ DOMYSLNY_INTERVAL_MIN = 60
 #: bo dzisiaj+jutro w dobie zmiany czasu daje legalne 49 godzin.
 MAX_MINUT_SERII = 60 * 24 * 2
 
+#: Limit dla list wpisów innych integracji: atrybut zbiorczy (np. `prices` w
+#: ENTSO-e) bywa wczoraj + dziś + jutro, a doba zmiany czasu dodaje godzinę.
+MAX_MINUT_SERII_WPISOW = 60 * 24 * 3 + 60
+
+#: Tolerancja sekundowego przesunięcia startu przedziału (np. `…T00:00:01`).
+TOLERANCJA_SEKUND = 5
+
 #: Litery skandynawskie i polskie w symbolach jednostek (`Øre` DKK/NOK, `Öre`
 #: SEK, `zł` PLN) — sprowadzamy je do zwykłych liter ASCII, żeby porównanie
 #: z listami niżej działało bez względu na diakrytyk.
@@ -255,7 +262,11 @@ def _chwila(wartosc: Any) -> datetime | None:
     # Ułamek sekundy obcinamy od razu: `startAt` znakuje przedział, nie pomiar,
     # a mikrosekundy psułyby i długość przedziału, i parowanie ze sprzedażą.
     if isinstance(wartosc, datetime):
-        return wartosc.replace(microsecond=0) if wartosc.tzinfo is not None else None
+        # UTC, bo różnica dwóch `datetime` z TYM SAMYM `ZoneInfo` to różnica
+        # czasu ściennego (doba zmiany czasu dałaby zły czas trwania).
+        if wartosc.tzinfo is None:
+            return None
+        return wartosc.astimezone(timezone.utc).replace(microsecond=0)
     if not isinstance(wartosc, str):
         return None
     tekst = wartosc.strip()
@@ -266,6 +277,24 @@ def _chwila(wartosc: Any) -> datetime | None:
     except ValueError:
         return None
     return chwila.replace(microsecond=0) if chwila.tzinfo is not None else None
+
+
+def _do_minuty(chwila: datetime | None) -> datetime | None:
+    """Zaokrągl do pełnej minuty, o ile odchyłka mieści się w tolerancji.
+
+    Rynki liczą przedziały w pełnych minutach, a część źródeł dokłada sekundowy
+    jitter (`…T00:00:01`). Większa odchyłka to nie jitter, tylko inne dane.
+    """
+    if chwila is None:
+        return None
+    sekundy = chwila.second
+    if sekundy == 0:
+        return chwila
+    if sekundy <= TOLERANCJA_SEKUND:
+        return chwila.replace(second=0)
+    if sekundy >= 60 - TOLERANCJA_SEKUND:
+        return chwila.replace(second=0) + timedelta(minutes=1)
+    return None
 
 
 def _minuty(dlugosc: timedelta) -> int | None:
@@ -341,8 +370,11 @@ def _wartosc_wpisu(wpis: Mapping[str, Any]) -> float | None:
         return _liczba(surowa)
     zagniezdzona = wpis.get("price_tax_included")
     if isinstance(zagniezdzona, Mapping):
-        cena = _liczba(zagniezdzona.get("amount"))
-        return None if cena is None else cena / _SKALA_ZONNEPLAN
+        kwota = zagniezdzona.get("amount")
+        # Zonneplan podaje liczbę CAŁKOWITĄ w skali 1e-7; ułamek to inna skala.
+        if not isinstance(kwota, int) or isinstance(kwota, bool):
+            return None
+        return kwota / _SKALA_ZONNEPLAN
     return None
 
 
@@ -358,12 +390,12 @@ def _z_wpisow(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
     for wpis in wpisy:
         if not isinstance(wpis, Mapping):
             return None
-        start = _chwila(_pierwszy_klucz(wpis, _KLUCZE_STARTU))
+        start = _do_minuty(_chwila(_pierwszy_klucz(wpis, _KLUCZE_STARTU)))
         cena = _wartosc_wpisu(wpis)
         if start is None or cena is None:
             return None
         surowy_koniec = _pierwszy_klucz(wpis, _KLUCZE_KONCA)
-        koniec = None if surowy_koniec is None else _chwila(surowy_koniec)
+        koniec = None if surowy_koniec is None else _do_minuty(_chwila(surowy_koniec))
         if surowy_koniec is not None and koniec is None:
             return None
         ma_koniec.add(koniec is not None)
@@ -382,7 +414,7 @@ def _z_wpisow(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
             if len(dlugosci) > 1:
                 return None
             wynik.append((start, cena, minuty))
-            if len(wynik) * minuty > MAX_MINUT_SERII:
+            if len(wynik) * minuty > MAX_MINUT_SERII_WPISOW:
                 return None
         return wynik
 
@@ -398,7 +430,7 @@ def _z_wpisow(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
         return None
     if any(b - a != timedelta(minutes=minuty) for a, b in zip(chwile, chwile[1:])):
         return None
-    if len(chwile) * minuty > MAX_MINUT_SERII:
+    if len(chwile) * minuty > MAX_MINUT_SERII_WPISOW:
         return None
     return [(po_chwili[c][0], po_chwili[c][1], minuty) for c in chwile]
 
@@ -409,6 +441,10 @@ def _z_innych_integracji(attrs: Mapping[str, Any]) -> list[_Przedzial] | None | 
         listy = [attrs.get(k) for k in klucze]
         listy = [l for l in listy if isinstance(l, (list, tuple))]
         if not listy or not any(listy):
+            continue
+        # Lista liczb (albo śmieci) pod tym kluczem to nie ten kształt —
+        # encja może nadal działać przez `today`/`tomorrow`.
+        if not all(isinstance(w, Mapping) for l in listy for w in l):
             continue
         seria = _z_wpisow([w for l in listy for w in l])
         return None if seria is None else _ciagla(seria)
@@ -655,7 +691,17 @@ def intervals_from_attributes(
     # która nie zgadza się z `waluta`, ALBO jest sama w sobie niespójna, degraduje
     # całą sprzedaż do None — nigdy tylko „brak informacji" (patrz `_sprzedaz_dopuszczalna`).
     if attrs_sell is not None and _sprzedaz_dopuszczalna(attrs_sell, waluta):
-        for start, cena, _minuty in _przedzialy(attrs_sell, tz, now) or []:
+        serie_sprzedazy = _przedzialy(attrs_sell, tz, now) or []
+        starty_kupna = {start.astimezone(timezone.utc) for start, _c, _m in zakup}
+        minuty_kupna = zakup[0][2]
+        # Siatka sprzedaży musi pokrywać się z siatką kupna (ta sama długość,
+        # starty w zbiorze startów kupna). Inaczej parowanie po chwili dałoby
+        # sprzedaż CZĘŚCIOWĄ (np. co czwarty kwadrans) — woli się brak sprzedaży.
+        siatka_zgodna = all(
+            minuty == minuty_kupna and start.astimezone(timezone.utc) in starty_kupna
+            for start, _c, minuty in serie_sprzedazy
+        )
+        for start, cena, _minuty in serie_sprzedazy if siatka_zgodna else []:
             # Klucz JAWNIE w UTC — kupno i sprzedaż bywają zapisane innym
             # offsetem tej samej chwili (+02:00 kontra Z).
             sprzedaz.setdefault(start.astimezone(timezone.utc), cena)

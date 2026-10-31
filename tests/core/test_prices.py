@@ -14,7 +14,7 @@ nigdy listy częściowej. Dziura w dobie cen jest dla plannera gorsza niż brak 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -406,16 +406,6 @@ def test_zepsute_atrybuty_sprzedazy_nie_kasuja_zakupu():
 
     assert len(out) == 3
     assert [w["sell"] for w in out] == [None, None, None]
-
-
-def test_sell_o_innej_rozdzielczosci_paruje_tylko_wspolne_chwile():
-    buy = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
-    sell = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=0.3)}
-
-    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
-
-    assert [w["minutes"] for w in out] == [60, 60]
-    assert [w["sell"] for w in out] == [pytest.approx(0.3), pytest.approx(0.3)]
 
 
 def test_sell_parowany_po_chwili_a_nie_po_zapisie_offsetu():
@@ -1077,3 +1067,104 @@ def test_adapter_sprzedaz_z_innego_ksztaltu_paruje_po_chwili():
     }
     out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
     assert [p["sell"] for p in out] == pytest.approx([0.1, 1.1, 2.1])
+
+
+def _wpisy_godzinowe(start_local: datetime, ile: int, cena=0.5):
+    """Wpisy `{time, price}` co godzinę w czasie ściennym (jak `str(datetime)`)."""
+    start_utc = start_local.astimezone(_UTC)
+    return [
+        {"time": str((start_utc + timedelta(hours=i)).astimezone(_WAW)), "price": cena}
+        for i in range(ile)
+    ]
+
+
+def test_adapter_jitter_sekundowy_startu_do_5_s_jest_tolerowany():
+    attrs = {
+        "forecasts": [
+            {
+                "start_time": f"2026-09-15T{i // 2:02d}:{(i % 2) * 30:02d}:01+10:00",
+                "end_time": f"2026-09-15T{(i + 1) // 2:02d}:{((i + 1) % 2) * 30:02d}:00+10:00",
+                "per_kwh": 0.2,
+            }
+            for i in range(4)
+        ]
+    }
+    out = intervals_from_attributes(attrs, None, "AUD", _WAW)
+    assert [p["minutes"] for p in out] == [30] * 4
+    assert out[0]["startAt"] == "2026-09-14T14:00:00Z"
+
+
+def test_adapter_jitter_powyzej_5_s_to_pusta_lista():
+    attrs = {
+        "forecasts": [
+            {
+                "start_time": f"2026-09-15T{i // 2:02d}:{(i % 2) * 30:02d}:07+10:00",
+                "end_time": f"2026-09-15T{(i + 1) // 2:02d}:{((i + 1) % 2) * 30:02d}:00+10:00",
+                "per_kwh": 0.2,
+            }
+            for i in range(4)
+        ]
+    }
+    assert intervals_from_attributes(attrs, None, "AUD", _WAW) == []
+
+
+@pytest.mark.parametrize(
+    "dzien,godziny", [(date(2026, 3, 29), 23), (date(2026, 10, 25), 25)]
+)
+def test_adapter_doba_zmiany_czasu_w_parze_dzis_jutro(dzien, godziny):
+    dzis = datetime(dzien.year, dzien.month, dzien.day, tzinfo=_WAW)
+    jutro = dzis + timedelta(days=1)
+    jutro = datetime(jutro.year, jutro.month, jutro.day, tzinfo=_WAW)
+    attrs = {
+        "prices_today": _wpisy_godzinowe(dzis, godziny),
+        "prices_tomorrow": _wpisy_godzinowe(jutro, 24),
+    }
+    out = intervals_from_attributes(attrs, None, "EUR", _WAW)
+    assert len(out) == godziny + 24
+
+
+def test_adapter_seria_72_godzin_w_kluczu_prices():
+    attrs = {"prices": _wpisy_godzinowe(_polnoc(2026, 9, 14), 72)}
+    assert len(intervals_from_attributes(attrs, None, "EUR", _WAW)) == 72
+
+
+def test_adapter_sprzedaz_na_innej_siatce_jest_pomijana_w_calosci():
+    kupno = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=0.3)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 8
+    assert all(p["sell"] is None for p in out)
+
+
+def test_adapter_sprzedaz_drobniejsza_niz_kupno_jest_pomijana_w_calosci():
+    kupno = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=0.3)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert all(p["sell"] is None for p in out)
+
+
+def test_adapter_prices_jako_lista_liczb_nie_blokuje_today():
+    attrs = {"prices": [0.1, 0.2], "today": [0.5] * 24}
+    assert len(intervals_from_attributes(attrs, None, "PLN", _WAW, _polnoc())) == 24
+
+
+def test_adapter_dst_ten_sam_zoneinfo_liczy_dlugosc_w_czasie_absolutnym():
+    p = datetime(2026, 10, 25, 2, 0, tzinfo=_WAW, fold=0)
+    k = datetime(2026, 10, 25, 2, 0, tzinfo=_WAW, fold=1)
+    attrs = {"raw_today": [{"start": p, "end": k, "value": 0.5}]}
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+    assert [x["minutes"] for x in out] == [60]
+
+
+def test_adapter_zonneplan_kwota_niecalkowita_to_pusta_lista():
+    attrs = {
+        "forecast": [
+            {
+                "start_date": f"2026-09-15T{i:02d}:00:00+00:00",
+                "end_date": f"2026-09-15T{i + 1:02d}:00:00+00:00",
+                "price_tax_included": {"amount": 0.25},
+            }
+            for i in range(3)
+        ]
+    }
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []

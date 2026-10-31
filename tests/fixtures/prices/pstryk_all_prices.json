@@ -1,7 +1,6 @@
 {
   "attributes": {
     "unit_of_measurement": "PLN/kWh",
-    "currency": "PLN",
     "All prices": [
       {
         "start": "2026-09-15T00:00:00+02:00",

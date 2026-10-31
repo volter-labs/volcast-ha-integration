@@ -1,31 +1,33 @@
 {
   "attributes": {
-    "unit_of_measurement": "GBP/kWh",
-    "currency": "GBP",
     "rates": [
       {
         "start": "2026-09-15T00:00:00+01:00",
         "end": "2026-09-15T00:30:00+01:00",
         "value_inc_vat": 0.25,
-        "is_capped": false
+        "is_capped": false,
+        "is_intelligent_adjusted": false
       },
       {
         "start": "2026-09-15T00:30:00+01:00",
         "end": "2026-09-15T01:00:00+01:00",
         "value_inc_vat": 0.26,
-        "is_capped": false
+        "is_capped": false,
+        "is_intelligent_adjusted": false
       },
       {
         "start": "2026-09-15T01:00:00+01:00",
         "end": "2026-09-15T01:30:00+01:00",
         "value_inc_vat": 0.27,
-        "is_capped": false
+        "is_capped": false,
+        "is_intelligent_adjusted": false
       },
       {
         "start": "2026-09-15T01:30:00+01:00",
         "end": "2026-09-15T02:00:00+01:00",
         "value_inc_vat": 0.28,
-        "is_capped": false
+        "is_capped": false,
+        "is_intelligent_adjusted": false
       }
     ]
   },
