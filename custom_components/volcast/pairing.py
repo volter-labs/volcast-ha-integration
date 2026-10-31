@@ -12,7 +12,7 @@ import time
 
 from .cloud.client import PollResult
 
-_TERMINAL = ("confirmed", "consumed", "expired", "gone", "disabled")
+_TERMINAL = ("confirmed", "consumed", "expired", "gone", "disabled", "not_live")
 _MAX_BACKOFF_S = 30.0
 
 

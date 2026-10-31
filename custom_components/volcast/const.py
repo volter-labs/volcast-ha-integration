@@ -45,6 +45,8 @@ CONF_BACKEND = "backend"
 CONF_USER_ID = "user_id"
 CONF_PAIRED_AT = "paired_at"
 CONF_PAIRING = "pairing"
+# hass.data: wpisy, których następna aktualizacja zmienia TYLKO dane parowania (bez przeładowania wpisu).
+PAIRING_ONLY_UPDATE_KEY = "volcast_pairing_only_update"
 CONF_PAIRING_URL = "pairing_url"
 OPT_CONTROL_MODE = "control_mode"
 CONTROL_MODE_ENTITIES = "entities"

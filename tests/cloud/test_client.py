@@ -253,8 +253,25 @@ def test_progress_body_and_result():
     assert s.calls[0]["json"] == {"action": "progress", "session_id": SID, "poll_token": POLL, "steps": steps}
     for status in (409, 400, 404, aiohttp.ClientError("x")):
         s2 = FakeSession()
-        s2.add("POST", PAIR, status, {"error": "not_live"})
+        s2.add("POST", PAIR, status, {"error": "conflict" if status == 409 else "invalid_request"})
         assert run(PairingClient(s2, PAIR).async_progress(SESSION, steps)) is False
+
+
+def test_not_live_409_raises_for_every_session_action():
+    from custom_components.volcast.cloud.client import SessionNotLive
+    for action in ("async_progress", "async_account_state", "async_request_plan"):
+        s = FakeSession()
+        s.add("POST", PAIR, 409, {"error": "not_live"})
+        call = getattr(PairingClient(s, PAIR), action)
+        coro = call(SESSION, []) if action == "async_progress" else call(SESSION)
+        with pytest.raises(SessionNotLive):
+            run(coro)
+    s = FakeSession()
+    s.add("POST", PAIR, 409, {"error": "not_live"})
+    assert run(PairingClient(s, PAIR).async_poll(SESSION)).status == "not_live"
+    s = FakeSession()
+    s.add("POST", PAIR, 409, {"error": "conflict"})
+    assert run(PairingClient(s, PAIR).async_poll(SESSION)).status == "error"
 
 
 def test_progress_detail_cleaned_to_cloud_limits():
@@ -305,7 +322,7 @@ def test_request_plan_result_and_failures():
         "success": True, "skipped": None, "slots_count": 24}
     for status in (409, 404, 503, aiohttp.ClientError("x")):
         s2 = FakeSession()
-        s2.add("POST", PAIR, status, {"error": "not_live"})
+        s2.add("POST", PAIR, status, {"error": "conflict"})
         assert run(PairingClient(s2, PAIR).async_request_plan(SESSION)) is None
 
 

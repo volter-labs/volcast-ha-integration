@@ -59,8 +59,9 @@ from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
 
+from .cloud.client import SessionNotLive
 from .cloud.control_choice import APPLIED_CHOICES, WIZARD_MARK, wizard_mark
-from .const import (CONF_PAIRING, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
+from .const import (CONF_PAIRING, PAIRING_ONLY_UPDATE_KEY, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
                     OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY)
 from .control import direct_search as ds
 from .control.runtime import readings_missing
@@ -166,6 +167,8 @@ class Onboarding:
         self._repost_delay = _REPOST_MIN_S
         self._repost_at: datetime | None = None
         self.first_plan_outcome: str | None = None
+        self.stopped = False                   # chmura zamknęła okno sesji (409 `not_live`) — nie raportujemy dalej
+        self.reset_result: str | None = None   # "cleared" (zapamiętana sesja usunięta) | "window_ended" (koniec okna)
         self._last_plan_at: datetime | None = None
         self._readings_retry_busy = False
         self._search = search
@@ -183,8 +186,41 @@ class Onboarding:
             await self._run()
         except asyncio.CancelledError:
             raise
+        except SessionNotLive:
+            self._on_not_live()
         except Exception as err:  # noqa: BLE001 — onboarding nigdy nie psuje wpisu
             _LOGGER.warning("Volcast onboarding stopped (%s)", type(err).__name__)
+
+    def _on_not_live(self) -> None:
+        """409 `not_live`: bez ponowień i bez czekania do `live_until`. Zamknięcie PRZED końcem okna to reset
+        w aplikacji — zapominamy sesję (nie `applied_choices`: znacznik „zastosowano z kreatora” musi przeżyć),
+        żeby po restarcie HA w oknie onboarding nie startował od nowa. Wpis NIE jest przeładowywany: reset nie
+        rusza działającego połączenia ani sterowania (kontrakt, pkt 18). Po naturalnym końcu okna dane
+        zostają — `_maybe_start_onboarding` i tak je ignoruje."""
+        if self.stopped:
+            return
+        self.stopped = True
+        if not self._live():
+            self.reset_result = "window_ended"
+            _LOGGER.info("Volcast onboarding: pairing window ended, reporting stopped")
+            return
+        self.reset_result = "cleared"
+        _LOGGER.info("Volcast onboarding: pairing session closed by the cloud, reporting stopped")
+        entry = self._entry()
+        pairing = (getattr(entry, "data", None) or {}).get(CONF_PAIRING) if entry is not None else None
+        if not isinstance(pairing, dict):
+            return
+        data = {k: v for k, v in entry.data.items() if k != CONF_PAIRING}
+        if _APPLIED in pairing:
+            data[CONF_PAIRING] = {_APPLIED: pairing[_APPLIED]}
+        # Jednorazowy znacznik dla nasłuchu zmian wpisu: sama zmiana danych parowania nie przeładowuje wpisu.
+        marker = self._hass.data.setdefault(PAIRING_ONLY_UPDATE_KEY, set())
+        marker.add(self._entry_id)
+        if not self._hass.config_entries.async_update_entry(entry, data=data):
+            marker.discard(self._entry_id)          # brak zmiany — nasłuch nie wystartuje, znacznik by został
+            return
+        # Nasłuch rusza od razu; po tej turze zużył znacznik albo już go nie zużyje (wpis w trakcie ładowania).
+        self._hass.loop.call_soon(marker.discard, self._entry_id)
 
     # ── pomocnicze ─────────────────────────────────────────────────────────
     async def _set(self, key: str, state: str, detail: str | None = None) -> None:
@@ -396,6 +432,8 @@ class Onboarding:
             return self.account_state
         try:
             state = await self._client.async_account_state(self._session)
+        except SessionNotLive:
+            raise
         except Exception as err:  # noqa: BLE001 — konto nigdy nie blokuje onboardingu
             _LOGGER.debug("Volcast onboarding: account state failed (%s)", type(err).__name__)
             state = None
@@ -519,7 +557,7 @@ class Onboarding:
     async def async_on_readings(self) -> None:
         """Pierwsza przyjęta telemetria z odczytem: ponów pierwszy plan (tylko w oknie na żywo, z limitem
         prób i odstępem cooldownu chmury). Wynik inny niż „brak odczytów/błąd planera" — nic nie robi."""
-        if self._readings_retry_busy:
+        if self._readings_retry_busy or self.stopped:
             return
         self._readings_retry_busy = True
         try:
@@ -539,13 +577,15 @@ class Onboarding:
                 await self._request_plan()
         except asyncio.CancelledError:
             raise
+        except SessionNotLive:
+            self._on_not_live()
         except Exception as err:  # noqa: BLE001 — onboarding nigdy nie psuje wpisu
             _LOGGER.warning("Volcast onboarding retry stopped (%s)", type(err).__name__)
         finally:
             self._readings_retry_busy = False
 
     async def _loop(self) -> None:
-        while self._live():
+        while self._live() and not self.stopped:
             if self._dirty and (self._repost_at is None or self._utcnow() >= self._repost_at):
                 await self._publish()
             if self._plan_retry_at is not None and self._utcnow() >= self._plan_retry_at:
@@ -555,6 +595,8 @@ class Onboarding:
                 return
             if waiting:
                 result = await self._client.async_poll(self._session)
+                if result.status == "not_live":
+                    raise SessionNotLive
                 if result.status == "consumed":
                     await self._apply(result.choices)
                 elif result.status in _GONE:
