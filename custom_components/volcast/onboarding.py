@@ -70,7 +70,8 @@ from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.control.recommend import recommend
 from .core.price_actions import InvalidPriceSource, parse_source
-from .core.price_setup import ACTION_DOMAINS, PLATFORM_CURRENCY, derived_currency, is_sell_entity, pair_entities
+from .core.price_setup import (ACTION_DOMAINS, PLATFORM_CURRENCY, currency_conflict, effective_currency,
+                               enrich_attributes, is_gas_entity, is_sell_entity, pair_entities)
 from .core.prices import has_usable_prices_now
 
 _LOGGER = logging.getLogger(__name__)
@@ -301,11 +302,11 @@ class Onboarding:
         if not entity_id:
             return False
         st = self._hass.states.get(entity_id)
-        if st is None:
+        if st is None or is_gas_entity(platform, entity_id):
             return False
         currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or PLATFORM_CURRENCY.get(platform)
         try:
-            return has_usable_prices_now(st.attributes, currency, self._tz(), self._utcnow())
+            return has_usable_prices_now(enrich_attributes(platform, st.attributes), currency, self._tz(), self._utcnow())
         except Exception as err:  # noqa: BLE001 — zła encja = nieużywalna
             _LOGGER.debug("Volcast onboarding: price entity check failed (%s)", type(err).__name__)
             return False
@@ -326,7 +327,8 @@ class Onboarding:
         found = []
         for domain in ACTION_DOMAINS:
             try:
-                if self._hass.config_entries.async_entries(domain):
+                if any(getattr(getattr(e, "state", None), "value", getattr(e, "state", None)) == "loaded"
+                       for e in self._hass.config_entries.async_entries(domain)):
                     found.append(domain)
             except Exception:  # noqa: BLE001
                 continue
@@ -498,7 +500,10 @@ class Onboarding:
             self._price_candidate = eid
             self._price_sell_candidate = pair.sell if pair is not None and not pair.ambiguous else None
             platform = cand.get("platform")
-            await self._set("prices", "choice", f"{platform} ({eid})" if platform else eid)
+            state = self._hass.states.get(eid)
+            currency = effective_currency(platform, getattr(state, "attributes", None)) or PLATFORM_CURRENCY.get(platform)
+            shown = f"{platform} ({eid})" if platform else eid
+            await self._set("prices", "choice", f"{shown} · {currency}" if currency else shown)
             return
         # Brak użytecznych encji — właściciel wybiera inne źródło; integracje z samą akcją wskazujemy z nazwy.
         integrations = self._action_integrations()
@@ -737,17 +742,23 @@ class Onboarding:
         if isinstance(source, str) and self._state("prices") == "choice":
             if source == "ha":
                 platform = self._platform_of(self._price_candidate)
-                if self._price_candidate and self._usable_price(self._price_candidate, platform):
+                state = self._hass.states.get(self._price_candidate) if self._price_candidate else None
+                declared = effective_currency(platform, getattr(state, "attributes", None))
+                assumed = declared or PLATFORM_CURRENCY.get(platform)
+                option_currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
+                if self._price_candidate and self._usable_price(self._price_candidate, platform) \
+                        and currency_conflict(assumed, option_currency):
+                    # Waluta integracji i opcja `price_currency` się różnią — pokazujemy, nie wybieramy za właściciela.
+                    steps.append(("prices", "error", f"currency conflict ({assumed} / {option_currency})"))
+                elif self._price_candidate and self._usable_price(self._price_candidate, platform):
                     patch[OPT_PRICE_BUY] = self._price_candidate
                     patch[OPT_PRICE_BUY_ACTION] = None        # akcja tej samej strony wygrałaby w runtime
                     sell = self._price_sell_candidate
                     if sell and self._usable_price(sell, platform):
                         patch[OPT_PRICE_SELL] = sell
                         patch[OPT_PRICE_SELL_ACTION] = None
-                    state = self._hass.states.get(self._price_candidate)
-                    if not self._options().get(OPT_PRICE_CURRENCY) and PLATFORM_CURRENCY.get(platform) \
-                            and derived_currency(getattr(state, "attributes", None)) is None:
-                        patch[OPT_PRICE_CURRENCY] = PLATFORM_CURRENCY[platform]   # seria nie podaje waluty
+                    if option_currency is None and declared is None and assumed:
+                        patch[OPT_PRICE_CURRENCY] = assumed           # seria nie podaje waluty
                     applied["price_source"] = source
                     steps.append(("prices", "done", self._price_candidate))
                 else:

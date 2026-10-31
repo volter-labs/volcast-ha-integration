@@ -336,7 +336,7 @@
       },
       "price_source_confirm": {
         "title": "Użyć tego źródła cen?",
-        "description": "To źródło daje prognozę cen na {hours} h do przodu. Zatwierdź, aby użyć go do planowania."
+        "description": "To źródło daje prognozę cen na {hours} h do przodu. Zatwierdź, aby użyć go do planowania. Ceny są liczone w {currency}."
       }
     },
     "abort": {

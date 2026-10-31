@@ -26,7 +26,9 @@ _SELL_WORDS = ("export", "feed_in", "feedin", "sell", "sprzed", "return", "terug
 _SIDE_TOKENS = frozenset({"export", "feed", "in", "feedin", "sell", "sprzedaz", "return", "buy", "import", "general",
                           "kupno", "teruglevering"})
 _AREA = re.compile(r"[A-Za-z0-9_-]{1,16}")
-#: Waluta kraju integracji — gdy seria jej nie podaje (Amber `$/kWh`, Octopus bez jednostki).
+#: Waluta kraju integracji — gdy seria jej nie podaje. Każda z tych integracji działa w jednym kraju
+#: (Amber: Australia, Octopus: Wielka Brytania, Pstryk: Polska). Amber ma jeszcze regułę
+#: `enrich_attributes` dla jednostki `$`, której ogólny adapter nie rozstrzyga.
 PLATFORM_CURRENCY = {"amberelectric": "AUD", "octopus_energy": "GBP", "pstryk": "PLN"}
 #: Domeny wpisów integracji, z których akcji umiemy czytać ceny.
 ACTION_DOMAINS = ("amberelectric", "tibber", "nordpool", "entsoe", "energyzero", "easyenergy")
@@ -39,6 +41,30 @@ class EntityPair:
     sell: str | None = None
     #: Para zgadnięta z kilku możliwych — pokazujemy wybór, nie stosujemy jej po cichu.
     ambiguous: bool = False
+
+
+def is_gas_entity(platform: str | None, entity_id: str) -> bool:
+    """Encja gazowa Octopusa (`…_gas_…`) ma kształt cen prądu, ale prądem nie jest."""
+    return platform == "octopus_energy" and "gas" in re.split(r"[._]", entity_id.lower())
+
+
+def enrich_attributes(platform: str | None, attrs: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Atrybuty encji z wiedzą o integracji: Amber (tylko Australia) z jednostką `$` i bez `currency` → AUD.
+
+    Ogólny adapter odmawia waluty dla niejednoznacznego `$`; dla Ambera nie ma tu niejednoznaczności.
+    Jawny atrybut `currency` zawsze wygrywa. Inne platformy zostają bez zmian.
+    """
+    out = dict(attrs) if isinstance(attrs, Mapping) else {}
+    unit = out.get("unit_of_measurement")
+    if (platform == "amberelectric" and not (isinstance(out.get("currency"), str) and out["currency"].strip())
+            and isinstance(unit, str) and unit.strip().startswith("$")):
+        out["currency"] = PLATFORM_CURRENCY["amberelectric"]
+    return out
+
+
+def effective_currency(platform: str | None, attrs: Mapping[str, Any] | None) -> str | None:
+    """Waluta, którą seria niesie sama (atrybut, jednostka albo reguła integracji), bez fallbacku z opcji."""
+    return derived_currency(enrich_attributes(platform, attrs))
 
 
 def is_sell_entity(entity_id: str) -> bool:
@@ -65,7 +91,8 @@ def pair_entities(candidates: Sequence[Mapping[str, Any]]) -> list[EntityPair]:
         if not isinstance(cand, Mapping):
             continue
         platform, eid = cand.get("platform"), cand.get("entity_id")
-        if platform not in KNOWN_PLATFORMS or not isinstance(eid, str) or not eid or "controlled_load" in eid:
+        if platform not in KNOWN_PLATFORMS or not isinstance(eid, str) or not eid or "controlled_load" in eid \
+                or is_gas_entity(platform, eid):
             continue
         buys, sells = groups.setdefault((platform, cand.get("config_entry_id")), ([], []))
         (sells if is_sell_entity(eid) else buys).append(eid)

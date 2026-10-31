@@ -336,7 +336,7 @@
       },
       "price_source_confirm": {
         "title": "Deze prijsbron gebruiken?",
-        "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. Bevestig om hem voor planning te gebruiken."
+        "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. Bevestig om hem voor planning te gebruiken. De prijzen worden gelezen in {currency}."
       }
     },
     "abort": {

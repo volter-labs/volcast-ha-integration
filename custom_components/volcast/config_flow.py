@@ -43,7 +43,7 @@ from .core.discovery.identify import Candidate
 from .core.price_actions import InvalidPriceSource, attributes_from_responses, build_calls, parse_source
 from .core.price_setup import (ACTION_DOMAINS, KNOWN_PLATFORMS, PLATFORM_CURRENCY, ActionCandidate, SeriesCheck,
                                action_candidates, build_action_option, check_series, currency_conflict,
-                               derived_currency, pair_entities)
+                               effective_currency, enrich_attributes, is_gas_entity, pair_entities)
 from .core.prices import has_usable_prices_now
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
@@ -528,7 +528,7 @@ def _clean(values: dict[str, Any]) -> dict[str, Any]:
 # Wszystkie zmienne tekstów kroku źródła cen — HA wstawia je do opisu i błędów.
 #: Limit jednego próbnego wywołania akcji (przepływ czeka na użytkownika; runtime ma własne 30 s).
 PROBE_TIMEOUT_S = 10.0
-_NO_PLACEHOLDERS = {"hours": "0", "source_currency": "", "option_currency": ""}
+_NO_PLACEHOLDERS = {"hours": "0", "source_currency": "", "option_currency": "", "currency": ""}
 
 
 class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
@@ -1052,11 +1052,12 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                         errors[key] = "prices_not_usable"
             placeholders = dict(_NO_PLACEHOLDERS)
             if currency is not None and OPT_PRICE_CURRENCY not in errors:
+                currency_changed = currency != ((saved.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
                 for key, eid in ((OPT_PRICE_BUY, buy), (OPT_PRICE_SELL, sell)):
-                    if not eid or eid == saved.get(key):
-                        continue                  # zapisana wcześniej nie blokuje zapisu reszty formularza
+                    if not eid or (eid == saved.get(key) and not currency_changed):
+                        continue                  # zapisana, niezmieniona para nie blokuje zapisu reszty formularza
                     st = self.hass.states.get(eid)
-                    declared = derived_currency(st.attributes) if st is not None else None
+                    declared = effective_currency(self._platform_of(eid), st.attributes) if st is not None else None
                     if currency_conflict(declared, currency):
                         errors[OPT_PRICE_CURRENCY] = "currency_conflict"
                         placeholders.update(source_currency=declared or "", option_currency=currency)
@@ -1079,11 +1080,21 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         st = self.hass.states.get(entity_id)
         if st is None:
             return SeriesCheck("unusable")
+        platform = self._platform_of(entity_id)
+        if is_gas_entity(platform, entity_id):
+            return SeriesCheck("unusable")
         try:
-            return check_series(st.attributes, currency, ZoneInfo(self.hass.config.time_zone), dt_util.utcnow(),
+            return check_series(enrich_attributes(platform, st.attributes), currency, ZoneInfo(self.hass.config.time_zone), dt_util.utcnow(),
                                 state=getattr(st, "state", None))
         except Exception:  # noqa: BLE001 — zła encja = nieużywalna
             return SeriesCheck("unusable")
+
+    def _platform_of(self, entity_id: str) -> str | None:
+        """Platforma encji z rejestru (wiedza o integracji: waluta Ambera, gaz Octopusa)."""
+        try:
+            return getattr(er.async_get(self.hass).async_get(entity_id), "platform", None)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _price_usable(self, entity_id: str, currency: str | None) -> bool:
         """Encja ceny daje pełną serię JUŻ TERAZ (ta sama reguła co w onboardingu)."""
@@ -1092,11 +1103,12 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _usable_price_entities(self) -> list[str]:
         currency = (self.config_entry.options.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
         try:
-            states = self.hass.states.async_all("sensor")
+            states = [*self.hass.states.async_all("sensor"), *self.hass.states.async_all("event")]
         except Exception:  # noqa: BLE001
             return []
         return sorted(st.entity_id for st in states
-                      if st is not None and self._price_usable(st.entity_id, currency))
+                      if st is not None and self._price_usable(
+                          st.entity_id, currency or PLATFORM_CURRENCY.get(self._platform_of(st.entity_id))))
 
     # ── źródło cen z wykrytych integracji ─────────────────────────────────
     def _option_currency(self) -> str | None:
@@ -1123,6 +1135,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                                "config_entry_id": getattr(e, "config_entry_id", None)})
         for pair in pair_entities(listed):
             label = f"{pair.platform}: {pair.buy}" + (f" / {pair.sell}" if pair.sell else "")
+            if pair.ambiguous:
+                label += " (ambiguous pairing)"
             found[f"entities|{pair.buy}|{pair.sell or ''}"] = (label, pair)
         entries = {}
         for domain in ACTION_DOMAINS:
@@ -1170,6 +1184,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         option_currency = self._option_currency()
         fallback = option_currency or PLATFORM_CURRENCY.get(pair.platform)
         hours = 0
+        shown = None
         patch_currency = None
         for eid, side in ((pair.buy, "buy"), (pair.sell, "sell")):
             if not eid:
@@ -1187,20 +1202,25 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             if side == "buy":
                 hours = check.hours
             st = self.hass.states.get(eid)
-            declared = derived_currency(st.attributes) if st is not None else None
-            if currency_conflict(declared, option_currency):
+            declared = effective_currency(pair.platform, st.attributes) if st is not None else None
+            # Seria nie podaje waluty: przyjmujemy walutę kraju integracji — i pokazujemy ją, a przy sprzecznej
+            # opcji zgłaszamy niejednoznaczność zamiast cichego wyboru.
+            assumed = declared or PLATFORM_CURRENCY.get(pair.platform)
+            if currency_conflict(assumed, option_currency):
                 errors["source"] = "currency_conflict"
-                placeholders.update(source_currency=declared or "", option_currency=option_currency or "")
+                placeholders.update(source_currency=assumed or "", option_currency=option_currency or "")
                 break
+            if side == "buy":
+                shown = assumed or option_currency
             if declared is None and option_currency is None:
-                patch_currency = fallback            # seria nie podaje waluty — bez niej runtime pominie ceny
+                patch_currency = assumed            # seria nie podaje waluty — bez niej runtime pominie ceny
         if errors:
             return self._source_form(errors, placeholders)
         self._price_pending = {OPT_PRICE_BUY: pair.buy, OPT_PRICE_SELL: pair.sell,
                                OPT_PRICE_BUY_ACTION: None, OPT_PRICE_SELL_ACTION: None,
                                **({OPT_PRICE_CURRENCY: patch_currency} if patch_currency else {})}
         return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
-                                    description_placeholders={**placeholders, "hours": str(hours)})
+                                    description_placeholders={**placeholders, "hours": str(hours), "currency": shown or ""})
 
     def _details_form(self, cand: ActionCandidate, previous: dict[str, Any] | None,
                       errors: dict[str, str] | None = None,
@@ -1264,7 +1284,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 self._price_pending = {OPT_PRICE_BUY: None, OPT_PRICE_BUY_ACTION: buy, OPT_PRICE_SELL_ACTION: sell,
                                        **({OPT_PRICE_SELL: None} if sell is not None else {})}
                 return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
-                                            description_placeholders={**placeholders, "hours": str(buy_check.hours)})
+                                            description_placeholders={**placeholders, "hours": str(buy_check.hours),
+                                                                  "currency": parsed.currency or option_currency or ""})
         if cand.fields:
             return self._details_form(cand, values, {field: error}, placeholders)
         return self._source_form({"base": error}, placeholders)
@@ -1350,7 +1371,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _prices_schema(self) -> vol.Schema:
         o = self.config_entry.options
         usable = self._usable_price_entities()
-        buy_cfg = {"domain": "sensor"}
+        buy_cfg = {"domain": ["sensor", "event"]}          # Octopus trzyma stawki w encjach `event`
         if usable:
             # Encje, które już teraz dają pełną serię cen — i zapisana, żeby dało się zapisać
             # resztę formularza, gdy chwilowo jej brakuje pełnej serii.
@@ -1360,7 +1381,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             _entity_field(OPT_PRICE_BUY, o.get(OPT_PRICE_BUY)):
                 selector.EntitySelector(selector.EntitySelectorConfig(**buy_cfg)),
             _entity_field(OPT_PRICE_SELL, o.get(OPT_PRICE_SELL)):
-                selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                selector.EntitySelector(selector.EntitySelectorConfig(domain=["sensor", "event"])),
             vol.Optional(OPT_PRICE_CURRENCY, description={"suggested_value": o.get(OPT_PRICE_CURRENCY)}): str,
         })
 

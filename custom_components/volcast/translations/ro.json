@@ -336,7 +336,7 @@
       },
       "price_source_confirm": {
         "title": "Folosești această sursă de prețuri?",
-        "description": "Această sursă oferă o prognoză de prețuri pentru următoarele {hours} h. Confirmă pentru a o folosi la planificare."
+        "description": "Această sursă oferă o prognoză de prețuri pentru următoarele {hours} h. Confirmă pentru a o folosi la planificare. Prețurile sunt citite în {currency}."
       }
     },
     "abort": {

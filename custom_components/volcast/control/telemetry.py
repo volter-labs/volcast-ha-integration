@@ -62,6 +62,7 @@ from typing import Awaitable, Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
 
 from ..const import (CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_BUY_ACTION,
@@ -71,6 +72,7 @@ from ..core.control.limits import BMS_POWER_FIELDS, PeakLimit, register_limits
 from ..core.control.readings import RawState, manual_reading, normalize_readings_report, readings_sources
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.price_actions import InvalidPriceSource, PriceActionPoller, parse_source
+from ..core.price_setup import enrich_attributes
 from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
 from .loads_reader import LoadsReader
 from .direct_sensors import STALE_FACTOR as _STALE_FACTOR   # jedna reguła świeżości z sensorami
@@ -390,7 +392,15 @@ class TelemetrySender:
         st = self._hass.states.get(eid) if eid else None
         if st is None or (require_available and st.state in _UNAVAILABLE):
             return False, None
-        return False, st.attributes
+        return False, enrich_attributes(self._entity_platform(eid), st.attributes)
+
+    def _entity_platform(self, entity_id: str) -> str | None:
+        """Platforma encji z rejestru (wiedza o integracji, np. waluta Ambera); bez rejestru None."""
+        try:
+            entry = er.async_get(self._hass).async_get(entity_id)
+        except Exception:  # noqa: BLE001
+            return None
+        return getattr(entry, "platform", None)
 
     def _raw(self, eid: str) -> RawState | None:
         st = self._hass.states.get(eid)

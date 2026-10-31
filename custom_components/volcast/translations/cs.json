@@ -336,7 +336,7 @@
       },
       "price_source_confirm": {
         "title": "Použít tento zdroj cen?",
-        "description": "Tento zdroj poskytuje předpověď cen na {hours} h dopředu. Potvrďte a použije se pro plánování."
+        "description": "Tento zdroj poskytuje předpověď cen na {hours} h dopředu. Potvrďte a použije se pro plánování. Ceny se čtou v {currency}."
       }
     },
     "abort": {

@@ -253,9 +253,9 @@ def _price_attrs():
 
 async def test_price_selector_include_entities_and_saved_unusable_entity(hass: HomeAssistant, network_down):
     hass.states.async_set("sensor.good_prices", "0.5", _price_attrs())
-    hass.states.async_set("sensor.stale_prices", "0.5", {"currency": "PLN"})
+    hass.states.async_set("sensor.stale_prices", "0.5", {"currency": "EUR"})
     hass.states.async_set("sensor.other", "1", {})
-    entry = make_entry(hass, options={"entity_price_buy": "sensor.stale_prices", "price_currency": "PLN"})
+    entry = make_entry(hass, options={"entity_price_buy": "sensor.stale_prices", "price_currency": "EUR"})
     await setup_entry(hass, entry)
     menu = await hass.config_entries.options.async_init(entry.entry_id)
     form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})

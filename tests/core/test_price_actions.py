@@ -497,3 +497,19 @@ def test_fresh_attributes_only_from_a_recent_success_covering_today():
     ha.responder = lambda *_a: RuntimeError("down")
     _run(p.async_refresh(NOW_WAW_10 + timedelta(hours=1), OSLO))
     assert p.fresh_attributes(NOW_WAW_10 + timedelta(hours=1), OSLO) is None
+
+
+def test_amber_rolling_forecast_refreshes_every_30_minutes_other_actions_every_6_hours():
+    amber = parse_source({"action": "amberelectric.get_forecasts",
+                          "data": {"config_entry_id": "a1", "channel_type": "general"}})
+    ha = FakeHA(lambda *_: amber_response(NOW_WAW_10.astimezone(SYD).replace(minute=0, second=0, microsecond=0)))
+    p = PriceActionPoller(amber, ha)
+    _run(p.async_refresh(NOW_WAW_10, SYD))
+    assert not p.due(NOW_WAW_10 + timedelta(minutes=29), SYD)
+    assert p.due(NOW_WAW_10 + timedelta(minutes=31), SYD)
+    # świeżość wyniku liczona od tego samego okresu (30 min + zapas), nie od 6 h
+    assert p.fresh_attributes(NOW_WAW_10 + timedelta(minutes=20), SYD) is p.attributes
+    assert p.fresh_attributes(NOW_WAW_10 + timedelta(minutes=45), SYD) is None
+    other = PriceActionPoller(parse_source(NP), FakeHA(_np_responder()))
+    _run(other.async_refresh(NOW_WAW_10, OSLO))
+    assert not other.due(NOW_WAW_10 + timedelta(minutes=31), OSLO)

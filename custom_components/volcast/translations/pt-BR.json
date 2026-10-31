@@ -336,7 +336,7 @@
       },
       "price_source_confirm": {
         "title": "Usar esta fonte de preços?",
-        "description": "Esta fonte fornece uma previsão de preços para as próximas {hours} h. Confirme para usá-la no planejamento."
+        "description": "Esta fonte fornece uma previsão de preços para as próximas {hours} h. Confirme para usá-la no planejamento. Os preços são lidos em {currency}."
       }
     },
     "abort": {

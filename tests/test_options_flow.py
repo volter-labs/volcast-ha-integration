@@ -376,8 +376,8 @@ def test_prices_fields_submitted_without_key_are_cleared():
 def test_saved_but_now_unusable_buy_entity_does_not_block_saving():
     f = flow(options={"entity_price_buy": "sensor.bad"},
              prices={"sensor.nordpool": _price_attrs(), "sensor.bad": {"unit_of_measurement": "PLN/kWh"}})
-    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.bad", "price_currency": "eur"}))
-    assert r["data"] == {"entity_price_buy": "sensor.bad", "price_currency": "EUR"}
+    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.bad", "price_currency": "pln"}))
+    assert r["data"] == {"entity_price_buy": "sensor.bad", "price_currency": "PLN"}
     key, sel = _field(f._prices_schema(), "entity_price_buy")
     assert sel.config["include_entities"] == ["sensor.bad", "sensor.nordpool"]
 

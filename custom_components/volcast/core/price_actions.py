@@ -52,6 +52,8 @@ _LOGGER = logging.getLogger(__name__)
 CALL_TIMEOUT_S = 30.0
 #: Zwykłe odświeżenie.
 REFRESH_S = 6 * 3600
+#: Odświeżenie prognozy kroczącej Ambera (cena zmienia się co 5 min).
+AMBER_REFRESH_S = 30 * 60
 #: Od tej godziny czasu rynku pytamy co godzinę, dopóki nie ma jutra.
 TOMORROW_FROM_HOUR = 13
 TOMORROW_RETRY_S = 3600
@@ -146,6 +148,8 @@ class _ActionSpec:
     unit: str | None = None
     #: Integracja ma własną skalę i walutę, a odpowiedź ich nie niesie — oba pola w konfiguracji.
     needs_unit: bool = False
+    #: Zwykłe odświeżenie tego źródła (s). Prognoza krocząca (Amber) zmienia się co kilka minut, więc krócej.
+    refresh_s: float = REFRESH_S
 
 
 _SPECS: dict[str, _ActionSpec] = {
@@ -153,7 +157,7 @@ _SPECS: dict[str, _ActionSpec] = {
     # feed_in w odpowiedzi jest już dodatni = zarabiasz.
     "amberelectric.get_forecasts": _ActionSpec(
         required=("config_entry_id", "channel_type"), dates=None, extract=_key("forecasts"),
-        list_key="forecasts", currency="AUD"),
+        list_key="forecasts", currency="AUD", refresh_s=AMBER_REFRESH_S),
     "tibber.get_prices": _ActionSpec(required=(), dates=_dates_as_datetimes, extract=_tibber),
     "nordpool.get_prices_for_date": _ActionSpec(
         required=("config_entry", "areas", "currency"), dates=_date_param, extract=_nordpool, unit="MWh"),
@@ -195,6 +199,10 @@ class PriceActionSource:
     @property
     def service(self) -> str:
         return self.action.split(".", 1)[1]
+
+    @property
+    def refresh_s(self) -> float:
+        return self.spec.refresh_s
 
     @property
     def spec(self) -> _ActionSpec:
@@ -359,7 +367,7 @@ class PriceActionPoller:
         if self._failures:
             return (now - self._last_try).total_seconds() >= backoff_s(self._failures)
         age = (now - self._last_ok).total_seconds() if self._last_ok else math.inf
-        if age >= REFRESH_S:
+        if age >= self.source.refresh_s:
             return True
         local = now.astimezone(tz)
         today = local.date()
@@ -376,7 +384,7 @@ class PriceActionPoller:
         """
         if self.attributes is None or self._last_ok is None or self._last_day is None:
             return None
-        if (now - self._last_ok).total_seconds() >= REFRESH_S + FRESH_GRACE_S:
+        if (now - self._last_ok).total_seconds() >= self.source.refresh_s + FRESH_GRACE_S:
             return None
         if self._last_day < now.astimezone(tz).date():
             return None

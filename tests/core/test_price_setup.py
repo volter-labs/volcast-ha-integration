@@ -8,7 +8,8 @@ import pytest
 
 from custom_components.volcast.core.price_actions import InvalidPriceSource, parse_source
 from custom_components.volcast.core.price_setup import (
-    action_candidates, build_action_option, check_series, currency_conflict, pair_entities)
+    action_candidates, build_action_option, check_series, currency_conflict, effective_currency,
+    enrich_attributes, is_gas_entity, pair_entities)
 
 WAW = ZoneInfo("Europe/Warsaw")
 NOW = datetime(2026, 10, 31, 9, 0, tzinfo=timezone.utc)
@@ -123,3 +124,35 @@ def test_nordpool_option_is_saved_normalized():
     npool = action_candidates({"nordpool": [("n1", "N")]})[0]
     buy, _ = build_action_option(npool, {"area": "se3", "currency": "sek"})
     assert buy["data"]["areas"] == ["SE3"] and buy["data"]["currency"] == "SEK"
+
+
+def test_amber_dollar_unit_without_currency_is_aud_only_for_amber():
+    attrs = {"unit_of_measurement": "$/kWh"}
+    assert effective_currency("amberelectric", attrs) == "AUD"
+    assert effective_currency("some_other_platform", attrs) is None      # reguła dotyczy tylko Ambera
+    assert effective_currency("octopus_energy", attrs) is None
+    assert enrich_attributes("amberelectric", {**attrs, "currency": "NZD"})["currency"] == "NZD"   # atrybut wygrywa
+    assert effective_currency("amberelectric", {**attrs, "currency": "NZD"}) == "NZD"
+    assert "currency" not in enrich_attributes("pstryk", attrs)
+    assert "currency" not in enrich_attributes("amberelectric", {"unit_of_measurement": "kr/kWh"})
+    assert enrich_attributes("amberelectric", None) == {}
+
+
+def test_amber_series_with_dollar_unit_is_usable_with_enrichment():
+    attrs = {**_hourly(24), "unit_of_measurement": "$/kWh"}
+    attrs.pop("currency")
+    assert check_series(attrs, None, WAW, NOW).status == "unusable"                      # bez reguły: waluta niejasna
+    assert check_series(enrich_attributes("amberelectric", attrs), None, WAW, NOW).status == "ok"
+
+
+def test_octopus_gas_is_not_an_electricity_candidate():
+    gas = "event.octopus_energy_gas_aaa_111_current_day_rates"
+    assert is_gas_entity("octopus_energy", gas) and not is_gas_entity("pstryk", gas)
+    assert not is_gas_entity("octopus_energy", "event.octopus_energy_electricity_aaa_111_current_day_rates")
+    out = pair_entities([
+        _c(gas, "octopus_energy"),
+        _c("event.octopus_energy_electricity_aaa_111_current_day_rates", "octopus_energy"),
+        _c("event.octopus_energy_electricity_bbb_222_export_current_day_rates", "octopus_energy")])
+    assert [(p.buy, p.sell, p.ambiguous) for p in out] == [
+        ("event.octopus_energy_electricity_aaa_111_current_day_rates",
+         "event.octopus_energy_electricity_bbb_222_export_current_day_rates", False)]

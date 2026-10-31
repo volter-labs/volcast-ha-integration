@@ -11,7 +11,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import entity_registry as er
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -233,17 +233,124 @@ async def test_nordpool_needs_exactly_one_zone(hass: HomeAssistant, network_down
 
 
 async def test_real_entity_sets_yield_one_pair_each(hass: HomeAssistant, network_down):
-    amber_buy, _ = _amber_set(hass)
+    amber_buy, amber_sell = _amber_set(hass)
     octo_buy, octo_sell = _octopus_set(hass)
     pstryk_buy, pstryk_sell = _pstryk_set(hass)
+    _entity(hass, "event", "octopus_energy", "octopus_energy_gas_ccc_333_current_day_rates",
+            _fixture("octopus_rates", "rates", 20, 30))
     form = await _open(hass, make_entry(hass))
     values = [o["value"] for o in form["data_schema"].schema["source"].config["options"]]
-    # Bez cen bieżących, średnich, `next_day_rates` (jutro) i kanału controlled_load. Amber ma jednostkę `$/kWh`,
-    # która nie wskazuje waluty, więc jego encje nie są źródłem — Amber idzie ścieżką akcji.
-    assert sorted(values) == sorted([f"entities|{octo_buy}|{octo_sell}", f"entities|{pstryk_buy}|{pstryk_sell}"])
-    assert not any(amber_buy in v for v in values)
+    # Bez cen bieżących, średnich, `next_day_rates` (jutro), kanału controlled_load i gazu Octopusa.
+    assert sorted(values) == sorted([f"entities|{amber_buy}|{amber_sell}", f"entities|{octo_buy}|{octo_sell}",
+                                     f"entities|{pstryk_buy}|{pstryk_sell}"])
 
 
+async def test_amber_pair_confirms_in_aud_without_writing_the_currency_option(hass: HomeAssistant, network_down):
+    buy, sell = _amber_set(hass)
+    entry = make_entry(hass)
+    _form, confirm = await _choose(hass, entry, f"entities|{buy}")
+    assert confirm["step_id"] == "price_source_confirm" and confirm["description_placeholders"]["currency"] == "AUD"
+    await hass.config_entries.options.async_configure(confirm["flow_id"], {})
+    assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == sell
+    assert "price_currency" not in entry.options
+
+
+async def test_amber_pair_conflicts_with_a_different_currency_option(hass: HomeAssistant, network_down):
+    buy, _sell = _amber_set(hass)
+    _form, res = await _choose(hass, make_entry(hass, options={"price_currency": "EUR"}), f"entities|{buy}")
+    assert res["errors"] == {"source": "currency_conflict"}
+    assert res["description_placeholders"]["source_currency"] == "AUD"
+
+
+async def test_platform_currency_conflicts_with_option_when_series_states_none(hass: HomeAssistant, network_down):
+    buy, _sell = _octopus_set(hass)
+    entry = make_entry(hass, options={"price_currency": "EUR"})
+    _form, res = await _choose(hass, entry, f"entities|{buy}")
+    assert res["errors"] == {"source": "currency_conflict"}
+    assert res["description_placeholders"]["source_currency"] == "GBP"
+    assert "entity_price_buy" not in entry.options
+
+
+async def test_confirm_shows_buy_horizon_not_sell_horizon(hass: HomeAssistant, network_down):
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", _fixture("pstryk_all_prices", "All prices", 30, 60))
+    _entity(hass, "sensor", "pstryk", "pstryk_current_sell_price", _fixture("pstryk_all_prices", "All prices", 10, 60))
+    _form, confirm = await _choose(hass, make_entry(hass), f"entities|{buy}")
+    assert int(confirm["description_placeholders"]["hours"]) >= 29
+
+
+async def test_octopus_gas_is_not_offered_and_gas_cannot_be_picked_in_prices_form(hass: HomeAssistant, network_down):
+    gas = _entity(hass, "event", "octopus_energy", "octopus_energy_gas_ccc_333_current_day_rates",
+                  _fixture("octopus_rates", "rates", 20, 30), "2026-10-31T10:00:00")
+    buy, sell = _octopus_set(hass)
+    entry = make_entry(hass)
+    form = await _open(hass, entry)
+    values = [o["value"] for o in form["data_schema"].schema["source"].config["options"]]
+    assert values == [f"entities|{buy}|{sell}"]
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    prices = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
+    field = next(sel for key, sel in prices["data_schema"].schema.items() if str(key) == "entity_price_buy")
+    assert gas not in field.config["include_entities"] and buy in field.config["include_entities"]
+    with pytest.raises(InvalidData):                         # selektor nie przyjmie encji spoza listy
+        await hass.config_entries.options.async_configure(prices["flow_id"], {"entity_price_buy": gas})
+
+
+async def test_ambiguous_pair_label_says_so(hass: HomeAssistant, network_down):
+    attrs = _fixture("pstryk_all_prices", "All prices", 24, 60)
+    for name in ("x_buy", "y_sell", "z_export"):
+        _entity(hass, "sensor", "pstryk", name, attrs)
+    form = await _open(hass, make_entry(hass))
+    labels = [o["label"] for o in form["data_schema"].schema["source"].config["options"]]
+    assert all("ambiguous" in label for label in labels)
+
+
+async def test_prices_form_currency_change_alone_is_checked_against_saved_entity(hass: HomeAssistant, network_down):
+    attrs = _fixture("pstryk_all_prices", "All prices", 24, 60, unit_of_measurement="SEK/kWh")
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", attrs)
+    entry = make_entry(hass, options={"entity_price_buy": buy})
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
+    res = await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": buy, "price_currency": "EUR"})
+    assert res["errors"] == {"price_currency": "currency_conflict"}
+
+
+async def test_prices_form_lists_amber_entities(hass: HomeAssistant, network_down):
+    buy, _sell = _amber_set(hass)
+    entry = make_entry(hass)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
+    field = next(sel for key, sel in form["data_schema"].schema.items() if str(key) == "entity_price_buy")
+    assert buy in field.config["include_entities"]
+
+
+async def _sent_prices(hass, entity_id, platform, attrs, options=None):
+    from .test_price_actions import _refresh_and_flush, _sender
+    er.async_get(hass).async_get_or_create("sensor", platform, entity_id.split(".")[1], suggested_object_id=entity_id.split(".")[1])
+    hass.states.async_set(entity_id, "0.3", attrs)
+    sender, cloud, _entry = await _sender(hass, {"entity_price_buy": entity_id, **(options or {})})
+    await _refresh_and_flush(sender)
+    return cloud.sent[0].get("prices")
+
+
+def _now_forecasts(extra=None):
+    from .test_price_actions import NOW
+    start = NOW.replace(minute=0, second=0, microsecond=0)
+    rows = [{"start_time": (start + timedelta(minutes=30 * i)).isoformat(),
+             "end_time": (start + timedelta(minutes=30 * (i + 1))).isoformat(), "per_kwh": 0.3} for i in range(60)]
+    return {"unit_of_measurement": "$/kWh", "forecasts": rows, **(extra or {})}
+
+
+async def test_amber_entity_prices_are_sent_in_aud(hass: HomeAssistant):
+    prices = await _sent_prices(hass, "sensor.home_general_forecast", "amberelectric", _now_forecasts())
+    assert prices["currency"] == "AUD"
+
+
+async def test_amber_explicit_currency_attribute_wins_over_the_integration_rule(hass: HomeAssistant):
+    prices = await _sent_prices(hass, "sensor.home_general_forecast", "amberelectric", _now_forecasts({"currency": "NZD"}))
+    assert prices["currency"] == "NZD"
+
+
+async def test_dollar_unit_on_other_platforms_stays_rejected(hass: HomeAssistant):
+    assert await _sent_prices(hass, "sensor.some_forecast", "some_other_platform", _now_forecasts()) is None
 async def test_pair_confirms_with_hours_then_saves_and_sets_platform_currency(hass: HomeAssistant, network_down):
     buy, sell = _octopus_set(hass)
     entry = make_entry(hass, options={"price_buy_action": {"action": "x.y"}, "price_sell_action": {"action": "x.z"}})

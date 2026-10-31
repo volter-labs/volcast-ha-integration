@@ -336,7 +336,7 @@
       },
       "price_source_confirm": {
         "title": "Utiliser cette source de prix ?",
-        "description": "Cette source fournit une prévision de prix sur {hours} h. Validez pour l'utiliser dans la planification."
+        "description": "Cette source fournit une prévision de prix sur {hours} h. Validez pour l'utiliser dans la planification. Les prix sont lus en {currency}."
       }
     },
     "abort": {
