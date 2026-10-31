@@ -42,7 +42,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Mapping, Sequence
 
 #: Rozdzielczości, które chmura przyjmuje w `PriceInterval.minutes`.
-DOZWOLONE_MINUTY: frozenset[int] = frozenset({15, 30, 60})
+DOZWOLONE_MINUTY: frozenset[int] = frozenset({5, 15, 30, 60})
 
 #: Domyślna długość przedziału w wariancie fallback (`today` / `tomorrow`).
 DOMYSLNY_INTERVAL_MIN = 60
@@ -56,6 +56,10 @@ MAX_MINUT_SERII = 60 * 24 * 2
 #: Limit dla list wpisów innych integracji: atrybut zbiorczy (np. `prices` w
 #: ENTSO-e) bywa wczoraj + dziś + jutro, a doba zmiany czasu dodaje godzinę.
 MAX_MINUT_SERII_WPISOW = 60 * 24 * 3 + 60
+
+#: Limit liczby wpisów serii 5-minutowej (100 h). Dla 15/30/60 min obowiązuje
+#: limit w minutach powyżej; wtyczka nie agreguje, więc 5-min zostaje 5-min.
+MAX_WPISOW_5_MIN = 1200
 
 #: Tolerancja sekundowego przesunięcia startu przedziału (np. `…T00:00:01`).
 TOLERANCJA_SEKUND = 5
@@ -297,6 +301,13 @@ def _do_minuty(chwila: datetime | None) -> datetime | None:
     return None
 
 
+def _za_dluga(liczba: int, minuty: int, max_minut: int) -> bool:
+    """Czy seria przekracza limit (5 min: wpisy, pozostałe: minuty)."""
+    if minuty == 5:
+        return liczba > MAX_WPISOW_5_MIN
+    return liczba * minuty > max_minut
+
+
 def _minuty(dlugosc: timedelta) -> int | None:
     """Długość przedziału w minutach, o ile jest jedną z dozwolonych."""
     sekundy = dlugosc.total_seconds()
@@ -333,7 +344,7 @@ def _z_raw(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
         if len(dlugosci) > 1:
             return None
         wynik.append((start, cena, minuty))
-        if len(wynik) * minuty > MAX_MINUT_SERII:
+        if _za_dluga(len(wynik), minuty, MAX_MINUT_SERII):
             return None
     return wynik
 
@@ -414,7 +425,7 @@ def _z_wpisow(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
             if len(dlugosci) > 1:
                 return None
             wynik.append((start, cena, minuty))
-            if len(wynik) * minuty > MAX_MINUT_SERII_WPISOW:
+            if _za_dluga(len(wynik), minuty, MAX_MINUT_SERII_WPISOW):
                 return None
         return wynik
 
@@ -430,7 +441,7 @@ def _z_wpisow(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
         return None
     if any(b - a != timedelta(minutes=minuty) for a, b in zip(chwile, chwile[1:])):
         return None
-    if len(chwile) * minuty > MAX_MINUT_SERII_WPISOW:
+    if _za_dluga(len(chwile), minuty, MAX_MINUT_SERII_WPISOW):
         return None
     return [(po_chwili[c][0], po_chwili[c][1], minuty) for c in chwile]
 
@@ -505,7 +516,7 @@ def _z_list_liczb(
         wartosci = attrs.get(klucz)
         if not isinstance(wartosci, (list, tuple)):
             continue
-        if len(wartosci) * minuty > MAX_MINUT_SERII:
+        if _za_dluga(len(wartosci), minuty, MAX_MINUT_SERII):
             return None
         poczatek_doby = (polnoc + timedelta(days=przesuniecie)).astimezone(timezone.utc)
         for i, surowa in enumerate(wartosci):

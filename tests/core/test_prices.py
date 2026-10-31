@@ -1193,3 +1193,51 @@ def test_adapter_sprzedaz_przesunieta_faza_to_none():
     out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
     assert len(out) == 4
     assert all(p["sell"] is None for p in out)
+
+
+# ── Serie 5-minutowe ────────────────────────────────────────────────────────
+
+
+def test_seria_5_min_daje_przedzialy_5_min():
+    attrs = {"raw_today": _raw(_polnoc(), 288, 5, wartosc=lambda i: 0.3 + i / 1000)}
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+    assert len(out) == 288
+    assert all(p["minutes"] == 5 for p in out)
+    assert out[1]["buy"] == pytest.approx(0.301)
+
+
+def test_seria_5_min_z_luka_to_pusta_lista():
+    wpisy = _raw(_polnoc(), 12, 5)
+    del wpisy[5]
+    attrs = {"All prices": [{"start": w["start"], "price": w["value"]} for w in wpisy]}
+    assert intervals_from_attributes(attrs, None, "PLN", _WAW) == []
+
+
+def test_seria_5_min_nierowny_odstep_to_pusta_lista():
+    wpisy = _raw(_polnoc(), 6, 5)
+    wpisy[3]["end"] = (_polnoc() + timedelta(minutes=17)).isoformat()
+    assert intervals_from_attributes({"raw_today": wpisy}, None, "PLN", _WAW) == []
+
+
+def test_seria_5_min_powyzej_limitu_to_pusta_lista():
+    start = _polnoc(2026, 9, 14)
+    ok = {"prices": _raw(start, 1200, 5)}
+    assert len(intervals_from_attributes(ok, None, "EUR", _WAW)) == 1200
+    za_duzo = {"prices": _raw(start, 1201, 5)}
+    assert intervals_from_attributes(za_duzo, None, "EUR", _WAW) == []
+
+
+def test_sprzedaz_5_min_paruje_sie_z_kupnem_5_min():
+    kupno = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 12
+    assert all(p["sell"] == pytest.approx(0.1) for p in out)
+
+
+def test_sprzedaz_5_min_przy_kupnie_15_min_to_none():
+    kupno = {"raw_today": _raw(_polnoc(), 4, 15, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 4
+    assert all(p["sell"] is None for p in out)
