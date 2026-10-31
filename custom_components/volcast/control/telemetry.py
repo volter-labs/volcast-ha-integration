@@ -10,6 +10,12 @@ Ceny (`prices`) idą tylko przy zmianie treści albo co 6 h i są uznane za wys�
 dopiero po przyjęciu odczytu przez chmurę. Błąd bloku cen nie zabiera odczytu.
 Jedna wysyłka naraz: tik zegara w trakcie trwającej wysyłki jest pomijany.
 
+Źródło ceny (kupno, sprzedaż osobno) to encja ALBO akcja HA z odpowiedzią
+(`OPT_PRICE_*_ACTION`, `core/price_actions.py`). Akcję woła zadanie w tle, które zleca tik zegara
+wg harmonogramu źródła (co 6 h, po 13:00 czasu rynku co godzinę do pojawienia się jutra, po błędzie
+z odstępem rosnącym), z limitem czasu i bez drugiego wywołania w trakcie pierwszego; wysyłka czyta
+tylko gotowy wynik. Błąd akcji = brak sekcji `prices`; zatrzymanie nadawcy anuluje trwające wywołanie.
+
 Tryb bezpośredni: wartości z odczytu rejestrów (`DirectReading.values` + tryb jako nazwa), tylko
 świeże (młodsze niż 3× okres odpytywania); ręczne mapowanie z opcji dalej wygrywa. Blok `driver`
 ma `access: "direct"`, możliwości z sondy (poza próbą) i limity (`registers` albo `user`);
@@ -44,6 +50,7 @@ dopóki trwa wstrzymanie po ręcznej ingerencji (bez potwierdzania — to stan, 
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -55,12 +62,13 @@ from zoneinfo import ZoneInfo
 import homeassistant.util.dt as dt_util
 from homeassistant.helpers.event import async_track_time_interval
 
-from ..const import (CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_CURRENCY,
-                     OPT_PRICE_SELL)
+from ..const import (CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_BUY_ACTION,
+                     OPT_PRICE_CURRENCY, OPT_PRICE_SELL, OPT_PRICE_SELL_ACTION)
 from ..core.control.caps import capabilities_for
 from ..core.control.limits import BMS_POWER_FIELDS, PeakLimit, register_limits
 from ..core.control.readings import RawState, manual_reading, normalize_readings_report, readings_sources
 from ..core.control.select import ProfileChoice, control_verified
+from ..core.price_actions import InvalidPriceSource, PriceActionPoller, parse_source
 from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
 from .loads_reader import LoadsReader
 from .direct_sensors import STALE_FACTOR as _STALE_FACTOR   # jedna reguła świeżości z sensorami
@@ -279,6 +287,9 @@ class TelemetrySender:
         self._on_signals = on_signals
         self._prices_fp: str | None = None
         self._prices_at: datetime | None = None
+        # Źródła cen z akcji: klucz opcji → (konfiguracja, z której powstał, poller albo None = zła).
+        self._price_actions: dict[str, tuple[object, PriceActionPoller | None]] = {}
+        self._price_tasks: dict[str, object] = {}
         self._unsub = None
         self._busy = False
         self._loads = LoadsReader(hass, entry, executor_report=self._loads_report)
@@ -304,9 +315,75 @@ class TelemetrySender:
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
+        for task in self._price_tasks.values():
+            task.cancel()
+        self._price_tasks.clear()
 
     async def _timer(self, _now=None) -> None:
+        try:
+            self._kick_price_actions(self._utcnow())
+        except Exception as err:  # noqa: BLE001 — ceny nigdy nie zabierają telemetrii
+            _LOGGER.debug("Volcast price action refresh skipped (%s)", type(err).__name__)
         await self.async_flush()
+
+    def _tz(self) -> ZoneInfo:
+        return ZoneInfo(self._hass.config.time_zone)
+
+    async def _async_call_price_action(self, domain: str, service: str, data: dict):
+        return await self._hass.services.async_call(domain, service, data, blocking=True, return_response=True)
+
+    def _price_action(self, key: str) -> tuple[bool, PriceActionPoller | None]:
+        """(czy strona ma źródło z akcji, poller — None przy złej konfiguracji) dla klucza opcji."""
+        raw = self._entry.options.get(key)
+        if not raw:
+            self._price_actions.pop(key, None)
+            return False, None
+        cached = self._price_actions.get(key)
+        if cached is not None and cached[0] == raw:
+            return True, cached[1]
+        try:
+            poller = PriceActionPoller(parse_source(raw), self._async_call_price_action)
+        except InvalidPriceSource as err:
+            _LOGGER.warning("Volcast price action source is not usable (%s); prices are skipped", err)
+            poller = None
+        self._price_actions[key] = (copy.deepcopy(raw), poller)
+        return True, poller
+
+    def _spawn(self, coro, name: str):
+        create = getattr(self._entry, "async_create_background_task", None)
+        try:
+            if callable(create):
+                return create(self._hass, coro, name)
+            return self._hass.async_create_background_task(coro, name)
+        except Exception:
+            coro.close()
+            raise
+
+    def _kick_price_actions(self, now: datetime) -> list:
+        """Zleć w tle odświeżenie źródeł cen z akcji, którym wypada termin; zwraca nowe zadania."""
+        tz = self._tz()
+        started = []
+        for key in (OPT_PRICE_BUY_ACTION, OPT_PRICE_SELL_ACTION):
+            _configured, poller = self._price_action(key)
+            # Zadanie strony jeszcze trwa (albo nie zdążyło ruszyć) — bez drugiego wywołania.
+            running = self._price_tasks.get(key)
+            if poller is None or (running is not None and not running.done()) or not poller.due(now, tz):
+                continue
+            task = self._spawn(poller.async_refresh(now, tz), "volcast_price_action")
+            self._price_tasks[key] = task
+            started.append(task)
+        return started
+
+    def _price_attributes(self, action_key: str, entity_key: str, *, require_available: bool):
+        """Atrybuty cen jednej strony: z akcji (gdy ustawiona) albo z encji; None = brak danych."""
+        configured, poller = self._price_action(action_key)
+        if configured:
+            return poller.attributes if poller is not None else None
+        eid = (self._entry.options.get(entity_key) or "").strip()
+        st = self._hass.states.get(eid) if eid else None
+        if st is None or (require_available and st.state in _UNAVAILABLE):
+            return None
+        return st.attributes
 
     def _raw(self, eid: str) -> RawState | None:
         st = self._hass.states.get(eid)
@@ -334,17 +411,14 @@ class TelemetrySender:
     def _prices(self, now: datetime) -> tuple[dict, str] | None:
         """Blok cen (albo None: brak encji, danych, zmiany) i jego odcisk."""
         opts = self._entry.options
-        buy = self._hass.states.get((opts.get(OPT_PRICE_BUY) or "").strip())
-        if buy is None or buy.state in _UNAVAILABLE:
+        buy = self._price_attributes(OPT_PRICE_BUY_ACTION, OPT_PRICE_BUY, require_available=True)
+        if buy is None:
             return None
-        sell_id = (opts.get(OPT_PRICE_SELL) or "").strip()
-        sell = self._hass.states.get(sell_id) if sell_id else None
-        currency = currency_from_attributes(buy.attributes,
-                                            (opts.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
+        sell = self._price_attributes(OPT_PRICE_SELL_ACTION, OPT_PRICE_SELL, require_available=False)
+        currency = currency_from_attributes(buy, (opts.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
         if currency is None:
             return None
-        intervals = intervals_from_attributes(buy.attributes, sell.attributes if sell else None, currency,
-                                              ZoneInfo(self._hass.config.time_zone), now)
+        intervals = intervals_from_attributes(buy, sell, currency, self._tz(), now)
         if not intervals:
             return None
         market = self._market()
