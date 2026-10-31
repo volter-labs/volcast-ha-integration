@@ -525,3 +525,10 @@ async def test_unusable_action_error_is_not_under_currency_field(hass: HomeAssis
     _form, details = await _choose(hass, make_entry(hass), "action|entsoe|en1")
     res = await hass.config_entries.options.async_configure(details["flow_id"], {"unit": "MWh", "currency": "EUR"})
     assert res["errors"] == {"base": "price_source_unusable"}
+
+
+def test_core_price_domains_exist_in_home_assistant():
+    from homeassistant import components
+    from tests.discovery.test_classify import VERIFIED_CORE
+    root = Path(components.__file__).parent
+    assert all((root / domain).is_dir() for domain in VERIFIED_CORE)

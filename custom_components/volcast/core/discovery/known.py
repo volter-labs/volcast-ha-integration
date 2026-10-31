@@ -24,9 +24,10 @@ INVERTER_MANUFACTURERS: tuple[str, ...] = (
     "solax", "sofar", "foxess", "growatt", "victron", "fronius", "solaredge", "sma",
     "sigenergy",
 )
+# Domeny sprawdzone u źródła (rdzeń HA / manifest HACS); `pstryk_aio` niepotwierdzona (patrz tests/discovery).
 PRICE_PLATFORMS: frozenset[str] = frozenset({
     "nordpool", "entsoe", "tibber", "octopus_energy", "pstryk", "pstryk_aio", "energyzero",
-    "easyenergy", "amber_electric", "epex_spot", "frank_energie",
+    "easyenergy", "amberelectric", "epex_spot", "frank_energie",
 })
 # klucze wpisu konfiguracji, które mogą nieść adres dongla (wszystko inne ignorujemy)
 HOST_KEYS: tuple[str, ...] = ("host", "ip_address", "inverter_host", "address")
