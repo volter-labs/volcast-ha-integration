@@ -214,8 +214,13 @@ class Onboarding:
         if _APPLIED in pairing:
             data[CONF_PAIRING] = {_APPLIED: pairing[_APPLIED]}
         # Jednorazowy znacznik dla nasłuchu zmian wpisu: sama zmiana danych parowania nie przeładowuje wpisu.
-        self._hass.data.setdefault(PAIRING_ONLY_UPDATE_KEY, set()).add(self._entry_id)
-        self._hass.config_entries.async_update_entry(entry, data=data)
+        marker = self._hass.data.setdefault(PAIRING_ONLY_UPDATE_KEY, set())
+        marker.add(self._entry_id)
+        if not self._hass.config_entries.async_update_entry(entry, data=data):
+            marker.discard(self._entry_id)          # brak zmiany — nasłuch nie wystartuje, znacznik by został
+            return
+        # Nasłuch rusza od razu; po tej turze zużył znacznik albo już go nie zużyje (wpis w trakcie ładowania).
+        self._hass.loop.call_soon(marker.discard, self._entry_id)
 
     # ── pomocnicze ─────────────────────────────────────────────────────────
     async def _set(self, key: str, state: str, detail: str | None = None) -> None:

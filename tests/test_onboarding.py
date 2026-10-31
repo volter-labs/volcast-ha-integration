@@ -79,7 +79,7 @@ def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, p
                                      options=dict({"load_energy_entity": "sensor.house_consumption"}
                                                   if options is None else options))
     hass = SimpleNamespace(
-        data={},
+        data={}, loop=SimpleNamespace(call_soon=MagicMock()),
         config=SimpleNamespace(time_zone="Europe/Warsaw"),
         states=States({PRICE: _price_attrs()} if prices is None else prices),
         config_entries=SimpleNamespace(
@@ -852,9 +852,10 @@ def test_not_live_from_account_state_stops_without_another_progress_call():
     asyncio.run(ob.async_run())
     assert ob.stopped and client.account_calls == 1 and client.plan_calls == 0
     assert "pairing" not in entry.data
+    progress_at_stop = len(client.progress)
     after = len(client.progress)
     asyncio.run(ob.async_on_readings())
-    assert len(client.progress) == after and client.plan_calls == 0
+    assert len(client.progress) == after == progress_at_stop and client.plan_calls == 0
 
 
 def test_not_live_in_readings_task_stops():
@@ -882,3 +883,23 @@ def test_not_live_keeps_wizard_mark_and_does_not_reload():
     assert entry.data["pairing"] == {"applied_choices": {"session_id": "s1",
                                                           "choices": {"control_mode": {"value": "entities"}}}}
     assert ob._entry_id in ob._hass.data[PAIRING_ONLY_UPDATE_KEY]
+
+
+def test_not_live_marker_discarded_when_update_fires_no_listener():
+    from custom_components.volcast.const import PAIRING_ONLY_UPDATE_KEY
+    ob, client, entry = make([PollResult("not_live")], plan=OK_PLAN)
+    ob._hass.config_entries.async_update_entry = MagicMock(return_value=False)
+    asyncio.run(ob.async_run())
+    assert ob._entry_id not in ob._hass.data[PAIRING_ONLY_UPDATE_KEY]
+    ob._hass.loop.call_soon.assert_not_called()
+
+
+def test_not_live_marker_has_a_deferred_discard():
+    from custom_components.volcast.const import PAIRING_ONLY_UPDATE_KEY
+    ob, client, entry = make([PollResult("not_live")], plan=OK_PLAN)
+    ob._hass.config_entries.async_update_entry = MagicMock(return_value=True)
+    asyncio.run(ob.async_run())
+    discard, eid = ob._hass.loop.call_soon.call_args.args
+    assert eid in ob._hass.data[PAIRING_ONLY_UPDATE_KEY]
+    discard(eid)
+    assert eid not in ob._hass.data[PAIRING_ONLY_UPDATE_KEY]
