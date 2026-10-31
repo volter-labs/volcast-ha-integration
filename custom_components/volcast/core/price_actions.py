@@ -14,7 +14,8 @@ Konfiguracja źródła (opcja wpisu, patrz `const.OPT_PRICE_*_ACTION`):
 
     {"action": "nordpool.get_prices_for_date",   # jedna z SUPPORTED_ACTIONS
      "data": {...},        # dane akcji od użytkownika (wpis integracji, strefa, VAT…)
-     "currency": "NOK",    # opcjonalnie: waluta, gdy odpowiedź jej nie niesie
+     "currency": "NOK",    # waluta, gdy odpowiedź jej nie niesie (ENTSO-e: wymagana)
+     "unit": "MWh",        # ENTSO-e (HACS): wymagana skala ceny, "kWh" albo "MWh"
      "home": "..."}        # opcjonalnie (Tibber): który dom z odpowiedzi
 
 Parametry dat (`date` / `start` / `end`) dokłada ten moduł — doba RYNKU
@@ -27,6 +28,13 @@ Błąd wywołania na DZIŚ (wyjątek, przekroczony czas, pusta albo zła odpowie
 kasuje dane źródła — brak sekcji `prices`, nigdy lista częściowa ani stara.
 Błąd albo pustka na JUTRO to zwykły stan przed publikacją: zostaje pełne dziś.
 W logu jest nazwa akcji i typ błędu, nigdy dane akcji ani treść wyjątku.
+Na zewnątrz idzie tylko wynik ŚWIEŻY (`fresh_attributes`): ostatnie odświeżenie
+udane, nie starsze niż odświeżenie z zapasem i obejmujące bieżącą dobę rynku.
+
+Znane ograniczenia: doba rynku to strefa czasowa Home Assistanta (wtyczka nie zna
+strefy rynku konta). Nord Pool liczy `date` jako dobę dostawy w CET — w strefach
+EET (FI, kraje bałtyckie) para dziś+jutro zaczyna się godzinę przed lokalną
+północą i kończy godzinę przed końcem jutra; seria jest ciągła, przesunięta.
 """
 
 from __future__ import annotations
@@ -50,6 +58,11 @@ TOMORROW_RETRY_S = 3600
 #: Odstęp po pierwszym błędzie (podwajany) i jego sufit.
 BACKOFF_FIRST_S = 300
 BACKOFF_MAX_S = 3600
+#: Zapas ponad odświeżenie, w którym wynik jest jeszcze świeży (wywołanie z limitem
+#: czasu i tik zegara co minutę mieszczą się w nim z nawiązką).
+FRESH_GRACE_S = 600
+#: Skale cen, które umiemy podać adapterowi jako mianownik jednostki.
+_UNITS = {"KWH": "kWh", "MWH": "MWh"}
 #: Ogranicznik długości listy w JEDNEJ odpowiedzi (doba 5-min to 288 wpisów,
 #: prognoza Ambera kilkaset) — dłuższa lista to nie doba cen, nie budujemy jej.
 MAX_RESPONSE_ENTRIES = 1500
@@ -129,8 +142,10 @@ class _ActionSpec:
     list_key: str = "prices"
     #: Waluta stała dla integracji (odpowiedź jej nie niesie).
     currency: str | None = None
-    #: Ceny za MWh (Nord Pool) — skala przez jednostkę, jak w atrybutach encji.
-    per_mwh: bool = False
+    #: Skala ceny stała dla integracji (Nord Pool: za MWh) — przez jednostkę, jak w atrybutach encji.
+    unit: str | None = None
+    #: Integracja ma własną skalę i walutę, a odpowiedź ich nie niesie — oba pola w konfiguracji.
+    needs_unit: bool = False
 
 
 _SPECS: dict[str, _ActionSpec] = {
@@ -141,9 +156,10 @@ _SPECS: dict[str, _ActionSpec] = {
         list_key="forecasts", currency="AUD"),
     "tibber.get_prices": _ActionSpec(required=(), dates=_dates_as_datetimes, extract=_tibber),
     "nordpool.get_prices_for_date": _ActionSpec(
-        required=("config_entry", "areas", "currency"), dates=_date_param, extract=_nordpool, per_mwh=True),
+        required=("config_entry", "areas", "currency"), dates=_date_param, extract=_nordpool, unit="MWh"),
+    # HACS: skala (`energy_scale` kWh/MWh) i waluta są ustawieniem integracji, odpowiedź ich nie niesie.
     "entsoe.get_energy_prices": _ActionSpec(
-        required=("config_entry",), dates=_dates_as_datetimes, extract=_key("prices")),
+        required=("config_entry",), dates=_dates_as_datetimes, extract=_key("prices"), needs_unit=True),
     "energyzero.get_energy_prices": _ActionSpec(
         required=("config_entry", "incl_vat"), dates=_dates_as_days, extract=_key("prices"), currency="EUR"),
     "easyenergy.get_energy_usage_prices": _ActionSpec(
@@ -170,6 +186,7 @@ class PriceActionSource:
     currency: str | None = None
     home: str | None = None
     area: str | None = None
+    unit: str | None = None
 
     @property
     def domain(self) -> str:
@@ -226,7 +243,16 @@ def parse_source(raw: Any) -> PriceActionSource:
         data["currency"] = currency
     if spec.currency is not None:
         currency = spec.currency
-    return PriceActionSource(action=action, data=data, currency=currency, home=home or None, area=area)
+    unit = spec.unit
+    if spec.needs_unit:
+        raw_unit = raw.get("unit")
+        unit = _UNITS.get(raw_unit.strip().upper()) if isinstance(raw_unit, str) else None
+        if unit is None:
+            raise InvalidPriceSource("missing unit")
+        if currency is None:
+            raise InvalidPriceSource("missing currency")
+    return PriceActionSource(action=action, data=data, currency=currency, home=home or None, area=area,
+                             unit=unit)
 
 
 def build_calls(source: PriceActionSource, now: datetime, tz: tzinfo) -> list[tuple[int | None, dict]]:
@@ -292,8 +318,8 @@ def attributes_from_responses(
     attrs: dict[str, Any] = {spec.list_key: entries}
     if source.currency is not None:
         attrs["currency"] = source.currency
-        if spec.per_mwh:
-            attrs["unit_of_measurement"] = f"{source.currency}/MWh"
+        if source.unit is not None:
+            attrs["unit_of_measurement"] = f"{source.currency}/{source.unit}"
     return attrs, last_day
 
 
@@ -341,6 +367,20 @@ class PriceActionPoller:
         if self._last_day is not None and self._last_day < today:
             return age >= TOMORROW_RETRY_S          # dane nie obejmują już nawet dziś
         return local.hour >= TOMORROW_FROM_HOUR and no_tomorrow and age >= TOMORROW_RETRY_S
+
+    def fresh_attributes(self, now: datetime, tz: tzinfo) -> dict[str, Any] | None:
+        """Wynik do wysłania albo None: tylko z udanego, niedawnego odświeżenia obejmującego dziś.
+
+        Po błędzie `attributes` jest już None; tu dochodzi wynik, który się zestarzał (kolejne
+        odświeżenie nie doszło do skutku) albo nie ma już bieżącej doby (minęła północ bez jutra).
+        """
+        if self.attributes is None or self._last_ok is None or self._last_day is None:
+            return None
+        if (now - self._last_ok).total_seconds() >= REFRESH_S + FRESH_GRACE_S:
+            return None
+        if self._last_day < now.astimezone(tz).date():
+            return None
+        return self.attributes
 
     async def _async_call(self, data: dict) -> Any:
         async with asyncio.timeout(self._timeout_s):

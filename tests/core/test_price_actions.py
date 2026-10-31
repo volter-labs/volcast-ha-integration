@@ -96,7 +96,8 @@ def _intervals(attrs, sell=None, fallback=None, tz=WAW, now=None):
     {"action": "amberelectric.get_forecasts", "data": {"config_entry_id": "a1", "channel_type": "general"}},
     {"action": "tibber.get_prices"},
     {"action": "nordpool.get_prices_for_date", "data": {"config_entry": "n1", "areas": "SE3", "currency": "SEK"}},
-    {"action": "entsoe.get_energy_prices", "data": {"config_entry": "e1"}},
+    {"action": "entsoe.get_energy_prices", "data": {"config_entry": "e1"}, "currency": "EUR", "unit": "kWh"},
+    {"action": "entsoe.get_energy_prices", "data": {"config_entry": "e1"}, "currency": "EUR", "unit": "MWh"},
     {"action": "energyzero.get_energy_prices", "data": {"config_entry": "z1", "incl_vat": True}},
     {"action": "easyenergy.get_energy_usage_prices", "data": {"config_entry": "y1", "incl_vat": True}},
     {"action": "easyenergy.get_energy_return_prices", "data": {"config_entry": "y1"}},
@@ -123,6 +124,10 @@ def test_supported_actions_parse(raw):
      "data": {"config_entry": "n1", "areas": ["SE3", "SE4"], "currency": "SEK"}},  # dwie strefy
     {"action": "nordpool.get_prices_for_date", "data": {"config_entry": "n1", "areas": "SE3"}},  # bez waluty
     {"action": "energyzero.get_energy_prices", "data": {"config_entry": "z1"}},     # bez incl_vat
+    # ENTSO-e (HACS) ma własną skalę (kWh/MWh) i walutę, a odpowiedź nie niesie jednostki — obie jawnie.
+    {"action": "entsoe.get_energy_prices", "data": {"config_entry": "e1"}, "currency": "EUR"},
+    {"action": "entsoe.get_energy_prices", "data": {"config_entry": "e1"}, "currency": "EUR", "unit": "Wh"},
+    {"action": "entsoe.get_energy_prices", "data": {"config_entry": "e1"}, "unit": "MWh"},
 ])
 def test_invalid_sources_rejected(raw):
     with pytest.raises(InvalidPriceSource):
@@ -159,7 +164,8 @@ def test_per_day_calls_cover_today_and_tomorrow_in_market_time():
 
 def test_market_day_from_market_timezone_not_utc():
     late = datetime(2026, 10, 31, 23, 30, tzinfo=timezone.utc)        # już 1.11 w Warszawie
-    src = parse_source({"action": "entsoe.get_energy_prices", "data": {"config_entry": "e1"}})
+    src = parse_source({"action": "entsoe.get_energy_prices", "data": {"config_entry": "e1"}, "currency": "EUR",
+                        "unit": "kWh"})
     assert build_calls(src, late, WAW)[0][1]["start"] == "2026-11-01T00:00:00+01:00"
 
 
@@ -233,9 +239,23 @@ def test_energyzero_easyenergy_entsoe_shapes():
     paired = _intervals(buy, sell, tz=AMS)
     assert paired[0]["buy"] == 0.2 and paired[0]["sell"] == 0.05 and len(paired) == 24
 
-    e = parse_source({"action": "entsoe.get_energy_prices", "data": {"config_entry": "e"}})
+    e = parse_source({"action": "entsoe.get_energy_prices", "data": {"config_entry": "e"}, "currency": "EUR",
+                      "unit": "kWh"})
     ent, _ = attributes_from_responses(e, entsoe_response(TODAY), None, today=TODAY, tz=AMS)
-    assert _intervals(ent, fallback="EUR", tz=AMS)[0]["buy"] == 0.05
+    assert _intervals(ent, tz=AMS)[0]["buy"] == 0.05
+
+
+def test_entsoe_mwh_scaled_to_kwh_kwh_unchanged():
+    mwh = parse_source({"action": "entsoe.get_energy_prices", "data": {"config_entry": "e"}, "currency": "eur",
+                        "unit": "mwh"})
+    resp = {"prices": [{**r, "price": r["price"] * 1000} for r in entsoe_response(TODAY)["prices"]]}
+    attrs, _ = attributes_from_responses(mwh, resp, None, today=TODAY, tz=AMS)
+    out = _intervals(attrs, tz=AMS)
+    assert out[0]["buy"] == pytest.approx(0.05) and out[0]["currency"] == "EUR" and len(out) == 24
+    kwh = parse_source({"action": "entsoe.get_energy_prices", "data": {"config_entry": "e"}, "currency": "EUR",
+                        "unit": "kWh"})
+    attrs, _ = attributes_from_responses(kwh, entsoe_response(TODAY), None, today=TODAY, tz=AMS)
+    assert _intervals(attrs, tz=AMS)[0]["buy"] == 0.05
 
 
 def test_amber_general_and_feed_in_pair_as_buy_and_sell():
@@ -459,3 +479,21 @@ def test_missing_today_coverage_refreshes_hourly_even_before_13():
     _run(p.async_refresh(evening, OSLO))
     morning = datetime(2026, 11, 1, 2, 0, tzinfo=timezone.utc)        # 03:00 następnego dnia, 5 h później
     assert p.due(morning, OSLO)
+
+
+def test_fresh_attributes_only_from_a_recent_success_covering_today():
+    ha = FakeHA(_np_responder(tomorrow_published=False))
+    p = PriceActionPoller(parse_source(NP), ha)
+    assert p.fresh_attributes(NOW_WAW_10, OSLO) is None                # przed pierwszym wynikiem
+    _run(p.async_refresh(NOW_WAW_10, OSLO))
+    assert p.fresh_attributes(NOW_WAW_10 + timedelta(hours=6), OSLO) is p.attributes
+    # Wynik starszy niż odświeżenie + zapas (odświeżenie nie doszło do skutku) — już nie świeży.
+    assert p.fresh_attributes(NOW_WAW_10 + timedelta(seconds=pa.REFRESH_S + pa.FRESH_GRACE_S), OSLO) is None
+    # Dane bez dzisiejszej doby (jutro się nie pojawiło, minęła północ) — nie świeże, choć młode.
+    late = PriceActionPoller(parse_source(NP), FakeHA(_np_responder(tomorrow_published=False)))
+    _run(late.async_refresh(datetime(2026, 10, 31, 21, 0, tzinfo=timezone.utc), OSLO))      # 22:00 w Oslo
+    assert late.fresh_attributes(datetime(2026, 10, 31, 22, 30, tzinfo=timezone.utc), OSLO) is not None
+    assert late.fresh_attributes(datetime(2026, 10, 31, 23, 30, tzinfo=timezone.utc), OSLO) is None
+    ha.responder = lambda *_a: RuntimeError("down")
+    _run(p.async_refresh(NOW_WAW_10 + timedelta(hours=1), OSLO))
+    assert p.fresh_attributes(NOW_WAW_10 + timedelta(hours=1), OSLO) is None

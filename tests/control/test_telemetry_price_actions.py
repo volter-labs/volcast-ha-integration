@@ -188,3 +188,111 @@ def test_kick_error_never_blocks_flush(monkeypatch, caplog):
 
     assert len(asyncio.run(scenario()).sent) == 1
     assert "secret" not in caplog.text and "RuntimeError" in caplog.text
+
+
+# ── strona sprzedaży z akcji: bez wyniku → bez sekcji `prices` (nie kupno z `sell: null`) ──
+
+
+def _buy_entity(h):
+    h.states.set("sensor.buy", "0.9", {"currency": "PLN", "raw_today": [
+        {"start": s["start"], "end": s["end"], "value": 0.9}
+        for s in nordpool_response(date(2026, 10, 31), area="PL")["PL"]]})
+
+
+def _np_sell(_d, _s, data):
+    return nordpool_response(date.fromisoformat(data["date"]), area="PL", base=300.0)
+
+
+def test_sell_action_pending_at_start_sends_no_prices():
+    async def scenario():
+        h, cloud = goodwe_hass(), Cloud()
+        _buy_entity(h)
+        _services(h, lambda *_a: asyncio.sleep(3600))
+        s = _sender(h, cloud, {"entity_price_buy": "sensor.buy", "price_sell_action": NP})
+        await s._timer()                                            # zadanie w tle trwa
+        await s.async_stop()
+        return cloud
+
+    sent = asyncio.run(scenario()).sent
+    assert len(sent) == 1 and "prices" not in sent[0]
+
+
+def test_sell_action_failed_sends_no_prices_even_after_earlier_success():
+    t = {"now": NOW}
+
+    async def scenario():
+        h, cloud = goodwe_hass(), Cloud()
+        _buy_entity(h)
+        state = {"fail": True}
+        _services(h, lambda *a: RuntimeError("down") if state["fail"] else _np_sell(*a))
+        s = _sender(h, cloud, {"entity_price_buy": "sensor.buy", "price_sell_action": NP}, clock=lambda: t["now"])
+        await asyncio.gather(*s._kick_price_actions(t["now"]))
+        await s.async_flush()                                       # błąd od początku
+        state["fail"] = False
+        t["now"] = NOW + timedelta(minutes=5)
+        await asyncio.gather(*s._kick_price_actions(t["now"]))
+        await s.async_flush()                                       # udane → pełny blok
+        state["fail"] = True
+        t["now"] = NOW + timedelta(hours=6, minutes=5)
+        await asyncio.gather(*s._kick_price_actions(t["now"]))
+        await s.async_flush()                                       # późniejszy błąd → znowu bez cen
+        return cloud
+
+    sent = asyncio.run(scenario()).sent
+    assert ["prices" in r for r in sent] == [False, True, False]
+    assert sent[1]["prices"]["intervals"][0]["sell"] == 0.3
+
+
+def test_sell_not_configured_keeps_buy_only_with_null_sell():
+    async def scenario():
+        h, cloud = goodwe_hass(), Cloud()
+        _services(h, _np)
+        s = _sender(h, cloud, {"price_buy_action": NP})
+        await _refresh(s)
+        await s.async_flush()
+        return cloud
+
+    ivs = asyncio.run(scenario()).sent[0]["prices"]["intervals"]
+    assert ivs and all(iv["sell"] is None for iv in ivs)
+
+
+def test_both_actions_successful_send_full_block():
+    async def scenario():
+        h, cloud = goodwe_hass(), Cloud()
+        _services(h, lambda d, sv, data: _np_sell(d, sv, data) if data.get("areas") == ["PL"] and
+                  data.get("config_entry") == "sell" else _np(d, sv, data))
+        sell = {**NP, "data": {**NP["data"], "config_entry": "sell"}}
+        s = _sender(h, cloud, {"price_buy_action": NP, "price_sell_action": sell})
+        await _refresh(s)
+        await s.async_flush()
+        return cloud
+
+    ivs = asyncio.run(scenario()).sent[0]["prices"]["intervals"]
+    assert len(ivs) == 192 and ivs[0]["buy"] == 0.5 and all(iv["sell"] is not None for iv in ivs)
+
+
+def test_sell_action_with_nothing_paired_sends_no_prices():
+    # Sprzedaż z akcji na innej siatce (60 min przy kupnie 15 min) — adapter jej nie paruje; to nie
+    # „rynek bez sprzedaży”, więc kupno z samymi `sell: null` nie idzie.
+    async def scenario():
+        h, cloud = goodwe_hass(), Cloud()
+        _buy_entity(h)
+        _services(h, lambda _d, _s, data: nordpool_response(date.fromisoformat(data["date"]), area="PL",
+                                                            minutes=60, base=300.0))
+        s = _sender(h, cloud, {"entity_price_buy": "sensor.buy", "price_sell_action": NP})
+        await _refresh(s)
+        await s.async_flush()
+        return cloud
+
+    assert "prices" not in asyncio.run(scenario()).sent[0]
+
+
+def test_invalid_sell_action_sends_no_prices():
+    async def scenario():
+        h, cloud = goodwe_hass(), Cloud()
+        _buy_entity(h)
+        s = _sender(h, cloud, {"entity_price_buy": "sensor.buy", "price_sell_action": {"action": "x.y"}})
+        await s._timer()
+        return cloud
+
+    assert "prices" not in asyncio.run(scenario()).sent[0]

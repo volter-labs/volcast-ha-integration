@@ -14,7 +14,9 @@ Jedna wysyłka naraz: tik zegara w trakcie trwającej wysyłki jest pomijany.
 (`OPT_PRICE_*_ACTION`, `core/price_actions.py`). Akcję woła zadanie w tle, które zleca tik zegara
 wg harmonogramu źródła (co 6 h, po 13:00 czasu rynku co godzinę do pojawienia się jutra, po błędzie
 z odstępem rosnącym), z limitem czasu i bez drugiego wywołania w trakcie pierwszego; wysyłka czyta
-tylko gotowy wynik. Błąd akcji = brak sekcji `prices`; zatrzymanie nadawcy anuluje trwające wywołanie.
+tylko gotowy, świeży wynik. Błąd akcji = brak sekcji `prices`; zatrzymanie nadawcy anuluje trwające
+wywołanie. Akcja sprzedaży bez świeżego wyniku (także przed pierwszym, przy starcie) wstrzymuje CAŁĄ
+sekcję — samo kupno z `sell: null` idzie tylko wtedy, gdy sprzedaży nie skonfigurowano wcale.
 
 Tryb bezpośredni: wartości z odczytu rejestrów (`DirectReading.values` + tryb jako nazwa), tylko
 świeże (młodsze niż 3× okres odpytywania); ręczne mapowanie z opcji dalej wygrywa. Blok `driver`
@@ -344,7 +346,8 @@ class TelemetrySender:
         try:
             poller = PriceActionPoller(parse_source(raw), self._async_call_price_action)
         except InvalidPriceSource as err:
-            _LOGGER.warning("Volcast price action source is not usable (%s); prices are skipped", err)
+            _LOGGER.warning("Volcast price action source is not usable (%s: %s); prices are skipped",
+                            type(err).__name__, err)
             poller = None
         self._price_actions[key] = (copy.deepcopy(raw), poller)
         return True, poller
@@ -374,16 +377,20 @@ class TelemetrySender:
             started.append(task)
         return started
 
-    def _price_attributes(self, action_key: str, entity_key: str, *, require_available: bool):
-        """Atrybuty cen jednej strony: z akcji (gdy ustawiona) albo z encji; None = brak danych."""
+    def _price_attributes(self, action_key: str, entity_key: str, now: datetime, *,
+                          require_available: bool) -> tuple[bool, Mapping | None]:
+        """(czy strona idzie z akcji, atrybuty cen — None = brak danych) dla kupna albo sprzedaży.
+
+        Z akcji bierzemy tylko wynik świeży (`fresh_attributes`): ostatnie odświeżenie udane,
+        niedawne i obejmujące bieżącą dobę."""
         configured, poller = self._price_action(action_key)
         if configured:
-            return poller.attributes if poller is not None else None
+            return True, poller.fresh_attributes(now, self._tz()) if poller is not None else None
         eid = (self._entry.options.get(entity_key) or "").strip()
         st = self._hass.states.get(eid) if eid else None
         if st is None or (require_available and st.state in _UNAVAILABLE):
-            return None
-        return st.attributes
+            return False, None
+        return False, st.attributes
 
     def _raw(self, eid: str) -> RawState | None:
         st = self._hass.states.get(eid)
@@ -411,16 +418,23 @@ class TelemetrySender:
     def _prices(self, now: datetime) -> tuple[dict, str] | None:
         """Blok cen (albo None: brak encji, danych, zmiany) i jego odcisk."""
         opts = self._entry.options
-        buy = self._price_attributes(OPT_PRICE_BUY_ACTION, OPT_PRICE_BUY, require_available=True)
+        _from_action, buy = self._price_attributes(OPT_PRICE_BUY_ACTION, OPT_PRICE_BUY, now, require_available=True)
         if buy is None:
             return None
-        sell = self._price_attributes(OPT_PRICE_SELL_ACTION, OPT_PRICE_SELL, require_available=False)
+        sell_action, sell = self._price_attributes(OPT_PRICE_SELL_ACTION, OPT_PRICE_SELL, now,
+                                                   require_available=False)
+        # Sprzedaż z akcji bez świeżego wyniku (trwa pierwsze wywołanie, błąd, zła konfiguracja) to nie
+        # „rynek bez sprzedaży” — samo kupno z `sell: null` nadpisałoby w chmurze dobre ceny sprzedaży.
+        if sell_action and sell is None:
+            return None
         currency = currency_from_attributes(buy, (opts.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
         if currency is None:
             return None
         intervals = intervals_from_attributes(buy, sell, currency, self._tz(), now)
         if not intervals:
             return None
+        if sell_action and all(iv["sell"] is None for iv in intervals):
+            return None                     # wynik sprzedaży jest, ale nic się nie sparowało — to samo
         market = self._market()
         fp = fingerprint([{"market": market}, *intervals])
         stale = self._prices_at is None or (now - self._prices_at).total_seconds() >= PRICES_RESEND_S
