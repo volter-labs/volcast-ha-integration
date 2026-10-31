@@ -29,7 +29,7 @@ from .core.discovery import (Classification, ConfigEntrySnap, DeviceSnap,
 from .core.discovery.history import HISTORY_WINDOW_DAYS, days_with_statistics
 from .core.discovery.known import HOST_KEYS
 from .core.discovery.network import NetworkProbeResult, probe_udp_48899
-from .registry_compat import all_devices
+from .registry_compat import all_devices, device_config_entry_ids
 from .core.discovery.report import ERROR_TIMEOUT, REPORT_SCHEMA, build_report
 from .control.direct_search import load_profiles
 
@@ -55,17 +55,6 @@ def _identifiers(raw: Any) -> tuple[tuple[str, str], ...]:
         parts = [str(p) for p in ident] if isinstance(ident, (tuple, list)) else [str(ident)]
         out.update((parts[0], value) for value in parts[1:])
     return tuple(sorted(out))
-
-
-def _config_entry_ids(device: Any) -> tuple[str, ...]:
-    """Wpisy urządzenia w stałej kolejności; wpis główny (jeśli HA go zna) pierwszy —
-    klasyfikacja bierze pierwszy wpis jako klucz znaleziska."""
-    ids = sorted(str(x) for x in (getattr(device, "config_entries", None) or ()))
-    primary = getattr(device, "primary_config_entry", None)
-    if primary in ids:
-        ids.remove(primary)
-        ids.insert(0, primary)
-    return tuple(ids)
 
 
 def _host(data: Any) -> str | None:
@@ -218,7 +207,7 @@ class DiscoveryRunner:
                 sw_version=d.sw_version, hw_version=getattr(d, "hw_version", None),
                 serial_number=getattr(d, "serial_number", None),
                 identifiers=_identifiers(d.identifiers),
-                config_entry_ids=_config_entry_ids(d),
+                config_entry_ids=device_config_entry_ids(d),
                 slug=slugify(d.name) if d.name else None,
             )
             for d in active
