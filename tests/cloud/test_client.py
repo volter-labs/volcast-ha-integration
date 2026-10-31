@@ -322,7 +322,7 @@ def test_request_plan_result_and_failures():
         "success": True, "skipped": None, "slots_count": 24}
     for status in (409, 404, 503, aiohttp.ClientError("x")):
         s2 = FakeSession()
-        s2.add("POST", PAIR, status, {"error": "not_live"})
+        s2.add("POST", PAIR, status, {"error": "conflict"})
         assert run(PairingClient(s2, PAIR).async_request_plan(SESSION)) is None
 
 
