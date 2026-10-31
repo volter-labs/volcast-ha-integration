@@ -13,7 +13,9 @@ nigdy listy częściowej. Dziura w dobie cen jest dla plannera gorsza niż brak 
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -972,3 +974,106 @@ def test_has_usable_prices_now_falsz_gdy_seria_zaczyna_sie_po_now():
     attrs = {"raw_today": _raw(jutro_10, 24, 60)}
 
     assert has_usable_prices_now(attrs, "PLN", _WAW, _polnoc()) is False
+
+
+# ── Adapter atrybutów: kształty popularnych integracji cenowych ─────────────
+
+_FIXTURY_CEN = Path(__file__).resolve().parent.parent / "fixtures" / "prices"
+
+
+@pytest.mark.parametrize("plik", sorted(_FIXTURY_CEN.glob("*.json")), ids=lambda p: p.stem)
+def test_adapter_ksztalt_integracji(plik):
+    dane = json.loads(plik.read_text(encoding="utf-8"))
+    oczekiwane = dane["expect"]
+
+    out = intervals_from_attributes(dane["attributes"], None, oczekiwane["currency"], _WAW)
+
+    assert len(out) == oczekiwane["count"]
+    assert out[0]["startAt"] == oczekiwane["first_start"]
+    assert out[0]["minutes"] == oczekiwane["minutes"]
+    assert out[0]["buy"] == pytest.approx(oczekiwane["buy0"])
+    assert all(p["minutes"] == oczekiwane["minutes"] for p in out)
+
+
+def test_adapter_koniec_z_odstepu_startow_bez_end():
+    attrs = {
+        "All prices": [
+            {"start": f"2026-09-15T{i:02d}:00:00+02:00", "price": 0.5} for i in range(3)
+        ]
+    }
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+    assert [p["minutes"] for p in out] == [60, 60, 60]
+
+
+def test_adapter_jeden_wpis_bez_end_to_pusta_lista():
+    attrs = {"All prices": [{"start": "2026-09-15T00:00:00+02:00", "price": 0.5}]}
+    assert intervals_from_attributes(attrs, None, "PLN", _WAW) == []
+
+
+def test_adapter_nierowny_odstep_startow_bez_end_to_pusta_lista():
+    attrs = {
+        "All prices": [
+            {"start": "2026-09-15T00:00:00+02:00", "price": 0.5},
+            {"start": "2026-09-15T01:00:00+02:00", "price": 0.5},
+            {"start": "2026-09-15T03:00:00+02:00", "price": 0.5},
+        ]
+    }
+    assert intervals_from_attributes(attrs, None, "PLN", _WAW) == []
+
+
+def test_adapter_znacznik_bez_offsetu_to_pusta_lista():
+    attrs = {
+        "prices": [{"time": f"2026-09-15 {i:02d}:00:00", "price": 0.5} for i in range(3)]
+    }
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+
+
+def test_adapter_dziura_w_serii_to_pusta_lista():
+    attrs = {
+        "prices": [
+            {"time": f"2026-09-15 {i:02d}:00:00+02:00", "price": 0.5} for i in (0, 1, 3)
+        ],
+        "unit_of_measurement": "EUR/kWh",
+    }
+    # Z końcem wyprowadzonym z odstępu dziura jest niespójnym odstępem.
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+
+
+def test_adapter_wpis_bez_wartosci_to_pusta_lista():
+    attrs = {
+        "rates": [
+            {"start": "2026-09-15T00:00:00+01:00", "end": "2026-09-15T00:30:00+01:00"},
+        ]
+    }
+    assert intervals_from_attributes(attrs, None, "GBP", _WAW) == []
+
+
+def test_adapter_mwh_skalowane_jak_dla_raw():
+    attrs = {
+        "unit_of_measurement": "EUR/MWh",
+        "prices": [
+            {"time": f"2026-09-15 {i:02d}:00:00+02:00", "price": 100.0} for i in range(3)
+        ],
+    }
+    out = intervals_from_attributes(attrs, None, "EUR", _WAW)
+    assert out[0]["buy"] == pytest.approx(0.1)
+
+
+def test_adapter_raw_today_ma_pierwszenstwo_przed_prices():
+    attrs = {
+        "raw_today": _raw(_polnoc(), 3, 60, wartosc=0.4),
+        "prices": [
+            {"time": f"2026-09-15 {i:02d}:00:00+02:00", "price": 9.0} for i in range(3)
+        ],
+    }
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+    assert out[0]["buy"] == pytest.approx(0.4)
+
+
+def test_adapter_sprzedaz_z_innego_ksztaltu_paruje_po_chwili():
+    kupno = {"prices": [{"time": f"2026-09-15 {i:02d}:00:00+02:00", "price": 0.5} for i in range(3)]}
+    sprzedaz = {
+        "All prices": [{"start": f"2026-09-15T{i:02d}:00:00+02:00", "price": 0.1 + i} for i in range(3)]
+    }
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert [p["sell"] for p in out] == pytest.approx([0.1, 1.1, 2.1])

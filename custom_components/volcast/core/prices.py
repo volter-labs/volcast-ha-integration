@@ -13,11 +13,17 @@ Kontrakt (odpowiednik TS-owego `PriceInterval` po stronie chmury):
      "sell": float | None,
      "currency": "PLN"}
 
-Dwa źródła atrybutów (pierwszeństwo w tej kolejności):
+Źródła atrybutów (pierwszeństwo w tej kolejności):
 
 1. `raw_today` / `raw_tomorrow` — listy wpisów `{start, end, value}` (konwencja
    Nord Pool i pochodnych). Długość przedziału bierzemy z `end - start`.
-2. `today` / `tomorrow` — listy samych liczb plus `interval_min` (domyślnie 60);
+2. Listy wpisów innych integracji cenowych (`prices`, `prices_today` +
+   `prices_tomorrow`, `forecast`, `forecasts`, `rates`, „All prices”): start
+   z `start|start_time|time|from|timestamp|start_date`, koniec z
+   `end|end_time|till|end_date` albo z jednolitego odstępu startów, cena z
+   `value|price|per_kwh|value_inc_vat` (Zonneplan: `price_tax_included.amount`
+   w skali 1e-7). Znacznik MUSI mieć offset (`str(datetime)` ze spacją wolno).
+3. `today` / `tomorrow` — listy samych liczb plus `interval_min` (domyślnie 60);
    chwile odtwarzamy od północy dnia lokalnego.
 
 REGUŁA NADRZĘDNA: dane niespójne (inna długość przedziału, wartość nieliczbowa,
@@ -303,6 +309,112 @@ def _z_raw(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
     return wynik
 
 
+#: Klucze atrybutów z listą wpisów w kształtach innych integracji cenowych —
+#: sprawdzane w tej kolejności, PO `raw_today` (który zostaje bez zmian).
+#: Para „dziś + jutro” (ENTSO-e) jest składana w jedną serię.
+_KLUCZE_LIST_WPISOW: tuple[tuple[str, ...], ...] = (
+    ("prices",),
+    ("prices_today", "prices_tomorrow"),
+    ("forecast",),
+    ("forecasts",),
+    ("rates",),
+    ("All prices",),
+)
+_KLUCZE_STARTU = ("start", "start_time", "time", "from", "timestamp", "start_date")
+_KLUCZE_KONCA = ("end", "end_time", "till", "end_date")
+_KLUCZE_WARTOSCI = ("value", "price", "per_kwh", "value_inc_vat")
+#: Zonneplan podaje cenę jako `price_tax_included.amount` w skali 1e-7 waluty.
+_SKALA_ZONNEPLAN = 1e7
+
+
+def _pierwszy_klucz(wpis: Mapping[str, Any], klucze: Sequence[str]) -> Any:
+    for klucz in klucze:
+        if klucz in wpis:
+            return wpis[klucz]
+    return None
+
+
+def _wartosc_wpisu(wpis: Mapping[str, Any]) -> float | None:
+    """Cena z wpisu: zwykły klucz albo zagnieżdżone `price_tax_included` (Zonneplan)."""
+    surowa = _pierwszy_klucz(wpis, _KLUCZE_WARTOSCI)
+    if surowa is not None:
+        return _liczba(surowa)
+    zagniezdzona = wpis.get("price_tax_included")
+    if isinstance(zagniezdzona, Mapping):
+        cena = _liczba(zagniezdzona.get("amount"))
+        return None if cena is None else cena / _SKALA_ZONNEPLAN
+    return None
+
+
+def _z_wpisow(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
+    """Lista wpisów w dowolnym ze znanych kształtów. None = dane niespójne.
+
+    Koniec przedziału bierzemy z klucza końca; gdy go nie ma (np. Pstryk),
+    z JEDNOLITEGO odstępu między kolejnymi startami — bez końca i bez co
+    najmniej dwóch wpisów długości nie da się ustalić, więc seria odpada.
+    """
+    wpisy_ok: list[tuple[datetime, float, datetime | None]] = []
+    ma_koniec: set[bool] = set()
+    for wpis in wpisy:
+        if not isinstance(wpis, Mapping):
+            return None
+        start = _chwila(_pierwszy_klucz(wpis, _KLUCZE_STARTU))
+        cena = _wartosc_wpisu(wpis)
+        if start is None or cena is None:
+            return None
+        surowy_koniec = _pierwszy_klucz(wpis, _KLUCZE_KONCA)
+        koniec = None if surowy_koniec is None else _chwila(surowy_koniec)
+        if surowy_koniec is not None and koniec is None:
+            return None
+        ma_koniec.add(koniec is not None)
+        wpisy_ok.append((start, cena, koniec))
+    if len(ma_koniec) > 1:
+        return None  # część wpisów z końcem, część bez — niespójne
+
+    if True in ma_koniec:
+        wynik: list[_Przedzial] = []
+        dlugosci: set[int] = set()
+        for start, cena, koniec in wpisy_ok:
+            minuty = _minuty(koniec - start)  # type: ignore[operator]
+            if minuty is None:
+                return None
+            dlugosci.add(minuty)
+            if len(dlugosci) > 1:
+                return None
+            wynik.append((start, cena, minuty))
+            if len(wynik) * minuty > MAX_MINUT_SERII:
+                return None
+        return wynik
+
+    # Bez końców: odstęp z posortowanych, zdeduplikowanych startów.
+    po_chwili: dict[datetime, tuple[datetime, float]] = {}
+    for start, cena, _koniec in wpisy_ok:
+        po_chwili.setdefault(start.astimezone(timezone.utc), (start, cena))
+    chwile = sorted(po_chwili)
+    if len(chwile) < 2:
+        return None
+    minuty = _minuty(chwile[1] - chwile[0])
+    if minuty is None:
+        return None
+    if any(b - a != timedelta(minutes=minuty) for a, b in zip(chwile, chwile[1:])):
+        return None
+    if len(chwile) * minuty > MAX_MINUT_SERII:
+        return None
+    return [(po_chwili[c][0], po_chwili[c][1], minuty) for c in chwile]
+
+
+def _z_innych_integracji(attrs: Mapping[str, Any]) -> list[_Przedzial] | None | bool:
+    """Pierwszy znany klucz z listą wpisów. False = żaden nie występuje."""
+    for klucze in _KLUCZE_LIST_WPISOW:
+        listy = [attrs.get(k) for k in klucze]
+        listy = [l for l in listy if isinstance(l, (list, tuple))]
+        if not listy or not any(listy):
+            continue
+        seria = _z_wpisow([w for l in listy for w in l])
+        return None if seria is None else _ciagla(seria)
+    return False
+
+
 def _ciagla(przedzialy: list[_Przedzial]) -> list[_Przedzial] | None:
     """Uporządkuj serię i sprawdź, że NIE MA w niej dziury ani zakładki.
 
@@ -408,6 +520,9 @@ def _przedzialy(
                 return None
             seria += jutro
         return _przeskaluj(_ciagla(seria), dzielnik)
+    inne = _z_innych_integracji(attrs)
+    if inne is not False:
+        return _przeskaluj(inne, dzielnik)  # type: ignore[arg-type]
     return _przeskaluj(_z_list_liczb(attrs, tz, now), dzielnik)
 
 

@@ -1,0 +1,33 @@
+{
+  "attributes": {
+    "unit_of_measurement": "EUR/kWh",
+    "currency": "EUR",
+    "prices_today": [
+      {
+        "time": "2026-09-15 22:00:00+02:00",
+        "price": 0.27
+      },
+      {
+        "time": "2026-09-15 23:00:00+02:00",
+        "price": 0.28
+      }
+    ],
+    "prices_tomorrow": [
+      {
+        "time": "2026-09-16 00:00:00+02:00",
+        "price": 0.07
+      },
+      {
+        "time": "2026-09-16 01:00:00+02:00",
+        "price": 0.08
+      }
+    ]
+  },
+  "expect": {
+    "minutes": 60,
+    "count": 4,
+    "first_start": "2026-09-15T20:00:00Z",
+    "buy0": 0.27,
+    "currency": "EUR"
+  }
+}

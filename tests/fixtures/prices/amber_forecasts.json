@@ -1,0 +1,51 @@
+{
+  "attributes": {
+    "unit_of_measurement": "AUD/kWh",
+    "currency": "AUD",
+    "forecasts": [
+      {
+        "start_time": "2026-09-15T00:00:00+02:00",
+        "end_time": "2026-09-15T00:30:00+02:00",
+        "duration": 30,
+        "per_kwh": 0.2,
+        "spot_per_kwh": 0.1,
+        "renewables": 40.0,
+        "descriptor": "neutral"
+      },
+      {
+        "start_time": "2026-09-15T00:30:00+02:00",
+        "end_time": "2026-09-15T01:00:00+02:00",
+        "duration": 30,
+        "per_kwh": 0.21000000000000002,
+        "spot_per_kwh": 0.1,
+        "renewables": 40.0,
+        "descriptor": "neutral"
+      },
+      {
+        "start_time": "2026-09-15T01:00:00+02:00",
+        "end_time": "2026-09-15T01:30:00+02:00",
+        "duration": 30,
+        "per_kwh": 0.22,
+        "spot_per_kwh": 0.1,
+        "renewables": 40.0,
+        "descriptor": "neutral"
+      },
+      {
+        "start_time": "2026-09-15T01:30:00+02:00",
+        "end_time": "2026-09-15T02:00:00+02:00",
+        "duration": 30,
+        "per_kwh": 0.23,
+        "spot_per_kwh": 0.1,
+        "renewables": 40.0,
+        "descriptor": "neutral"
+      }
+    ]
+  },
+  "expect": {
+    "minutes": 30,
+    "count": 4,
+    "first_start": "2026-09-14T22:00:00Z",
+    "buy0": 0.2,
+    "currency": "AUD"
+  }
+}
