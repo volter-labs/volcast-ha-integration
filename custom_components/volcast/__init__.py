@@ -220,8 +220,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Nieudane złożenie samo zatrzymuje wykonawcę (`async_setup_control`).
             control = await async_setup_control(hass, entry, report=lambda: runner.report)
         except Exception as err:  # noqa: BLE001 — sterowanie nigdy nie psuje prognozy
+            # Ze śladem: sam typ wyjątku nie pozwala znaleźć przyczyny u użytkownika.
             _LOGGER.error("Volcast control could not be set up (%s) — forecast continues",
-                          type(err).__name__)
+                          type(err).__name__, exc_info=True)
             control = None
     hass.data[DOMAIN][entry.entry_id]["control"] = control
 

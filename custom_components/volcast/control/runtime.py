@@ -72,7 +72,7 @@ from ..core.control.select import InverterHint, ProfileChoice, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, resolve_entities, resolve_work_mode_entity
 from ..core.modbus.views import UNCORRELATED_KINDS
-from ..registry_compat import all_devices
+from ..registry_compat import all_devices, device_config_entry_ids
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
 from .direct import DirectConnection
@@ -590,7 +590,7 @@ def inverter_hints(hass) -> list[InverterHint]:
     for dev in all_devices(dr.async_get(hass)):
         if getattr(dev, "disabled_by", None):
             continue
-        for ce_id in sorted(getattr(dev, "config_entries", None) or ()):
+        for ce_id in sorted(device_config_entry_ids(dev)):
             ce = hass.config_entries.async_get_entry(ce_id)
             if ce is not None and ce.domain in INVERTER_DOMAINS:
                 out.append(InverterHint(ce.domain, dev.manufacturer, dev.model))
@@ -699,7 +699,13 @@ def start_work_mode_watch(hass, choice: ProfileChoice | None, rt) -> None:
             return False
         watcher = WorkModeWatcher(eid, choice.profile.work_mode.ha_neutral_options, tracker=rt.work_mode)
         watcher.prime(hass.states.get(eid))
-        rt.unsubs.append(async_track_state_change_event(hass, [eid], callback(watcher.on_event)))
+
+        # `callback` znakuje funkcję atrybutem — na metodzie związanej się nie da (AttributeError).
+        @callback
+        def _on_work_mode(event) -> None:
+            watcher.on_event(event)
+
+        rt.unsubs.append(async_track_state_change_event(hass, [eid], _on_work_mode))
         if getattr(rt, "direct", None) is None:        # w trybie bezpośrednim tracker karmi odczyt rejestru
             _start_work_mode_refresh(hass, rt, eid, choice.profile.work_mode.poll_s)
         return True

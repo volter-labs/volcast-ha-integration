@@ -31,3 +31,21 @@ def all_devices(registry: Any) -> list:
     if isinstance(devices, Mapping):
         return list(devices.values())
     return list(devices)
+
+
+def device_config_entry_ids(device: Any) -> tuple[str, ...]:
+    """Wpisy urządzenia w stałej kolejności; wpis główny (jeśli HA go zna) pierwszy —
+    klasyfikacja bierze pierwszy wpis jako klucz znaleziska.
+
+    HA 2026.10+ (`is_composite_device`): urządzenie należy do jednego wpisu, `config_entry_id`;
+    `config_entries` i `primary_config_entry` są tam wycofane i zgłaszają użycie. Starsze HA —
+    dotychczasowa ścieżka (bez ostrzeżeń)."""
+    if getattr(device, "is_composite_device", None) is False:
+        entry_id = getattr(device, "config_entry_id", None)
+        return (str(entry_id),) if entry_id else ()
+    ids = sorted(str(x) for x in (getattr(device, "config_entries", None) or ()))
+    primary = getattr(device, "primary_config_entry", None)
+    if primary in ids:
+        ids.remove(primary)
+        ids.insert(0, primary)
+    return tuple(ids)

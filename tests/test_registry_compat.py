@@ -6,7 +6,7 @@ iteracja daje urządzenia, a `.values()`/`[id]` jest wycofywane.
 from types import SimpleNamespace
 
 from custom_components.volcast.control import runtime
-from custom_components.volcast.registry_compat import all_devices
+from custom_components.volcast.registry_compat import all_devices, device_config_entry_ids
 
 
 class DeviceView:
@@ -76,3 +76,42 @@ def test_discovery_snapshot_iterates_the_new_view(monkeypatch):
     runner = discovery_runner.DiscoveryRunner(SimpleNamespace(data={}), "e1", "1.0")
     snaps, skipped = runner._snap_devices()
     assert [s.id for s in snaps] == ["d1"] and skipped == frozenset({"d2"})
+
+
+class _NewDevice:
+    """HA 2026.10+: jeden wpis; wycofane pola rzucają, żeby test złapał ich odczyt."""
+    is_composite_device = False
+
+    def __init__(self, entry_id):
+        self.config_entry_id = entry_id
+
+    @property
+    def config_entries(self):
+        raise AssertionError("deprecated config_entries read")
+
+    @property
+    def primary_config_entry(self):
+        raise AssertionError("deprecated primary_config_entry read")
+
+
+class _OldDevice:
+    def __init__(self, entries, primary=None):
+        self.config_entries = set(entries)
+        self.primary_config_entry = primary
+
+
+def test_device_entry_ids_single_entry_ha_reads_only_config_entry_id():
+    assert device_config_entry_ids(_NewDevice("e1")) == ("e1",)
+    assert device_config_entry_ids(_NewDevice(None)) == ()
+
+
+def test_device_entry_ids_older_ha_sorted_with_primary_first():
+    assert device_config_entry_ids(_OldDevice({"b", "a", "c"}, primary="c")) == ("c", "a", "b")
+    assert device_config_entry_ids(_OldDevice({"b", "a"})) == ("a", "b")
+
+
+def test_device_entry_ids_composite_device_keeps_all_entries():
+    dev = _OldDevice({"b", "a"}, primary="b")
+    dev.is_composite_device = True
+    dev.config_entry_id = "b"
+    assert device_config_entry_ids(dev) == ("b", "a")
