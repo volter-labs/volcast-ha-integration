@@ -104,7 +104,8 @@
           "control": "Omvormerbesturing",
           "details": "Installatiegegevens",
           "prices": "Energieprijzen",
-          "ev_charger": "EV-lader"
+          "ev_charger": "EV-lader",
+          "price_source": "Prijsbron uit een integratie"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "Kalibratie van de voorspelling gebruikt nu inverter-telemetrie",
         "description": "Zolang inverterregeling aan staat, kalibreert Volcast de voorspelling op basis van de productie die het van de omvormer leest. De PV-sensoren die in de voorspellingsopties zijn gekoppeld ({mapped}) worden niet meer voor de kalibratie gebruikt. Je kunt ze laten staan of leegmaken."
+      },
+      "price_source": {
+        "title": "Prijsbron",
+        "description": "Kies een prijsbron die in Home Assistant is gevonden. Voor planning zijn alleen bronnen met een prijsprognose bruikbaar.",
+        "data": {
+          "source": "Bron"
+        }
+      },
+      "price_source_details": {
+        "title": "Broninstellingen",
+        "description": "Instellingen die deze integratie nodig heeft om prijzen te leveren.",
+        "data": {
+          "area": "Biedzone (precies één)",
+          "currency": "Valuta (ISO-code, bv. EUR)",
+          "unit": "Prijseenheid",
+          "incl_vat": "Prijzen inclusief btw",
+          "home": "Woning (optioneel)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Deze prijsbron gebruiken?",
+        "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. Bevestig om hem voor planning te gebruiken."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "Nog geen omvormer gevonden. Zoek hem eerst onder Installatiegegevens.",
       "direct_in_use": "Een ander Volcast-item is al met deze omvormer verbonden.",
       "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten).",
-      "no_ev_chargers": "Er is nog geen EV-lader gevonden. Voer eerst detectie uit en controleer of de integratie van de lader is ingesteld."
+      "no_ev_chargers": "Er is nog geen EV-lader gevonden. Voer eerst detectie uit en controleer of de integratie van de lader is ingesteld.",
+      "no_price_sources": "Er is in Home Assistant geen bekende prijsintegratie gevonden. Kies een sensor bij Energieprijzen.",
+      "price_source_invalid": "De instellingen van de prijsbron zijn niet meer geldig. Begin opnieuw."
     },
     "error": {
       "prices_not_usable": "Deze sensor levert op dit moment geen volledige prijsreeks.",
@@ -339,7 +364,14 @@
       "role_required": "De statusentiteit is verplicht.",
       "entity_not_found": "De entiteit is niet gevonden. Kies een bestaande entiteit.",
       "status_without_options": "Kies een sensor of select met een lijst van mogelijke toestanden. Een aan/uit-sensor laat het laden niet zien.",
-      "unit_mismatch": "Een van de entiteiten meldt een eenheid die Volcast voor deze waarde niet kan gebruiken. Ga terug en kies een andere entiteit."
+      "unit_mismatch": "Een van de entiteiten meldt een eenheid die Volcast voor deze waarde niet kan gebruiken. Ga terug en kies een andere entiteit.",
+      "prices_current_only": "Deze sensor heeft alleen de actuele prijs. Gebruik voor planning je eigen prijslijst in de app of een integratie met prognose.",
+      "price_horizon_short": "De prognose reikt maar {hours} uur; voor planning is minstens 6 uur vooruit nodig.",
+      "price_source_unusable": "Home Assistant gaf geen bruikbare prijsreeks van deze bron.",
+      "price_sell_unusable": "De verkoopzijde van deze bron heeft geen bruikbare prijsreeks.",
+      "price_source_invalid": "Deze instellingen beschrijven geen bruikbare bron (controleer zone, eenheid en valuta).",
+      "currency_conflict": "De valuta van de bron ({source_currency}) wijkt af van de valuta bij Energieprijzen ({option_currency}). Wis een van beide.",
+      "currency_missing": "Geef de valuta op: deze bron vermeldt hem niet."
     },
     "progress": {
       "direct_search": "Het lokale netwerk wordt doorzocht op de omvormer. Dit kan tot een minuut duren."

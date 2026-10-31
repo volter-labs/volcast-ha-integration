@@ -104,7 +104,8 @@
           "control": "Sterowanie falownikiem",
           "details": "Szczegóły instalacji",
           "prices": "Ceny energii",
-          "ev_charger": "Ładowarka EV"
+          "ev_charger": "Ładowarka EV",
+          "price_source": "Źródło cen z integracji"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "Kalibracja prognozy korzysta teraz z telemetrii falownika",
         "description": "Gdy sterowanie falownikiem jest włączone, Volcast kalibruje prognozę na podstawie produkcji odczytywanej z falownika. Czujniki PV przypisane w opcjach prognozy ({mapped}) nie są już używane do kalibracji. Możesz je zostawić lub wyczyścić."
+      },
+      "price_source": {
+        "title": "Źródło cen",
+        "description": "Wybierz źródło cen wykryte w Home Assistancie. Do planowania nadają się tylko źródła z prognozą cen.",
+        "data": {
+          "source": "Źródło"
+        }
+      },
+      "price_source_details": {
+        "title": "Ustawienia źródła",
+        "description": "Ustawienia, których ta integracja potrzebuje, by podać ceny.",
+        "data": {
+          "area": "Strefa cenowa (dokładnie jedna)",
+          "currency": "Waluta (kod ISO, np. EUR)",
+          "unit": "Jednostka ceny",
+          "incl_vat": "Ceny zawierają VAT",
+          "home": "Dom (opcjonalnie)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Użyć tego źródła cen?",
+        "description": "To źródło daje prognozę cen na {hours} h do przodu. Zatwierdź, aby użyć go do planowania."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "Nie znaleziono jeszcze falownika. Najpierw wyszukaj go w Szczegółach instalacji.",
       "direct_in_use": "Inny wpis Volcast już łączy się z tym falownikiem.",
       "restore_failed": "Volcast nie mógł przywrócić falownika do ustawień sprzed sterowania, więc nic nie zostało zmienione. Spróbuj ponownie, gdy falownik będzie osiągalny, albo wyłącz przełącznik sterowania Volcast (Volcast nadal próbuje przywrócić falownik).",
-      "no_ev_chargers": "Nie znaleziono jeszcze ładowarki EV. Najpierw uruchom wykrywanie i upewnij się, że integracja ładowarki jest skonfigurowana."
+      "no_ev_chargers": "Nie znaleziono jeszcze ładowarki EV. Najpierw uruchom wykrywanie i upewnij się, że integracja ładowarki jest skonfigurowana.",
+      "no_price_sources": "Nie znaleziono w Home Assistancie żadnej znanej integracji cenowej. Wybierz czujnik w Cenach energii.",
+      "price_source_invalid": "Ustawienia źródła cen są już nieważne. Zacznij od nowa."
     },
     "error": {
       "prices_not_usable": "Ten czujnik nie dostarcza teraz kompletnej serii cen.",
@@ -339,7 +364,14 @@
       "role_required": "Encja statusu jest wymagana.",
       "entity_not_found": "Nie znaleziono encji. Wybierz istniejącą encję.",
       "status_without_options": "Wybierz sensor lub select z listą możliwych stanów. Czujnik włącz/wyłącz nie pokazuje ładowania.",
-      "unit_mismatch": "Jedna z encji podaje jednostkę, której Volcast nie może użyć dla tej wartości. Wróć i wybierz inną encję."
+      "unit_mismatch": "Jedna z encji podaje jednostkę, której Volcast nie może użyć dla tej wartości. Wróć i wybierz inną encję.",
+      "prices_current_only": "Ten czujnik ma tylko bieżącą cenę. Do planowania użyj cennika własnego w aplikacji albo integracji z prognozą.",
+      "price_horizon_short": "Prognoza sięga tylko {hours} h; do planowania potrzeba co najmniej 6 h w przód.",
+      "price_source_unusable": "Home Assistant nie zwrócił z tego źródła użytecznej serii cen.",
+      "price_sell_unusable": "Strona sprzedaży tego źródła nie ma użytecznej serii cen.",
+      "price_source_invalid": "Te ustawienia nie opisują użytecznego źródła (sprawdź strefę, jednostkę i walutę).",
+      "currency_conflict": "Waluta źródła ({source_currency}) różni się od waluty ustawionej w Cenach energii ({option_currency}). Wyczyść jedną z nich.",
+      "currency_missing": "Podaj walutę: to źródło jej nie podaje."
     },
     "progress": {
       "direct_search": "Wyszukiwanie falownika w sieci lokalnej. Może to potrwać do minuty."

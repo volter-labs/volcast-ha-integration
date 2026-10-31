@@ -104,7 +104,8 @@
           "control": "Controllo dell'inverter",
           "details": "Dettagli dell'impianto",
           "prices": "Prezzi dell'energia",
-          "ev_charger": "Caricatore EV"
+          "ev_charger": "Caricatore EV",
+          "price_source": "Fonte prezzi da un'integrazione"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "La calibrazione della previsione ora usa la telemetria dell'inverter",
         "description": "Con il controllo dell'inverter attivo, Volcast calibra la previsione in base alla produzione letta dall'inverter. I sensori FV associati nelle opzioni di previsione ({mapped}) non vengono più usati per la calibrazione. Puoi lasciarli o rimuoverli."
+      },
+      "price_source": {
+        "title": "Fonte prezzi",
+        "description": "Scegli una fonte prezzi rilevata in Home Assistant. Per la pianificazione servono solo fonti con previsione dei prezzi.",
+        "data": {
+          "source": "Fonte"
+        }
+      },
+      "price_source_details": {
+        "title": "Impostazioni della fonte",
+        "description": "Impostazioni di cui questa integrazione ha bisogno per fornire i prezzi.",
+        "data": {
+          "area": "Zona di offerta (esattamente una)",
+          "currency": "Valuta (codice ISO, es. EUR)",
+          "unit": "Unità di prezzo",
+          "incl_vat": "Prezzi IVA inclusa",
+          "home": "Casa (facoltativo)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Usare questa fonte prezzi?",
+        "description": "Questa fonte fornisce una previsione dei prezzi per le prossime {hours} h. Conferma per usarla nella pianificazione."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "Nessun inverter trovato finora. Cercalo prima in Dettagli dell'impianto.",
       "direct_in_use": "Un'altra voce Volcast si connette già a questo inverter.",
       "restore_failed": "Volcast non è riuscito a riportare l'inverter alle impostazioni precedenti al controllo, quindi non è stato modificato nulla. Riprova quando l'inverter è raggiungibile oppure spegni l'interruttore di controllo di Volcast (Volcast continua a cercare di riportare l'inverter).",
-      "no_ev_chargers": "Non è ancora stato trovato alcun caricatore EV. Esegui prima la rilevazione e verifica che l'integrazione del caricatore sia configurata."
+      "no_ev_chargers": "Non è ancora stato trovato alcun caricatore EV. Esegui prima la rilevazione e verifica che l'integrazione del caricatore sia configurata.",
+      "no_price_sources": "In Home Assistant non è stata trovata alcuna integrazione prezzi nota. Scegli un sensore in Prezzi dell'energia.",
+      "price_source_invalid": "Le impostazioni della fonte prezzi non sono più valide. Ricomincia."
     },
     "error": {
       "prices_not_usable": "Questo sensore al momento non fornisce una serie di prezzi completa.",
@@ -339,7 +364,14 @@
       "role_required": "L'entità di stato è obbligatoria.",
       "entity_not_found": "Entità non trovata. Scegli un'entità esistente.",
       "status_without_options": "Scegli un sensore o un select con un elenco di stati possibili. Un sensore acceso/spento non mostra la ricarica.",
-      "unit_mismatch": "Una delle entità riporta un’unità che Volcast non può usare per quel valore. Torna indietro e scegli un’altra entità."
+      "unit_mismatch": "Una delle entità riporta un’unità che Volcast non può usare per quel valore. Torna indietro e scegli un’altra entità.",
+      "prices_current_only": "Questo sensore ha solo il prezzo attuale. Per pianificare usa il tuo listino nell'app o un'integrazione con previsione.",
+      "price_horizon_short": "La previsione arriva solo a {hours} h; per pianificare servono almeno 6 h in avanti.",
+      "price_source_unusable": "Home Assistant non ha restituito una serie di prezzi utilizzabile da questa fonte.",
+      "price_sell_unusable": "Il lato vendita di questa fonte non ha una serie di prezzi utilizzabile.",
+      "price_source_invalid": "Queste impostazioni non descrivono una fonte utilizzabile (controlla zona, unità e valuta).",
+      "currency_conflict": "La valuta della fonte ({source_currency}) differisce da quella impostata in Prezzi dell'energia ({option_currency}). Cancellane una.",
+      "currency_missing": "Indica la valuta: questa fonte non la specifica."
     },
     "progress": {
       "direct_search": "Ricerca dell'inverter sulla rete locale. Può richiedere fino a un minuto."

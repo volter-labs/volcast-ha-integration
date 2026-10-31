@@ -96,7 +96,7 @@ def test_discovery_only_entry_has_no_options():
 
 def test_paired_entry_shows_menu_without_default():
     r = asyncio.run(flow().async_step_init())
-    assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices", "ev_charger"]}
+    assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices", "price_source", "ev_charger"]}
     c = asyncio.run(flow().async_step_control())
     # trzy pozycje, żadnej domyślnej („Bezpośrednio” sprawdza dostępność dopiero po wyborze)
     assert c == {"type": "menu", "step_id": "control",
@@ -225,7 +225,8 @@ def test_prices_saved_and_cleared():
 def test_prices_unusable_buy_entity_is_rejected():
     f = flow(prices={"sensor.nordpool": _price_attrs(), "sensor.bad": {"unit_of_measurement": "PLN/kWh"}})
     r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.bad"}))
-    assert r == {"type": "form", "step_id": "prices", "errors": {"entity_price_buy": "prices_not_usable"}}
+    # Encja z walutą i liczbą w stanie, ale bez serii: sama bieżąca cena, nie źródło planu.
+    assert r == {"type": "form", "step_id": "prices", "errors": {"entity_price_buy": "prices_current_only"}}
 
 
 def test_prices_buy_can_be_cleared():
@@ -323,7 +324,7 @@ def test_strings_have_new_steps_and_errors():
     for name in ("strings.json", "translations/en.json"):
         opts = json.loads((root / name).read_text(encoding="utf-8"))["options"]
         assert {"init", "forecast", "control", "details", "prices"} <= set(opts["step"])
-        assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices", "ev_charger"}
+        assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices", "price_source", "ev_charger"}
         assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_direct", "control_off", "entity_map"}
         assert "entity_mode_unavailable" in opts["abort"] and "prices_not_usable" in opts["error"]
         assert "currency_invalid" in opts["error"]

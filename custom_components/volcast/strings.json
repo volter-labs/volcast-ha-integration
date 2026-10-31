@@ -104,7 +104,8 @@
           "control": "Inverter control",
           "details": "Installation details",
           "prices": "Energy prices",
-          "ev_charger": "EV charger"
+          "ev_charger": "EV charger",
+          "price_source": "Price source from an integration"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "Forecast calibration now uses inverter telemetry",
         "description": "While inverter control is on, Volcast calibrates the forecast from the production it reads from the inverter. The PV sensors mapped in the Forecast options ({mapped}) are no longer used for calibration. You can leave them or clear them."
+      },
+      "price_source": {
+        "title": "Price source",
+        "description": "Pick a price source detected in Home Assistant. Only sources that provide a price forecast can be used for planning.",
+        "data": {
+          "source": "Source"
+        }
+      },
+      "price_source_details": {
+        "title": "Source settings",
+        "description": "Settings this integration needs to provide prices.",
+        "data": {
+          "area": "Bidding zone (exactly one)",
+          "currency": "Currency (ISO code, e.g. EUR)",
+          "unit": "Price unit",
+          "incl_vat": "Prices include VAT",
+          "home": "Home (optional)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Use this price source?",
+        "description": "This source provides a price forecast for {hours} h ahead. Submit to use it for planning."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "No inverter found yet. Search for it under Installation details first.",
       "direct_in_use": "Another Volcast entry already connects to this inverter.",
       "restore_failed": "Volcast could not return the inverter to its settings from before control, so nothing was changed. Try again when the inverter is reachable, or turn off the Volcast control switch (Volcast keeps trying to return the inverter).",
-      "no_ev_chargers": "No EV charger was found yet. Run discovery first and make sure the charger integration is set up."
+      "no_ev_chargers": "No EV charger was found yet. Run discovery first and make sure the charger integration is set up.",
+      "no_price_sources": "No known price integration was found in Home Assistant. Use Energy prices to pick a sensor.",
+      "price_source_invalid": "The price source settings are no longer valid. Start again."
     },
     "error": {
       "prices_not_usable": "This sensor does not provide a complete price series right now.",
@@ -339,7 +364,14 @@
       "role_required": "The status entity is required.",
       "entity_not_found": "The entity was not found. Choose an existing entity.",
       "status_without_options": "Choose a sensor or select that lists its possible states. An on/off sensor cannot show charging.",
-      "unit_mismatch": "One of the entities reports a unit Volcast cannot use for that value. Go back and choose another entity."
+      "unit_mismatch": "One of the entities reports a unit Volcast cannot use for that value. Go back and choose another entity.",
+      "prices_current_only": "This sensor only has the current price. For planning, use your own price list in the app or an integration that provides a forecast.",
+      "price_horizon_short": "The forecast covers only {hours} h; at least 6 h ahead are needed for planning.",
+      "price_source_unusable": "Home Assistant returned no usable price series from this source.",
+      "price_sell_unusable": "The sale side of this source has no usable price series.",
+      "price_source_invalid": "These settings do not describe a usable source (check the zone, unit and currency).",
+      "currency_conflict": "The source currency ({source_currency}) differs from the currency set under Energy prices ({option_currency}). Clear one of them.",
+      "currency_missing": "Enter the currency: this source does not state it."
     },
     "progress": {
       "direct_search": "Searching the local network for the inverter. This can take up to a minute."

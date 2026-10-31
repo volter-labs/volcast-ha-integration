@@ -62,12 +62,13 @@ import homeassistant.util.dt as dt_util
 from .cloud.client import SessionNotLive
 from .cloud.control_choice import APPLIED_CHOICES, WIZARD_MARK, wizard_mark
 from .const import (CONF_PAIRING, PAIRING_ONLY_UPDATE_KEY, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
-                    OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY)
+                    OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY, OPT_PRICE_SELL)
 from .control import direct_search as ds
 from .control.runtime import readings_missing
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.control.recommend import recommend
+from .core.price_setup import pair_entities
 from .core.prices import has_usable_prices_now
 
 _LOGGER = logging.getLogger(__name__)
@@ -161,6 +162,7 @@ class Onboarding:
         self._discovery_wait_s, self._choice_poll_s = discovery_wait_s, choice_poll_s
         self._steps: dict[str, tuple[str, str | None]] = {k: ("pending", None) for k in STEP_KEYS}
         self._price_candidate: str | None = None
+        self._price_sell_candidate: str | None = None      # sprzedaż sparowana z kupnem tej samej integracji
         self._plan_attempts = 0
         self._plan_retry_at: datetime | None = None
         self._dirty = False
@@ -453,10 +455,14 @@ class Onboarding:
                 and _PRICE_SOURCE.fullmatch(account.price_kind):
             await self._set("prices", "done", f"from your account ({account.price_kind})")
             return
+        pairs = {p.buy: p.sell for p in pair_entities(
+            [c for c in report.get("price_entities") or [] if isinstance(c, dict)])}
         for cand in report.get("price_entities") or []:
             eid = cand.get("entity_id") if isinstance(cand, dict) else None
             if self._usable_price(eid):
                 self._price_candidate = eid
+                sell = pairs.get(eid)
+                self._price_sell_candidate = sell if self._usable_price(sell) else None
                 platform = cand.get("platform")
                 await self._set("prices", "choice", f"{platform} ({eid})" if platform else eid)
                 return
@@ -693,6 +699,8 @@ class Onboarding:
             if source == "ha":
                 if self._price_candidate and self._usable_price(self._price_candidate):
                     patch[OPT_PRICE_BUY] = self._price_candidate
+                    if self._price_sell_candidate and self._usable_price(self._price_sell_candidate):
+                        patch[OPT_PRICE_SELL] = self._price_sell_candidate
                     applied["price_source"] = source
                     steps.append(("prices", "done", self._price_candidate))
                 else:

@@ -104,7 +104,8 @@
           "control": "Controlul invertorului",
           "details": "Detalii instalație",
           "prices": "Prețurile energiei",
-          "ev_charger": "Încărcător EV"
+          "ev_charger": "Încărcător EV",
+          "price_source": "Sursă de prețuri dintr-o integrare"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "Calibrarea prognozei folosește acum telemetria invertorului",
         "description": "Cât timp controlul invertorului este activat, Volcast calibrează prognoza pe baza producției citite de la invertor. Senzorii FV asociați în opțiunile prognozei ({mapped}) nu mai sunt folosiți pentru calibrare. Îi poți lăsa sau șterge."
+      },
+      "price_source": {
+        "title": "Sursă de prețuri",
+        "description": "Alege o sursă de prețuri detectată în Home Assistant. Pentru planificare se potrivesc doar sursele cu prognoză de prețuri.",
+        "data": {
+          "source": "Sursă"
+        }
+      },
+      "price_source_details": {
+        "title": "Setările sursei",
+        "description": "Setări de care această integrare are nevoie pentru a furniza prețuri.",
+        "data": {
+          "area": "Zonă de ofertare (exact una)",
+          "currency": "Monedă (cod ISO, de ex. EUR)",
+          "unit": "Unitatea prețului",
+          "incl_vat": "Prețuri cu TVA inclus",
+          "home": "Locuință (opțional)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Folosești această sursă de prețuri?",
+        "description": "Această sursă oferă o prognoză de prețuri pentru următoarele {hours} h. Confirmă pentru a o folosi la planificare."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "Nu a fost găsit încă niciun invertor. Caută-l mai întâi în Detalii instalație.",
       "direct_in_use": "O altă intrare Volcast se conectează deja la acest invertor.",
       "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul).",
-      "no_ev_chargers": "Încă nu a fost găsit niciun încărcător EV. Rulează mai întâi detectarea și verifică dacă integrarea încărcătorului este configurată."
+      "no_ev_chargers": "Încă nu a fost găsit niciun încărcător EV. Rulează mai întâi detectarea și verifică dacă integrarea încărcătorului este configurată.",
+      "no_price_sources": "Nu a fost găsită nicio integrare de prețuri cunoscută în Home Assistant. Alege un senzor la Prețurile energiei.",
+      "price_source_invalid": "Setările sursei de prețuri nu mai sunt valide. Începe din nou."
     },
     "error": {
       "prices_not_usable": "Acest senzor nu oferă acum o serie completă de prețuri.",
@@ -339,7 +364,14 @@
       "role_required": "Entitatea de stare este obligatorie.",
       "entity_not_found": "Entitatea nu a fost găsită. Alege o entitate existentă.",
       "status_without_options": "Alegeți un senzor sau un select cu o listă de stări posibile. Un senzor pornit/oprit nu arată încărcarea.",
-      "unit_mismatch": "Una dintre entități raportează o unitate pe care Volcast nu o poate folosi pentru această valoare. Reveniți și alegeți altă entitate."
+      "unit_mismatch": "Una dintre entități raportează o unitate pe care Volcast nu o poate folosi pentru această valoare. Reveniți și alegeți altă entitate.",
+      "prices_current_only": "Acest senzor are doar prețul curent. Pentru planificare, folosește lista ta de prețuri din aplicație sau o integrare cu prognoză.",
+      "price_horizon_short": "Prognoza acoperă doar {hours} h; pentru planificare sunt necesare cel puțin 6 h înainte.",
+      "price_source_unusable": "Home Assistant nu a returnat o serie de prețuri utilizabilă din această sursă.",
+      "price_sell_unusable": "Partea de vânzare a acestei surse nu are o serie de prețuri utilizabilă.",
+      "price_source_invalid": "Aceste setări nu descriu o sursă utilizabilă (verifică zona, unitatea și moneda).",
+      "currency_conflict": "Moneda sursei ({source_currency}) diferă de cea setată la Prețurile energiei ({option_currency}). Șterge una dintre ele.",
+      "currency_missing": "Indică moneda: această sursă nu o specifică."
     },
     "progress": {
       "direct_search": "Se caută invertorul în rețeaua locală. Poate dura până la un minut."

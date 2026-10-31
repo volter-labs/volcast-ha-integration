@@ -104,7 +104,8 @@
           "control": "Pilotage de l'onduleur",
           "details": "Détails de l'installation",
           "prices": "Prix de l'énergie",
-          "ev_charger": "Borne de recharge VE"
+          "ev_charger": "Borne de recharge VE",
+          "price_source": "Source de prix d'une intégration"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "La calibration des prévisions utilise désormais la télémétrie de l'onduleur",
         "description": "Lorsque le contrôle de l'onduleur est activé, Volcast calibre la prévision à partir de la production lue sur l'onduleur. Les capteurs PV associés dans les options de prévision ({mapped}) ne servent plus à la calibration. Vous pouvez les conserver ou les vider."
+      },
+      "price_source": {
+        "title": "Source de prix",
+        "description": "Choisissez une source de prix détectée dans Home Assistant. Seules les sources avec prévision de prix servent à la planification.",
+        "data": {
+          "source": "Source"
+        }
+      },
+      "price_source_details": {
+        "title": "Réglages de la source",
+        "description": "Réglages dont cette intégration a besoin pour fournir les prix.",
+        "data": {
+          "area": "Zone d'enchères (exactement une)",
+          "currency": "Devise (code ISO, p. ex. EUR)",
+          "unit": "Unité de prix",
+          "incl_vat": "Prix TVA comprise",
+          "home": "Foyer (facultatif)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Utiliser cette source de prix ?",
+        "description": "Cette source fournit une prévision de prix sur {hours} h. Validez pour l'utiliser dans la planification."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "Aucun onduleur trouvé pour l'instant. Recherchez-le d'abord dans Détails de l'installation.",
       "direct_in_use": "Une autre entrée Volcast se connecte déjà à cet onduleur.",
       "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état).",
-      "no_ev_chargers": "Aucune borne de recharge VE n'a encore été trouvée. Lancez d'abord la détection et vérifiez que l'intégration de la borne est configurée."
+      "no_ev_chargers": "Aucune borne de recharge VE n'a encore été trouvée. Lancez d'abord la détection et vérifiez que l'intégration de la borne est configurée.",
+      "no_price_sources": "Aucune intégration de prix connue n'a été trouvée dans Home Assistant. Choisissez un capteur dans Prix de l'énergie.",
+      "price_source_invalid": "Les réglages de la source de prix ne sont plus valides. Recommencez."
     },
     "error": {
       "prices_not_usable": "Ce capteur ne fournit pas de série de prix complète pour le moment.",
@@ -339,7 +364,14 @@
       "role_required": "L'entité d'état est obligatoire.",
       "entity_not_found": "L'entité est introuvable. Choisissez une entité existante.",
       "status_without_options": "Choisissez un capteur ou un select avec une liste d'états possibles. Un capteur marche/arrêt n'indique pas la charge.",
-      "unit_mismatch": "L’une des entités indique une unité que Volcast ne peut pas utiliser pour cette valeur. Revenez en arrière et choisissez une autre entité."
+      "unit_mismatch": "L’une des entités indique une unité que Volcast ne peut pas utiliser pour cette valeur. Revenez en arrière et choisissez une autre entité.",
+      "prices_current_only": "Ce capteur n'a que le prix actuel. Pour planifier, utilisez votre propre grille tarifaire dans l'app ou une intégration avec prévision.",
+      "price_horizon_short": "La prévision ne couvre que {hours} h ; la planification exige au moins 6 h d'avance.",
+      "price_source_unusable": "Home Assistant n'a renvoyé aucune série de prix exploitable pour cette source.",
+      "price_sell_unusable": "Le côté vente de cette source n'a pas de série de prix exploitable.",
+      "price_source_invalid": "Ces réglages ne décrivent pas une source exploitable (vérifiez la zone, l'unité et la devise).",
+      "currency_conflict": "La devise de la source ({source_currency}) diffère de celle définie dans Prix de l'énergie ({option_currency}). Effacez l'une des deux.",
+      "currency_missing": "Indiquez la devise : cette source ne la précise pas."
     },
     "progress": {
       "direct_search": "Recherche de l'onduleur sur le réseau local. Cela peut prendre jusqu'à une minute."

@@ -104,7 +104,8 @@
           "control": "Řízení střídače",
           "details": "Podrobnosti o instalaci",
           "prices": "Ceny energie",
-          "ev_charger": "Nabíječka EV"
+          "ev_charger": "Nabíječka EV",
+          "price_source": "Zdroj cen z integrace"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "Kalibrace předpovědi nyní využívá telemetrii střídače",
         "description": "Pokud je řízení střídače zapnuté, Volcast kalibruje předpověď podle výroby, kterou čte ze střídače. Fotovoltaické senzory přiřazené v možnostech předpovědi ({mapped}) se pro kalibraci již nepoužívají. Můžete je ponechat nebo vymazat."
+      },
+      "price_source": {
+        "title": "Zdroj cen",
+        "description": "Vyberte zdroj cen zjištěný v Home Assistantu. Pro plánování se hodí jen zdroje s předpovědí cen.",
+        "data": {
+          "source": "Zdroj"
+        }
+      },
+      "price_source_details": {
+        "title": "Nastavení zdroje",
+        "description": "Nastavení, která tato integrace potřebuje k poskytnutí cen.",
+        "data": {
+          "area": "Obchodní zóna (právě jedna)",
+          "currency": "Měna (kód ISO, např. EUR)",
+          "unit": "Jednotka ceny",
+          "incl_vat": "Ceny včetně DPH",
+          "home": "Domácnost (volitelné)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Použít tento zdroj cen?",
+        "description": "Tento zdroj poskytuje předpověď cen na {hours} h dopředu. Potvrďte a použije se pro plánování."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "Zatím nebyl nalezen žádný střídač. Nejprve ho vyhledejte v Podrobnostech o instalaci.",
       "direct_in_use": "K tomuto střídači se již připojuje jiný záznam Volcast.",
       "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit).",
-      "no_ev_chargers": "Nabíječka EV zatím nebyla nalezena. Nejprve spusťte zjišťování a ověřte, že je integrace nabíječky nastavená."
+      "no_ev_chargers": "Nabíječka EV zatím nebyla nalezena. Nejprve spusťte zjišťování a ověřte, že je integrace nabíječky nastavená.",
+      "no_price_sources": "V Home Assistantu nebyla nalezena žádná známá cenová integrace. Vyberte senzor v Cenách energie.",
+      "price_source_invalid": "Nastavení zdroje cen už neplatí. Začněte znovu."
     },
     "error": {
       "prices_not_usable": "Tento senzor teď neposkytuje úplnou cenovou řadu.",
@@ -339,7 +364,14 @@
       "role_required": "Entita stavu je povinná.",
       "entity_not_found": "Entita nebyla nalezena. Vyberte existující entitu.",
       "status_without_options": "Vyberte senzor nebo select se seznamem možných stavů. Senzor zapnuto/vypnuto nabíjení neukazuje.",
-      "unit_mismatch": "Jedna z entit udává jednotku, kterou Volcast pro tuto hodnotu nemůže použít. Vraťte se a vyberte jinou entitu."
+      "unit_mismatch": "Jedna z entit udává jednotku, kterou Volcast pro tuto hodnotu nemůže použít. Vraťte se a vyberte jinou entitu.",
+      "prices_current_only": "Tento senzor má jen aktuální cenu. Pro plánování použijte vlastní ceník v aplikaci nebo integraci s předpovědí.",
+      "price_horizon_short": "Předpověď sahá jen {hours} h; pro plánování je potřeba alespoň 6 h dopředu.",
+      "price_source_unusable": "Home Assistant z tohoto zdroje nevrátil použitelnou řadu cen.",
+      "price_sell_unusable": "Prodejní strana tohoto zdroje nemá použitelnou řadu cen.",
+      "price_source_invalid": "Toto nastavení nepopisuje použitelný zdroj (zkontrolujte zónu, jednotku a měnu).",
+      "currency_conflict": "Měna zdroje ({source_currency}) se liší od měny nastavené v Cenách energie ({option_currency}). Jednu z nich vymažte.",
+      "currency_missing": "Zadejte měnu: tento zdroj ji neuvádí."
     },
     "progress": {
       "direct_search": "Vyhledávání střídače v místní síti. Může to trvat až minutu."

@@ -104,7 +104,8 @@
           "control": "Wechselrichter-Steuerung",
           "details": "Anlagendetails",
           "prices": "Energiepreise",
-          "ev_charger": "E-Auto-Ladegerät"
+          "ev_charger": "E-Auto-Ladegerät",
+          "price_source": "Preisquelle aus einer Integration"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "Kalibrierung der Prognose nutzt jetzt Wechselrichter-Telemetrie",
         "description": "Solange die Wechselrichtersteuerung aktiv ist, kalibriert Volcast die Prognose anhand der Produktion, die es vom Wechselrichter liest. Die in den Prognoseoptionen zugeordneten PV-Sensoren ({mapped}) werden für die Kalibrierung nicht mehr verwendet. Du kannst sie belassen oder leeren."
+      },
+      "price_source": {
+        "title": "Preisquelle",
+        "description": "Wähle eine in Home Assistant erkannte Preisquelle. Für die Planung eignen sich nur Quellen mit Preisprognose.",
+        "data": {
+          "source": "Quelle"
+        }
+      },
+      "price_source_details": {
+        "title": "Quelleneinstellungen",
+        "description": "Einstellungen, die diese Integration für die Preise braucht.",
+        "data": {
+          "area": "Gebotszone (genau eine)",
+          "currency": "Währung (ISO-Code, z. B. EUR)",
+          "unit": "Preiseinheit",
+          "incl_vat": "Preise inklusive MwSt.",
+          "home": "Haus (optional)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Diese Preisquelle verwenden?",
+        "description": "Diese Quelle liefert eine Preisprognose für {hours} h im Voraus. Bestätige, um sie für die Planung zu nutzen."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "Noch kein Wechselrichter gefunden. Suche ihn zuerst unter Anlagendetails.",
       "direct_in_use": "Ein anderer Volcast-Eintrag ist bereits mit diesem Wechselrichter verbunden.",
       "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen).",
-      "no_ev_chargers": "Es wurde noch kein E-Auto-Ladegerät gefunden. Starte zuerst die Erkennung und stelle sicher, dass die Integration des Ladegeräts eingerichtet ist."
+      "no_ev_chargers": "Es wurde noch kein E-Auto-Ladegerät gefunden. Starte zuerst die Erkennung und stelle sicher, dass die Integration des Ladegeräts eingerichtet ist.",
+      "no_price_sources": "In Home Assistant wurde keine bekannte Preisintegration gefunden. Wähle unter Energiepreise einen Sensor.",
+      "price_source_invalid": "Die Einstellungen der Preisquelle sind nicht mehr gültig. Beginne neu."
     },
     "error": {
       "prices_not_usable": "Dieser Sensor liefert derzeit keine vollständige Preisreihe.",
@@ -339,7 +364,14 @@
       "role_required": "Die Status-Entität ist erforderlich.",
       "entity_not_found": "Die Entität wurde nicht gefunden. Wähle eine vorhandene Entität.",
       "status_without_options": "Wähle einen Sensor oder ein Select mit einer Liste möglicher Zustände. Ein Ein/Aus-Sensor zeigt das Laden nicht an.",
-      "unit_mismatch": "Eine der Entitäten meldet eine Einheit, die Volcast für diesen Wert nicht verwenden kann. Gehe zurück und wähle eine andere Entität."
+      "unit_mismatch": "Eine der Entitäten meldet eine Einheit, die Volcast für diesen Wert nicht verwenden kann. Gehe zurück und wähle eine andere Entität.",
+      "prices_current_only": "Dieser Sensor hat nur den aktuellen Preis. Nutze für die Planung eine eigene Preisliste in der App oder eine Integration mit Prognose.",
+      "price_horizon_short": "Die Prognose reicht nur {hours} h; für die Planung sind mindestens 6 h im Voraus nötig.",
+      "price_source_unusable": "Home Assistant hat aus dieser Quelle keine brauchbare Preisreihe geliefert.",
+      "price_sell_unusable": "Die Verkaufsseite dieser Quelle hat keine brauchbare Preisreihe.",
+      "price_source_invalid": "Diese Einstellungen beschreiben keine brauchbare Quelle (Zone, Einheit und Währung prüfen).",
+      "currency_conflict": "Die Währung der Quelle ({source_currency}) weicht von der unter Energiepreise gesetzten ({option_currency}) ab. Leere eine von beiden.",
+      "currency_missing": "Gib die Währung an: Diese Quelle nennt sie nicht."
     },
     "progress": {
       "direct_search": "Das lokale Netzwerk wird nach dem Wechselrichter durchsucht. Das kann bis zu einer Minute dauern."

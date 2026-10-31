@@ -186,6 +186,16 @@ def test_price_choice_ha_uses_first_usable_candidate():
     assert last(client)["prices"] == {"key": "prices", "state": "done", "detail": PRICE}
 
 
+def test_price_choice_ha_also_applies_paired_sell_entity():
+    buy, sell = "sensor.octopus_energy_import_rate", "sensor.octopus_energy_export_rate"
+    report = dict(REPORT, price_entities=[{"entity_id": buy, "platform": "octopus_energy"},
+                                          {"entity_id": sell, "platform": "octopus_energy"}])
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN, report=report,
+                             prices={buy: _price_attrs(), sell: _price_attrs()})
+    asyncio.run(ob.async_run())
+    assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == sell
+
+
 def test_unusable_price_entity_is_not_offered():
     # Encja ceny jest, ale jej atrybuty nie dają dziś pełnej serii — nie proponujemy jej.
     ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,

@@ -104,7 +104,8 @@
           "control": "Riadenie striedača",
           "details": "Podrobnosti o inštalácii",
           "prices": "Ceny energie",
-          "ev_charger": "Nabíjačka EV"
+          "ev_charger": "Nabíjačka EV",
+          "price_source": "Zdroj cien z integrácie"
         }
       },
       "forecast": {
@@ -314,6 +315,28 @@
       "control_telemetry_info": {
         "title": "Kalibrácia predpovede teraz využíva telemetriu invertora",
         "description": "Keď je riadenie invertora zapnuté, Volcast kalibruje predpoveď podľa výroby, ktorú číta z invertora. Fotovoltaické senzory priradené v možnostiach predpovede ({mapped}) sa na kalibráciu už nepoužívajú. Môžete ich ponechať alebo vymazať."
+      },
+      "price_source": {
+        "title": "Zdroj cien",
+        "description": "Vyberte zdroj cien zistený v Home Assistante. Na plánovanie sa hodia len zdroje s predpoveďou cien.",
+        "data": {
+          "source": "Zdroj"
+        }
+      },
+      "price_source_details": {
+        "title": "Nastavenia zdroja",
+        "description": "Nastavenia, ktoré táto integrácia potrebuje na poskytnutie cien.",
+        "data": {
+          "area": "Obchodná zóna (práve jedna)",
+          "currency": "Mena (kód ISO, napr. EUR)",
+          "unit": "Jednotka ceny",
+          "incl_vat": "Ceny vrátane DPH",
+          "home": "Domácnosť (voliteľné)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Použiť tento zdroj cien?",
+        "description": "Tento zdroj poskytuje predpoveď cien na {hours} h dopredu. Potvrďte a použije sa na plánovanie."
       }
     },
     "abort": {
@@ -323,7 +346,9 @@
       "direct_not_found": "Zatiaľ sa nenašiel žiadny striedač. Najprv ho vyhľadajte v Podrobnostiach o inštalácii.",
       "direct_in_use": "K tomuto striedaču sa už pripája iný záznam Volcast.",
       "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť).",
-      "no_ev_chargers": "Nabíjačka EV zatiaľ nebola nájdená. Najprv spustite zisťovanie a overte, že je integrácia nabíjačky nastavená."
+      "no_ev_chargers": "Nabíjačka EV zatiaľ nebola nájdená. Najprv spustite zisťovanie a overte, že je integrácia nabíjačky nastavená.",
+      "no_price_sources": "V Home Assistante sa nenašla žiadna známa cenová integrácia. Vyberte senzor v Cenách energie.",
+      "price_source_invalid": "Nastavenia zdroja cien už neplatia. Začnite odznova."
     },
     "error": {
       "prices_not_usable": "Tento senzor teraz neposkytuje úplný cenový rad.",
@@ -339,7 +364,14 @@
       "role_required": "Entita stavu je povinná.",
       "entity_not_found": "Entita sa nenašla. Vyberte existujúcu entitu.",
       "status_without_options": "Vyberte senzor alebo select so zoznamom možných stavov. Senzor zapnuté/vypnuté nabíjanie neukazuje.",
-      "unit_mismatch": "Jedna z entít udáva jednotku, ktorú Volcast pre túto hodnotu nemôže použiť. Vráťte sa a vyberte inú entitu."
+      "unit_mismatch": "Jedna z entít udáva jednotku, ktorú Volcast pre túto hodnotu nemôže použiť. Vráťte sa a vyberte inú entitu.",
+      "prices_current_only": "Tento senzor má len aktuálnu cenu. Na plánovanie použite vlastný cenník v aplikácii alebo integráciu s predpoveďou.",
+      "price_horizon_short": "Predpoveď siaha len {hours} h; na plánovanie treba aspoň 6 h dopredu.",
+      "price_source_unusable": "Home Assistant z tohto zdroja nevrátil použiteľný rad cien.",
+      "price_sell_unusable": "Predajná strana tohto zdroja nemá použiteľný rad cien.",
+      "price_source_invalid": "Tieto nastavenia nepopisujú použiteľný zdroj (skontrolujte zónu, jednotku a menu).",
+      "currency_conflict": "Mena zdroja ({source_currency}) sa líši od meny nastavenej v Cenách energie ({option_currency}). Jednu z nich vymažte.",
+      "currency_missing": "Zadajte menu: tento zdroj ju neuvádza."
     },
     "progress": {
       "direct_search": "Vyhľadávanie striedača v miestnej sieti. Môže to trvať až minútu."
