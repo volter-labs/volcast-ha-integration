@@ -1168,3 +1168,28 @@ def test_adapter_zonneplan_kwota_niecalkowita_to_pusta_lista():
         ]
     }
     assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+
+
+def test_adapter_sprzedaz_72h_od_wczoraj_paruje_sie_dla_dzis_i_jutro():
+    kupno = {"prices_today": _wpisy_godzinowe(_polnoc(2026, 9, 15), 24, 0.5),
+             "prices_tomorrow": _wpisy_godzinowe(_polnoc(2026, 9, 16), 24, 0.5)}
+    sprzedaz = {"prices": _wpisy_godzinowe(_polnoc(2026, 9, 14), 72, 0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "EUR", _WAW)
+    assert len(out) == 48
+    assert all(p["sell"] == pytest.approx(0.1) for p in out)
+
+
+def test_adapter_sprzedaz_z_jutrem_przy_kupnie_tylko_na_dzis_zachowana():
+    kupno = {"prices": _wpisy_godzinowe(_polnoc(2026, 9, 15), 24, 0.5)}
+    sprzedaz = {"prices": _wpisy_godzinowe(_polnoc(2026, 9, 15), 48, 0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "EUR", _WAW)
+    assert len(out) == 24
+    assert all(p["sell"] == pytest.approx(0.1) for p in out)
+
+
+def test_adapter_sprzedaz_przesunieta_faza_to_none():
+    kupno = {"raw_today": _raw(_polnoc(), 4, 30, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc() + timedelta(minutes=15), 4, 30, wartosc=0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 4
+    assert all(p["sell"] is None for p in out)

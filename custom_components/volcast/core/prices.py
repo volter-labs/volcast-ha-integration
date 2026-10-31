@@ -692,13 +692,15 @@ def intervals_from_attributes(
     # całą sprzedaż do None — nigdy tylko „brak informacji" (patrz `_sprzedaz_dopuszczalna`).
     if attrs_sell is not None and _sprzedaz_dopuszczalna(attrs_sell, waluta):
         serie_sprzedazy = _przedzialy(attrs_sell, tz, now) or []
-        starty_kupna = {start.astimezone(timezone.utc) for start, _c, _m in zakup}
         minuty_kupna = zakup[0][2]
-        # Siatka sprzedaży musi pokrywać się z siatką kupna (ta sama długość,
-        # starty w zbiorze startów kupna). Inaczej parowanie po chwili dałoby
-        # sprzedaż CZĘŚCIOWĄ (np. co czwarty kwadrans) — woli się brak sprzedaży.
+        krok_s = minuty_kupna * 60
+        faza_kupna = int(zakup[0][0].timestamp()) % krok_s
+        # Siatka sprzedaży musi mieć TĘ SAMĄ długość przedziału i TĘ SAMĄ fazę
+        # (w UTC) co kupno. Inaczej parowanie po chwili dałoby sprzedaż
+        # CZĘŚCIOWĄ (np. co czwarty kwadrans) — woli się brak sprzedaży.
+        # Chwile sprzedaży poza zakresem kupna po prostu się nie parują.
         siatka_zgodna = all(
-            minuty == minuty_kupna and start.astimezone(timezone.utc) in starty_kupna
+            minuty == minuty_kupna and int(start.timestamp()) % krok_s == faza_kupna
             for start, _c, minuty in serie_sprzedazy
         )
         for start, cena, _minuty in serie_sprzedazy if siatka_zgodna else []:
