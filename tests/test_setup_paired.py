@@ -704,3 +704,18 @@ def test_update_listener_freezes_old_executor_before_restore(monkeypatch):
     assert hass.states.get(E["mode"]).state == "auto" and not rt.executor.owned   # powrót zrobiony
     assert order == [("reload", 0)]                                                # po powrocie: zero zapisów
     assert unsubbed == [True] and rt.unsubs == []
+
+
+@pytest.mark.asyncio
+async def test_update_listener_skips_reload_for_pairing_only_update():
+    import custom_components.volcast as integ
+    from custom_components.volcast.const import PAIRING_ONLY_UPDATE_KEY
+    rt = fake_runtime()
+    rt.options_at_setup = {"control_mode": "entities"}
+    hass, entry, order = _listener_hass(rt, {"control_mode": "entities"})
+    rt.executor = OwnedExec(order)
+    hass.data[PAIRING_ONLY_UPDATE_KEY] = {entry.entry_id}
+    await integ._async_update_listener(hass, entry)
+    assert order == [] and not hass.data[PAIRING_ONLY_UPDATE_KEY]      # bez reload i bez restore/neutral
+    await integ._async_update_listener(hass, entry)                    # znacznik jednorazowy
+    assert order == ["reload"]

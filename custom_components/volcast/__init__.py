@@ -18,6 +18,7 @@ from homeassistant.helpers.event import async_track_time_change
 
 from .cloud.client import Backend
 from .const import (
+    PAIRING_ONLY_UPDATE_KEY,
     ATTR_DATE,
     CONF_API_URL,
     CONF_BACKEND,
@@ -597,6 +598,10 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     przez OBECNEGO wykonawcę. Zmiana samego czujnika zużycia domu nie przeładowuje
     wpisu — uruchamia tylko jednorazowy import historii.
     """
+    pairing_only = hass.data.get(PAIRING_ONLY_UPDATE_KEY)
+    if pairing_only and entry.entry_id in pairing_only:
+        pairing_only.discard(entry.entry_id)
+        return                      # reset parowania w aplikacji: bez przeładowania i bez zapisu neutralnego
     control = (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
     if control is not None:
         old, new = control.options_at_setup, dict(entry.options)

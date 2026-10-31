@@ -253,7 +253,7 @@ def test_progress_body_and_result():
     assert s.calls[0]["json"] == {"action": "progress", "session_id": SID, "poll_token": POLL, "steps": steps}
     for status in (409, 400, 404, aiohttp.ClientError("x")):
         s2 = FakeSession()
-        s2.add("POST", PAIR, status, {"error": "invalid_request"})
+        s2.add("POST", PAIR, status, {"error": "conflict" if status == 409 else "invalid_request"})
         assert run(PairingClient(s2, PAIR).async_progress(SESSION, steps)) is False
 
 

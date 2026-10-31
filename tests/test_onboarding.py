@@ -79,6 +79,7 @@ def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, p
                                      options=dict({"load_energy_entity": "sensor.house_consumption"}
                                                   if options is None else options))
     hass = SimpleNamespace(
+        data={},
         config=SimpleNamespace(time_zone="Europe/Warsaw"),
         states=States({PRICE: _price_attrs()} if prices is None else prices),
         config_entries=SimpleNamespace(
@@ -842,3 +843,42 @@ def test_not_live_from_plan_request_stops():
     client.async_request_plan = plan
     asyncio.run(ob.async_run())
     assert client.plan_calls == 1 and ob.stopped and "pairing" not in entry.data
+
+
+def test_not_live_from_account_state_stops_without_another_progress_call():
+    from custom_components.volcast.cloud.client import SessionNotLive
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    client.account = SessionNotLive()
+    asyncio.run(ob.async_run())
+    assert ob.stopped and client.account_calls == 1 and client.plan_calls == 0
+    assert "pairing" not in entry.data
+    after = len(client.progress)
+    asyncio.run(ob.async_on_readings())
+    assert len(client.progress) == after and client.plan_calls == 0
+
+
+def test_not_live_in_readings_task_stops():
+    from custom_components.volcast.cloud.client import SessionNotLive
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    calls = []
+
+    async def plan(s):
+        calls.append(1)
+        raise SessionNotLive
+    client.async_request_plan = plan
+    ob.first_plan_outcome = "failed:planner_failed"
+    asyncio.run(ob.async_on_readings())
+    assert calls == [1] and ob.stopped and "pairing" not in entry.data
+    asyncio.run(ob.async_on_readings())
+    assert calls == [1]
+
+
+def test_not_live_keeps_wizard_mark_and_does_not_reload():
+    from custom_components.volcast.const import PAIRING_ONLY_UPDATE_KEY
+    ob, client, entry = make([PollResult("not_live")], plan=OK_PLAN)
+    entry.data["pairing"] = {"session_id": "s1", "poll_token": "p", "live_until": "x", "url": "u",
+                             "applied_choices": {"session_id": "s1", "choices": {"control_mode": {"value": "entities"}}}}
+    asyncio.run(ob.async_run())
+    assert entry.data["pairing"] == {"applied_choices": {"session_id": "s1",
+                                                          "choices": {"control_mode": {"value": "entities"}}}}
+    assert ob._entry_id in ob._hass.data[PAIRING_ONLY_UPDATE_KEY]
