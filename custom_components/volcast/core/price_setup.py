@@ -22,7 +22,14 @@ from .prices import currency_from_attributes, has_usable_prices_now, intervals_f
 KNOWN_PLATFORMS = frozenset({"amberelectric", "octopus_energy", "pstryk", "entsoe", "nordpool", "tibber",
                              "energyzero", "easyenergy"})
 _SELL_WORDS = ("export", "feed_in", "feedin", "sell", "sprzed", "return", "teruglever", "inject")
+#: Człony nazwy encji, które mówią tylko o stronie (kupno/sprzedaż) — odpadają przy szukaniu „pnia" pary.
+_SIDE_TOKENS = frozenset({"export", "feed", "in", "feedin", "sell", "sprzedaz", "return", "buy", "import", "general",
+                          "kupno", "teruglevering"})
 _AREA = re.compile(r"[A-Za-z0-9_-]{1,16}")
+#: Waluta kraju integracji — gdy seria jej nie podaje (Amber `$/kWh`, Octopus bez jednostki).
+PLATFORM_CURRENCY = {"amberelectric": "AUD", "octopus_energy": "GBP", "pstryk": "PLN"}
+#: Domeny wpisów integracji, z których akcji umiemy czytać ceny.
+ACTION_DOMAINS = ("amberelectric", "tibber", "nordpool", "entsoe", "energyzero", "easyenergy")
 
 
 @dataclass(frozen=True)
@@ -30,36 +37,59 @@ class EntityPair:
     platform: str
     buy: str
     sell: str | None = None
+    #: Para zgadnięta z kilku możliwych — pokazujemy wybór, nie stosujemy jej po cichu.
+    ambiguous: bool = False
 
 
-def _is_sell(entity_id: str) -> bool:
+def is_sell_entity(entity_id: str) -> bool:
     low = entity_id.lower()
     return any(w in low for w in _SELL_WORDS)
 
 
-def pair_entities(candidates: Sequence[Mapping[str, Any]]) -> list[EntityPair]:
-    """Encje znanych integracji → pary kupno/sprzedaż.
+def _stem(entity_id: str) -> str:
+    tokens = re.split(r"[._]", entity_id.lower())
+    return "_".join(t for t in tokens if t and t not in _SIDE_TOKENS)
 
-    Parujemy tylko, gdy w obrębie platformy jest dokładnie jedno kupno i jedna sprzedaż;
-    inaczej nie zgadujemy, która z którą — kupna zostają pojedyncze, a sprzedaży bez pary
-    nie podpowiadamy.
+
+def pair_entities(candidates: Sequence[Mapping[str, Any]]) -> list[EntityPair]:
+    """Encje znanych integracji (JUŻ z użyteczną prognozą) → pary kupno/sprzedaż.
+
+    Grupa = platforma + wpis konfiguracji. W grupie para powstaje, gdy nazwy różnią się tylko
+    stroną (`…_buy_price` / `…_sell_price`, `…general_forecast` / `…feed_in_forecast`), a gdy
+    zostaje po jednym kupnie i sprzedaży — także wtedy (Octopus ma osobne liczniki importu
+    i eksportu). Reszta jest niejednoznaczna: wszystkie kombinacje z `ambiguous=True`.
+    Sprzedaż bez kupna nie jest podpowiadana; kanał `controlled_load` (Amber) pomijamy.
     """
-    by_platform: dict[str, tuple[list[str], list[str]]] = {}
+    groups: dict[tuple[str, Any], tuple[list[str], list[str]]] = {}
     for cand in candidates:
         if not isinstance(cand, Mapping):
             continue
         platform, eid = cand.get("platform"), cand.get("entity_id")
-        if platform not in KNOWN_PLATFORMS or not isinstance(eid, str) or not eid:
+        if platform not in KNOWN_PLATFORMS or not isinstance(eid, str) or not eid or "controlled_load" in eid:
             continue
-        buys, sells = by_platform.setdefault(platform, ([], []))
-        (sells if _is_sell(eid) else buys).append(eid)
+        buys, sells = groups.setdefault((platform, cand.get("config_entry_id")), ([], []))
+        (sells if is_sell_entity(eid) else buys).append(eid)
     out: list[EntityPair] = []
-    for platform in sorted(by_platform):
-        buys, sells = sorted(by_platform[platform][0]), sorted(by_platform[platform][1])
-        if len(buys) == 1 and len(sells) == 1:
-            out.append(EntityPair(platform, buys[0], sells[0]))
+    for (platform, _entry), (buys, sells) in sorted(groups.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+        buys, sells = sorted(buys), sorted(sells)
+        by_stem: dict[str, list[str]] = {}
+        for sell in sells:
+            by_stem.setdefault(_stem(sell), []).append(sell)
+        rest_buys, used = [], set()
+        for buy in buys:
+            match = by_stem.get(_stem(buy), [])
+            if len(match) == 1 and match[0] not in used:
+                used.add(match[0])
+                out.append(EntityPair(platform, buy, match[0]))
+            else:
+                rest_buys.append(buy)
+        left = [x for x in sells if x not in used]
+        if not left:
+            out.extend(EntityPair(platform, b) for b in rest_buys)
+        elif len(rest_buys) == 1 and len(left) == 1:
+            out.append(EntityPair(platform, rest_buys[0], left[0]))
         else:
-            out.extend(EntityPair(platform, b) for b in buys)
+            out.extend(EntityPair(platform, b, s, True) for b in rest_buys for s in left)
     return out
 
 
@@ -73,10 +103,6 @@ class ActionCandidate:
     sell: dict | None
     #: Pola, o które formularz musi zapytać (kolejność = kolejność w formularzu).
     fields: tuple[str, ...]
-
-
-def needed_fields(candidate: ActionCandidate) -> tuple[str, ...]:
-    return candidate.fields
 
 
 def action_candidates(entries: Mapping[str, Sequence[tuple[str, str]]]) -> list[ActionCandidate]:
@@ -149,7 +175,8 @@ def build_action_option(candidate: ActionCandidate, values: Mapping[str, Any]) -
                 option[key] = option[key].strip().upper()
         if isinstance(option.get("unit"), str):
             option["unit"] = option["unit"].strip()
-        parse_source(option)                    # kontrola kształtu; wyjątek idzie do wołającego
+        parsed = parse_source(option)           # kontrola kształtu; wyjątek idzie do wołającego
+        option["data"] = dict(parsed.data)      # postać znormalizowana (Nord Pool: strefa wielkimi, lista)
         return option
 
     buy_option = side(candidate.buy, buy=True)
@@ -189,6 +216,9 @@ def check_series(attrs: Mapping[str, Any] | None, fallback_currency: str | None,
         return SeriesCheck("unusable")
     if has_usable_prices_now(attrs, fallback_currency, tz, now):
         return SeriesCheck("ok", _hours_ahead(intervals, now))
+    first = datetime.fromisoformat(intervals[0]["startAt"].replace("Z", "+00:00"))
+    if first > now.astimezone(timezone.utc):
+        return SeriesCheck("unusable")      # seria zaczyna się w przyszłości (np. „jutro") — nie obejmuje teraz
     hours = _hours_ahead(intervals, now)
     return SeriesCheck("short" if hours > 0 else "unusable", max(hours, 0))
 
@@ -209,3 +239,8 @@ def _numeric(state: str) -> bool:
 
 def _has_series_attribute(attrs: Mapping[str, Any]) -> bool:
     return any(isinstance(v, (list, tuple, dict)) for v in attrs.values())
+
+
+def derived_currency(attrs: Mapping[str, Any] | None) -> str | None:
+    """Waluta, którą encja podaje SAMA (atrybut `currency` albo jednostka `SEK/kWh`), bez żadnego fallbacku."""
+    return currency_from_attributes(attrs if isinstance(attrs, Mapping) else {}, None)

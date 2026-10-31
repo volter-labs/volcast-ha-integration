@@ -62,13 +62,15 @@ import homeassistant.util.dt as dt_util
 from .cloud.client import SessionNotLive
 from .cloud.control_choice import APPLIED_CHOICES, WIZARD_MARK, wizard_mark
 from .const import (CONF_PAIRING, PAIRING_ONLY_UPDATE_KEY, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
-                    OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY, OPT_PRICE_SELL)
+                    OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_BUY_ACTION, OPT_PRICE_CURRENCY, OPT_PRICE_SELL,
+                    OPT_PRICE_SELL_ACTION)
 from .control import direct_search as ds
 from .control.runtime import readings_missing
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.control.recommend import recommend
-from .core.price_setup import pair_entities
+from .core.price_actions import InvalidPriceSource, parse_source
+from .core.price_setup import ACTION_DOMAINS, PLATFORM_CURRENCY, derived_currency, is_sell_entity, pair_entities
 from .core.prices import has_usable_prices_now
 
 _LOGGER = logging.getLogger(__name__)
@@ -163,6 +165,7 @@ class Onboarding:
         self._steps: dict[str, tuple[str, str | None]] = {k: ("pending", None) for k in STEP_KEYS}
         self._price_candidate: str | None = None
         self._price_sell_candidate: str | None = None      # sprzedaż sparowana z kupnem tej samej integracji
+        self._price_platforms: dict[str, str] = {}
         self._plan_attempts = 0
         self._plan_retry_at: datetime | None = None
         self._dirty = False
@@ -294,18 +297,40 @@ class Onboarding:
         """Ta sama reguła co w opcjach (`entity_mode_ready`)."""
         return entity_mode_ready(getattr(rt, "choice", None), getattr(rt, "mapped", None) or {})
 
-    def _usable_price(self, entity_id: str | None) -> bool:
+    def _usable_price(self, entity_id: str | None, platform: str | None = None) -> bool:
         if not entity_id:
             return False
         st = self._hass.states.get(entity_id)
         if st is None:
             return False
-        currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
+        currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or PLATFORM_CURRENCY.get(platform)
         try:
             return has_usable_prices_now(st.attributes, currency, self._tz(), self._utcnow())
         except Exception as err:  # noqa: BLE001 — zła encja = nieużywalna
             _LOGGER.debug("Volcast onboarding: price entity check failed (%s)", type(err).__name__)
             return False
+
+    def _platform_of(self, entity_id: str | None) -> str | None:
+        return self._price_platforms.get(entity_id)
+
+    def _configured_price_action(self) -> str | None:
+        """Nazwa akcji skonfigurowanego źródła kupna (opcje), gdy jest poprawna — wygrywa z encją."""
+        raw = self._options().get(OPT_PRICE_BUY_ACTION)
+        try:
+            return parse_source(raw).action if raw else None
+        except InvalidPriceSource:
+            return None
+
+    def _action_integrations(self) -> list[str]:
+        """Integracje cenowe z akcją (Tibber, Nord Pool…) skonfigurowane w HA — źródło ustawia się w opcjach."""
+        found = []
+        for domain in ACTION_DOMAINS:
+            try:
+                if self._hass.config_entries.async_entries(domain):
+                    found.append(domain)
+            except Exception:  # noqa: BLE001
+                continue
+        return found
 
     async def _wait_report(self) -> dict | None:
         waited = 0.0
@@ -443,6 +468,10 @@ class Onboarding:
         return state
 
     async def _prices_step(self, report: dict) -> None:
+        action = self._configured_price_action()
+        if action:
+            await self._set("prices", "done", action)             # akcja wygrywa z encją, nie nadpisujemy jej
+            return
         current = self._options().get(OPT_PRICE_BUY)
         if self._usable_price(current):
             await self._set("prices", "done", current)
@@ -455,18 +484,28 @@ class Onboarding:
                 and _PRICE_SOURCE.fullmatch(account.price_kind):
             await self._set("prices", "done", f"from your account ({account.price_kind})")
             return
-        pairs = {p.buy: p.sell for p in pair_entities(
-            [c for c in report.get("price_entities") or [] if isinstance(c, dict)])}
-        for cand in report.get("price_entities") or []:
-            eid = cand.get("entity_id") if isinstance(cand, dict) else None
-            if self._usable_price(eid):
-                self._price_candidate = eid
-                sell = pairs.get(eid)
-                self._price_sell_candidate = sell if self._usable_price(sell) else None
-                platform = cand.get("platform")
-                await self._set("prices", "choice", f"{platform} ({eid})" if platform else eid)
-                return
-        # Brak encji albo żadna nie daje dziś pełnej serii — właściciel wybiera inne źródło.
+        # Rola (kupno/sprzedaż) wynika z rozpoznania encji, nie z kolejności w rejestrze: sprzedaż nigdy nie
+        # jest ceną kupna, a para powstaje tylko z encji, które już teraz mają pełną serię.
+        entities = [c for c in report.get("price_entities") or [] if isinstance(c, dict)]
+        self._price_platforms = {c.get("entity_id"): c.get("platform") for c in entities}
+        usable = [c for c in entities if self._usable_price(c.get("entity_id"), c.get("platform"))]
+        pairs = {p.buy: p for p in pair_entities(usable)}
+        for cand in usable:
+            eid = cand.get("entity_id")
+            if is_sell_entity(eid):
+                continue
+            pair = pairs.get(eid)
+            self._price_candidate = eid
+            self._price_sell_candidate = pair.sell if pair is not None and not pair.ambiguous else None
+            platform = cand.get("platform")
+            await self._set("prices", "choice", f"{platform} ({eid})" if platform else eid)
+            return
+        # Brak użytecznych encji — właściciel wybiera inne źródło; integracje z samą akcją wskazujemy z nazwy.
+        integrations = self._action_integrations()
+        if integrations:
+            await self._set("prices", "choice", f"{NONE_FOUND}; set up in options (price_source): "
+                                                f"{', '.join(integrations)}")
+            return
         await self._set("prices", "choice", NONE_FOUND)
 
     async def _consumption_step(self, report: dict) -> None:
@@ -697,10 +736,18 @@ class Onboarding:
         source = choices.get("price_source")
         if isinstance(source, str) and self._state("prices") == "choice":
             if source == "ha":
-                if self._price_candidate and self._usable_price(self._price_candidate):
+                platform = self._platform_of(self._price_candidate)
+                if self._price_candidate and self._usable_price(self._price_candidate, platform):
                     patch[OPT_PRICE_BUY] = self._price_candidate
-                    if self._price_sell_candidate and self._usable_price(self._price_sell_candidate):
-                        patch[OPT_PRICE_SELL] = self._price_sell_candidate
+                    patch[OPT_PRICE_BUY_ACTION] = None        # akcja tej samej strony wygrałaby w runtime
+                    sell = self._price_sell_candidate
+                    if sell and self._usable_price(sell, platform):
+                        patch[OPT_PRICE_SELL] = sell
+                        patch[OPT_PRICE_SELL_ACTION] = None
+                    state = self._hass.states.get(self._price_candidate)
+                    if not self._options().get(OPT_PRICE_CURRENCY) and PLATFORM_CURRENCY.get(platform) \
+                            and derived_currency(getattr(state, "attributes", None)) is None:
+                        patch[OPT_PRICE_CURRENCY] = PLATFORM_CURRENCY[platform]   # seria nie podaje waluty
                     applied["price_source"] = source
                     steps.append(("prices", "done", self._price_candidate))
                 else:

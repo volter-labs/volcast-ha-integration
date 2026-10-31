@@ -370,7 +370,7 @@
       "price_source_unusable": "O Home Assistant não devolveu uma série de preços utilizável desta fonte.",
       "price_sell_unusable": "O lado da venda desta fonte não tem uma série de preços utilizável.",
       "price_source_invalid": "Estas configurações não descrevem uma fonte utilizável (verifique a zona, a unidade e a moeda).",
-      "currency_conflict": "A moeda da fonte ({source_currency}) difere da definida em Preços de energia ({option_currency}). Limpe uma das duas.",
+      "currency_conflict": "A moeda da fonte ({source_currency}) difere da definida em Preços de energia ({option_currency}). Altere essa moeda para coincidir ou limpe-a.",
       "currency_missing": "Informe a moeda: esta fonte não a informa."
     },
     "progress": {

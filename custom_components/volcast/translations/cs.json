@@ -370,7 +370,7 @@
       "price_source_unusable": "Home Assistant z tohoto zdroje nevrátil použitelnou řadu cen.",
       "price_sell_unusable": "Prodejní strana tohoto zdroje nemá použitelnou řadu cen.",
       "price_source_invalid": "Toto nastavení nepopisuje použitelný zdroj (zkontrolujte zónu, jednotku a měnu).",
-      "currency_conflict": "Měna zdroje ({source_currency}) se liší od měny nastavené v Cenách energie ({option_currency}). Jednu z nich vymažte.",
+      "currency_conflict": "Měna zdroje ({source_currency}) se liší od měny nastavené v Cenách energie ({option_currency}). Změňte tu měnu tak, aby souhlasila, nebo ji vymažte.",
       "currency_missing": "Zadejte měnu: tento zdroj ji neuvádí."
     },
     "progress": {

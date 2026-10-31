@@ -8,7 +8,7 @@ import pytest
 
 from custom_components.volcast.core.price_actions import InvalidPriceSource, parse_source
 from custom_components.volcast.core.price_setup import (
-    action_candidates, build_action_option, check_series, currency_conflict, needed_fields, pair_entities)
+    action_candidates, build_action_option, check_series, currency_conflict, pair_entities)
 
 WAW = ZoneInfo("Europe/Warsaw")
 NOW = datetime(2026, 10, 31, 9, 0, tzinfo=timezone.utc)
@@ -20,23 +20,38 @@ def _hourly(hours, start=NOW.replace(minute=0)):
                            "end": (start + timedelta(hours=i + 1)).isoformat(), "value": 0.5} for i in range(hours)]}
 
 
-def test_pairing_octopus_import_export():
-    out = pair_entities([
-        {"entity_id": "sensor.octopus_energy_electricity_x_current_rate", "platform": "octopus_energy"},
-        {"entity_id": "sensor.octopus_energy_electricity_x_export_current_rate", "platform": "octopus_energy"},
-        {"entity_id": "sensor.other", "platform": "something_else"}])
-    assert [(p.buy, p.sell) for p in out] == [("sensor.octopus_energy_electricity_x_current_rate",
-                                               "sensor.octopus_energy_electricity_x_export_current_rate")]
+def _c(eid, platform, entry=None):
+    return {"entity_id": eid, "platform": platform, "config_entry_id": entry}
 
 
-def test_pairing_pstryk_and_ambiguous_platform_not_paired():
+def test_pairing_octopus_events_import_export():
     out = pair_entities([
-        {"entity_id": "sensor.pstryk_current_buy_price", "platform": "pstryk"},
-        {"entity_id": "sensor.pstryk_current_sell_price", "platform": "pstryk"}])
+        _c("event.octopus_energy_electricity_aaa_111_current_day_rates", "octopus_energy"),
+        _c("event.octopus_energy_electricity_bbb_222_export_current_day_rates", "octopus_energy"),
+        _c("sensor.other", "something_else")])
+    assert [(p.buy, p.sell, p.ambiguous) for p in out] == [
+        ("event.octopus_energy_electricity_aaa_111_current_day_rates",
+         "event.octopus_energy_electricity_bbb_222_export_current_day_rates", False)]
+
+
+def test_pairing_pstryk_and_amber_by_stem_and_controlled_load_skipped():
+    out = pair_entities([_c("sensor.pstryk_current_buy_price", "pstryk"), _c("sensor.pstryk_current_sell_price", "pstryk")])
     assert (out[0].buy, out[0].sell) == ("sensor.pstryk_current_buy_price", "sensor.pstryk_current_sell_price")
-    two = pair_entities([
-        {"entity_id": "sensor.a_price", "platform": "tibber"}, {"entity_id": "sensor.b_price", "platform": "tibber"}])
+    amber = pair_entities([_c("sensor.home_general_forecast", "amberelectric", "a"),
+                           _c("sensor.home_feed_in_forecast", "amberelectric", "a"),
+                           _c("sensor.home_controlled_load_forecast", "amberelectric", "a")])
+    assert [(p.buy, p.sell) for p in amber] == [("sensor.home_general_forecast", "sensor.home_feed_in_forecast")]
+
+
+def test_pairing_groups_by_config_entry_and_ambiguity_is_offered_not_hidden():
+    two = pair_entities([_c("sensor.a_price", "tibber", "e1"), _c("sensor.b_price", "tibber", "e2")])
     assert [(p.buy, p.sell) for p in two] == [("sensor.a_price", None), ("sensor.b_price", None)]
+    # jedno kupno i dwie sprzedaże bez wspólnego pnia: wszystkie kombinacje, oznaczone jako niejednoznaczne
+    amb = pair_entities([_c("sensor.x_buy", "pstryk"), _c("sensor.y_sell", "pstryk"), _c("sensor.z_export", "pstryk")])
+    assert sorted((p.buy, p.sell, p.ambiguous) for p in amb) == [
+        ("sensor.x_buy", "sensor.y_sell", True), ("sensor.x_buy", "sensor.z_export", True)]
+    # sprzedaż bez kupna nie jest podpowiadana
+    assert pair_entities([_c("sensor.only_sell", "pstryk")]) == []
 
 
 def test_action_candidates_amber_pair_and_per_entry():
@@ -45,7 +60,7 @@ def test_action_candidates_amber_pair_and_per_entry():
     assert amber.buy["action"] == "amberelectric.get_forecasts" and amber.sell["action"] == "amberelectric.get_forecasts"
     assert amber.buy["data"] == {"config_entry_id": "e1", "channel_type": "general"}
     assert amber.sell["data"] == {"config_entry_id": "e1", "channel_type": "feed_in"}
-    assert needed_fields(amber) == ()
+    assert amber.fields == ()
     assert next(x for x in c if x.domain == "tibber").sell is None
 
 
@@ -54,7 +69,7 @@ def test_action_candidates_amber_pair_and_per_entry():
     ("energyzero", ("incl_vat",)), ("easyenergy", ("incl_vat",)), ("tibber", ("home", "currency"))])
 def test_needed_fields(domain, fields):
     c = action_candidates({domain: [("e1", "X")]})[0]
-    assert needed_fields(c) == fields
+    assert c.fields == fields
 
 
 def test_build_options_pass_parse_source():
@@ -97,3 +112,14 @@ def test_check_series_forecast_current_only_short():
     assert check_series({"x": 1}, None, WAW, NOW, state="0.5").status == "unusable"   # nie wygląda na cenę
     bad = check_series({"currency": "FOO", "raw_today": []}, None, WAW, NOW)
     assert bad.status == "unusable"
+
+
+def test_series_starting_in_the_future_is_not_a_forecast():
+    future = _hourly(30, start=NOW.replace(minute=0) + timedelta(hours=2))
+    assert check_series(future, None, WAW, NOW).status == "unusable"
+
+
+def test_nordpool_option_is_saved_normalized():
+    npool = action_candidates({"nordpool": [("n1", "N")]})[0]
+    buy, _ = build_action_option(npool, {"area": "se3", "currency": "sek"})
+    assert buy["data"]["areas"] == ["SE3"] and buy["data"]["currency"] == "SEK"

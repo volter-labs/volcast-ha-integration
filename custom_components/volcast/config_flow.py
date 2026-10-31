@@ -40,9 +40,10 @@ from .core.control.select import ProfileChoice
 from .core.entity_map import KEY_DESCRIPTORS, field_group, preview_entity
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
 from .core.discovery.identify import Candidate
-from .core.price_actions import CALL_TIMEOUT_S, InvalidPriceSource, attributes_from_responses, build_calls, parse_source
-from .core.price_setup import (KNOWN_PLATFORMS, ActionCandidate, SeriesCheck, action_candidates,
-                               build_action_option, check_series, currency_conflict, needed_fields, pair_entities)
+from .core.price_actions import InvalidPriceSource, attributes_from_responses, build_calls, parse_source
+from .core.price_setup import (ACTION_DOMAINS, KNOWN_PLATFORMS, PLATFORM_CURRENCY, ActionCandidate, SeriesCheck,
+                               action_candidates, build_action_option, check_series, currency_conflict,
+                               derived_currency, pair_entities)
 from .core.prices import has_usable_prices_now
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
@@ -525,6 +526,8 @@ def _clean(values: dict[str, Any]) -> dict[str, Any]:
 
 
 # Wszystkie zmienne tekstów kroku źródła cen — HA wstawia je do opisu i błędów.
+#: Limit jednego próbnego wywołania akcji (przepływ czeka na użytkownika; runtime ma własne 30 s).
+PROBE_TIMEOUT_S = 10.0
 _NO_PLACEHOLDERS = {"hours": "0", "source_currency": "", "option_currency": ""}
 
 
@@ -542,6 +545,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     _price_candidate: ActionCandidate | None = None
     _price_pending: dict[str, Any] | None = None
+    _shown_sources: dict[str, tuple[str, Any]] | None = None
 
     def _merged(self, patch: dict[str, Any]) -> dict[str, Any]:
         out = dict(self.config_entry.options)
@@ -1046,8 +1050,20 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                         errors[key] = "prices_current_only"      # sama bieżąca cena nie jest źródłem planu
                     elif check.status != "ok":
                         errors[key] = "prices_not_usable"
+            placeholders = dict(_NO_PLACEHOLDERS)
+            if currency is not None and OPT_PRICE_CURRENCY not in errors:
+                for key, eid in ((OPT_PRICE_BUY, buy), (OPT_PRICE_SELL, sell)):
+                    if not eid or eid == saved.get(key):
+                        continue                  # zapisana wcześniej nie blokuje zapisu reszty formularza
+                    st = self.hass.states.get(eid)
+                    declared = derived_currency(st.attributes) if st is not None else None
+                    if currency_conflict(declared, currency):
+                        errors[OPT_PRICE_CURRENCY] = "currency_conflict"
+                        placeholders.update(source_currency=declared or "", option_currency=currency)
+                        break
             if errors:
-                return self.async_show_form(step_id="prices", data_schema=self._prices_schema(), errors=errors)
+                return self.async_show_form(step_id="prices", data_schema=self._prices_schema(), errors=errors,
+                                            description_placeholders=placeholders)
             patch = {OPT_PRICE_BUY: buy or None, OPT_PRICE_SELL: sell or None, OPT_PRICE_CURRENCY: currency}
             # Akcja tej samej strony wygrywa z encją w czasie działania — wybór encji ją zastępuje.
             for entity_key, action_key, eid in ((OPT_PRICE_BUY, OPT_PRICE_BUY_ACTION, buy),
@@ -1087,39 +1103,52 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return (self.config_entry.options.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
 
     def _detected_sources(self) -> dict[str, tuple[str, Any]]:
-        """Kandydaci z Home Assistanta: {id wyboru: (etykieta, EntityPair | ActionCandidate)}."""
+        """Kandydaci z Home Assistanta: {id wyboru: (etykieta, EntityPair | ActionCandidate)}.
+
+        Encje: tylko znanych integracji (sensory i `event` — Octopus) i tylko z prognozą, która już teraz
+        obejmuje bieżącą godzinę; dopiero z nich powstają pary kupno/sprzedaż.
+        """
         found: dict[str, tuple[str, Any]] = {}
         try:
             registry = er.async_get(self.hass)
-            sensors = [{"entity_id": e.entity_id, "platform": e.platform} for e in registry.entities.values()
-                       if e.domain == "sensor" and e.platform in KNOWN_PLATFORMS and e.disabled_by is None]
+            rows = [e for e in registry.entities.values()
+                    if e.domain in ("sensor", "event") and e.platform in KNOWN_PLATFORMS and e.disabled_by is None]
         except Exception:  # noqa: BLE001 — bez rejestru zostają źródła z akcji
-            sensors = []
-        for pair in pair_entities(sensors):
+            rows = []
+        listed = []
+        for e in rows:
+            fallback = self._option_currency() or PLATFORM_CURRENCY.get(e.platform)
+            if self._price_check(e.entity_id, fallback).status in ("ok", "short"):
+                listed.append({"entity_id": e.entity_id, "platform": e.platform,
+                               "config_entry_id": getattr(e, "config_entry_id", None)})
+        for pair in pair_entities(listed):
             label = f"{pair.platform}: {pair.buy}" + (f" / {pair.sell}" if pair.sell else "")
-            found[f"entities|{pair.buy}"] = (label, pair)
+            found[f"entities|{pair.buy}|{pair.sell or ''}"] = (label, pair)
         entries = {}
-        for domain in sorted({"amberelectric", "tibber", "nordpool", "entsoe", "energyzero", "easyenergy"}):
+        for domain in ACTION_DOMAINS:
             try:
-                rows = [(e.entry_id, e.title) for e in self.hass.config_entries.async_entries(domain)]
+                rows_ = [(e.entry_id, e.title) for e in self.hass.config_entries.async_entries(domain)
+                         if getattr(e.state, "value", e.state) == "loaded"]
             except Exception:  # noqa: BLE001
-                rows = []
-            if rows:
-                entries[domain] = rows
+                rows_ = []
+            if rows_:
+                entries[domain] = rows_
         for cand in action_candidates(entries):
             found[f"action|{cand.domain}|{cand.entry_id}"] = (f"{cand.domain}: {cand.title}", cand)
         return found
 
     def _source_form(self, errors: dict[str, str] | None = None,
                      placeholders: dict[str, str] | None = None) -> ConfigFlowResult:
-        options = [selector.SelectOptionDict(value=k, label=v[0]) for k, v in self._detected_sources().items()]
+        sources = self._detected_sources()
+        self._shown_sources = sources                # wybór sprawdzamy ponownie na tym, co użytkownik widział
+        options = [selector.SelectOptionDict(value=k, label=v[0]) for k, v in sources.items()]
         schema = vol.Schema({vol.Required("source"): selector.SelectSelector(
             selector.SelectSelectorConfig(options=options, mode=selector.SelectSelectorMode.LIST))})
         return self.async_show_form(step_id="price_source", data_schema=schema, errors=errors or {},
                                     description_placeholders=placeholders or _NO_PLACEHOLDERS)
 
     async def async_step_price_source(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        sources = self._detected_sources()
+        sources = (self._shown_sources if user_input is not None else None) or self._detected_sources()
         if not sources:
             return self.async_abort(reason="no_price_sources")
         if user_input is not None:
@@ -1128,20 +1157,24 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 cand = chosen[1]
                 if isinstance(cand, ActionCandidate):
                     self._price_candidate = cand
-                    if needed_fields(cand):
+                    if cand.fields:
                         return self._details_form(cand, None)
                     return await self._submit_values(cand, {})
                 return await self._save_entity_pair(cand)
         return self._source_form()
 
     async def _save_entity_pair(self, pair) -> ConfigFlowResult:
+        """Para encji: ponowne sprawdzenie przy wyborze (stan mógł się zmienić), potem potwierdzenie z liczbą godzin."""
         errors: dict[str, str] = {}
         placeholders = dict(_NO_PLACEHOLDERS)
-        currency = self._option_currency()
+        option_currency = self._option_currency()
+        fallback = option_currency or PLATFORM_CURRENCY.get(pair.platform)
+        hours = 0
+        patch_currency = None
         for eid, side in ((pair.buy, "buy"), (pair.sell, "sell")):
             if not eid:
                 continue
-            check = self._price_check(eid, currency)
+            check = self._price_check(eid, fallback)
             if check.status == "current_only":
                 errors["source"] = "prices_current_only"
             elif check.status == "short" and side == "buy":
@@ -1151,17 +1184,23 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 errors["source"] = "price_sell_unusable" if side == "sell" else "prices_not_usable"
             if errors:
                 break
+            if side == "buy":
+                hours = check.hours
             st = self.hass.states.get(eid)
-            declared = st.attributes.get("currency") if st is not None else None
-            if isinstance(declared, str) and currency_conflict(declared, currency):
+            declared = derived_currency(st.attributes) if st is not None else None
+            if currency_conflict(declared, option_currency):
                 errors["source"] = "currency_conflict"
-                placeholders.update(source_currency=declared.strip().upper(), option_currency=currency or "")
+                placeholders.update(source_currency=declared or "", option_currency=option_currency or "")
                 break
+            if declared is None and option_currency is None:
+                patch_currency = fallback            # seria nie podaje waluty — bez niej runtime pominie ceny
         if errors:
             return self._source_form(errors, placeholders)
-        return await self._finish(self._merged({
-            OPT_PRICE_BUY: pair.buy, OPT_PRICE_SELL: pair.sell,
-            OPT_PRICE_BUY_ACTION: None, OPT_PRICE_SELL_ACTION: None}))
+        self._price_pending = {OPT_PRICE_BUY: pair.buy, OPT_PRICE_SELL: pair.sell,
+                               OPT_PRICE_BUY_ACTION: None, OPT_PRICE_SELL_ACTION: None,
+                               **({OPT_PRICE_CURRENCY: patch_currency} if patch_currency else {})}
+        return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
+                                    description_placeholders={**placeholders, "hours": str(hours)})
 
     def _details_form(self, cand: ActionCandidate, previous: dict[str, Any] | None,
                       errors: dict[str, str] | None = None,
@@ -1172,7 +1211,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return {"suggested_value": previous.get(key)}
 
         fields: dict = {}
-        for name in needed_fields(cand):
+        for name in cand.fields:
             if name == "unit":
                 fields[vol.Required("unit", description=hint("unit"))] = selector.SelectSelector(
                     selector.SelectSelectorConfig(options=["kWh", "MWh"], mode=selector.SelectSelectorMode.LIST))
@@ -1198,7 +1237,6 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     async def _submit_values(self, cand: ActionCandidate, values: dict[str, Any]) -> ConfigFlowResult:
         """Opcje źródła z odpowiedzi formularza → waluta bez niejednoznaczności → próbne wywołanie akcji."""
         placeholders = dict(_NO_PLACEHOLDERS)
-        field = "currency" if "currency" in needed_fields(cand) else "base"
         try:
             buy, sell = build_action_option(cand, values)
             parsed = parse_source(buy)
@@ -1206,10 +1244,13 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return self._details_form(cand, values, {"base": "price_source_invalid"}, placeholders)
         option_currency = self._option_currency()
         error = None
+        field = "base"
         if parsed.currency is None and option_currency is None:
             error = "currency_missing"
+            field = "currency" if "currency" in cand.fields else "base"
         elif currency_conflict(parsed.currency, option_currency):
             error = "currency_conflict"
+            field = "currency" if "currency" in cand.fields else "base"
             placeholders.update(source_currency=parsed.currency or "", option_currency=option_currency or "")
         if error is None:
             buy_check = await self._probe(buy)
@@ -1219,11 +1260,12 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             elif sell is not None and (await self._probe(sell)).status not in ("ok", "short"):
                 error = "price_sell_unusable"
             else:
-                self._price_pending = {OPT_PRICE_BUY: None, OPT_PRICE_SELL: None, OPT_PRICE_BUY_ACTION: buy,
-                                       OPT_PRICE_SELL_ACTION: sell}
+                # Sprzedaż osobno ustawiona jako encja zostaje, gdy to źródło nie ma strony sprzedaży.
+                self._price_pending = {OPT_PRICE_BUY: None, OPT_PRICE_BUY_ACTION: buy, OPT_PRICE_SELL_ACTION: sell,
+                                       **({OPT_PRICE_SELL: None} if sell is not None else {})}
                 return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
                                             description_placeholders={**placeholders, "hours": str(buy_check.hours)})
-        if needed_fields(cand):
+        if cand.fields:
             return self._details_form(cand, values, {field: error}, placeholders)
         return self._source_form({"base": error}, placeholders)
 
@@ -1241,7 +1283,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             responses: list[Any] = []
             for offset, data in build_calls(source, now, tz):
                 try:
-                    async with asyncio.timeout(CALL_TIMEOUT_S):
+                    async with asyncio.timeout(PROBE_TIMEOUT_S):
                         responses.append(await self.hass.services.async_call(
                             source.domain, source.service, data, blocking=True, return_response=True))
                 except Exception as err:  # noqa: BLE001 — błąd na dziś = brak źródła, na jutro = jeszcze nie ma

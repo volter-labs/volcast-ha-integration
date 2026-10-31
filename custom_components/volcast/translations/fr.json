@@ -370,7 +370,7 @@
       "price_source_unusable": "Home Assistant n'a renvoyé aucune série de prix exploitable pour cette source.",
       "price_sell_unusable": "Le côté vente de cette source n'a pas de série de prix exploitable.",
       "price_source_invalid": "Ces réglages ne décrivent pas une source exploitable (vérifiez la zone, l'unité et la devise).",
-      "currency_conflict": "La devise de la source ({source_currency}) diffère de celle définie dans Prix de l'énergie ({option_currency}). Effacez l'une des deux.",
+      "currency_conflict": "La devise de la source ({source_currency}) diffère de celle définie dans Prix de l'énergie ({option_currency}). Modifiez cette devise pour qu'elle corresponde, ou effacez-la.",
       "currency_missing": "Indiquez la devise : cette source ne la précise pas."
     },
     "progress": {

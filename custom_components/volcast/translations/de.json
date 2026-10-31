@@ -370,7 +370,7 @@
       "price_source_unusable": "Home Assistant hat aus dieser Quelle keine brauchbare Preisreihe geliefert.",
       "price_sell_unusable": "Die Verkaufsseite dieser Quelle hat keine brauchbare Preisreihe.",
       "price_source_invalid": "Diese Einstellungen beschreiben keine brauchbare Quelle (Zone, Einheit und Währung prüfen).",
-      "currency_conflict": "Die Währung der Quelle ({source_currency}) weicht von der unter Energiepreise gesetzten ({option_currency}) ab. Leere eine von beiden.",
+      "currency_conflict": "Die Währung der Quelle ({source_currency}) weicht von der unter Energiepreise gesetzten ({option_currency}) ab. Ändere jene Währung passend oder leere sie.",
       "currency_missing": "Gib die Währung an: Diese Quelle nennt sie nicht."
     },
     "progress": {

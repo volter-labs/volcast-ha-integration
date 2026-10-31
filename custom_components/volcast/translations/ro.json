@@ -370,7 +370,7 @@
       "price_source_unusable": "Home Assistant nu a returnat o serie de prețuri utilizabilă din această sursă.",
       "price_sell_unusable": "Partea de vânzare a acestei surse nu are o serie de prețuri utilizabilă.",
       "price_source_invalid": "Aceste setări nu descriu o sursă utilizabilă (verifică zona, unitatea și moneda).",
-      "currency_conflict": "Moneda sursei ({source_currency}) diferă de cea setată la Prețurile energiei ({option_currency}). Șterge una dintre ele.",
+      "currency_conflict": "Moneda sursei ({source_currency}) diferă de cea setată la Prețurile energiei ({option_currency}). Schimb-o pe aceea ca să coincidă sau șterge-o.",
       "currency_missing": "Indică moneda: această sursă nu o specifică."
     },
     "progress": {

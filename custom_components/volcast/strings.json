@@ -370,7 +370,7 @@
       "price_source_unusable": "Home Assistant returned no usable price series from this source.",
       "price_sell_unusable": "The sale side of this source has no usable price series.",
       "price_source_invalid": "These settings do not describe a usable source (check the zone, unit and currency).",
-      "currency_conflict": "The source currency ({source_currency}) differs from the currency set under Energy prices ({option_currency}). Clear one of them.",
+      "currency_conflict": "The source currency ({source_currency}) differs from the currency set under Energy prices ({option_currency}). Change that currency to match, or clear it.",
       "currency_missing": "Enter the currency: this source does not state it."
     },
     "progress": {

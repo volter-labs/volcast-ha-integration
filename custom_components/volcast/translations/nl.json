@@ -370,7 +370,7 @@
       "price_source_unusable": "Home Assistant gaf geen bruikbare prijsreeks van deze bron.",
       "price_sell_unusable": "De verkoopzijde van deze bron heeft geen bruikbare prijsreeks.",
       "price_source_invalid": "Deze instellingen beschrijven geen bruikbare bron (controleer zone, eenheid en valuta).",
-      "currency_conflict": "De valuta van de bron ({source_currency}) wijkt af van de valuta bij Energieprijzen ({option_currency}). Wis een van beide.",
+      "currency_conflict": "De valuta van de bron ({source_currency}) wijkt af van de valuta bij Energieprijzen ({option_currency}). Pas die valuta aan of wis haar.",
       "currency_missing": "Geef de valuta op: deze bron vermeldt hem niet."
     },
     "progress": {

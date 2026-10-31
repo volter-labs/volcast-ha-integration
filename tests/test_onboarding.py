@@ -186,14 +186,91 @@ def test_price_choice_ha_uses_first_usable_candidate():
     assert last(client)["prices"] == {"key": "prices", "state": "done", "detail": PRICE}
 
 
+BUY, SELL = "sensor.pstryk_current_buy_price", "sensor.pstryk_current_sell_price"
+
+
+def _pair_report(*ids):
+    return dict(REPORT, price_entities=[{"entity_id": i, "platform": "pstryk"} for i in ids])
+
+
 def test_price_choice_ha_also_applies_paired_sell_entity():
-    buy, sell = "sensor.octopus_energy_import_rate", "sensor.octopus_energy_export_rate"
-    report = dict(REPORT, price_entities=[{"entity_id": buy, "platform": "octopus_energy"},
-                                          {"entity_id": sell, "platform": "octopus_energy"}])
-    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN, report=report,
-                             prices={buy: _price_attrs(), sell: _price_attrs()})
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
+                             report=_pair_report(BUY, SELL), prices={BUY: _price_attrs(), SELL: _price_attrs()})
     asyncio.run(ob.async_run())
-    assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == sell
+    assert entry.options["entity_price_buy"] == BUY and entry.options["entity_price_sell"] == SELL
+
+
+def test_sell_entity_first_in_registry_never_becomes_the_buy_price():
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
+                             report=_pair_report(SELL, BUY), prices={BUY: _price_attrs(), SELL: _price_attrs()})
+    asyncio.run(ob.async_run())
+    assert entry.options["entity_price_buy"] == BUY and entry.options["entity_price_sell"] == SELL
+
+
+def test_lone_sell_entity_is_not_offered_as_buy():
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
+                             report=_pair_report(SELL), prices={SELL: _price_attrs()})
+    asyncio.run(ob.async_run())
+    assert "entity_price_buy" not in entry.options and "entity_price_sell" not in entry.options
+    assert last(client)["prices"]["detail"] == "none found"
+
+
+def test_unusable_sell_entity_is_not_applied():
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
+                             report=_pair_report(BUY, SELL), prices={BUY: _price_attrs(), SELL: {"currency": "PLN"}})
+    asyncio.run(ob.async_run())
+    assert entry.options["entity_price_buy"] == BUY and "entity_price_sell" not in entry.options
+
+
+def test_sell_entity_that_lost_data_before_choice_is_not_applied():
+    prices = {BUY: _price_attrs(), SELL: _price_attrs()}
+    ob, client, entry = make([PollResult("pending"), PollResult("consumed", choices={"price_source": "ha"})],
+                             plan=OK_PLAN, report=_pair_report(BUY, SELL), prices=prices)
+    real = ob._client.async_poll
+
+    async def poll(s):
+        prices[SELL] = {"currency": "PLN"}
+        return await real(s)
+    ob._client.async_poll = poll
+    asyncio.run(ob.async_run())
+    assert entry.options["entity_price_buy"] == BUY and "entity_price_sell" not in entry.options
+
+
+def test_choice_clears_actions_of_the_replaced_sides_only():
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
+                             report=_pair_report(BUY, SELL), prices={BUY: _price_attrs(), SELL: _price_attrs()},
+                             options={"price_sell_action": {"action": "easyenergy.get_energy_return_prices"}})
+    asyncio.run(ob.async_run())
+    assert entry.options["entity_price_sell"] == SELL and "price_sell_action" not in entry.options
+
+
+def test_configured_buy_action_counts_as_a_price_source():
+    action = {"action": "tibber.get_prices", "currency": "SEK"}
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
+                             prices={}, options={"price_buy_action": action})
+    asyncio.run(ob.async_run())
+    step = last(client)["prices"]
+    assert step["state"] == "done" and step["detail"] == "tibber.get_prices"
+    assert entry.options["price_buy_action"] == action and "entity_price_buy" not in entry.options
+
+
+def test_action_only_integrations_point_to_the_options_menu():
+    ob, client, entry = make([PollResult("pending")], plan=OK_PLAN, prices={}, report=dict(REPORT, price_entities=[]))
+    ob._hass.config_entries.async_entries = lambda domain: [SimpleNamespace(entry_id="t1")] if domain == "tibber" else []
+    asyncio.run(ob.async_run())
+    step = last(client)["prices"]
+    assert step["state"] == "choice" and "price_source" in step["detail"] and "tibber" in step["detail"]
+
+
+def test_platform_currency_is_set_when_series_does_not_state_it():
+    attrs = {k: v for k, v in _price_attrs().items() if k != "currency"}          # seria bez waluty (Octopus)
+    eid = "event.octopus_energy_electricity_a_1_current_day_rates"
+    report = dict(REPORT, price_entities=[{"entity_id": eid, "platform": "octopus_energy"}])
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN, report=report,
+                             prices={eid: attrs})
+    asyncio.run(ob.async_run())
+    assert entry.options["entity_price_buy"] == eid
+    assert entry.options["price_currency"] == "GBP"
 
 
 def test_unusable_price_entity_is_not_offered():

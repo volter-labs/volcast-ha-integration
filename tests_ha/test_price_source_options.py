@@ -1,17 +1,26 @@
 """Krok opcji „Źródło cen z integracji": wykrywanie, walidacja prognozy i zapis akcji na prawdziwym rdzeniu HA."""
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+import pytest
 import voluptuous as vol
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.volcast import config_flow
+
 from .conftest import make_entry
+
+FIXTURES = Path(__file__).parents[1] / "tests" / "fixtures" / "prices"
 
 
 def _hours(n: int, step_min: int = 60, key_start="start_time", value_key="per_kwh", value=0.3):
@@ -32,6 +41,97 @@ def _register(hass, domain, service, build, calls):
                                  supports_response=SupportsResponse.ONLY)
 
 
+@pytest.fixture(autouse=True)
+def _no_unload_of_fake_entries(hass: HomeAssistant):
+    """Wpisy cudzych integracji są atrapami „załadowanymi"; przed zamknięciem HA wracają do stanu nieładowanego."""
+    yield
+    for entry in hass.config_entries.async_entries():
+        if entry.domain != "volcast" and entry.state is ConfigEntryState.LOADED:
+            entry.mock_state(hass, ConfigEntryState.NOT_LOADED)
+
+
+def _loaded(hass, domain, title, entry_id):
+    entry = MockConfigEntry(domain=domain, title=title, entry_id=entry_id)
+    entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    return entry
+
+
+def _fixture(name: str, key: str, hours: int, step_min: int, **extra) -> dict:
+    """Atrybuty zanonimizowanej encji z `tests/fixtures/prices`, z serią przesuniętą na „teraz"."""
+    attrs = json.loads((FIXTURES / f"{name}.json").read_text())["attributes"]
+    template = attrs[key][0]
+    start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    rows = []
+    for i in range(hours * 60 // step_min):
+        row = dict(template)
+        s = start + timedelta(minutes=i * step_min)
+        for k in ("start", "start_time"):
+            if k in row:
+                row[k] = s.isoformat()
+        for k in ("end", "end_time"):
+            if k in row:
+                row[k] = (s + timedelta(minutes=step_min)).isoformat()
+        rows.append(row)
+    return {**attrs, key: rows, **extra}
+
+
+def _entity(hass, domain, platform, object_id, attrs, state="0.3", disabled=False):
+    er.async_get(hass).async_get_or_create(
+        domain, platform, object_id, suggested_object_id=object_id,
+        disabled_by=er.RegistryEntryDisabler.USER if disabled else None)
+    hass.states.async_set(f"{domain}.{object_id}", state, attrs)
+    return f"{domain}.{object_id}"
+
+
+def _amber_set(hass):
+    fc = _fixture("amber_forecasts", "forecasts", 36, 30)
+    plain = {"unit_of_measurement": "$/kWh", "per_kwh": 0.3}
+    _entity(hass, "sensor", "amberelectric", "home_general_price", plain)
+    buy = _entity(hass, "sensor", "amberelectric", "home_general_forecast", fc)
+    _entity(hass, "sensor", "amberelectric", "home_feed_in_price", plain)
+    sell = _entity(hass, "sensor", "amberelectric", "home_feed_in_forecast", fc)
+    _entity(hass, "sensor", "amberelectric", "home_controlled_load_forecast", fc)
+    _entity(hass, "sensor", "amberelectric", "home_renewables", {"unit_of_measurement": "%"}, "40")
+    return buy, sell
+
+
+def _octopus_set(hass):
+    rates = _fixture("octopus_rates", "rates", 20, 30)
+    tomorrow = _fixture("octopus_rates", "rates", 20, 30)
+    for row in tomorrow["rates"]:
+        row["start"] = (datetime.fromisoformat(row["start"]) + timedelta(days=1)).isoformat()
+        row["end"] = (datetime.fromisoformat(row["end"]) + timedelta(days=1)).isoformat()
+    buy = _entity(hass, "event", "octopus_energy", "octopus_energy_electricity_aaa_111_current_day_rates", rates)
+    _entity(hass, "event", "octopus_energy", "octopus_energy_electricity_aaa_111_next_day_rates", tomorrow)
+    _entity(hass, "sensor", "octopus_energy", "octopus_energy_electricity_aaa_111_current_rate",
+            {"unit_of_measurement": "GBP/kWh"})
+    sell = _entity(hass, "event", "octopus_energy", "octopus_energy_electricity_bbb_222_export_current_day_rates", rates)
+    return buy, sell
+
+
+def _pstryk_set(hass):
+    attrs = _fixture("pstryk_all_prices", "All prices", 24, 60)
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", attrs)
+    sell = _entity(hass, "sensor", "pstryk", "pstryk_current_sell_price", attrs)
+    for name in ("pstryk_monthly_avg_buy_price", "pstryk_monthly_avg_sell_price", "pstryk_yearly_avg_buy_price"):
+        _entity(hass, "sensor", "pstryk", name, {"unit_of_measurement": "PLN/kWh"}, "0.5")
+    return buy, sell
+
+
+def _source_id(form, prefix: str) -> str:
+    values = [o["value"] for o in form["data_schema"].schema["source"].config["options"]]
+    (found,) = [v for v in values if v.startswith(prefix)]
+    return found
+
+
+async def _choose(hass, entry, source):
+    form = await _open(hass, entry)
+    if source.startswith("entities|"):
+        source = _source_id(form, source)
+    return form, await hass.config_entries.options.async_configure(form["flow_id"], {"source": source})
+
+
 async def _open(hass, entry, step="price_source"):
     menu = await hass.config_entries.options.async_init(entry.entry_id)
     assert "price_source" in menu["menu_options"]
@@ -45,7 +145,7 @@ async def test_no_known_source_aborts(hass: HomeAssistant, network_down):
 
 
 async def test_amber_pair_is_validated_and_saved_as_actions(hass: HomeAssistant, network_down):
-    MockConfigEntry(domain="amberelectric", title="Amber home", entry_id="amb1").add_to_hass(hass)
+    _loaded(hass, "amberelectric", "Amber home", "amb1")
     calls = []
     _register(hass, "amberelectric", "get_forecasts", lambda call: {"forecasts": _hours(36, 30)}, calls)
     entry = make_entry(hass, options={"entity_price_buy": "sensor.old", "entity_price_sell": "sensor.old_sell"})
@@ -64,7 +164,7 @@ async def test_amber_pair_is_validated_and_saved_as_actions(hass: HomeAssistant,
 
 
 async def test_short_forecast_is_not_saved(hass: HomeAssistant, network_down):
-    MockConfigEntry(domain="amberelectric", title="Amber home", entry_id="amb1").add_to_hass(hass)
+    _loaded(hass, "amberelectric", "Amber home", "amb1")
     _register(hass, "amberelectric", "get_forecasts", lambda call: {"forecasts": _hours(3)}, [])
     entry = make_entry(hass)
     form = await _open(hass, entry)
@@ -75,7 +175,7 @@ async def test_short_forecast_is_not_saved(hass: HomeAssistant, network_down):
 
 
 async def test_failing_action_is_not_saved(hass: HomeAssistant, network_down):
-    MockConfigEntry(domain="amberelectric", title="Amber home", entry_id="amb1").add_to_hass(hass)
+    _loaded(hass, "amberelectric", "Amber home", "amb1")
 
     def boom(call):
         raise RuntimeError("down")
@@ -87,7 +187,7 @@ async def test_failing_action_is_not_saved(hass: HomeAssistant, network_down):
 
 
 async def test_entsoe_asks_for_unit_and_currency(hass: HomeAssistant, network_down):
-    MockConfigEntry(domain="entsoe", title="ENTSO-e", entry_id="en1").add_to_hass(hass)
+    _loaded(hass, "entsoe", "ENTSO-e", "en1")
     calls = []
     _register(hass, "entsoe", "get_energy_prices",
               lambda call: {"prices": _hours(30, 60, "timestamp", "price", 80.0)}, calls)
@@ -105,7 +205,7 @@ async def test_entsoe_asks_for_unit_and_currency(hass: HomeAssistant, network_do
 
 
 async def test_currency_conflict_is_shown_not_resolved(hass: HomeAssistant, network_down):
-    MockConfigEntry(domain="entsoe", title="ENTSO-e", entry_id="en1").add_to_hass(hass)
+    _loaded(hass, "entsoe", "ENTSO-e", "en1")
     calls = []
     _register(hass, "entsoe", "get_energy_prices", lambda call: {"prices": _hours(30, 60, "timestamp", "price")}, calls)
     entry = make_entry(hass, options={"price_currency": "PLN"})
@@ -119,7 +219,7 @@ async def test_currency_conflict_is_shown_not_resolved(hass: HomeAssistant, netw
 
 
 async def test_nordpool_needs_exactly_one_zone(hass: HomeAssistant, network_down):
-    MockConfigEntry(domain="nordpool", title="Nord Pool", entry_id="np1").add_to_hass(hass)
+    _loaded(hass, "nordpool", "Nord Pool", "np1")
     _register(hass, "nordpool", "get_prices_for_date",
               lambda call: {"SE3": [{"start": s["start_time"], "end": s["end_time"], "price": 500.0}
                                     for s in _hours(30)]}, [])
@@ -132,41 +232,189 @@ async def test_nordpool_needs_exactly_one_zone(hass: HomeAssistant, network_down
     assert ok["step_id"] == "price_source_confirm"
 
 
-async def test_detected_entity_pair_validated_and_saved(hass: HomeAssistant, network_down):
-    registry = er.async_get(hass)
-    for eid in ("octopus_energy_x_current_rate", "octopus_energy_x_export_current_rate"):
-        registry.async_get_or_create("sensor", "octopus_energy", eid, suggested_object_id=eid)
-    series = _hours(24, 60, "start", "value", 0.2)
-    for s in series:
-        s["end"] = s.pop("end_time")
-    attrs = {"currency": "GBP", "unit_of_measurement": "GBP/kWh", "rates": series}
-    hass.states.async_set("sensor.octopus_energy_x_current_rate", "0.2", attrs)
-    hass.states.async_set("sensor.octopus_energy_x_export_current_rate", "0.1", attrs)
-    entry = make_entry(hass, options={"price_buy_action": {"action": "x.y"}})
-    form = await _open(hass, entry)
-    done = await hass.config_entries.options.async_configure(
-        form["flow_id"], {"source": "entities|sensor.octopus_energy_x_current_rate"})
+async def test_real_entity_sets_yield_one_pair_each(hass: HomeAssistant, network_down):
+    amber_buy, _ = _amber_set(hass)
+    octo_buy, octo_sell = _octopus_set(hass)
+    pstryk_buy, pstryk_sell = _pstryk_set(hass)
+    form = await _open(hass, make_entry(hass))
+    values = [o["value"] for o in form["data_schema"].schema["source"].config["options"]]
+    # Bez cen bieżących, średnich, `next_day_rates` (jutro) i kanału controlled_load. Amber ma jednostkę `$/kWh`,
+    # która nie wskazuje waluty, więc jego encje nie są źródłem — Amber idzie ścieżką akcji.
+    assert sorted(values) == sorted([f"entities|{octo_buy}|{octo_sell}", f"entities|{pstryk_buy}|{pstryk_sell}"])
+    assert not any(amber_buy in v for v in values)
+
+
+async def test_pair_confirms_with_hours_then_saves_and_sets_platform_currency(hass: HomeAssistant, network_down):
+    buy, sell = _octopus_set(hass)
+    entry = make_entry(hass, options={"price_buy_action": {"action": "x.y"}, "price_sell_action": {"action": "x.z"}})
+    _form, confirm = await _choose(hass, entry, f"entities|{buy}")
+    assert confirm["step_id"] == "price_source_confirm" and int(confirm["description_placeholders"]["hours"]) >= 9
+    assert "entity_price_buy" not in entry.options                      # dopiero po potwierdzeniu
+    done = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
     assert done["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options["entity_price_buy"] == "sensor.octopus_energy_x_current_rate"
-    assert entry.options["entity_price_sell"] == "sensor.octopus_energy_x_export_current_rate"
-    assert "price_buy_action" not in entry.options
+    assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == sell
+    assert "price_buy_action" not in entry.options and "price_sell_action" not in entry.options
+    assert entry.options["price_currency"] == "GBP"                     # seria nie podaje waluty, a opcji nie było
 
 
-async def test_current_price_only_entity_is_refused(hass: HomeAssistant, network_down):
-    registry = er.async_get(hass)
-    registry.async_get_or_create("sensor", "pstryk", "buy", suggested_object_id="pstryk_buy_now")
-    hass.states.async_set("sensor.pstryk_buy_now", "0.61", {"unit_of_measurement": "PLN/kWh"})
+async def test_ambiguous_sells_are_offered_not_guessed(hass: HomeAssistant, network_down):
+    attrs = _fixture("pstryk_all_prices", "All prices", 24, 60)
+    _entity(hass, "sensor", "pstryk", "x_buy", attrs)
+    _entity(hass, "sensor", "pstryk", "y_sell", attrs)
+    _entity(hass, "sensor", "pstryk", "z_export", attrs)
+    form = await _open(hass, make_entry(hass))
+    values = [o["value"] for o in form["data_schema"].schema["source"].config["options"]]
+    assert len(values) == 2 and all(v.startswith("entities|") for v in values)
+
+
+async def test_short_forecast_pair_is_refused(hass: HomeAssistant, network_down):
+    attrs = _fixture("pstryk_all_prices", "All prices", 4, 60)
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", attrs)
+    entry = make_entry(hass)
+    _form, res = await _choose(hass, entry, f"entities|{buy}")
+    assert res["errors"] == {"source": "price_horizon_short"} and int(res["description_placeholders"]["hours"]) in (3, 4)
+    assert "entity_price_buy" not in entry.options
+
+
+async def test_pair_rechecked_at_choice_sell_that_lost_forecast_is_refused(hass: HomeAssistant, network_down):
+    buy, sell = _pstryk_set(hass)
     entry = make_entry(hass)
     form = await _open(hass, entry)
-    res = await hass.config_entries.options.async_configure(form["flow_id"], {"source": "entities|sensor.pstryk_buy_now"})
+    source = _source_id(form, f"entities|{buy}")
+    hass.states.async_set(sell, "0.2", {"unit_of_measurement": "PLN/kWh"})       # sprzedaż straciła prognozę
+    res = await hass.config_entries.options.async_configure(form["flow_id"], {"source": source})
     assert res["errors"] == {"source": "prices_current_only"} and "entity_price_buy" not in entry.options
 
 
-async def test_prices_form_refuses_current_only_and_replaces_action(hass: HomeAssistant, network_down):
+async def test_current_price_only_buy_that_lost_forecast_is_refused(hass: HomeAssistant, network_down):
+    buy, _sell = _pstryk_set(hass)
+    entry = make_entry(hass)
+    form = await _open(hass, entry)
+    source = _source_id(form, f"entities|{buy}")
+    hass.states.async_set(buy, "0.61", {"unit_of_measurement": "PLN/kWh"})
+    res = await hass.config_entries.options.async_configure(form["flow_id"], {"source": source})
+    assert res["errors"] == {"source": "prices_current_only"}
+
+
+async def test_currency_from_unit_conflicts_with_option(hass: HomeAssistant, network_down):
+    attrs = _fixture("pstryk_all_prices", "All prices", 24, 60, unit_of_measurement="SEK/kWh")
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", attrs)
+    entry = make_entry(hass, options={"price_currency": "EUR"})
+    _form, res = await _choose(hass, entry, f"entities|{buy}")
+    assert res["errors"] == {"source": "currency_conflict"}
+    assert res["description_placeholders"]["source_currency"] == "SEK"
+    assert res["description_placeholders"]["option_currency"] == "EUR"
+
+
+async def test_prices_form_currency_from_unit_conflicts(hass: HomeAssistant, network_down):
+    attrs = _fixture("pstryk_all_prices", "All prices", 24, 60, unit_of_measurement="SEK/kWh")
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", attrs)
+    entry = make_entry(hass)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
+    res = await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": buy, "price_currency": "EUR"})
+    assert res["errors"] == {"price_currency": "currency_conflict"}
+
+
+async def test_current_price_only_entity_is_not_listed(hass: HomeAssistant, network_down):
+    _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", {"unit_of_measurement": "PLN/kWh"}, "0.61")
+    res = await _open(hass, make_entry(hass))
+    assert res["type"] is FlowResultType.ABORT and res["reason"] == "no_price_sources"
+
+
+async def test_disabled_entities_and_unloaded_entries_are_not_offered(hass: HomeAssistant, network_down):
+    attrs = _fixture("pstryk_all_prices", "All prices", 24, 60)
+    _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", attrs, disabled=True)
+    MockConfigEntry(domain="tibber", title="Tibber", entry_id="t1").add_to_hass(hass)      # nie załadowany
+    res = await _open(hass, make_entry(hass))
+    assert res["type"] is FlowResultType.ABORT
+
+
+async def test_prices_form_clears_only_the_replaced_side_action(hass: HomeAssistant, network_down):
+    attrs = _fixture("pstryk_all_prices", "All prices", 24, 60)
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", attrs)
+    entry = make_entry(hass, options={"price_buy_action": {"action": "tibber.get_prices"},
+                                      "price_sell_action": {"action": "easyenergy.get_energy_return_prices"}})
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
+    done = await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": buy})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert "price_buy_action" not in entry.options and "price_sell_action" in entry.options
+
+
+async def test_prices_form_refuses_current_only_and_short(hass: HomeAssistant, network_down):
     hass.states.async_set("sensor.now_only", "0.61", {"unit_of_measurement": "PLN/kWh"})
+    short = _entity(hass, "sensor", "pstryk", "short_buy", _fixture("pstryk_all_prices", "All prices", 3, 60))
     entry = make_entry(hass, options={"price_buy_action": {"action": "tibber.get_prices"}})
     menu = await hass.config_entries.options.async_init(entry.entry_id)
     form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
     bad = await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": "sensor.now_only"})
     assert bad["errors"] == {"entity_price_buy": "prices_current_only"}
+    bad = await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": short})
+    assert bad["errors"] == {"entity_price_buy": "prices_not_usable"}
     assert "price_buy_action" in entry.options
+
+
+async def test_missing_currency_is_asked_for(hass: HomeAssistant, network_down):
+    _loaded(hass, "tibber", "Tibber", "t1")
+    _register(hass, "tibber", "get_prices", lambda call: {"prices": {"Dom": [
+        {"start_time": s["start_time"], "price": 1.2} for s in _hours(30)]}}, [])
+    entry = make_entry(hass)
+    _form, details = await _choose(hass, entry, "action|tibber|t1")
+    assert details["step_id"] == "price_source_details"
+    res = await hass.config_entries.options.async_configure(details["flow_id"], {})
+    assert res["errors"] == {"currency": "currency_missing"}
+
+
+async def test_tomorrow_failure_does_not_fail_the_probe(hass: HomeAssistant, network_down):
+    _loaded(hass, "entsoe", "ENTSO-e", "en1")
+    today = datetime.now(timezone.utc).date()
+
+    def build(call):
+        if datetime.fromisoformat(call.data["start"]).date() > today:
+            raise RuntimeError("tomorrow not published")
+        return {"prices": _hours(30, 60, "timestamp", "price", 80.0)}
+
+    _register(hass, "entsoe", "get_energy_prices", build, [])
+    entry = make_entry(hass)
+    _form, details = await _choose(hass, entry, "action|entsoe|en1")
+    res = await hass.config_entries.options.async_configure(details["flow_id"], {"unit": "MWh", "currency": "EUR"})
+    assert res["step_id"] == "price_source_confirm"
+
+
+async def test_slow_action_times_out(hass: HomeAssistant, network_down, monkeypatch):
+    _loaded(hass, "amberelectric", "Amber home", "amb1")
+    monkeypatch.setattr(config_flow, "PROBE_TIMEOUT_S", 0.05)
+
+    async def slow(call: ServiceCall):
+        await asyncio.sleep(2)
+        return {"forecasts": _hours(36, 30)}
+
+    hass.services.async_register("amberelectric", "get_forecasts", slow, schema=vol.Schema({}, extra=vol.ALLOW_EXTRA),
+                                 supports_response=SupportsResponse.ONLY)
+    entry = make_entry(hass)
+    form = await _open(hass, entry)
+    res = await hass.config_entries.options.async_configure(form["flow_id"], {"source": "action|amberelectric|amb1"})
+    assert res["errors"] == {"base": "price_source_unusable"}
+
+
+async def test_action_source_without_sell_keeps_existing_sell_entity_and_errors_stay_off_currency_field(
+        hass: HomeAssistant, network_down):
+    _loaded(hass, "entsoe", "ENTSO-e", "en1")
+    _register(hass, "entsoe", "get_energy_prices", lambda call: {"prices": _hours(30, 60, "timestamp", "price", 80.0)}, [])
+    entry = make_entry(hass, options={"entity_price_sell": "sensor.my_sell"})
+    _form, details = await _choose(hass, entry, "action|entsoe|en1")
+    confirm = await hass.config_entries.options.async_configure(details["flow_id"], {"unit": "MWh", "currency": "EUR"})
+    await hass.config_entries.options.async_configure(confirm["flow_id"], {})
+    assert entry.options["entity_price_sell"] == "sensor.my_sell"
+
+
+async def test_unusable_action_error_is_not_under_currency_field(hass: HomeAssistant, network_down):
+    _loaded(hass, "entsoe", "ENTSO-e", "en1")
+
+    def boom(call):
+        raise RuntimeError("down")
+    _register(hass, "entsoe", "get_energy_prices", boom, [])
+    _form, details = await _choose(hass, make_entry(hass), "action|entsoe|en1")
+    res = await hass.config_entries.options.async_configure(details["flow_id"], {"unit": "MWh", "currency": "EUR"})
+    assert res["errors"] == {"base": "price_source_unusable"}
