@@ -699,7 +699,13 @@ def start_work_mode_watch(hass, choice: ProfileChoice | None, rt) -> None:
             return False
         watcher = WorkModeWatcher(eid, choice.profile.work_mode.ha_neutral_options, tracker=rt.work_mode)
         watcher.prime(hass.states.get(eid))
-        rt.unsubs.append(async_track_state_change_event(hass, [eid], callback(watcher.on_event)))
+
+        # `callback` znakuje funkcję atrybutem — na metodzie związanej się nie da (AttributeError).
+        @callback
+        def _on_work_mode(event) -> None:
+            watcher.on_event(event)
+
+        rt.unsubs.append(async_track_state_change_event(hass, [eid], _on_work_mode))
         if getattr(rt, "direct", None) is None:        # w trybie bezpośrednim tracker karmi odczyt rejestru
             _start_work_mode_refresh(hass, rt, eid, choice.profile.work_mode.poll_s)
         return True
