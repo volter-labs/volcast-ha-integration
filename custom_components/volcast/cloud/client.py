@@ -376,7 +376,7 @@ def _opt_number(v: Any) -> float | None:
 
 @dataclass(frozen=True)
 class PollResult:
-    # "pending" | "confirmed" | "consumed" | "expired" | "gone" | "disabled" | "error"
+    # "pending" | "confirmed" | "consumed" | "expired" | "gone" | "disabled" | "not_live" | "error"
     status: str
     api_key: str | None = None
     user_id: str | None = None
@@ -390,6 +390,15 @@ class PairingDisabled(Exception):
 
 class PairingError(Exception):
     """Sesji nie da się założyć (limit, zły format odpowiedzi, sieć)."""
+
+
+class SessionNotLive(Exception):
+    """Chmura zamknęła okno sesji (409 `not_live`: reset w aplikacji albo koniec okna) — nie raportujemy dalej."""
+
+
+def _raise_if_not_live(status: int, data: Any) -> None:
+    if status == 409 and isinstance(data, dict) and data.get("error") == "not_live":
+        raise SessionNotLive
 
 
 class ClientOutdated(PairingError):
@@ -465,6 +474,8 @@ class PairingClient:
             return PollResult("gone")
         if status == 503:
             return PollResult("disabled")
+        if status == 409 and isinstance(data, dict) and data.get("error") == "not_live":
+            return PollResult("not_live")
         if status != 200 or not isinstance(data, dict):
             return PollResult("error")
         if data.get("status") == "confirmed":
@@ -493,7 +504,8 @@ class PairingClient:
             if "detail" in step:
                 step["detail"] = _cut_utf16(_clean(step["detail"], _DETAIL_MAX), _DETAIL_MAX).strip()
             payload.append(step)
-        status, _ = await self._call({**self._auth(s, "progress"), "steps": payload})
+        status, data = await self._call({**self._auth(s, "progress"), "steps": payload})
+        _raise_if_not_live(status, data)
         return status == 200
 
     async def async_account_state(self, s: PairingSession) -> AccountState | None:
@@ -503,6 +515,7 @@ class PairingClient:
         except Exception as err:  # noqa: BLE001 — onboarding nie czeka na konto
             _LOGGER.debug("pairing account_state failed (%s)", type(err).__name__)
             return None
+        _raise_if_not_live(status, data)
         if status != 200 or not isinstance(data, dict):
             return None
         src = data.get("price_source")
@@ -521,6 +534,7 @@ class PairingClient:
 
     async def async_request_plan(self, s: PairingSession) -> dict | None:
         status, data = await self._call(self._auth(s, "request_plan"), _PLAN_TIMEOUT)
+        _raise_if_not_live(status, data)
         if status == 429:            # plan zlecony przed chwilą — to nie błąd
             return {"skipped": "cooldown"}
         return data if status == 200 and isinstance(data, dict) else None

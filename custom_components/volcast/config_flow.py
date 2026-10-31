@@ -92,7 +92,7 @@ PAIR_POLL_INTERVAL_S = 3.0
 PAIR_DEADLINE_S = 630.0
 # Okno postępu i wyborów po potwierdzeniu (chmura liczy je od potwierdzenia).
 LIVE_WINDOW = timedelta(minutes=30)
-_ABORT_BY_STATUS = {"expired": "pairing_expired", "gone": "pairing_expired", "disabled": "pairing_disabled",
+_ABORT_BY_STATUS = {"expired": "pairing_expired", "gone": "pairing_expired", "not_live": "pairing_expired", "disabled": "pairing_disabled",
                     "error": "pairing_connection_lost"}
 # Poświadczenia wydane (także w zgubionej odpowiedzi) — anulowanie sesji nic by nie cofnęło.
 _CREDENTIALS_ISSUED = ("confirmed", "consumed")

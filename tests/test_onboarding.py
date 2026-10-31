@@ -794,3 +794,51 @@ def test_no_retry_when_first_plan_already_ok():
     _reopen(ob)
     asyncio.run(ob.async_on_readings())
     assert client.plan_calls == 1
+
+
+# ── 409 `not_live`: koniec raportowania, czyszczenie zapamiętanej sesji ──
+
+
+def test_not_live_on_progress_stops_after_one_call_and_clears_pairing():
+    from custom_components.volcast.cloud.client import SessionNotLive
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    calls = []
+
+    async def progress(s, steps):
+        calls.append(steps)
+        raise SessionNotLive
+    client.async_progress = progress
+    asyncio.run(ob.async_run())
+    assert len(calls) == 1 and client.plan_calls == 0
+    assert ob.stopped and ob.reset_result == "cleared"
+    assert "pairing" not in entry.data and entry.data["api_key"] == "vk_x"
+
+
+def test_not_live_from_poll_stops_the_loop():
+    ob, client, entry = make([PollResult("not_live")], plan=OK_PLAN)
+    asyncio.run(ob.async_run())
+    assert ob.stopped and ob.reset_result == "cleared" and "pairing" not in entry.data
+
+
+def test_not_live_after_window_does_not_clear_pairing():
+    from custom_components.volcast.cloud.client import SessionNotLive
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    ob._live_until = NOW - timedelta(seconds=1)
+
+    async def progress(s, steps):
+        raise SessionNotLive
+    client.async_progress = progress
+    asyncio.run(ob.async_run())
+    assert ob.stopped and ob.reset_result == "window_ended" and "pairing" in entry.data
+
+
+def test_not_live_from_plan_request_stops():
+    from custom_components.volcast.cloud.client import SessionNotLive
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+
+    async def plan(s):
+        client.plan_calls += 1
+        raise SessionNotLive
+    client.async_request_plan = plan
+    asyncio.run(ob.async_run())
+    assert client.plan_calls == 1 and ob.stopped and "pairing" not in entry.data

@@ -59,6 +59,7 @@ from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
 
+from .cloud.client import SessionNotLive
 from .cloud.control_choice import APPLIED_CHOICES, WIZARD_MARK, wizard_mark
 from .const import (CONF_PAIRING, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
                     OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY)
@@ -166,6 +167,8 @@ class Onboarding:
         self._repost_delay = _REPOST_MIN_S
         self._repost_at: datetime | None = None
         self.first_plan_outcome: str | None = None
+        self.stopped = False                   # chmura zamknęła okno sesji (409 `not_live`) — nie raportujemy dalej
+        self.reset_result: str | None = None   # "cleared" (zapamiętana sesja usunięta) | "window_ended" (koniec okna)
         self._last_plan_at: datetime | None = None
         self._readings_retry_busy = False
         self._search = search
@@ -183,8 +186,28 @@ class Onboarding:
             await self._run()
         except asyncio.CancelledError:
             raise
+        except SessionNotLive:
+            self._on_not_live()
         except Exception as err:  # noqa: BLE001 — onboarding nigdy nie psuje wpisu
             _LOGGER.warning("Volcast onboarding stopped (%s)", type(err).__name__)
+
+    def _on_not_live(self) -> None:
+        """409 `not_live`: bez ponowień i bez czekania do `live_until`. Zamknięcie PRZED końcem okna to reset
+        w aplikacji — czyścimy zapamiętaną sesję, żeby kolejne parowanie zaczęło się od nowa."""
+        if self.stopped:
+            return
+        self.stopped = True
+        if not self._live():
+            self.reset_result = "window_ended"
+            _LOGGER.info("Volcast onboarding: pairing window ended, reporting stopped")
+            return
+        self.reset_result = "cleared"
+        _LOGGER.info("Volcast onboarding: pairing session closed by the cloud, reporting stopped")
+        entry = self._entry()
+        if entry is None or CONF_PAIRING not in (getattr(entry, "data", None) or {}):
+            return
+        self._hass.config_entries.async_update_entry(
+            entry, data={k: v for k, v in entry.data.items() if k != CONF_PAIRING})
 
     # ── pomocnicze ─────────────────────────────────────────────────────────
     async def _set(self, key: str, state: str, detail: str | None = None) -> None:
@@ -519,7 +542,7 @@ class Onboarding:
     async def async_on_readings(self) -> None:
         """Pierwsza przyjęta telemetria z odczytem: ponów pierwszy plan (tylko w oknie na żywo, z limitem
         prób i odstępem cooldownu chmury). Wynik inny niż „brak odczytów/błąd planera" — nic nie robi."""
-        if self._readings_retry_busy:
+        if self._readings_retry_busy or self.stopped:
             return
         self._readings_retry_busy = True
         try:
@@ -539,6 +562,8 @@ class Onboarding:
                 await self._request_plan()
         except asyncio.CancelledError:
             raise
+        except SessionNotLive:
+            self._on_not_live()
         except Exception as err:  # noqa: BLE001 — onboarding nigdy nie psuje wpisu
             _LOGGER.warning("Volcast onboarding retry stopped (%s)", type(err).__name__)
         finally:
@@ -555,6 +580,8 @@ class Onboarding:
                 return
             if waiting:
                 result = await self._client.async_poll(self._session)
+                if result.status == "not_live":
+                    raise SessionNotLive
                 if result.status == "consumed":
                     await self._apply(result.choices)
                 elif result.status in _GONE:

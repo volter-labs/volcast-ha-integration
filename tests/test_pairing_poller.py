@@ -40,7 +40,7 @@ def test_pending_then_confirmed():
 
 
 def test_terminal_statuses_return_immediately():
-    for st in ("expired", "gone", "disabled"):
+    for st in ("expired", "gone", "disabled", "not_live"):
         c = Client(PollResult(st))
         assert run(c).status == st and c.n == 1
 
