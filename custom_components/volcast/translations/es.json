@@ -50,7 +50,7 @@
           "battery_charge_power_entity": "Potencia de carga de la batería (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un sensor que muestra la producción solar total de hoy en kWh (se reinicia cada día). Es la fuente principal para el seguimiento: busca sensores como «Generación FV de hoy» o «Rendimiento diario» de tu inversor (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_energy_entity": "Un sensor con tu producción solar en kWh: un contador diario o un total acumulado, ambos funcionan. Es la fuente principal para el seguimiento: busca sensores como «Generación FV de hoy» o «Rendimiento diario» de tu inversor (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "Un sensor que muestra la potencia solar actual en vatios. Se usa como alternativa cuando el sensor de energía no está disponible o se reinicia a mitad del día.",
           "battery_soc_entity": "Un sensor que muestra el estado de carga de la batería (0-100 %). Se usa para detectar la limitación del inversor cuando la batería está llena. Opcional: solo es necesario si tienes un sistema de baterías.",
           "battery_charge_power_entity": "Un sensor que muestra la potencia de carga de la batería en vatios. Se usa para confirmar la limitación (batería llena, no acepta carga) y detectar la carga desde la red (escenarios de precios negativos). Opcional."
@@ -94,7 +94,7 @@
           "battery_charge_power_entity": "Potencia de carga de la batería (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un sensor que muestra la producción solar total de hoy en kWh (se reinicia cada día).",
+          "pv_energy_entity": "Un sensor con tu producción solar en kWh: un contador diario o un total acumulado, ambos funcionan.",
           "pv_power_entity": "Un sensor que muestra la potencia solar actual en vatios. Se usa como alternativa.",
           "battery_soc_entity": "Un sensor que muestra el estado de carga de la batería (0-100 %). Se usa para detectar la limitación.",
           "battery_charge_power_entity": "Un sensor de la potencia de carga de la batería en vatios. Detecta la limitación y la carga desde la red."
@@ -118,7 +118,7 @@
           "battery_charge_power_entity": "Potencia de carga de la batería (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un sensor que muestra la producción solar total de hoy en kWh (se reinicia cada día).",
+          "pv_energy_entity": "Un sensor con tu producción solar en kWh: un contador diario o un total acumulado, ambos funcionan.",
           "pv_power_entity": "Un sensor que muestra la potencia solar actual en vatios. Se usa como alternativa.",
           "battery_soc_entity": "Un sensor que muestra el estado de carga de la batería (0-100 %). Se usa para detectar la limitación.",
           "battery_charge_power_entity": "Un sensor de la potencia de carga de la batería en vatios. Detecta la limitación y la carga desde la red."

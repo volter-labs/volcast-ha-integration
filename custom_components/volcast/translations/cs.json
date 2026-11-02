@@ -50,7 +50,7 @@
           "battery_charge_power_entity": "Nabíjecí výkon baterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Senzor zobrazující celkovou dnešní solární výrobu v kWh (denně se nuluje). Je to hlavní zdroj pro sledování — hledejte senzory jako „Dnešní výroba FV“ nebo „Denní výnos“ od svého střídače (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_energy_entity": "Senzor s vaší solární výrobou v kWh — denní počítadlo i celkový součet, funguje obojí. Je to hlavní zdroj pro sledování — hledejte senzory jako „Dnešní výroba FV“ nebo „Denní výnos“ od svého střídače (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "Senzor zobrazující aktuální solární výkon ve wattech. Používá se jako záloha, když je senzor energie nedostupný nebo se během dne vynuluje.",
           "battery_soc_entity": "Senzor zobrazující stav nabití baterie (0–100 %). Používá se ke zjištění omezení výkonu střídače při plné baterii. Volitelné — potřebné jen tehdy, pokud máte bateriový systém.",
           "battery_charge_power_entity": "Senzor zobrazující nabíjecí výkon baterie ve wattech. Používá se k potvrzení omezení výkonu (baterie plná, nepřijímá nabíjení) a ke zjištění nabíjení ze sítě (scénáře se zápornými cenami). Volitelné."
@@ -94,7 +94,7 @@
           "battery_charge_power_entity": "Nabíjecí výkon baterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Senzor zobrazující celkovou dnešní solární výrobu v kWh (denně se nuluje).",
+          "pv_energy_entity": "Senzor s vaší solární výrobou v kWh — denní počítadlo i celkový součet, funguje obojí.",
           "pv_power_entity": "Senzor zobrazující aktuální solární výkon ve wattech. Používá se jako záloha.",
           "battery_soc_entity": "Senzor zobrazující stav nabití baterie (0–100 %). Používá se ke zjištění omezení výkonu.",
           "battery_charge_power_entity": "Senzor nabíjecího výkonu baterie ve wattech. Zjišťuje omezení výkonu a nabíjení ze sítě."
@@ -118,7 +118,7 @@
           "battery_charge_power_entity": "Nabíjecí výkon baterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Senzor zobrazující celkovou dnešní solární výrobu v kWh (denně se nuluje).",
+          "pv_energy_entity": "Senzor s vaší solární výrobou v kWh — denní počítadlo i celkový součet, funguje obojí.",
           "pv_power_entity": "Senzor zobrazující aktuální solární výkon ve wattech. Používá se jako záloha.",
           "battery_soc_entity": "Senzor zobrazující stav nabití baterie (0–100 %). Používá se ke zjištění omezení výkonu.",
           "battery_charge_power_entity": "Senzor nabíjecího výkonu baterie ve wattech. Zjišťuje omezení výkonu a nabíjení ze sítě."

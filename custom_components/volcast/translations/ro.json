@@ -50,7 +50,7 @@
           "battery_charge_power_entity": "Puterea de încărcare a bateriei (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un senzor care arată producția solară totală de azi în kWh (se resetează zilnic). Este sursa principală pentru urmărire — caută senzori precum „Producția FV de azi” sau „Randament zilnic” de la invertorul tău (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_energy_entity": "Un senzor cu producția ta solară în kWh — un contor zilnic sau un total cumulat, ambele funcționează. Este sursa principală pentru urmărire — caută senzori precum „Producția FV de azi” sau „Randament zilnic” de la invertorul tău (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "Un senzor care arată puterea solară curentă în wați. Folosit ca alternativă când senzorul de energie nu este disponibil sau se resetează în timpul zilei.",
           "battery_soc_entity": "Un senzor care arată starea de încărcare a bateriei (0-100 %). Folosit pentru a detecta limitarea invertorului când bateria este plină. Opțional — necesar doar dacă ai un sistem cu baterie.",
           "battery_charge_power_entity": "Un senzor care arată puterea de încărcare a bateriei în wați. Folosit pentru a confirma limitarea (baterie plină, nu mai acceptă încărcare) și pentru a detecta încărcarea din rețea (scenarii cu prețuri negative). Opțional."
@@ -94,7 +94,7 @@
           "battery_charge_power_entity": "Puterea de încărcare a bateriei (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un senzor care arată producția solară totală de azi în kWh (se resetează zilnic).",
+          "pv_energy_entity": "Un senzor cu producția ta solară în kWh — un contor zilnic sau un total cumulat, ambele funcționează.",
           "pv_power_entity": "Un senzor care arată puterea solară curentă în wați. Folosit ca alternativă.",
           "battery_soc_entity": "Un senzor care arată starea de încărcare a bateriei (0-100 %). Folosit pentru a detecta limitarea.",
           "battery_charge_power_entity": "Un senzor pentru puterea de încărcare a bateriei în wați. Detectează limitarea și încărcarea din rețea."
@@ -118,7 +118,7 @@
           "battery_charge_power_entity": "Puterea de încărcare a bateriei (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un senzor care arată producția solară totală de azi în kWh (se resetează zilnic).",
+          "pv_energy_entity": "Un senzor cu producția ta solară în kWh — un contor zilnic sau un total cumulat, ambele funcționează.",
           "pv_power_entity": "Un senzor care arată puterea solară curentă în wați. Folosit ca alternativă.",
           "battery_soc_entity": "Un senzor care arată starea de încărcare a bateriei (0-100 %). Folosit pentru a detecta limitarea.",
           "battery_charge_power_entity": "Un senzor pentru puterea de încărcare a bateriei în wați. Detectează limitarea și încărcarea din rețea."
