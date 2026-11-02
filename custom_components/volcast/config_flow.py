@@ -453,38 +453,9 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 options=options,
             )
 
-        production_schema = vol.Schema(
-            {
-                vol.Optional(CONF_PV_ENERGY_ENTITY, default=""): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="energy",
-                    )
-                ),
-                vol.Optional(CONF_PV_POWER_ENTITY, default=""): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="power",
-                    )
-                ),
-                vol.Optional(CONF_BATTERY_SOC_ENTITY, default=""): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="battery",
-                    )
-                ),
-                vol.Optional(CONF_BATTERY_CHARGE_POWER_ENTITY, default=""): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="power",
-                    )
-                ),
-            }
-        )
-
         return self.async_show_form(
             step_id="production",
-            data_schema=production_schema,
+            data_schema=_production_schema(),
         )
 
     @staticmethod
@@ -1142,6 +1113,21 @@ def _ev_label(name: str | None, manufacturer: str | None, model: str | None, dev
 _MANUAL = "manual"
 RESTORE_FAILED = "restore_failed"
 _LOGGER_SERIAL = re.compile(r"\d{1,10}")
+
+
+def _production_schema() -> vol.Schema:
+    """Optional production sensors for a new entry, all empty by default.
+
+    No `default=""`: Home Assistant rejects an empty string as an entity id,
+    so a field left blank failed the whole form (no battery yet, issue #12).
+    """
+    return vol.Schema({
+        _entity_field(key, None): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class=device_class))
+        for key, device_class in ((CONF_PV_ENERGY_ENTITY, "energy"), (CONF_PV_POWER_ENTITY, "power"),
+                                  (CONF_BATTERY_SOC_ENTITY, "battery"),
+                                  (CONF_BATTERY_CHARGE_POWER_ENTITY, "power"))
+    })
 
 
 def _entity_field(key: str, saved: Any) -> vol.Optional:
