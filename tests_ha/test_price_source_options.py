@@ -588,16 +588,20 @@ def _frank_attrs(hours: int) -> dict:
                                 for i in range(hours)]}
 
 
-async def test_frank_energie_entity_is_offered_and_saved_in_eur(hass: HomeAssistant, network_down):
-    buy = _entity(hass, "sensor", "frank_energie", "frank_energie_prices_current_electricity_price", _frank_attrs(24))
-    # Ten sam kształt pod platformą z samym raportem wykrywania nie jest podpowiadany.
+async def test_frank_energie_entity_is_not_suggested_but_can_be_picked_by_hand(hass: HomeAssistant, network_down):
+    buy = _entity(hass, "sensor", "frank_energie", "frank_energie_prices_current_electricity_price_all_in",
+                  _frank_attrs(24))
+    # Ten sam kształt i jednostkę ma np. sam VAT — integracja z samym raportem wykrywania nie jest podpowiadana.
+    vat = _entity(hass, "sensor", "frank_energie", "frank_energie_prices_current_electricity_vat_price",
+                  _frank_attrs(24))
     _entity(hass, "sensor", "epex_spot", "epex_spot_price", _frank_attrs(24))
     entry = make_entry(hass)
-    form = await _open(hass, entry)
-    values = [o["value"] for o in form["data_schema"].schema["source"].config["options"]]
-    assert values == [f"entities|{buy}|"]
-    confirm = await hass.config_entries.options.async_configure(form["flow_id"], {"source": values[0]})
-    assert confirm["step_id"] == "price_source_confirm" and confirm["description_placeholders"]["currency"] == "EUR"
-    done = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
+    res = await _open(hass, entry)
+    assert res["type"] is FlowResultType.ABORT and res["reason"] == "no_price_sources"
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
+    field = next(sel for key, sel in form["data_schema"].schema.items() if str(key) == "entity_price_buy")
+    assert {buy, vat} <= set(field.config["include_entities"])
+    done = await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": buy})
     assert done["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["entity_price_buy"] == buy and entry.options.get("price_buy_action") is None

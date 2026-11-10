@@ -20,8 +20,8 @@ class EntityUse(Enum):
     """Co wtyczka robi z encjami integracji."""
     #: Encji nie wykrywamy; wpis niesie tylko wiedzę o kształcie ceny (adapter atrybutów).
     NONE = "none"
-    #: Encje idą do raportu wykrywania, ale nie podpowiadamy ich w konfiguracji — kształtu
-    #: atrybutów nie potwierdziliśmy (fixture albo kod źródłowy integracji).
+    #: Encje idą do raportu wykrywania, ale nie podpowiadamy ich w konfiguracji — ogólny adapter
+    #: kształtu atrybutów nie czyta albo ten sam kształt mają też serie, które ceną prądu domu nie są.
     REPORTED = "reported"
     #: Raport wykrywania i podpowiedź w konfiguracji (onboarding, wykryte źródła w opcjach).
     OFFERED = "offered"
@@ -250,9 +250,10 @@ INTEGRATIONS: tuple[PriceIntegration, ...] = (
     ),
     # Pstryk (HACS, Polska): lista „All prices” wpisów bez końca przedziału (długość z odstępu startów).
     PriceIntegration(domain="pstryk", currency="PLN"),
-    # Frank Energie (HACS): `prices` z wpisami `from` / `till` / `price` — kształt potwierdzony fixture'em
-    # `tests/fixtures/prices/frank_energie_prices.json`.
-    PriceIntegration(domain="frank_energie"),
+    # Frank Energie (HACS): `prices` z wpisami `from` / `till` / `price` w €/kWh — kształt potwierdzony u źródła,
+    # więc encja wybrana ręcznie działa. Nie podpowiadamy: ten sam kształt i jednostkę mają serie, które ceną prądu
+    # domu nie są (sama cena rynkowa, sam VAT, gaz w €/kWh przy umowie belgijskiej), a nazwy encji zależą od języka.
+    PriceIntegration(domain="frank_energie", entities=EntityUse.REPORTED),
     # EPEX Spot (HACS): domena potwierdzona, kształt atrybutów nie — tylko raport wykrywania.
     PriceIntegration(domain="epex_spot", entities=EntityUse.REPORTED),
     # Domeny nie udało się potwierdzić w żadnym źródle; zostaje w raporcie (nieznana domena nic nie łapie).

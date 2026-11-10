@@ -139,17 +139,23 @@ def _frank_series(now: datetime, hours: int) -> dict:
     return {**attrs, "prices": rows}
 
 
-def test_frank_energie_is_offered_and_its_shape_parses():
+def test_frank_energie_shape_parses_but_is_not_offered():
+    # Kształt jest potwierdzony u źródła (`prices` z `from` / `till` / `price`, €/kWh), więc wybrana ręcznie encja
+    # działa. Podpowiedzi nie ma: integracja wystawia ten sam kształt i jednostkę także dla serii, które nie są ceną
+    # prądu domu — sama cena rynkowa, sam VAT, a przy umowie belgijskiej gaz w €/kWh.
     now = datetime(2026, 10, 31, 9, 20, tzinfo=timezone.utc)
-    assert "frank_energie" in reg.OFFERED_PLATFORMS
+    assert "frank_energie" in reg.REPORTED_PLATFORMS and "frank_energie" not in reg.OFFERED_PLATFORMS
     attrs = _frank_series(now, 24)
     assert effective_currency("frank_energie", attrs) == "EUR"           # z jednostki €/kWh
-    check = check_series(enrich_attributes("frank_energie", attrs), None, _WAW, now)
-    assert (check.status, check.hours) == ("ok", 23)
-    out = pair_entities([{"entity_id": "sensor.frank_energie_prices_current_electricity_price",
-                          "platform": "frank_energie", "config_entry_id": "f1"}])
-    assert [(p.platform, p.buy, p.sell) for p in out] == [
-        ("frank_energie", "sensor.frank_energie_prices_current_electricity_price", None)]
+    for series in (attrs, {**attrs, "prices": [{**row, "price": 0.04} for row in attrs["prices"]]}):
+        check = check_series(enrich_attributes("frank_energie", series), None, _WAW, now)
+        assert (check.status, check.hours) == ("ok", 23)                 # VAT / gaz: nie do odróżnienia kształtem
+    out = pair_entities([{"entity_id": eid, "platform": "frank_energie", "config_entry_id": "f1"} for eid in (
+        "sensor.frank_energie_prices_current_electricity_price_all_in",
+        "sensor.frank_energie_prices_current_electricity_market_price",
+        "sensor.frank_energie_prices_current_electricity_vat_price",
+        "sensor.frank_energie_gasprices_huidige_gasprijs_all_in")])
+    assert out == []
 
 
 @pytest.mark.parametrize("platform", ["epex_spot", "pstryk_aio"])
