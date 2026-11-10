@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -12,6 +12,8 @@ from custom_components.volcast.control.runtime import ControlRuntime
 from custom_components.volcast.core.control.select import ProfileChoice
 from custom_components.volcast.core.profile import load_builtin
 from custom_components.volcast.onboarding import STEP_KEYS, Onboarding, plan_outcome, progress_payload
+
+from .core.test_price_actions import tibber_response
 
 NOW = datetime(2026, 9, 27, 10, 0, tzinfo=timezone.utc)
 S = PairingSession("s1", "p", "https://volcast.app/connect?s=s1", "t")
@@ -244,14 +246,45 @@ def test_choice_clears_actions_of_the_replaced_sides_only():
     assert entry.options["entity_price_sell"] == SELL and "price_sell_action" not in entry.options
 
 
+def _action_services(ob, respond):
+    calls = []
+
+    async def async_call(domain, service, data, blocking=False, return_response=False):
+        calls.append((f"{domain}.{service}", dict(data)))
+        return respond(data)
+
+    ob._hass.services = SimpleNamespace(async_call=async_call)
+    return calls
+
+
+def _tibber_day(data):
+    return tibber_response(date.fromisoformat(data["start"][:10]))
+
+
 def test_configured_buy_action_counts_as_a_price_source():
     action = {"action": "tibber.get_prices", "currency": "SEK"}
     ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
                              prices={}, options={"price_buy_action": action})
+    calls = _action_services(ob, _tibber_day)
     asyncio.run(ob.async_run())
+    assert [c[0] for c in calls] == ["tibber.get_prices", "tibber.get_prices"]    # dziś + jutro, jak w runtime
     step = last(client)["prices"]
     assert step["state"] == "done" and step["detail"] == "tibber.get_prices"
     assert entry.options["price_buy_action"] == action and "entity_price_buy" not in entry.options
+
+
+@pytest.mark.parametrize("respond", [
+    lambda _d: {"prices": {"Home": []}},                    # poprawna akcja, ale bez cen (np. zły dom)
+    lambda _d: (_ for _ in ()).throw(RuntimeError("down")),  # akcja zawodzi
+])
+def test_configured_buy_action_without_prices_is_not_done(respond):
+    action = {"action": "tibber.get_prices", "currency": "SEK"}
+    ob, client, entry = make([PollResult("pending")], plan=OK_PLAN, prices={}, options={"price_buy_action": action})
+    _action_services(ob, respond)
+    asyncio.run(ob.async_run())
+    step = last(client)["prices"]
+    assert step["state"] == "choice" and step["detail"] != "tibber.get_prices"
+    assert entry.options["price_buy_action"] == action                  # konfiguracja zostaje, nic nie nadpisane
 
 
 def test_action_only_integrations_point_to_the_options_menu():

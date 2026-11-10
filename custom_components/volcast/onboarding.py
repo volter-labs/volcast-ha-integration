@@ -16,8 +16,8 @@ Pierwszy plan zawsze ma jawny wynik (`plan_outcome`), nigdy ogólne „gotowe":
 - odmowa planera (`success` nie True, także brak poziomu konta), 0 albo brak slotów,
   planer nieosiągalny → `error "planner unavailable"` (nieosiągalny: z ponowieniem).
 
-Encję ceny proponujemy tylko wtedy, gdy JUŻ TERAZ daje pełną serię
-(`has_usable_prices_now`); inaczej „none found" — właściciel wybiera inne źródło.
+Encję ceny proponujemy (a źródło z akcji uznajemy) tylko wtedy, gdy JUŻ TERAZ daje pełną
+serię (`has_usable_prices_now`); inaczej „none found" — właściciel wybiera inne źródło.
 
 Wybory zdalne:
 - stosujemy je najwyżej RAZ na sesję: zastosowany wybór (sesja, wartość, czas) trafia do
@@ -69,7 +69,7 @@ from .control.runtime import readings_missing
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.control.recommend import recommend
-from .core.price_actions import InvalidPriceSource, parse_source
+from .core.price_actions import InvalidPriceSource, PriceActionPoller, parse_source
 from .core.price_setup import (ACTION_DOMAINS, PLATFORM_CURRENCY, currency_conflict, effective_currency,
                                enrich_attributes, is_gas_entity, is_sell_entity, pair_entities)
 from .core.prices import has_usable_prices_now
@@ -314,13 +314,32 @@ class Onboarding:
     def _platform_of(self, entity_id: str | None) -> str | None:
         return self._price_platforms.get(entity_id)
 
-    def _configured_price_action(self) -> str | None:
-        """Nazwa akcji skonfigurowanego źródła kupna (opcje), gdy jest poprawna — wygrywa z encją."""
+    async def _usable_price_action(self) -> str | None:
+        """Nazwa akcji skonfigurowanego źródła kupna (opcje), gdy JUŻ TERAZ daje pełną serię — wygrywa z encją.
+
+        Sama poprawna konfiguracja to jeszcze nie ceny (zła strefa, inny dom): jedno odświeżenie tak jak
+        w runtime (dziś + jutro, z limitem czasu) i ta sama reguła co dla encji (`has_usable_prices_now`)."""
         raw = self._options().get(OPT_PRICE_BUY_ACTION)
         try:
-            return parse_source(raw).action if raw else None
+            source = parse_source(raw) if raw else None
         except InvalidPriceSource:
             return None
+        if source is None:
+            return None
+
+        async def call(domain: str, service: str, data: dict):
+            return await self._hass.services.async_call(domain, service, data, blocking=True, return_response=True)
+
+        tz, now = self._tz(), self._utcnow()
+        poller = PriceActionPoller(source, call)
+        await poller.async_refresh(now, tz)          # nie rzuca — błąd akcji to brak cen
+        currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
+        try:
+            usable = has_usable_prices_now(poller.fresh_attributes(now, tz), currency, tz, now)
+        except Exception as err:  # noqa: BLE001 — zła odpowiedź = źródło nieużywalne
+            _LOGGER.debug("Volcast onboarding: price action check failed (%s)", type(err).__name__)
+            return None
+        return source.action if usable else None
 
     def _action_integrations(self) -> list[str]:
         """Integracje cenowe z akcją (Tibber, Nord Pool…) skonfigurowane w HA — źródło ustawia się w opcjach."""
@@ -470,7 +489,7 @@ class Onboarding:
         return state
 
     async def _prices_step(self, report: dict) -> None:
-        action = self._configured_price_action()
+        action = await self._usable_price_action()
         if action:
             await self._set("prices", "done", action)             # akcja wygrywa z encją, nie nadpisujemy jej
             return
