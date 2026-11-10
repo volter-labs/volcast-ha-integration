@@ -90,3 +90,15 @@ def test_disabled_account_entry_is_not_paired_into_either():
     flow._session = SimpleNamespace(session_id="s", poll_token="t")
     assert asyncio.run(flow.async_step_pair_finish()) == {"type": "abort", "reason": "existing_entry_disabled"}
     flow.hass.config_entries.async_update_entry.assert_not_called()
+
+
+def test_production_fields_have_no_empty_string_default():
+    """#12: HA rejects "" as an entity id — a blank optional sensor must stay absent."""
+    import voluptuous as vol
+    schema = cf._production_schema()
+    assert {str(k) for k in schema.schema} == {"pv_energy_entity", "pv_power_entity",
+                                               "battery_soc_entity", "battery_charge_power_entity"}
+    assert all(key.default is vol.UNDEFINED for key in schema.schema)
+    assert schema({}) == {}
+    r = asyncio.run(_flow_with([]).async_step_production())
+    assert r["step_id"] == "production"
