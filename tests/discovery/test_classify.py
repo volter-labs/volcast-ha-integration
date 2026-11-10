@@ -116,9 +116,9 @@ def test_amber_general_and_feed_in_reach_the_price_candidates():
 # Domeny sprawdzone u źródła: integracje rdzenia HA (katalog `homeassistant/components`, test w tests_ha)
 # oraz HACS (`domain` w manifest.json repozytorium integracji).
 VERIFIED_CORE = {"nordpool", "tibber", "energyzero", "easyenergy", "amberelectric"}
-VERIFIED_HACS = {"entsoe", "octopus_energy", "pstryk", "epex_spot", "frank_energie"}
-# Nie udało się potwierdzić domeny w żadnym źródle; zostaje, bo ma test i nie szkodzi (nieznana domena nic nie łapie).
-UNVERIFIED = {"pstryk_aio"}
+VERIFIED_HACS = {"entsoe", "octopus_energy", "pstryk", "epex_spot", "frank_energie", "pstryk_aio"}
+# Domeny, których nie udało się potwierdzić w żadnym źródle (dziś brak) — każda musi być tu wpisana jawnie.
+UNVERIFIED: set[str] = set()
 
 
 def test_every_price_platform_is_verified_or_explicitly_unverified():

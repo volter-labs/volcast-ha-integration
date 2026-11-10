@@ -254,12 +254,16 @@ INTEGRATIONS: tuple[PriceIntegration, ...] = (
     # więc encja wybrana ręcznie działa. Nie podpowiadamy: ten sam kształt i jednostkę mają serie, które ceną prądu
     # domu nie są (sama cena rynkowa, sam VAT, gaz w €/kWh przy umowie belgijskiej), a nazwy encji zależą od języka.
     PriceIntegration(domain="frank_energie", entities=EntityUse.REPORTED),
-    # EPEX Spot (HACS): domena potwierdzona, kształt atrybutów nie — tylko raport wykrywania.
+    # EPEX Spot (HACS): seria w atrybucie `data` (`start_time` / `end_time` / `price_per_kwh`, €/kWh albo £/kWh),
+    # którego ogólny adapter nie czyta; ten sam kształt mają „Market Price” (sama giełda) i „Total Price”
+    # (z narzutami użytkownika) — tylko raport wykrywania.
     PriceIntegration(domain="epex_spot", entities=EntityUse.REPORTED),
-    # Domeny nie udało się potwierdzić w żadnym źródle; zostaje w raporcie (nieznana domena nic nie łapie).
+    # Pstryk AiO (HACS): dziś i jutro w OSOBNYCH encjach (`today_prices` / `tomorrow_prices`), a źródło strony to
+    # jedna encja — sama doba dzisiejsza nie wystarcza do planu. Tylko raport wykrywania.
     PriceIntegration(domain="pstryk_aio", entities=EntityUse.REPORTED),
-    # Zonneplan (HACS): cena jako `price_tax_included.amount` w skali 1e-7 waluty. Encji nie wykrywamy
-    # (domena niepotwierdzona); kształt ceny rozumie adapter atrybutów każdej encji.
+    # Zonneplan (HACS): `forecast` z `start_date` / `end_date` i ceną `price_tax_included.amount` w skali 1e-7
+    # waluty (sensory „Current (quarter) hourly electricity tariff”). Encji nie wykrywamy; kształt ceny rozumie
+    # adapter atrybutów każdej encji.
     PriceIntegration(
         domain="zonneplan_one",
         entities=EntityUse.NONE,

@@ -158,10 +158,29 @@ def test_frank_energie_shape_parses_but_is_not_offered():
     assert out == []
 
 
-@pytest.mark.parametrize("platform", ["epex_spot", "pstryk_aio"])
-def test_unverified_shapes_are_reported_but_not_offered(platform):
+def _epex_market_price(now: datetime) -> dict:
+    """Atrybuty sensora „Market Price” epex_spot (`data`: `start_time` / `end_time` ISO z offsetem, `price_per_kwh`)."""
+    start = now.astimezone(_WAW).replace(minute=0, second=0, microsecond=0)
+    return {"unit_of_measurement": "€/kWh", "price_per_kwh": 0.1, "data": [
+        {"start_time": (start + timedelta(hours=i)).isoformat(), "end_time": (start + timedelta(hours=i + 1)).isoformat(),
+         "price_per_kwh": 0.1} for i in range(24)]}
+
+
+def _pstryk_aio_today(now: datetime) -> dict:
+    """Atrybuty sensora ceny zakupu „dziś” pstryk_aio (`today_prices`; jutro jest w osobnej encji)."""
+    start = now.astimezone(_WAW).replace(hour=0, minute=0, second=0, microsecond=0)
+    return {"unit_of_measurement": "PLN/kWh", "average_price_today": 0.6, "today_prices": [
+        {"start": (start + timedelta(hours=i)).isoformat(timespec="seconds"),
+         "end": (start + timedelta(hours=i + 1)).isoformat(timespec="seconds"),
+         "price": 0.6, "is_cheap": False, "is_expensive": False} for i in range(24)]}
+
+
+@pytest.mark.parametrize(("platform", "attrs"), [("epex_spot", _epex_market_price), ("pstryk_aio", _pstryk_aio_today)])
+def test_shapes_the_generic_adapter_does_not_read_are_reported_but_not_offered(platform, attrs):
+    now = datetime(2026, 10, 31, 9, 20, tzinfo=timezone.utc)
     assert platform in reg.REPORTED_PLATFORMS and platform not in reg.OFFERED_PLATFORMS
     assert pair_entities([{"entity_id": f"sensor.{platform}_price", "platform": platform}]) == []
+    assert check_series(enrich_attributes(platform, attrs(now)), None, _WAW, now).status == "unusable"
 
 
 def test_discovery_and_setup_read_the_same_table():

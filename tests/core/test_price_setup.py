@@ -167,6 +167,15 @@ def test_short_amber_forecast_is_short_not_unusable():
     assert (short.status, short.hours) == ("short", 3)
 
 
+def test_event_entity_before_its_first_event_is_unusable_in_setup_too():
+    # Encja `event` HA ma stan „unknown” tylko przed pierwszym zdarzeniem (stan = chwila ostatniego zdarzenia,
+    # przywracana razem z jego atrybutami) — wtedy atrybuty to sam `event_type` bez stawek. Formularz odrzuca ją
+    # tak samo jak telemetria, która stanu „unknown” nie czyta.
+    attrs = {"event_type": None, "event_types": ["octopus_energy_electricity_current_day_rates"]}
+    check = check_series(enrich_attributes("octopus_energy", attrs), None, WAW, NOW, state="unknown")
+    assert check.status == "unusable"
+
+
 def test_octopus_gas_is_not_an_electricity_candidate():
     gas = "event.octopus_energy_gas_aaa_111_current_day_rates"
     assert is_excluded_entity("octopus_energy", gas) and not is_excluded_entity("pstryk", gas)

@@ -1207,6 +1207,49 @@ def test_adapter_zonneplan_kwota_niecalkowita_to_pusta_lista():
     assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
 
 
+_AMS = ZoneInfo("Europe/Amsterdam")
+
+
+@pytest.mark.parametrize("minuty", [60, 15])
+def test_adapter_zonneplan_prognoza_w_pamieci_ha_z_datetime(minuty):
+    # Atrybut `forecast` sensorów „Current (quarter) hourly electricity tariff” zonneplan_one: wpisy z API
+    # z `start_date` / `end_date` przeliczonymi na `datetime` w Europe/Amsterdam i kwotą w 1e-7 EUR.
+    start = datetime(2026, 9, 15, tzinfo=_AMS)
+    attrs = {"unit_of_measurement": "€/kWh", "forecast": [
+        {"start_date": start + timedelta(minutes=minuty * i), "end_date": start + timedelta(minutes=minuty * (i + 1)),
+         "price_tax_included": {"amount": 2_000_000}, "price_tax_excluded": {"amount": 1_652_893}}
+        for i in range(4)]}
+    out = intervals_from_attributes(attrs, None, "EUR", _WAW)
+    assert [p["startAt"] for p in out[:2]] == [
+        "2026-09-14T22:00:00Z", (start + timedelta(minutes=minuty)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")]
+    assert len(out) == 4 and all(p["minutes"] == minuty and p["buy"] == pytest.approx(0.2) for p in out)
+
+
+def test_adapter_zonneplan_prognoza_starego_sensora_to_pusta_lista():
+    # Starszy sensor „Current electricity tariff” zonneplan_one: `electricity_price` w 1e-7 EUR bez ścieżki
+    # zagnieżdżonej. Skali tego klucza rejestr nie zna — seria jest wstrzymana, nie zgadywana.
+    start = datetime(2026, 9, 15, tzinfo=_AMS)
+    attrs = {"unit_of_measurement": "€/kWh", "forecast": [
+        {"start_date": start + timedelta(hours=i), "datetime": (start + timedelta(hours=i)).astimezone(timezone.utc)
+         .isoformat(), "electricity_price": 2_000_000, "electricity_price_excl_tax": 1_652_893,
+         "sustainability_score": 0, "tariff_group": "normal"} for i in range(4)]}
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+
+
+@pytest.mark.parametrize("wpis", [
+    # octopus_energy 8.4–8.5 (encja `event`): klucze z API, `value_inc_vat` w pensach.
+    lambda s: {"valid_from": s, "valid_to": s + timedelta(minutes=30), "value_inc_vat": 25.2, "is_capped": False},
+    # octopus_energy 6.x–7.x (sensor): `rates` z `from` / `to` / `rate` w pensach.
+    lambda s: {"from": s, "to": s + timedelta(minutes=30), "rate": 25.2, "is_capped": False},
+], ids=["event_8x", "sensor_7x"])
+def test_adapter_octopus_stawki_w_pensach_to_pusta_lista(wpis):
+    # Od 9.0.0 stawki są w funtach z kluczami `start` / `end`; starsze wersje podawały pensy innymi kluczami.
+    # Bez jednostki skali nie sprawdzimy, więc te kształty muszą zostać nieczytelne (inaczej ×100 za drogo).
+    start = datetime(2026, 9, 15, tzinfo=timezone.utc)
+    attrs = {"rates": [wpis(start + timedelta(minutes=30 * i)) for i in range(4)]}
+    assert intervals_from_attributes(attrs, None, "GBP", _WAW) == []
+
+
 def test_adapter_sprzedaz_72h_od_wczoraj_paruje_sie_dla_dzis_i_jutro():
     kupno = {"prices_today": _wpisy_godzinowe(_polnoc(2026, 9, 15), 24, 0.5),
              "prices_tomorrow": _wpisy_godzinowe(_polnoc(2026, 9, 16), 24, 0.5)}
