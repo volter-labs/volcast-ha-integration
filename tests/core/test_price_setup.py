@@ -123,7 +123,7 @@ def test_series_starting_in_the_future_is_not_a_forecast():
 def test_nordpool_option_is_saved_normalized():
     npool = action_candidates({"nordpool": [("n1", "N")]})[0]
     buy, _ = build_action_option(npool, {"area": "se3", "currency": "sek"})
-    assert buy["data"]["areas"] == ["SE3"] and buy["data"]["currency"] == "SEK"
+    assert buy["data"]["areas"] == "SE3" and buy["data"]["currency"] == "SEK"
 
 
 def test_amber_dollar_unit_without_currency_is_aud_only_for_amber():

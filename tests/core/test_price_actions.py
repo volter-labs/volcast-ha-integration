@@ -134,6 +134,14 @@ def test_invalid_sources_rejected(raw):
         parse_source(raw)
 
 
+@pytest.mark.parametrize("areas", ["se3", ["se3"], " SE3 "])
+def test_nordpool_area_is_sent_as_one_string(areas):
+    # Rdzeń HA (starsze wersje) sprawdza `areas` przez `vol.In` przed `ensure_list` — lista nie przechodzi.
+    src = parse_source({"action": "nordpool.get_prices_for_date",
+                        "data": {"config_entry": "n1", "areas": areas, "currency": "SEK"}})
+    assert src.data["areas"] == "SE3" and src.area == "SE3"
+
+
 # ── wywołania: daty doby rynku ─────────────────────────────────────────────
 
 

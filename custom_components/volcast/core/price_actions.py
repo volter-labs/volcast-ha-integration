@@ -244,7 +244,9 @@ def parse_source(raw: Any) -> PriceActionSource:
         if not isinstance(areas, list) or len(areas) != 1 or not isinstance(areas[0], str):
             raise InvalidPriceSource("one area required")
         area = areas[0].strip().upper()
-        data["areas"] = [area]
+        # Wysyłamy jeden tekst, nie listę: starszy rdzeń HA sprawdza `areas` przez `vol.In` PRZED
+        # `ensure_list`, więc lista nie przechodzi walidacji; tekst przyjmuje każda wersja.
+        data["areas"] = area
         currency = _currency_code(data["currency"])
         if currency is None:
             raise InvalidPriceSource("bad currency")

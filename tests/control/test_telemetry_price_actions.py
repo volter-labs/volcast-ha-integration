@@ -281,7 +281,7 @@ def test_sell_not_configured_keeps_buy_only_with_null_sell():
 def test_both_actions_successful_send_full_block():
     async def scenario():
         h, cloud = goodwe_hass(), Cloud()
-        _services(h, lambda d, sv, data: _np_sell(d, sv, data) if data.get("areas") == ["PL"] and
+        _services(h, lambda d, sv, data: _np_sell(d, sv, data) if data.get("areas") == "PL" and
                   data.get("config_entry") == "sell" else _np(d, sv, data))
         sell = {**NP, "data": {**NP["data"], "config_entry": "sell"}}
         s = _sender(h, cloud, {"price_buy_action": NP, "price_sell_action": sell})

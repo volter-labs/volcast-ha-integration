@@ -56,11 +56,19 @@ def _quarters(day: date, tz: str):
         t += timedelta(minutes=15)
 
 
+#: Wycinek `pynordpool.AREAS` (biblioteka nie jest instalowana w zestawie testowym).
+_NORDPOOL_AREAS = ("DK1", "DK2", "FI", "NO1", "NO2", "NO3", "NO4", "NO5", "SE1", "SE2", "SE3", "SE4", "PL")
+
+
 def _register_nordpool(hass, calls, *, tomorrow_published=True):
+    # `areas` przepisane z rdzenia HA 2026.5 (homeassistant/components/nordpool/services.py):
+    # `vol.In` działa PRZED `ensure_list`, więc lista jest odrzucana — przechodzi tylko tekst.
+    # Nowszy rdzeń (`ensure_list` + walidacja każdej strefy) przyjmuje i jedno, i drugie;
+    # sprawdzamy wariant ostrzejszy, bo wtyczka wspiera oba.
     schema = vol.Schema({
         vol.Required("config_entry"): ConfigEntrySelector({"integration": "nordpool"}),
         vol.Required("date"): cv.date,
-        vol.Optional("areas", default=[]): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional("areas"): vol.All(vol.In(list(_NORDPOOL_AREAS)), cv.ensure_list, [str]),
         vol.Optional("currency"): vol.All(cv.string, vol.Upper, vol.In(["EUR", "PLN", "SEK"])),
     })
 
