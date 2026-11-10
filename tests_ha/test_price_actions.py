@@ -102,7 +102,8 @@ async def _sender(hass, options):
 
 
 async def _refresh_and_flush(sender):
-    await asyncio.gather(*sender._kick_price_actions(NOW))
+    sender._kick_price_actions(NOW)
+    await asyncio.gather(*sender._price_tasks.values())
     await sender.async_flush()
 
 
@@ -221,8 +222,9 @@ async def test_timer_runs_action_in_background_and_stop_cancels(hass: HomeAssist
     await hass.async_block_till_done()
     # Wysyłka poszła mimo trwającej akcji — bez cen; drugi tik nie woła akcji drugi raz.
     assert len(cloud.sent) == 1 and "prices" not in cloud.sent[0]
-    assert sender._kick_price_actions(NOW) == []
     task = sender._price_tasks["price_buy_action"]
+    sender._kick_price_actions(NOW)
+    assert sender._price_tasks == {"price_buy_action": task}
     await sender.async_stop()
     with pytest.raises(asyncio.CancelledError):
         await task

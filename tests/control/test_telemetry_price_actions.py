@@ -48,8 +48,9 @@ def _sender(h, cloud, options, clock=None):
                            limits=None, utcnow=clock or (lambda: NOW))
 
 
-async def _refresh(s):
-    await asyncio.gather(*s._kick_price_actions(NOW))
+async def _refresh(s, now=NOW):
+    s._kick_price_actions(now)
+    await asyncio.gather(*s._price_tasks.values())
 
 
 def test_buy_prices_from_action():
@@ -135,7 +136,9 @@ def test_hanging_action_never_delays_telemetry():
         await asyncio.wait_for(s._timer(), timeout=1)               # tik: zlecenie w tle + wysyłka
         assert len(cloud.sent) == 1 and "prices" not in cloud.sent[0]
         # Kolejny tik w trakcie trwającego wywołania nie zleca drugiego.
-        assert s._kick_price_actions(NOW + timedelta(minutes=1)) == []
+        running = dict(s._price_tasks)
+        s._kick_price_actions(NOW + timedelta(minutes=1))
+        assert s._price_tasks == running
         await s.async_stop()
         await asyncio.sleep(0)
         assert all(t.done() for t in h.tasks)                       # zatrzymanie anuluje zadanie cen
@@ -165,9 +168,9 @@ def test_refresh_follows_schedule_not_every_tick():
         s = _sender(h, cloud, {"price_buy_action": NP}, clock=lambda: t["now"])
         for minutes in (0, 1, 2, 30, 359):
             t["now"] = NOW + timedelta(minutes=minutes)
-            await asyncio.gather(*s._kick_price_actions(t["now"]))
+            await _refresh(s, t["now"])
         t["now"] = NOW + timedelta(hours=6)
-        await asyncio.gather(*s._kick_price_actions(t["now"]))
+        await _refresh(s, t["now"])
         return calls
 
     assert len(asyncio.run(scenario())) == 4                        # dwa odświeżenia × (dziś + jutro)
@@ -226,15 +229,15 @@ def test_sell_action_failed_sends_no_prices_even_after_earlier_success():
         state = {"fail": True}
         _services(h, lambda *a: RuntimeError("down") if state["fail"] else _np_sell(*a))
         s = _sender(h, cloud, {"entity_price_buy": "sensor.buy", "price_sell_action": NP}, clock=lambda: t["now"])
-        await asyncio.gather(*s._kick_price_actions(t["now"]))
+        await _refresh(s, t["now"])
         await s.async_flush()                                       # błąd od początku
         state["fail"] = False
         t["now"] = NOW + timedelta(minutes=5)
-        await asyncio.gather(*s._kick_price_actions(t["now"]))
+        await _refresh(s, t["now"])
         await s.async_flush()                                       # udane → pełny blok
         state["fail"] = True
         t["now"] = NOW + timedelta(hours=6, minutes=5)
-        await asyncio.gather(*s._kick_price_actions(t["now"]))
+        await _refresh(s, t["now"])
         await s.async_flush()                                       # późniejszy błąd → znowu bez cen
         return cloud
 

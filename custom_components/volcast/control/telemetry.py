@@ -372,20 +372,16 @@ class TelemetrySender:
             coro.close()
             raise
 
-    def _kick_price_actions(self, now: datetime) -> list:
-        """Zleć w tle odświeżenie źródeł cen z akcji, którym wypada termin; zwraca nowe zadania."""
+    def _kick_price_actions(self, now: datetime) -> None:
+        """Zleć w tle odświeżenie źródeł cen z akcji, którym wypada termin (zadania w `_price_tasks`)."""
         tz = self._tz()
-        started = []
         for key in (OPT_PRICE_BUY_ACTION, OPT_PRICE_SELL_ACTION):
             _configured, poller = self._price_action(key)
             # Zadanie strony jeszcze trwa (albo nie zdążyło ruszyć) — bez drugiego wywołania.
             running = self._price_tasks.get(key)
             if poller is None or (running is not None and not running.done()) or not poller.due(now, tz):
                 continue
-            task = self._spawn(poller.async_refresh(now, tz), "volcast_price_action")
-            self._price_tasks[key] = task
-            started.append(task)
-        return started
+            self._price_tasks[key] = self._spawn(poller.async_refresh(now, tz), "volcast_price_action")
 
     def _price_attributes(self, action_key: str, entity_key: str, now: datetime, *,
                           require_available: bool) -> tuple[bool, Mapping | None]:

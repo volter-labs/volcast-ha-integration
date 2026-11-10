@@ -65,7 +65,7 @@ def enrich_attributes(platform: str | None, attrs: Mapping[str, Any] | None) -> 
 
 def effective_currency(platform: str | None, attrs: Mapping[str, Any] | None) -> str | None:
     """Waluta, którą seria niesie sama (atrybut, jednostka albo reguła integracji), bez fallbacku z opcji."""
-    return derived_currency(enrich_attributes(platform, attrs))
+    return currency_from_attributes(enrich_attributes(platform, attrs), None)
 
 
 def is_sell_entity(entity_id: str) -> bool:
@@ -266,8 +266,3 @@ def _numeric(state: str) -> bool:
 
 def _has_series_attribute(attrs: Mapping[str, Any]) -> bool:
     return any(isinstance(v, (list, tuple, dict)) for v in attrs.values())
-
-
-def derived_currency(attrs: Mapping[str, Any] | None) -> str | None:
-    """Waluta, którą encja podaje SAMA (atrybut `currency` albo jednostka `SEK/kWh`), bez żadnego fallbacku."""
-    return currency_from_attributes(attrs if isinstance(attrs, Mapping) else {}, None)

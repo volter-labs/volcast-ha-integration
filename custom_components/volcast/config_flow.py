@@ -44,7 +44,6 @@ from .core.price_actions import InvalidPriceSource, attributes_from_responses, b
 from .core.price_setup import (ACTION_DOMAINS, KNOWN_PLATFORMS, PLATFORM_CURRENCY, ActionCandidate, SeriesCheck,
                                action_candidates, build_action_option, check_series, currency_conflict,
                                effective_currency, enrich_attributes, is_gas_entity, pair_entities)
-from .core.prices import has_usable_prices_now
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
