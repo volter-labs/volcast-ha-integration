@@ -178,3 +178,11 @@ def test_octopus_gas_is_not_an_electricity_candidate():
     assert [(p.buy, p.sell, p.ambiguous) for p in out] == [
         ("event.octopus_energy_electricity_aaa_111_current_day_rates",
          "event.octopus_energy_electricity_bbb_222_export_current_day_rates", False)]
+
+
+def test_role_vocabulary_is_the_generic_words_plus_registry_hints():
+    """Słowa ról z rejestru dochodzą do ogólnego słownika — pary tworzą się tak samo jak przed rejestrem."""
+    from custom_components.volcast.core import price_setup as ps
+    assert set(ps._SELL_WORDS) == {"export", "feed_in", "feedin", "sell", "sprzed", "return", "teruglever", "inject"}
+    assert ps._SIDE_TOKENS == {"export", "feed", "in", "feedin", "sell", "sprzedaz", "return", "buy", "import",
+                               "general", "kupno", "teruglevering"}

@@ -218,7 +218,8 @@ def build_action_option(candidate: ActionCandidate, values: Mapping[str, Any]) -
         return option
 
     buy_option = side(candidate.buy, integ.buy.fields)
-    sell_option = side(candidate.sell, integ.sell.fields) if candidate.sell is not None and integ.sell else None
+    sell_option = side(candidate.sell, integ.sell.fields) if candidate.sell is not None and integ.sell is not None \
+        else None
     return buy_option, sell_option
 
 
