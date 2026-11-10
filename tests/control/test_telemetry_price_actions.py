@@ -243,6 +243,28 @@ def test_sell_action_failed_sends_no_prices_even_after_earlier_success():
     assert sent[1]["prices"]["intervals"][0]["sell"] == 0.3
 
 
+def test_sell_action_without_tomorrow_trims_block_to_common_range():
+    # Kupno ma jutro, sprzedaży jutro się nie udało — jutro bez sprzedaży nie idzie z `sell: null`.
+    async def scenario():
+        h, cloud = goodwe_hass(), Cloud()
+        sell = {**NP, "data": {**NP["data"], "config_entry": "sell"}}
+
+        def responder(d, sv, data):
+            if data.get("config_entry") != "sell":
+                return _np(d, sv, data)
+            return RuntimeError("down") if data["date"] == "2026-11-01" else _np_sell(d, sv, data)
+
+        _services(h, responder)
+        s = _sender(h, cloud, {"price_buy_action": NP, "price_sell_action": sell})
+        await _refresh(s)
+        await s.async_flush()
+        return cloud
+
+    ivs = asyncio.run(scenario()).sent[0]["prices"]["intervals"]
+    assert len(ivs) == 96 and all(iv["sell"] is not None for iv in ivs)
+    assert ivs[0]["startAt"] == "2026-10-30T23:00:00Z"
+
+
 def test_sell_not_configured_keeps_buy_only_with_null_sell():
     async def scenario():
         h, cloud = goodwe_hass(), Cloud()

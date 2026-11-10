@@ -381,7 +381,8 @@ class TelemetrySender:
 
     def _price_attributes(self, action_key: str, entity_key: str, now: datetime, *,
                           require_available: bool) -> tuple[bool, Mapping | None]:
-        """(czy strona idzie z akcji, atrybuty cen — None = brak danych) dla kupna albo sprzedaży.
+        """(czy strona ma ustawione źródło — akcję albo encję, atrybuty cen — None = brak danych)
+        dla kupna albo sprzedaży.
 
         Z akcji bierzemy tylko wynik świeży (`fresh_attributes`): ostatnie odświeżenie udane,
         niedawne i obejmujące bieżącą dobę."""
@@ -391,8 +392,8 @@ class TelemetrySender:
         eid = (self._entry.options.get(entity_key) or "").strip()
         st = self._hass.states.get(eid) if eid else None
         if st is None or (require_available and st.state in _UNAVAILABLE):
-            return False, None
-        return False, enrich_attributes(self._entity_platform(eid), st.attributes)
+            return bool(eid), None
+        return True, enrich_attributes(self._entity_platform(eid), st.attributes)
 
     def _entity_platform(self, entity_id: str) -> str | None:
         """Platforma encji z rejestru (wiedza o integracji, np. waluta Ambera); bez rejestru None."""
@@ -428,23 +429,27 @@ class TelemetrySender:
     def _prices(self, now: datetime) -> tuple[dict, str] | None:
         """Blok cen (albo None: brak encji, danych, zmiany) i jego odcisk."""
         opts = self._entry.options
-        _from_action, buy = self._price_attributes(OPT_PRICE_BUY_ACTION, OPT_PRICE_BUY, now, require_available=True)
+        _, buy = self._price_attributes(OPT_PRICE_BUY_ACTION, OPT_PRICE_BUY, now, require_available=True)
         if buy is None:
             return None
-        sell_action, sell = self._price_attributes(OPT_PRICE_SELL_ACTION, OPT_PRICE_SELL, now,
-                                                   require_available=False)
-        # Sprzedaż z akcji bez świeżego wyniku (trwa pierwsze wywołanie, błąd, zła konfiguracja) to nie
-        # „rynek bez sprzedaży” — samo kupno z `sell: null` nadpisałoby w chmurze dobre ceny sprzedaży.
-        if sell_action and sell is None:
+        sell_set, sell = self._price_attributes(OPT_PRICE_SELL_ACTION, OPT_PRICE_SELL, now,
+                                                require_available=False)
+        # Ustawiona sprzedaż bez danych (trwa pierwsze wywołanie akcji, błąd, encja zniknęła) to nie
+        # „rynek bez sprzedaży” — samo kupno z `sell: null` nadpisałoby w chmurze dobre ceny sprzedaży
+        # (a `null` planner czyta jako eksport wart 0).
+        if sell_set and sell is None:
             return None
         currency = currency_from_attributes(buy, (opts.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
         if currency is None:
             return None
         intervals = intervals_from_attributes(buy, sell, currency, self._tz(), now)
+        if sell_set:
+            # Z ustawioną sprzedażą idzie tylko zakres pokryty przez OBIE strony (np. kupno ma już
+            # jutro, sprzedaż jeszcze nie). Seria sprzedaży jest ciągła, więc to nadal jeden ciągły
+            # zakres; pusty (nic się nie sparowało) — blok nie idzie wcale.
+            intervals = [iv for iv in intervals if iv["sell"] is not None]
         if not intervals:
             return None
-        if sell_action and all(iv["sell"] is None for iv in intervals):
-            return None                     # wynik sprzedaży jest, ale nic się nie sparowało — to samo
         market = self._market()
         fp = fingerprint([{"market": market}, *intervals])
         stale = self._prices_at is None or (now - self._prices_at).total_seconds() >= PRICES_RESEND_S

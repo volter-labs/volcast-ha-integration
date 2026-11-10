@@ -258,6 +258,34 @@ def test_quarter_hour_buy_with_hourly_sell_entity_pairs_every_interval():
     assert len(iv) == 96 and all(p["minutes"] == 15 and p["sell"] == 0.2 for p in iv)
 
 
+def test_sell_entity_shorter_than_buy_trims_block_to_common_range():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.buy", "entity_price_sell": "sensor.nordpool"})
+    start = datetime(2026, 9, 23, tzinfo=timezone(timedelta(hours=2)))
+    doba = [{"start": (start + timedelta(hours=i)).isoformat(),
+             "end": (start + timedelta(hours=i + 1)).isoformat(), "value": 0.5} for i in range(48)]
+    h.states.set("sensor.buy", "0.5", {"currency": "PLN", "raw_today": doba[:24], "raw_tomorrow": doba[24:]})
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 24 and all(p["sell"] == 0.5 for p in iv)
+    assert iv[-1]["startAt"] == "2026-09-23T21:00:00Z"
+
+
+def test_configured_sell_entity_without_data_withholds_prices():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.missing"})
+    asyncio.run(s.async_flush())
+    assert "prices" not in cloud.sent[0]
+
+
+def test_buy_entity_without_sell_source_keeps_null_sell():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud)
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 24 and all(p["sell"] is None for p in iv)
+
+
 # ── odczyty, znak sieci, prywatność, cykl życia ────────────────────────────
 
 
