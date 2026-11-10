@@ -50,7 +50,7 @@
           "battery_charge_power_entity": "Laadvermogen van de accu (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Een sensor die de totale zonne-opbrengst van vandaag in kWh toont (dagelijks gereset). Dit is de belangrijkste bron voor de registratie — zoek naar sensoren zoals „PV-opbrengst vandaag” of „Dagopbrengst” van je omvormer (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_energy_entity": "Een sensor met je zonne-opbrengst in kWh — een dagteller of een totaalteller, beide werken. Dit is de belangrijkste bron voor de registratie — zoek naar sensoren zoals „PV-opbrengst vandaag” of „Dagopbrengst” van je omvormer (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "Een sensor die het huidige zonnevermogen in watt toont. Wordt gebruikt als terugval wanneer de energiesensor niet beschikbaar is of halverwege de dag reset.",
           "battery_soc_entity": "Een sensor die de laadtoestand van de accu (0-100%) toont. Wordt gebruikt om terugregeling van de omvormer te detecteren als de accu vol is. Optioneel — alleen nodig als je een thuisaccu hebt.",
           "battery_charge_power_entity": "Een sensor die het laadvermogen van de accu in watt toont. Wordt gebruikt om terugregeling te bevestigen (accu vol, neemt geen lading aan) en om laden vanaf het net te detecteren (scenario's met negatieve prijzen). Optioneel."
@@ -94,7 +94,7 @@
           "battery_charge_power_entity": "Laadvermogen van de accu (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Een sensor die de totale zonne-opbrengst van vandaag in kWh toont (dagelijks gereset).",
+          "pv_energy_entity": "Een sensor met je zonne-opbrengst in kWh — een dagteller of een totaalteller, beide werken.",
           "pv_power_entity": "Een sensor die het huidige zonnevermogen in watt toont. Wordt gebruikt als terugval.",
           "battery_soc_entity": "Een sensor die de laadtoestand van de accu (0-100%) toont. Wordt gebruikt om terugregeling te detecteren.",
           "battery_charge_power_entity": "Een sensor voor het laadvermogen van de accu in watt. Detecteert terugregeling en laden vanaf het net."
@@ -118,7 +118,7 @@
           "battery_charge_power_entity": "Laadvermogen van de accu (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Een sensor die de totale zonne-opbrengst van vandaag in kWh toont (dagelijks gereset).",
+          "pv_energy_entity": "Een sensor met je zonne-opbrengst in kWh — een dagteller of een totaalteller, beide werken.",
           "pv_power_entity": "Een sensor die het huidige zonnevermogen in watt toont. Wordt gebruikt als terugval.",
           "battery_soc_entity": "Een sensor die de laadtoestand van de accu (0-100%) toont. Wordt gebruikt om terugregeling te detecteren.",
           "battery_charge_power_entity": "Een sensor voor het laadvermogen van de accu in watt. Detecteert terugregeling en laden vanaf het net."

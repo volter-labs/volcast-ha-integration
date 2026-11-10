@@ -50,7 +50,7 @@
           "battery_charge_power_entity": "Moc ładowania baterii (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Czujnik pokazujący łączną dzisiejszą produkcję słoneczną w kWh (zerowany codziennie). To główne źródło śledzenia — szukaj czujników w rodzaju „Produkcja PV dzisiaj” lub „Uzysk dzienny” z Twojego falownika (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_energy_entity": "Czujnik z produkcją słoneczną w kWh — licznik dzienny lub licznik całkowity, oba działają. To główne źródło śledzenia — szukaj czujników w rodzaju „Produkcja PV dzisiaj” lub „Uzysk dzienny” z Twojego falownika (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "Czujnik pokazujący bieżącą moc wyjściową instalacji słonecznej w watach. Używany jako zapas, gdy czujnik energii jest niedostępny albo zeruje się w ciągu dnia.",
           "battery_soc_entity": "Czujnik pokazujący stan naładowania baterii (0–100%). Służy do wykrywania ograniczania mocy falownika, gdy bateria jest pełna. Opcjonalny — potrzebny tylko, jeśli masz magazyn energii.",
           "battery_charge_power_entity": "Czujnik pokazujący moc ładowania baterii w watach. Służy do potwierdzania ograniczania mocy (bateria pełna, nie przyjmuje ładowania) i wykrywania ładowania z sieci (ujemne ceny). Opcjonalny."
@@ -94,7 +94,7 @@
           "battery_charge_power_entity": "Moc ładowania baterii (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Czujnik pokazujący łączną dzisiejszą produkcję słoneczną w kWh (zerowany codziennie).",
+          "pv_energy_entity": "Czujnik z produkcją słoneczną w kWh — licznik dzienny lub licznik całkowity, oba działają.",
           "pv_power_entity": "Czujnik pokazujący bieżącą moc wyjściową instalacji słonecznej w watach. Używany jako zapas.",
           "battery_soc_entity": "Czujnik pokazujący stan naładowania baterii (0–100%). Służy do wykrywania ograniczania mocy.",
           "battery_charge_power_entity": "Czujnik mocy ładowania baterii w watach. Wykrywa ograniczanie mocy i ładowanie z sieci."
@@ -118,7 +118,7 @@
           "battery_charge_power_entity": "Moc ładowania baterii (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Czujnik pokazujący łączną dzisiejszą produkcję słoneczną w kWh (zerowany codziennie).",
+          "pv_energy_entity": "Czujnik z produkcją słoneczną w kWh — licznik dzienny lub licznik całkowity, oba działają.",
           "pv_power_entity": "Czujnik pokazujący bieżącą moc wyjściową instalacji słonecznej w watach. Używany jako zapas.",
           "battery_soc_entity": "Czujnik pokazujący stan naładowania baterii (0–100%). Służy do wykrywania ograniczania mocy.",
           "battery_charge_power_entity": "Czujnik mocy ładowania baterii w watach. Wykrywa ograniczanie mocy i ładowanie z sieci."

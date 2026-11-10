@@ -50,7 +50,7 @@
           "battery_charge_power_entity": "Ladeleistung der Batterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Ein Sensor, der die gesamte Solarerzeugung von heute in kWh anzeigt (täglich zurückgesetzt). Das ist die wichtigste Quelle für die Erfassung — suche nach Sensoren wie „PV-Erzeugung heute“ oder „Tagesertrag“ deines Wechselrichters (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_energy_entity": "Ein Sensor mit deiner Solarerzeugung in kWh — ein Tageszähler oder ein Gesamtzähler, beides funktioniert. Das ist die wichtigste Quelle für die Erfassung — suche nach Sensoren wie „PV-Erzeugung heute“ oder „Tagesertrag“ deines Wechselrichters (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "Ein Sensor, der die aktuelle Solarleistung in Watt anzeigt. Dient als Ersatz, wenn der Energiesensor nicht verfügbar ist oder sich tagsüber zurücksetzt.",
           "battery_soc_entity": "Ein Sensor, der den Ladezustand der Batterie (0–100 %) anzeigt. Dient dazu, eine Abregelung des Wechselrichters bei voller Batterie zu erkennen. Optional — nur nötig, wenn du einen Batteriespeicher hast.",
           "battery_charge_power_entity": "Ein Sensor, der die Ladeleistung der Batterie in Watt anzeigt. Dient dazu, eine Abregelung zu bestätigen (Batterie voll, nimmt keine Ladung an) und Laden aus dem Netz zu erkennen (Szenarien mit negativen Preisen). Optional."
@@ -94,7 +94,7 @@
           "battery_charge_power_entity": "Ladeleistung der Batterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Ein Sensor, der die gesamte Solarerzeugung von heute in kWh anzeigt (täglich zurückgesetzt).",
+          "pv_energy_entity": "Ein Sensor mit deiner Solarerzeugung in kWh — ein Tageszähler oder ein Gesamtzähler, beides funktioniert.",
           "pv_power_entity": "Ein Sensor, der die aktuelle Solarleistung in Watt anzeigt. Dient als Ersatz.",
           "battery_soc_entity": "Ein Sensor, der den Ladezustand der Batterie (0–100 %) anzeigt. Dient zur Erkennung von Abregelung.",
           "battery_charge_power_entity": "Ein Sensor für die Ladeleistung der Batterie in Watt. Erkennt Abregelung und Laden aus dem Netz."
@@ -118,7 +118,7 @@
           "battery_charge_power_entity": "Ladeleistung der Batterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Ein Sensor, der die gesamte Solarerzeugung von heute in kWh anzeigt (täglich zurückgesetzt).",
+          "pv_energy_entity": "Ein Sensor mit deiner Solarerzeugung in kWh — ein Tageszähler oder ein Gesamtzähler, beides funktioniert.",
           "pv_power_entity": "Ein Sensor, der die aktuelle Solarleistung in Watt anzeigt. Dient als Ersatz.",
           "battery_soc_entity": "Ein Sensor, der den Ladezustand der Batterie (0–100 %) anzeigt. Dient zur Erkennung von Abregelung.",
           "battery_charge_power_entity": "Ein Sensor für die Ladeleistung der Batterie in Watt. Erkennt Abregelung und Laden aus dem Netz."

@@ -50,7 +50,7 @@
           "battery_charge_power_entity": "Puissance de charge de la batterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un capteur qui indique la production solaire totale du jour en kWh (remis à zéro chaque jour). C'est la source principale du suivi — cherchez des capteurs comme « Production PV du jour » ou « Rendement quotidien » de votre onduleur (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
+          "pv_energy_entity": "Un capteur indiquant votre production solaire en kWh — un compteur journalier ou un total cumulé, les deux fonctionnent. C'est la source principale du suivi — cherchez des capteurs comme « Production PV du jour » ou « Rendement quotidien » de votre onduleur (GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase).",
           "pv_power_entity": "Un capteur qui indique la puissance solaire actuelle en watts. Utilisé en secours lorsque le capteur d'énergie est indisponible ou se remet à zéro en cours de journée.",
           "battery_soc_entity": "Un capteur qui indique l'état de charge de la batterie (0-100 %). Utilisé pour détecter le bridage de l'onduleur lorsque la batterie est pleine. Facultatif — nécessaire uniquement si vous avez un système de batterie.",
           "battery_charge_power_entity": "Un capteur qui indique la puissance de charge de la batterie en watts. Utilisé pour confirmer le bridage (batterie pleine, n'accepte plus de charge) et détecter la charge depuis le réseau (scénarios de prix négatifs). Facultatif."
@@ -94,7 +94,7 @@
           "battery_charge_power_entity": "Puissance de charge de la batterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un capteur qui indique la production solaire totale du jour en kWh (remis à zéro chaque jour).",
+          "pv_energy_entity": "Un capteur indiquant votre production solaire en kWh — un compteur journalier ou un total cumulé, les deux fonctionnent.",
           "pv_power_entity": "Un capteur qui indique la puissance solaire actuelle en watts. Utilisé en secours.",
           "battery_soc_entity": "Un capteur qui indique l'état de charge de la batterie (0-100 %). Utilisé pour détecter le bridage.",
           "battery_charge_power_entity": "Un capteur de la puissance de charge de la batterie en watts. Détecte le bridage et la charge depuis le réseau."
@@ -118,7 +118,7 @@
           "battery_charge_power_entity": "Puissance de charge de la batterie (W)"
         },
         "data_description": {
-          "pv_energy_entity": "Un capteur qui indique la production solaire totale du jour en kWh (remis à zéro chaque jour).",
+          "pv_energy_entity": "Un capteur indiquant votre production solaire en kWh — un compteur journalier ou un total cumulé, les deux fonctionnent.",
           "pv_power_entity": "Un capteur qui indique la puissance solaire actuelle en watts. Utilisé en secours.",
           "battery_soc_entity": "Un capteur qui indique l'état de charge de la batterie (0-100 %). Utilisé pour détecter le bridage.",
           "battery_charge_power_entity": "Un capteur de la puissance de charge de la batterie en watts. Détecte le bridage et la charge depuis le réseau."
