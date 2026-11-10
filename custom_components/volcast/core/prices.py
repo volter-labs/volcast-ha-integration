@@ -696,6 +696,8 @@ def intervals_from_attributes(
         return []
 
     sprzedaz: dict[datetime, float] = {}
+    krok_sprzedazy = 0
+    faza_sprzedazy = 0
     # Waluta sprzedaży musi zgadzać się z walutą bloku (kupna) — encja sprzedaży
     # bez ŻADNEJ deklaracji waluty jest przyjmowana bez zastrzeżeń, ale każda
     # deklaracja (atrybut, symbol jednoznaczny albo wieloznaczny rozstrzygnięty),
@@ -703,32 +705,45 @@ def intervals_from_attributes(
     # całą sprzedaż do None — nigdy tylko „brak informacji" (patrz `_sprzedaz_dopuszczalna`).
     if attrs_sell is not None and _sprzedaz_dopuszczalna(attrs_sell, waluta):
         serie_sprzedazy = _przedzialy(attrs_sell, tz, now) or []
-        minuty_kupna = zakup[0][2]
-        krok_s = minuty_kupna * 60
-        faza_kupna = int(zakup[0][0].timestamp()) % krok_s
-        # Siatka sprzedaży musi mieć TĘ SAMĄ długość przedziału i TĘ SAMĄ fazę
-        # (w UTC) co kupno. Inaczej parowanie po chwili dałoby sprzedaż
-        # CZĘŚCIOWĄ (np. co czwarty kwadrans) — woli się brak sprzedaży.
-        # Chwile sprzedaży poza zakresem kupna po prostu się nie parują.
-        siatka_zgodna = all(
-            minuty == minuty_kupna and int(start.timestamp()) % krok_s == faza_kupna
-            for start, _c, minuty in serie_sprzedazy
-        )
-        for start, cena, _minuty in serie_sprzedazy if siatka_zgodna else []:
-            # Klucz JAWNIE w UTC — kupno i sprzedaż bywają zapisane innym
-            # offsetem tej samej chwili (+02:00 kontra Z).
-            sprzedaz.setdefault(start.astimezone(timezone.utc), cena)
+        if serie_sprzedazy:
+            # Seria jest ciągła i jednej długości (`_ciagla`), więc siatkę
+            # opisuje pierwszy przedział: długość i faza w UTC.
+            krok_kupna = zakup[0][2] * 60
+            krok_sprzedazy = serie_sprzedazy[0][2] * 60
+            faza_sprzedazy = int(serie_sprzedazy[0][0].timestamp()) % krok_sprzedazy
+            drobniejszy = min(krok_kupna, krok_sprzedazy)
+            # Siatki muszą się ZAGNIEŻDŻAĆ: dłuższy krok jest wielokrotnością
+            # krótszego i obie mają tę samą fazę względem krótszego. Wtedy każdy
+            # przedział kupna albo zaczyna się na starcie przedziału sprzedaży
+            # (sprzedaż drobniejsza — bierzemy cenę z tego startu), albo w całości
+            # leży w jednym przedziale sprzedaży (sprzedaż grubsza — cena
+            # dokładna). Siatki przesunięte albo niewspółmierne dałyby sprzedaż
+            # CZĘŚCIOWĄ (np. co któryś przedział) — woli się brak sprzedaży.
+            siatka_zgodna = (
+                max(krok_kupna, krok_sprzedazy) % drobniejszy == 0
+                and int(zakup[0][0].timestamp()) % drobniejszy == faza_sprzedazy % drobniejszy
+            )
+            for start, cena, _minuty in serie_sprzedazy if siatka_zgodna else []:
+                # Klucz JAWNIE w UTC — kupno i sprzedaż bywają zapisane innym
+                # offsetem tej samej chwili (+02:00 kontra Z).
+                sprzedaz.setdefault(start.astimezone(timezone.utc), cena)
 
     wynik: dict[datetime, dict[str, Any]] = {}
     for start, cena, minuty in zakup:
         chwila = start.astimezone(timezone.utc).replace(microsecond=0)
         if chwila in wynik:
             continue  # duplikat — zostaje pierwszy napotkany
+        # Start przedziału sprzedaży, w którym leży `chwila` (przy sprzedaży
+        # drobniejszej albo równej to sama `chwila`). Chwile sprzedaży poza
+        # zakresem kupna po prostu się nie parują.
+        start_sprzedazy = chwila - timedelta(
+            seconds=(int(chwila.timestamp()) - faza_sprzedazy) % krok_sprzedazy if krok_sprzedazy else 0
+        )
         wynik[chwila] = {
             "startAt": chwila.isoformat().replace("+00:00", "Z"),
             "minutes": minuty,
             "buy": cena,
-            "sell": sprzedaz.get(chwila),
+            "sell": sprzedaz.get(start_sprzedazy),
             "currency": waluta,
         }
     return [wynik[chwila] for chwila in sorted(wynik)]

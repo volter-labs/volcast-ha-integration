@@ -408,6 +408,39 @@ def test_zepsute_atrybuty_sprzedazy_nie_kasuja_zakupu():
     assert [w["sell"] for w in out] == [None, None, None]
 
 
+def test_sell_o_innej_rozdzielczosci_paruje_tylko_wspolne_chwile():
+    """Sprzedaż drobniejsza i zagnieżdżona: przedział kupna bierze kwadrans ze swojego startu."""
+    buy = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=lambda i: 0.1 * (i + 1))}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["minutes"] for w in out] == [60, 60]
+    assert [w["sell"] for w in out] == [pytest.approx(0.1), pytest.approx(0.5)]
+
+
+def test_sell_grubszy_zagniezdzony_kopiowany_na_kazdy_przedzial_kupna():
+    """Sprzedaż godzinowa przy kupnie 15-min: każdy kwadrans leży w jednej godzinie — cena dokładna."""
+    buy = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=lambda i: 0.2 + i)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["minutes"] for w in out] == [15] * 8
+    assert [w["sell"] for w in out] == [pytest.approx(0.2)] * 4 + [pytest.approx(1.2)] * 4
+
+
+def test_sell_grubszy_przesuniety_wzgledem_siatki_kupna_to_none():
+    """Godzina sprzedaży od :05 nie zawiera całych kwadransów kupna — brak sprzedaży."""
+    buy = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc() + timedelta(minutes=5), 2, 60, wartosc=0.2)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert len(out) == 8
+    assert all(w["sell"] is None for w in out)
+
+
 def test_sell_parowany_po_chwili_a_nie_po_zapisie_offsetu():
     """Kupno zapisane jako +02:00, sprzedaż jako Z — ta sama chwila, ma się sparować."""
     buy = {"raw_today": _raw(_polnoc(), 3, 60, wartosc=1.0)}
@@ -1128,21 +1161,6 @@ def test_adapter_seria_72_godzin_w_kluczu_prices():
     assert len(intervals_from_attributes(attrs, None, "EUR", _WAW)) == 72
 
 
-def test_adapter_sprzedaz_na_innej_siatce_jest_pomijana_w_calosci():
-    kupno = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=0.5)}
-    sprzedaz = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=0.3)}
-    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
-    assert len(out) == 8
-    assert all(p["sell"] is None for p in out)
-
-
-def test_adapter_sprzedaz_drobniejsza_niz_kupno_jest_pomijana_w_calosci():
-    kupno = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=0.5)}
-    sprzedaz = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=0.3)}
-    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
-    assert all(p["sell"] is None for p in out)
-
-
 def test_adapter_prices_jako_lista_liczb_nie_blokuje_today():
     attrs = {"prices": [0.1, 0.2], "today": [0.5] * 24}
     assert len(intervals_from_attributes(attrs, None, "PLN", _WAW, _polnoc())) == 24
@@ -1235,9 +1253,17 @@ def test_sprzedaz_5_min_paruje_sie_z_kupnem_5_min():
     assert all(p["sell"] == pytest.approx(0.1) for p in out)
 
 
-def test_sprzedaz_5_min_przy_kupnie_15_min_to_none():
+def test_sprzedaz_5_min_przy_kupnie_15_min_bierze_wartosc_ze_startu():
     kupno = {"raw_today": _raw(_polnoc(), 4, 15, wartosc=0.5)}
-    sprzedaz = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=0.1)}
+    sprzedaz = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=lambda i: 0.1 * i)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 4
+    assert [p["sell"] for p in out] == pytest.approx([0.0, 0.3, 0.6, 0.9])
+
+
+def test_sprzedaz_5_min_przesunieta_faza_przy_kupnie_15_min_to_none():
+    kupno = {"raw_today": _raw(_polnoc(), 4, 15, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc() + timedelta(minutes=2), 12, 5, wartosc=0.1)}
     out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
     assert len(out) == 4
     assert all(p["sell"] is None for p in out)

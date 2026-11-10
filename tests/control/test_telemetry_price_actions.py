@@ -272,13 +272,18 @@ def test_both_actions_successful_send_full_block():
 
 
 def test_sell_action_with_nothing_paired_sends_no_prices():
-    # Sprzedaż z akcji na innej siatce (60 min przy kupnie 15 min) — adapter jej nie paruje; to nie
-    # „rynek bez sprzedaży”, więc kupno z samymi `sell: null` nie idzie.
+    # Sprzedaż z akcji na przesuniętej siatce (godziny od :05 przy kupnie 15 min) — adapter jej nie
+    # paruje; to nie „rynek bez sprzedaży”, więc kupno z samymi `sell: null` nie idzie.
+    def _przesuniete(_d, _s, data):
+        przesun = timedelta(minutes=5)
+        wiersze = nordpool_response(date.fromisoformat(data["date"]), area="PL", minutes=60, base=300.0)["PL"]
+        return {"PL": [{**w, "start": (datetime.fromisoformat(w["start"]) + przesun).isoformat(),
+                        "end": (datetime.fromisoformat(w["end"]) + przesun).isoformat()} for w in wiersze]}
+
     async def scenario():
         h, cloud = goodwe_hass(), Cloud()
         _buy_entity(h)
-        _services(h, lambda _d, _s, data: nordpool_response(date.fromisoformat(data["date"]), area="PL",
-                                                            minutes=60, base=300.0))
+        _services(h, _przesuniete)
         s = _sender(h, cloud, {"entity_price_buy": "sensor.buy", "price_sell_action": NP})
         await _refresh(s)
         await s.async_flush()

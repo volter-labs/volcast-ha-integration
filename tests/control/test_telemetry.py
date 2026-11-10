@@ -231,6 +231,33 @@ def test_sell_price_entity_used():
     assert iv[0]["buy"] == 0.5 and iv[0]["sell"] == 0.2
 
 
+def _kwadranse(h, eid, value):
+    """Encja z dobą 96 kwadransów (seria 15-min) na 2026-09-23 w czasie lokalnym +02:00."""
+    start = datetime(2026, 9, 23, tzinfo=timezone(timedelta(hours=2)))
+    h.states.set(eid, str(value), {"currency": "PLN", "raw_today": [
+        {"start": (start + timedelta(minutes=15 * i)).isoformat(),
+         "end": (start + timedelta(minutes=15 * (i + 1))).isoformat(), "value": value} for i in range(96)]})
+
+
+def test_hourly_buy_with_quarter_hour_sell_entity_pairs_every_interval():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _kwadranse(h, "sensor.sell", 0.2)
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 24 and all(p["minutes"] == 60 and p["sell"] == 0.2 for p in iv)
+
+
+def test_quarter_hour_buy_with_hourly_sell_entity_pairs_every_interval():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.buy", "entity_price_sell": "sensor.nordpool"})
+    _kwadranse(h, "sensor.buy", 0.5)
+    _nordpool(h, value=0.2)
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 96 and all(p["minutes"] == 15 and p["sell"] == 0.2 for p in iv)
+
+
 # ── odczyty, znak sieci, prywatność, cykl życia ────────────────────────────
 
 
