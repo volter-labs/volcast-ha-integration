@@ -33,8 +33,10 @@ udane, nie starsze niż odświeżenie z zapasem i obejmujące bieżącą dobę r
 
 Znane ograniczenia: doba rynku to strefa czasowa Home Assistanta (wtyczka nie zna
 strefy rynku konta). Nord Pool liczy `date` jako dobę dostawy w CET — w strefach
-EET (FI, kraje bałtyckie) para dziś+jutro zaczyna się godzinę przed lokalną
-północą i kończy godzinę przed końcem jutra; seria jest ciągła, przesunięta.
+EET (FI, kraje bałtyckie) doba CET zaczyna się o 01:00 lokalnie, więc para
+dziś+jutro zaczyna się godzinę PO lokalnej północy i kończy godzinę po końcu
+jutra; seria jest ciągła, przesunięta. Między 00:00 a 01:00 lokalnie bieżącej
+godziny w serii nie ma.
 """
 
 from __future__ import annotations
