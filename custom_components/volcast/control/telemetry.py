@@ -437,7 +437,7 @@ class TelemetrySender:
         opts = self._entry.options
         _, buy = self._price_attributes(OPT_PRICE_BUY_ACTION, OPT_PRICE_BUY, now, require_available=True)
         if buy is None:
-            return None
+            return self._without_buy()
         sell_set, sell = self._price_attributes(OPT_PRICE_SELL_ACTION, OPT_PRICE_SELL, now,
                                                 require_available=False)
         # Ustawiona sprzedaż bez danych (trwa pierwsze wywołanie akcji, błąd, encja zniknęła) to nie
@@ -448,7 +448,7 @@ class TelemetrySender:
             return None
         currency = currency_from_attributes(buy, (opts.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
         if currency is None:
-            return None
+            return self._without_buy()
         intervals = intervals_from_attributes(buy, sell, currency, self._tz(), now)
         if sell_set:
             # Z ustawioną sprzedażą idzie tylko zakres pokryty przez OBIE strony (np. kupno ma już
@@ -460,7 +460,7 @@ class TelemetrySender:
                 return None
             intervals = paired
         if not intervals:
-            return None
+            return self._without_buy()
         self._sell_withheld(None)
         market = self._market()
         fp = fingerprint([{"market": market}, *intervals])
@@ -468,6 +468,13 @@ class TelemetrySender:
         if fp == self._prices_fp and not stale:
             return None
         return {"market": market, "currency": currency, "intervals": intervals}, fp
+
+    def _without_buy(self) -> None:
+        """Kupno nie daje cen (brak danych, waluty albo przedziałów): strona sprzedaży nie była w tym cyklu
+        oceniona, więc seria jej powodu się przerywa — po powrocie kupna znowu jeden cykl karencji.
+        Zostaje znacznik ostrzeżenia: ten sam, nadal trwający powód nie ostrzega drugi raz."""
+        self._sell_seen = None
+        return None
 
     def _sell_withheld(self, reason: str | None) -> None:
         """Ostrzeżenie, że blok cen nie idzie przez stronę sprzedaży — raz na zmianę powodu;

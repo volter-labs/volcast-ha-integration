@@ -398,6 +398,51 @@ def test_withheld_warning_rearms_after_prices_flow_again(caplog):
     assert len(_warnings(caplog)) == 2
 
 
+def _buy_unavailable(h):
+    h.states.set("sensor.nordpool", "unavailable", {})
+
+
+def _buy_without_currency(h):
+    attrs = dict(h.states.get("sensor.nordpool").attributes)
+    del attrs["currency"]
+    h.states.set("sensor.nordpool", "0.5", attrs)
+
+
+def _buy_without_series(h):
+    h.states.set("sensor.nordpool", "0.5", {"currency": "PLN", "raw_today": []})
+
+
+@pytest.mark.parametrize("drop_buy", [_buy_unavailable, _buy_without_currency, _buy_without_series],
+                         ids=["unavailable", "no-currency", "no-series"])
+def test_buy_dropout_restarts_the_sell_warning_grace(drop_buy, caplog):
+    # Cykl bez kupna nie ocenia strony sprzedaży — po powrocie kupna znowu jeden cykl karencji.
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _sell_other_currency(h)
+    _flush(s, 1)                                    # sprzedaż się nie paruje — karencja
+    drop_buy(h)
+    _flush(s, 1)                                    # kupno wypada
+    _nordpool(h)
+    _flush(s, 1)                                    # kupno wraca — znowu pierwszy cykl
+    assert _warnings(caplog) == []
+    _flush(s, 1)
+    assert len(_warnings(caplog)) == 1 and all("prices" not in r for r in cloud.sent)
+
+
+def test_buy_dropout_does_not_repeat_a_warning_already_given(caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _sell_other_currency(h)
+    _flush(s, 2)                                    # ostrzeżenie
+    _buy_unavailable(h)
+    _flush(s, 1)
+    _nordpool(h)
+    _flush(s, 3)                                    # ten sam, nadal trwający powód
+    assert len(_warnings(caplog)) == 1
+
+
 @pytest.mark.parametrize("options", [{"entity_price_buy": "sensor.nordpool"},
                                      {"entity_price_buy": "sensor.nordpool", "entity_price_sell": None,
                                       "price_sell_action": None}])
