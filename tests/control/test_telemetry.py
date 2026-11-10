@@ -286,6 +286,115 @@ def test_buy_entity_without_sell_source_keeps_null_sell():
     assert len(iv) == 24 and all(p["sell"] is None for p in iv)
 
 
+# ── ceny wstrzymane przez stronę sprzedaży: ostrzeżenie raz na zmianę powodu ─
+
+_SELL_PRICE = 0.4321      # wartość, której nie wolno zobaczyć w logu
+_NP_ACTION = {"action": "nordpool.get_prices_for_date",
+              "data": {"config_entry": "np1", "areas": "PL", "currency": "PLN"}}
+
+
+def _sell_entity(h, eid="sensor.sell", *, currency="PLN", shift_min=0):
+    """Godzinowa doba sprzedaży (+02:00), opcjonalnie w innej walucie albo przesunięta o `shift_min`."""
+    start = datetime(2026, 9, 23, tzinfo=timezone(timedelta(hours=2))) + timedelta(minutes=shift_min)
+    h.states.set(eid, str(_SELL_PRICE), {"currency": currency, "raw_today": [
+        {"start": (start + timedelta(hours=i)).isoformat(), "end": (start + timedelta(hours=i + 1)).isoformat(),
+         "value": _SELL_PRICE} for i in range(24)]})
+
+
+def _sell_missing(h):
+    pass
+
+
+def _sell_unavailable(h):
+    h.states.set("sensor.sell", "unavailable", {})
+
+
+def _sell_other_currency(h):
+    _sell_entity(h, currency="EUR")
+
+
+def _sell_shifted_grid(h):
+    _sell_entity(h, shift_min=30)
+
+
+def _warnings(caplog):
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def _flush(s, times):
+    for _ in range(times):
+        asyncio.run(s.async_flush())
+
+
+@pytest.mark.parametrize("setup, option, source", [
+    (_sell_missing, {"entity_price_sell": "sensor.sell"}, "sensor.sell"),
+    (_sell_unavailable, {"entity_price_sell": "sensor.sell"}, "sensor.sell"),
+    (_sell_other_currency, {"entity_price_sell": "sensor.sell"}, "sensor.sell"),
+    (_sell_shifted_grid, {"entity_price_sell": "sensor.sell"}, "sensor.sell"),
+    (_sell_missing, {"price_sell_action": _NP_ACTION}, "nordpool.get_prices_for_date"),
+], ids=["missing", "unavailable", "other-currency", "shifted-grid", "action-without-result"])
+def test_withheld_by_sell_side_warns_once_across_cycles(setup, option, source, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", **option})
+    setup(h)
+    _flush(s, 4)
+    assert len(cloud.sent) == 4 and all("prices" not in r for r in cloud.sent)
+    (msg,) = _warnings(caplog)
+    assert "sell" in msg and source in msg
+    assert str(_SELL_PRICE) not in caplog.text and "0.5" not in caplog.text
+
+
+def test_withheld_warning_skips_first_cycle_after_start(caplog):
+    # Pierwszy cykl po starcie (akcja jeszcze trwa, encja jeszcze się nie załadowała) to nie usterka.
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _flush(s, 1)
+    assert _warnings(caplog) == []
+    _sell_entity(h)
+    _flush(s, 3)
+    assert _warnings(caplog) == [] and cloud.sent[1]["prices"]["intervals"][0]["sell"] == _SELL_PRICE
+
+
+def test_withheld_warning_repeats_on_change_of_reason(caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _flush(s, 3)                                    # brak encji sprzedaży
+    _sell_other_currency(h)
+    _flush(s, 3)                                    # encja jest, ale nic się nie paruje
+    assert all("prices" not in r for r in cloud.sent)
+    first, second = _warnings(caplog)
+    assert first != second
+
+
+def test_withheld_warning_rearms_after_prices_flow_again(caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _sell_unavailable(h)
+    _flush(s, 3)
+    _sell_entity(h)
+    _flush(s, 1)
+    assert "prices" in cloud.sent[-1]
+    _sell_unavailable(h)
+    _flush(s, 3)
+    assert len(_warnings(caplog)) == 2
+
+
+@pytest.mark.parametrize("options", [{"entity_price_buy": "sensor.nordpool"},
+                                     {"entity_price_buy": "sensor.nordpool", "entity_price_sell": None,
+                                      "price_sell_action": None}])
+def test_buy_only_never_warns_about_sell(options, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options=options)
+    _flush(s, 3)
+    assert "prices" in cloud.sent[0] and cloud.sent[0]["prices"]["intervals"][0]["sell"] is None
+    assert _warnings(caplog) == []
+
+
 # ── odczyty, znak sieci, prywatność, cykl życia ────────────────────────────
 
 

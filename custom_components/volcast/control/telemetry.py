@@ -83,6 +83,11 @@ PRICES_RESEND_S = 6 * 3600
 _UNAVAILABLE = ("unavailable", "unknown")
 # Rynek, gdy konfiguracja HA nie podaje kraju (instalacje sprzed tego pola).
 _DEFAULT_MARKET = "PL"
+# Powody wstrzymania bloku cen przez ustawioną stronę sprzedaży (dokończenie zdania w logu).
+_SELL_NO_DATA = ("is set but gives no prices (entity missing or unavailable, or no fresh result "
+                 "from the price action), so the buy prices are withheld too")
+_SELL_NO_PAIR = ("gives prices that do not match the buy prices (different currency, or intervals "
+                 "that do not line up with the buy intervals), so the buy prices are withheld too")
 TELEMETRY_FIELDS = {
     "soc": "battery_soc", "pv_power_w": "pv_power_w", "battery_power_w": "battery_power_w",
     "grid_power_w": "grid_power_w", "load_power_w": "load_power_w",
@@ -291,6 +296,9 @@ class TelemetrySender:
         self._on_signals = on_signals
         self._prices_fp: str | None = None
         self._prices_at: datetime | None = None
+        # Powód wstrzymania cen przez sprzedaż: widziany w poprzednim cyklu i już zgłoszony w logu.
+        self._sell_seen: str | None = None
+        self._sell_warned: str | None = None
         # Źródła cen z akcji: klucz opcji → (konfiguracja, z której powstał, poller albo None = zła).
         self._price_actions: dict[str, tuple[object, PriceActionPoller | None]] = {}
         self._price_tasks: dict[str, object] = {}
@@ -438,6 +446,7 @@ class TelemetrySender:
         # „rynek bez sprzedaży” — samo kupno z `sell: null` nadpisałoby w chmurze dobre ceny sprzedaży
         # (a `null` planner czyta jako eksport wart 0).
         if sell_set and sell is None:
+            self._sell_withheld(_SELL_NO_DATA)
             return None
         currency = currency_from_attributes(buy, (opts.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
         if currency is None:
@@ -447,15 +456,40 @@ class TelemetrySender:
             # Z ustawioną sprzedażą idzie tylko zakres pokryty przez OBIE strony (np. kupno ma już
             # jutro, sprzedaż jeszcze nie). Seria sprzedaży jest ciągła, więc to nadal jeden ciągły
             # zakres; pusty (nic się nie sparowało) — blok nie idzie wcale.
-            intervals = [iv for iv in intervals if iv["sell"] is not None]
+            paired = [iv for iv in intervals if iv["sell"] is not None]
+            if intervals and not paired:
+                self._sell_withheld(_SELL_NO_PAIR)
+                return None
+            intervals = paired
         if not intervals:
             return None
+        self._sell_withheld(None)
         market = self._market()
         fp = fingerprint([{"market": market}, *intervals])
         stale = self._prices_at is None or (now - self._prices_at).total_seconds() >= PRICES_RESEND_S
         if fp == self._prices_fp and not stale:
             return None
         return {"market": market, "currency": currency, "intervals": intervals}, fp
+
+    def _sell_withheld(self, reason: str | None) -> None:
+        """Ostrzeżenie, że blok cen nie idzie przez stronę sprzedaży — raz na zmianę powodu;
+        None = ceny znów się składają (kolejny problem ostrzeże od nowa).
+
+        Ostrzegamy dopiero, gdy ten sam powód trwa drugi cykl z rzędu: pierwszy cykl po starcie
+        (akcja jeszcze trwa, encja sprzedaży jeszcze się nie załadowała) to nie usterka."""
+        seen, self._sell_seen = self._sell_seen, reason
+        if reason is None:
+            self._sell_warned = None
+            return
+        if reason != seen or reason == self._sell_warned:
+            return
+        self._sell_warned = reason
+        configured, poller = self._price_action(OPT_PRICE_SELL_ACTION)
+        if configured:
+            source = poller.source.action if poller is not None else "(invalid action)"
+        else:
+            source = (self._entry.options.get(OPT_PRICE_SELL) or "").strip()
+        _LOGGER.warning("Volcast prices are not sent: the sell price source %s %s", source, reason)
 
     def _unsupported(self) -> tuple[str, ...]:
         """Nastawy, które wykonawca uznał za nieobsługiwane (brak encji, długo niedostępna)."""
