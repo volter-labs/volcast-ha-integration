@@ -16,13 +16,14 @@ Kontrakt (odpowiednik TS-owego `PriceInterval` po stronie chmury):
 Źródła atrybutów (pierwszeństwo w tej kolejności):
 
 1. `raw_today` / `raw_tomorrow` — listy wpisów `{start, end, value}` (konwencja
-   Nord Pool i pochodnych). Długość przedziału bierzemy z `end - start`.
+   wielu integracji giełdowych). Długość przedziału bierzemy z `end - start`.
 2. Listy wpisów innych integracji cenowych (`prices`, `prices_today` +
    `prices_tomorrow`, `forecast`, `forecasts`, `rates`, „All prices”): start
    z `start|start_time|time|from|timestamp|start_date`, koniec z
    `end|end_time|till|end_date` albo z jednolitego odstępu startów, cena z
-   `value|price|per_kwh|value_inc_vat` (Zonneplan: `price_tax_included.amount`
-   w skali 1e-7). Znacznik MUSI mieć offset (`str(datetime)` ze spacją wolno).
+   `value|price|per_kwh|value_inc_vat` albo ze ścieżki zagnieżdżonej w skali
+   ułamkowej (rejestr integracji: `scaled_values`). Znacznik MUSI mieć offset
+   (`str(datetime)` ze spacją wolno).
 3. `today` / `tomorrow` — listy samych liczb plus `interval_min` (domyślnie 60);
    chwile odtwarzamy od północy dnia lokalnego.
 
@@ -41,6 +42,8 @@ import re
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Mapping, Sequence
 
+from .price_integrations import SCALED_VALUES
+
 #: Rozdzielczości, które chmura przyjmuje w `PriceInterval.minutes`.
 DOZWOLONE_MINUTY: frozenset[int] = frozenset({5, 15, 30, 60})
 
@@ -53,8 +56,8 @@ DOMYSLNY_INTERVAL_MIN = 60
 #: bo dzisiaj+jutro w dobie zmiany czasu daje legalne 49 godzin.
 MAX_MINUT_SERII = 60 * 24 * 2
 
-#: Limit dla list wpisów innych integracji: atrybut zbiorczy (np. `prices` w
-#: ENTSO-e) bywa wczoraj + dziś + jutro, a doba zmiany czasu dodaje godzinę.
+#: Limit dla list wpisów innych integracji: atrybut zbiorczy (np. `prices`)
+#: bywa wczoraj + dziś + jutro, a doba zmiany czasu dodaje godzinę.
 MAX_MINUT_SERII_WPISOW = 60 * 24 * 3 + 60
 
 #: Limit liczby wpisów serii 5-minutowej (100 h). Dla 15/30/60 min obowiązuje
@@ -357,7 +360,7 @@ def _z_raw(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
 
 #: Klucze atrybutów z listą wpisów w kształtach innych integracji cenowych —
 #: sprawdzane w tej kolejności, PO `raw_today` (który zostaje bez zmian).
-#: Para „dziś + jutro” (ENTSO-e) jest składana w jedną serię.
+#: Para „dziś + jutro” jest składana w jedną serię.
 _KLUCZE_LIST_WPISOW: tuple[tuple[str, ...], ...] = (
     ("prices",),
     ("prices_today", "prices_tomorrow"),
@@ -369,8 +372,6 @@ _KLUCZE_LIST_WPISOW: tuple[tuple[str, ...], ...] = (
 _KLUCZE_STARTU = ("start", "start_time", "time", "from", "timestamp", "start_date")
 _KLUCZE_KONCA = ("end", "end_time", "till", "end_date")
 _KLUCZE_WARTOSCI = ("value", "price", "per_kwh", "value_inc_vat")
-#: Zonneplan podaje cenę jako `price_tax_included.amount` w skali 1e-7 waluty.
-_SKALA_ZONNEPLAN = 1e7
 
 
 def _pierwszy_klucz(wpis: Mapping[str, Any], klucze: Sequence[str]) -> Any:
@@ -380,25 +381,36 @@ def _pierwszy_klucz(wpis: Mapping[str, Any], klucze: Sequence[str]) -> Any:
     return None
 
 
+def _po_sciezce(wpis: Mapping[str, Any], sciezka: Sequence[str]) -> Any:
+    """Wartość pod ścieżką kluczy zagnieżdżonych słowników; None, gdy ścieżki nie ma."""
+    wartosc: Any = wpis
+    for klucz in sciezka:
+        if not isinstance(wartosc, Mapping):
+            return None
+        wartosc = wartosc.get(klucz)
+    return wartosc
+
+
 def _wartosc_wpisu(wpis: Mapping[str, Any]) -> float | None:
-    """Cena z wpisu: zwykły klucz albo zagnieżdżone `price_tax_included` (Zonneplan)."""
+    """Cena z wpisu: zwykły klucz albo pierwsza obecna ścieżka zagnieżdżona z rejestru (`SCALED_VALUES`)."""
     surowa = _pierwszy_klucz(wpis, _KLUCZE_WARTOSCI)
     if surowa is not None:
         return _liczba(surowa)
-    zagniezdzona = wpis.get("price_tax_included")
-    if isinstance(zagniezdzona, Mapping):
-        kwota = zagniezdzona.get("amount")
-        # Zonneplan podaje liczbę CAŁKOWITĄ w skali 1e-7; ułamek to inna skala.
+    for skalowana in SCALED_VALUES:
+        kwota = _po_sciezce(wpis, skalowana.path)
+        if kwota is None:
+            continue
+        # Liczba CAŁKOWITA w skali ułamkowej waluty; ułamek oznacza inną skalę.
         if not isinstance(kwota, int) or isinstance(kwota, bool):
             return None
-        return kwota / _SKALA_ZONNEPLAN
+        return kwota / skalowana.divisor
     return None
 
 
 def _z_wpisow(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
     """Lista wpisów w dowolnym ze znanych kształtów. None = dane niespójne.
 
-    Koniec przedziału bierzemy z klucza końca; gdy go nie ma (np. Pstryk),
+    Koniec przedziału bierzemy z klucza końca; gdy go nie ma (wpisy z samym startem),
     z JEDNOLITEGO odstępu między kolejnymi startami — bez końca i bez co
     najmniej dwóch wpisów długości nie da się ustalić, więc seria odpada.
     """
@@ -772,10 +784,11 @@ def has_usable_prices_now(
     jednostkę. Krok „prices" onboardingu nie wolno oznaczać jako zrobiony na
     podstawie samego wyboru encji, tylko na podstawie tego wyniku.
 
-    „Pełna seria JUŻ TERAZ" oznacza konkretnie: seria zaczyna się najpóźniej
-    w następnym przedziale (`starts_by_next_interval`), trwa jeszcze w `now`
-    i sięga co najmniej 6 h w przód — samo „jakieś dwie godziny `today`" albo
-    seria sprzed miesiąca (encja martwa) to nie jest gotowość.
+    „Pełna seria JUŻ TERAZ" oznacza konkretnie: seria obejmuje `now` albo
+    zaczyna się dokładnie jeden przedział później (`starts_by_next_interval` —
+    tam też, dlaczego to przyjmuje samo „jutro" w ostatnim przedziale doby),
+    trwa jeszcze w `now` i sięga co najmniej 6 h w przód — samo „jakieś dwie
+    godziny `today`" albo seria sprzed miesiąca (encja martwa) to nie jest gotowość.
     """
     waluta = currency_from_attributes(attrs_buy, fallback_currency)
     if waluta is None:
@@ -793,10 +806,16 @@ def has_usable_prices_now(
 def starts_by_next_interval(intervals: Sequence[Mapping[str, Any]], now: datetime) -> bool:
     """Czy seria obejmuje `now` albo zaczyna się najpóźniej jeden przedział po nim.
 
-    Prognoza krocząca (Amber `forecasts`) nie zawiera BIEŻĄCEGO przedziału — ten
-    jest osobną ceną bieżącą — więc zaczyna się od następnej granicy siatki. Luka
-    jest ograniczona długością jednego przedziału: seria „od jutra" dalej nie
-    jest gotowością na teraz.
+    Przyjmujemy serię, której pierwszy przedział zaczyna się nie później niż
+    `now` + długość przedziału — czyli także serię zaczynającą się dokładnie
+    jeden przedział przed nami. Powód: prognoza krocząca nie zawiera BIEŻĄCEGO
+    przedziału (ten jest osobną ceną bieżącą), więc zaczyna się od następnej
+    granicy siatki.
+
+    To celowo przyjmuje też serię z samym „jutro", sprawdzaną w ostatnim
+    przedziale doby lokalnej: zaczyna się od następnego przedziału, więc nie da
+    się jej odróżnić od prognozy kroczącej. Seria zaczynająca się dalej niż
+    jeden przedział po `now` nie jest gotowością na teraz.
     """
     pierwszy = datetime.fromisoformat(intervals[0]["startAt"].replace("Z", "+00:00"))
     return pierwszy <= now.astimezone(timezone.utc) + timedelta(minutes=intervals[0]["minutes"])

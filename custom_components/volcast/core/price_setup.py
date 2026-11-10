@@ -255,7 +255,7 @@ def check_series(attrs: Mapping[str, Any] | None, fallback_currency: str | None,
     if has_usable_prices_now(attrs, fallback_currency, tz, now):
         return SeriesCheck("ok", _hours_ahead(intervals, now))
     if not starts_by_next_interval(intervals, now):
-        return SeriesCheck("unusable")      # seria zaczyna się dalej w przyszłości (np. „jutro") — nie obejmuje teraz
+        return SeriesCheck("unusable")      # seria zaczyna się dalej niż jeden przedział po teraz — nie obejmuje teraz
     hours = _hours_ahead(intervals, now)
     return SeriesCheck("short" if hours > 0 else "unusable", max(hours, 0))
 
