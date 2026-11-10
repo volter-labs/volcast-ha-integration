@@ -551,3 +551,29 @@ def test_core_price_domains_exist_in_home_assistant():
     from tests.discovery.test_classify import VERIFIED_CORE
     root = Path(components.__file__).parent
     assert all((root / domain).is_dir() for domain in VERIFIED_CORE)
+
+
+@pytest.mark.parametrize("domain,expected", [
+    ("tibber", [("home", "Optional", None), ("currency", "Optional", None)]),
+    ("nordpool", [("area", "Required", None), ("currency", "Required", None)]),
+    ("entsoe", [("unit", "Required", None), ("currency", "Required", None)]),
+    ("energyzero", [("incl_vat", "Required", True)]),
+    ("easyenergy", [("incl_vat", "Required", True)]),
+])
+async def test_details_form_fields_per_integration(hass: HomeAssistant, network_down, domain, expected):
+    _loaded(hass, domain, domain, "x1")
+    _form, details = await _choose(hass, make_entry(hass), f"action|{domain}|x1")
+    assert details["step_id"] == "price_source_details"
+    got = [(str(k), type(k).__name__, k.default() if k.default is not vol.UNDEFINED else None)
+           for k in details["data_schema"].schema]
+    assert got == expected
+    unit = [v for k, v in details["data_schema"].schema.items() if str(k) == "unit"]
+    if unit:
+        assert unit[0].config["options"] == ["kWh", "MWh"]
+
+
+async def test_amber_action_source_has_no_details_form(hass: HomeAssistant, network_down):
+    _loaded(hass, "amberelectric", "Amber home", "amb1")
+    _register(hass, "amberelectric", "get_forecasts", lambda call: {"forecasts": []}, [])
+    _form, res = await _choose(hass, make_entry(hass), "action|amberelectric|amb1")
+    assert res["step_id"] == "price_source" and res["errors"] == {"base": "price_source_unusable"}
