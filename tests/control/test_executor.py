@@ -833,7 +833,7 @@ def test_notifies_listeners_after_tick(monkeypatch):
     ("OPT_PRICE_CURRENCY", "price_currency"),
     ("SIGNAL_CONTROL_UPDATED", "volcast_control_updated_{entry_id}"),
     ("EXECUTOR_INTERVAL_S", 60), ("STOP_WRITE_TIMEOUT_S", 10.0), ("ERROR_ISSUE_AFTER", 10),
-    ("BETA_PAIRING_URL", "https://staging.volcast.app/functions/v1/pairing-session"),
+    ("DEFAULT_PAIRING_URL", "https://jzihchpmkhawegqcfbeo.supabase.co/functions/v1/pairing-session"),
 ])
 def test_control_constants(name, value):
     from custom_components.volcast import const

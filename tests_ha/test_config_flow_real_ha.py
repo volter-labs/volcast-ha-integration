@@ -154,7 +154,7 @@ async def test_http_pair_form_has_collapsed_advanced_section_and_default_service
     resp = await client.post(f"{FLOW_URL}/{flow_id}", json={"advanced": {}})
     ext = await resp.json()
     assert resp.status == 200 and ext["type"] == "external" and ext["step_id"] == "pair"
-    assert ext["url"] == CONNECT_URL and FakePairing.instances[0].url == cf.BETA_PAIRING_URL
+    assert ext["url"] == CONNECT_URL and FakePairing.instances[0].url == cf.DEFAULT_PAIRING_URL
     hass.config_entries.flow.async_abort(flow_id)
     await hass.async_block_till_done()
 
@@ -164,7 +164,7 @@ async def test_http_pair_form_without_section_key_uses_default(hass: HomeAssista
     flow_id, _ = await _http_to_pair_form(hass, client)
     resp = await client.post(f"{FLOW_URL}/{flow_id}", json={})
     assert (await resp.json())["type"] == "external"
-    assert FakePairing.instances[0].url == cf.BETA_PAIRING_URL
+    assert FakePairing.instances[0].url == cf.DEFAULT_PAIRING_URL
     hass.config_entries.flow.async_abort(flow_id)
     await hass.async_block_till_done()
 

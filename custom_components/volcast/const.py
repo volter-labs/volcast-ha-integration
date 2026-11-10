@@ -81,8 +81,8 @@ VERIFY_WINDOW_MAX_SOC = 90.0
 ISSUE_VERIFICATION_STOPPED = "verification_stopped"
 STOP_WRITE_TIMEOUT_S = 10.0
 ERROR_ISSUE_AFTER = 10
-# Pre-release backend; replaced on the stable release.
-BETA_PAIRING_URL = "https://staging.volcast.app/functions/v1/pairing-session"
+# Default pairing service (production); the advanced field can override it.
+DEFAULT_PAIRING_URL = "https://jzihchpmkhawegqcfbeo.supabase.co/functions/v1/pairing-session"
 
 # Połączenie bezpośrednie z falownikiem (Modbus)
 CONTROL_MODE_DIRECT = "direct"

@@ -46,7 +46,7 @@ from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
 from .version import async_integration_version
 from .const import (
-    BETA_PAIRING_URL,
+    DEFAULT_PAIRING_URL,
     CONF_API_URL,
     CONF_BACKEND,
     CONF_BATTERY_CHARGE_POWER_ENTITY,
@@ -138,7 +138,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize."""
         self._api_data: dict[str, Any] = {}
-        self._pairing_url = BETA_PAIRING_URL
+        self._pairing_url = DEFAULT_PAIRING_URL
         self._pairing: PairingClient | None = None
         self._session = None
         self._pair_task: asyncio.Task | None = None
@@ -177,7 +177,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         if url and not is_https_url(url):
             return self.async_show_form(step_id="pair", data_schema=self._pair_schema(url),
                                         errors={"base": "invalid_url"})
-        self._pairing_url = url or BETA_PAIRING_URL
+        self._pairing_url = url or DEFAULT_PAIRING_URL
         return await self._async_step_external()
 
     @staticmethod

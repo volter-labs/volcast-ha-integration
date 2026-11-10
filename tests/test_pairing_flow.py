@@ -138,7 +138,7 @@ def test_pair_happy_path_creates_entry_with_backend(monkeypatch):
     assert created["type"] == "create_entry" and created["title"] == "Volcast — Dom"
     assert (d["api_key"], d["api_url"], d["user_id"]) == (KEY, BACKEND.forecast, "u1")
     assert d["backend"] == BACKEND.as_dict() and d["pairing"]["poll_token"] == "vps_tok"
-    assert d["pairing"]["session_id"] == "s1" and d["pairing"]["url"] == cf.BETA_PAIRING_URL
+    assert d["pairing"]["session_id"] == "s1" and d["pairing"]["url"] == cf.DEFAULT_PAIRING_URL
     assert d["paired_at"] < d["pairing"]["live_until"]
     assert "mode" not in d
     # unique_id to skrót klucza, nie klucz; krok końcowy nie ustępuje równoległemu kreatorowi.
@@ -150,7 +150,7 @@ def test_advanced_reentry_after_form_does_not_show_form_again(monkeypatch):
     flow = make_flow(monkeypatch, polls=[CONFIRMED])
 
     async def go():
-        ext = await flow.async_step_pair({"advanced": {"pairing_url": cf.BETA_PAIRING_URL}})
+        ext = await flow.async_step_pair({"advanced": {"pairing_url": cf.DEFAULT_PAIRING_URL}})
         await asyncio.gather(*flow._tasks)
         return ext, await flow.async_step_pair()
     ext, done = asyncio.run(go())
@@ -169,7 +169,7 @@ def test_begin_describes_this_instance(monkeypatch):
     (kw,) = FakeClient.begins
     assert kw["instance_id"] == "abcdef1234567890" and kw["instance_name"] == "Dom"
     assert kw["ha_version"] == "2026.9.0" and isinstance(kw["client_version"], str)
-    assert FakeClient.urls == [cf.BETA_PAIRING_URL]
+    assert FakeClient.urls == [cf.DEFAULT_PAIRING_URL]
 
 
 def test_pair_reentry_while_pending_does_not_begin_again(monkeypatch):
@@ -384,7 +384,25 @@ def test_empty_address_uses_default_service(monkeypatch, submitted):
         await asyncio.gather(*flow._tasks, return_exceptions=True)
         return ext
     assert asyncio.run(go())["type"] == "external"
-    assert FakeClient.urls == [cf.BETA_PAIRING_URL]
+    assert FakeClient.urls == [cf.DEFAULT_PAIRING_URL]
+
+
+def test_default_pairing_service_is_production():
+    assert cf.DEFAULT_PAIRING_URL == "https://jzihchpmkhawegqcfbeo.supabase.co/functions/v1/pairing-session"
+    assert "staging" not in cf.DEFAULT_PAIRING_URL
+
+
+def test_staging_address_in_advanced_field_is_used(monkeypatch):
+    staging = "https://staging.volcast.app/functions/v1/pairing-session"
+    flow = make_flow(monkeypatch, polls=[PollResult("pending")])
+
+    async def go():
+        ext = await flow.async_step_pair({"advanced": {"pairing_url": staging}})
+        flow.async_remove()
+        await asyncio.gather(*flow._tasks, return_exceptions=True)
+        return ext
+    assert asyncio.run(go())["type"] == "external"
+    assert FakeClient.urls == [staging]
 
 
 def test_advanced_url_must_be_https(monkeypatch):

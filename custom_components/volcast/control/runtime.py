@@ -59,7 +59,7 @@ from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
 from ..cloud.signal_channel import SignalChannel
 from ..coordinator import async_get_profile_feed
-from ..const import (BETA_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
+from ..const import (DEFAULT_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
@@ -1211,7 +1211,7 @@ def _maybe_start_onboarding(hass, entry, report, profiles=()) -> None:
             return  # przeładowanie wpisu (zmiana opcji) nie startuje drugiego onboardingu
         # Nowe parowanie w żywym oknie poprzedniej sesji: stary reporter pisałby do starej sesji.
         _cancel_onboarding(hass, entry.entry_id)
-    client = PairingClient(async_get_clientsession(hass), p.get("url") or BETA_PAIRING_URL)
+    client = PairingClient(async_get_clientsession(hass), p.get("url") or DEFAULT_PAIRING_URL)
     session = PairingSession(session_id, str(p.get("poll_token")), "", "")
 
     def runtime():
