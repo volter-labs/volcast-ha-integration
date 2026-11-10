@@ -138,11 +138,33 @@ def test_amber_dollar_unit_without_currency_is_aud_only_for_amber():
     assert enrich_attributes("amberelectric", None) == {}
 
 
+def _amber(hours, minutes=30, now=NOW):
+    """Prognoza w kształcie Ambera: BEZ bieżącego przedziału, od następnej granicy siatki,
+    start znakowany sekundą po pełnej minucie."""
+    krok = minutes * 60
+    start = datetime.fromtimestamp((int(now.timestamp()) // krok + 1) * krok, timezone.utc)
+    return {"unit_of_measurement": "$/kWh", "forecasts": [
+        {"start_time": (start + timedelta(minutes=minutes * i, seconds=1)).isoformat(),
+         "end_time": (start + timedelta(minutes=minutes * (i + 1))).isoformat(), "per_kwh": 0.3}
+        for i in range(hours * 60 // minutes)]}
+
+
 def test_amber_series_with_dollar_unit_is_usable_with_enrichment():
-    attrs = {**_hourly(24), "unit_of_measurement": "$/kWh"}
-    attrs.pop("currency")
+    attrs = _amber(24)
     assert check_series(attrs, None, WAW, NOW).status == "unusable"                      # bez reguły: waluta niejasna
-    assert check_series(enrich_attributes("amberelectric", attrs), None, WAW, NOW).status == "ok"
+    ok = check_series(enrich_attributes("amberelectric", attrs), None, WAW, NOW)
+    assert (ok.status, ok.hours) == ("ok", 24)
+
+
+@pytest.mark.parametrize("minutes, after", [(5, 0), (5, 3), (30, 0), (30, 17)])
+def test_amber_forecast_without_current_interval_is_usable(minutes, after):
+    now = NOW + timedelta(minutes=after)
+    assert check_series(enrich_attributes("amberelectric", _amber(24, minutes, now)), None, WAW, now).status == "ok"
+
+
+def test_short_amber_forecast_is_short_not_unusable():
+    short = check_series(enrich_attributes("amberelectric", _amber(3)), None, WAW, NOW)
+    assert (short.status, short.hours) == ("short", 3)
 
 
 def test_octopus_gas_is_not_an_electricity_candidate():

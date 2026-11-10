@@ -1021,8 +1021,16 @@ def test_ambiguous_pair_applies_buy_only_nothing_guessed():
     assert entry.options["entity_price_buy"] == "sensor.p_buy_a" and "entity_price_sell" not in entry.options
 
 
+def _amber_attrs():
+    """Prognoza w kształcie Ambera: bez bieżącego przedziału — od następnej granicy 30 min po NOW."""
+    start = NOW + timedelta(minutes=30)
+    return {"unit_of_measurement": "$/kWh", "forecasts": [
+        {"start_time": (start + timedelta(minutes=30 * i, seconds=1)).isoformat(),
+         "end_time": (start + timedelta(minutes=30 * (i + 1))).isoformat(), "per_kwh": 0.3} for i in range(48)]}
+
+
 def test_amber_entities_with_dollar_unit_are_a_pair_in_aud():
-    attrs = {"unit_of_measurement": "$/kWh", **{k: v for k, v in _price_attrs().items() if k != "currency"}}
+    attrs = _amber_attrs()
     buy, sell = "sensor.home_general_forecast", "sensor.home_feed_in_forecast"
     report = dict(REPORT, price_entities=[{"entity_id": e, "platform": "amberelectric"} for e in (sell, buy)])
     ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN, report=report,
@@ -1033,7 +1041,7 @@ def test_amber_entities_with_dollar_unit_are_a_pair_in_aud():
 
 
 def test_amber_choice_detail_shows_aud():
-    attrs = {"unit_of_measurement": "$/kWh", **{k: v for k, v in _price_attrs().items() if k != "currency"}}
+    attrs = _amber_attrs()
     eid = "sensor.home_general_forecast"
     ob, client, entry = make([PollResult("pending")], plan=OK_PLAN, prices={eid: attrs},
                              report=dict(REPORT, price_entities=[{"entity_id": eid, "platform": "amberelectric"}]))

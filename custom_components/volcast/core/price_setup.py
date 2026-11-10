@@ -16,7 +16,8 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Mapping, Sequence
 
 from .price_actions import InvalidPriceSource, parse_source
-from .prices import currency_from_attributes, has_usable_prices_now, intervals_from_attributes
+from .prices import (currency_from_attributes, has_usable_prices_now, intervals_from_attributes,
+                     starts_by_next_interval)
 
 #: Integracje cenowe, które podpowiadamy (platformy encji / domeny akcji).
 KNOWN_PLATFORMS = frozenset({"amberelectric", "octopus_energy", "pstryk", "entsoe", "nordpool", "tibber",
@@ -243,9 +244,8 @@ def check_series(attrs: Mapping[str, Any] | None, fallback_currency: str | None,
         return SeriesCheck("unusable")
     if has_usable_prices_now(attrs, fallback_currency, tz, now):
         return SeriesCheck("ok", _hours_ahead(intervals, now))
-    first = datetime.fromisoformat(intervals[0]["startAt"].replace("Z", "+00:00"))
-    if first > now.astimezone(timezone.utc):
-        return SeriesCheck("unusable")      # seria zaczyna się w przyszłości (np. „jutro") — nie obejmuje teraz
+    if not starts_by_next_interval(intervals, now):
+        return SeriesCheck("unusable")      # seria zaczyna się dalej w przyszłości (np. „jutro") — nie obejmuje teraz
     hours = _hours_ahead(intervals, now)
     return SeriesCheck("short" if hours > 0 else "unusable", max(hours, 0))
 

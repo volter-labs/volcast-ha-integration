@@ -763,9 +763,10 @@ def has_usable_prices_now(
     jednostkę. Krok „prices" onboardingu nie wolno oznaczać jako zrobiony na
     podstawie samego wyboru encji, tylko na podstawie tego wyniku.
 
-    „Pełna seria JUŻ TERAZ" oznacza konkretnie: seria pokrywa bieżącą godzinę
-    (`now`) i sięga co najmniej 6 h w przód — samo „jakieś dwie godziny
-    `today`" albo seria sprzed miesiąca (encja martwa) to nie jest gotowość.
+    „Pełna seria JUŻ TERAZ" oznacza konkretnie: seria zaczyna się najpóźniej
+    w następnym przedziale (`starts_by_next_interval`), trwa jeszcze w `now`
+    i sięga co najmniej 6 h w przód — samo „jakieś dwie godziny `today`" albo
+    seria sprzed miesiąca (encja martwa) to nie jest gotowość.
     """
     waluta = currency_from_attributes(attrs_buy, fallback_currency)
     if waluta is None:
@@ -774,10 +775,22 @@ def has_usable_prices_now(
     if not przedzialy:
         return False
     chwila = (now or datetime.now(tz)).astimezone(timezone.utc)
-    pierwszy = datetime.fromisoformat(przedzialy[0]["startAt"].replace("Z", "+00:00"))
     ostatni = datetime.fromisoformat(przedzialy[-1]["startAt"].replace("Z", "+00:00"))
     koniec_serii = ostatni + timedelta(minutes=przedzialy[-1]["minutes"])
-    return pierwszy <= chwila < koniec_serii and koniec_serii >= chwila + timedelta(hours=6)
+    return (starts_by_next_interval(przedzialy, chwila) and chwila < koniec_serii
+            and koniec_serii >= chwila + timedelta(hours=6))
+
+
+def starts_by_next_interval(intervals: Sequence[Mapping[str, Any]], now: datetime) -> bool:
+    """Czy seria obejmuje `now` albo zaczyna się najpóźniej jeden przedział po nim.
+
+    Prognoza krocząca (Amber `forecasts`) nie zawiera BIEŻĄCEGO przedziału — ten
+    jest osobną ceną bieżącą — więc zaczyna się od następnej granicy siatki. Luka
+    jest ograniczona długością jednego przedziału: seria „od jutra" dalej nie
+    jest gotowością na teraz.
+    """
+    pierwszy = datetime.fromisoformat(intervals[0]["startAt"].replace("Z", "+00:00"))
+    return pierwszy <= now.astimezone(timezone.utc) + timedelta(minutes=intervals[0]["minutes"])
 
 
 def fingerprint(intervals: Sequence[Mapping[str, Any]]) -> str:

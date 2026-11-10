@@ -989,6 +989,24 @@ def test_has_usable_prices_now_falsz_dla_nieaktualnej_serii():
     assert has_usable_prices_now(attrs, "PLN", _WAW, poza_seria) is False
 
 
+@pytest.mark.parametrize("minuty, teraz_po", [(5, 2), (5, 0), (30, 10), (30, 0)])
+def test_has_usable_prices_now_prawda_dla_prognozy_od_nastepnego_przedzialu(minuty, teraz_po):
+    """Prognoza krocząca (Amber) nie zawiera BIEŻĄCEGO przedziału — zaczyna się od
+    następnej granicy siatki. To nadal gotowość: luka to najwyżej jeden przedział."""
+    granica = _polnoc() + timedelta(hours=10)
+    now = granica + timedelta(minutes=teraz_po)
+    attrs = {"raw_today": _raw(granica + timedelta(minutes=minuty), 24 * 60 // minuty, minuty)}
+
+    assert has_usable_prices_now(attrs, "PLN", _WAW, now) is True
+
+
+def test_has_usable_prices_now_falsz_gdy_luka_dluzsza_niz_jeden_przedzial():
+    granica = _polnoc() + timedelta(hours=10)
+    attrs = {"raw_today": _raw(granica + timedelta(minutes=10), 288, 5)}
+
+    assert has_usable_prices_now(attrs, "PLN", _WAW, granica + timedelta(minutes=4)) is False
+
+
 def test_has_usable_prices_now_falsz_gdy_seria_zaczyna_sie_po_now():
     """Seria jest kompletna i sięga daleko w przód, ale zaczyna się PO `now`
     (np. encja opublikowała już jutro, a jeszcze nie dzisiaj) — nie pokrywa

@@ -23,8 +23,18 @@ from .conftest import make_entry
 FIXTURES = Path(__file__).parents[1] / "tests" / "fixtures" / "prices"
 
 
-def _hours(n: int, step_min: int = 60, key_start="start_time", value_key="per_kwh", value=0.3):
-    start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+def _hour_start() -> datetime:
+    return datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+
+def _next_boundary(step_min: int) -> datetime:
+    """Pierwsza granica siatki PO teraz — od niej zaczyna się prognoza Ambera (bez bieżącego przedziału)."""
+    step = step_min * 60
+    return datetime.fromtimestamp((int(datetime.now(timezone.utc).timestamp()) // step + 1) * step, timezone.utc)
+
+
+def _hours(n: int, step_min: int = 60, key_start="start_time", value_key="per_kwh", value=0.3, start=None):
+    start = start or _hour_start()
     out = []
     for i in range(n * 60 // step_min):
         s = start + timedelta(minutes=i * step_min)
@@ -57,11 +67,11 @@ def _loaded(hass, domain, title, entry_id):
     return entry
 
 
-def _fixture(name: str, key: str, hours: int, step_min: int, **extra) -> dict:
+def _fixture(name: str, key: str, hours: int, step_min: int, start=None, **extra) -> dict:
     """Atrybuty zanonimizowanej encji z `tests/fixtures/prices`, z serią przesuniętą na „teraz"."""
     attrs = json.loads((FIXTURES / f"{name}.json").read_text())["attributes"]
     template = attrs[key][0]
-    start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    start = start or _hour_start()
     rows = []
     for i in range(hours * 60 // step_min):
         row = dict(template)
@@ -85,7 +95,7 @@ def _entity(hass, domain, platform, object_id, attrs, state="0.3", disabled=Fals
 
 
 def _amber_set(hass):
-    fc = _fixture("amber_forecasts", "forecasts", 36, 30)
+    fc = _fixture("amber_forecasts", "forecasts", 36, 30, start=_next_boundary(30))
     plain = {"unit_of_measurement": "$/kWh", "per_kwh": 0.3}
     _entity(hass, "sensor", "amberelectric", "home_general_price", plain)
     buy = _entity(hass, "sensor", "amberelectric", "home_general_forecast", fc)
@@ -147,7 +157,7 @@ async def test_no_known_source_aborts(hass: HomeAssistant, network_down):
 async def test_amber_pair_is_validated_and_saved_as_actions(hass: HomeAssistant, network_down):
     _loaded(hass, "amberelectric", "Amber home", "amb1")
     calls = []
-    _register(hass, "amberelectric", "get_forecasts", lambda call: {"forecasts": _hours(36, 30)}, calls)
+    _register(hass, "amberelectric", "get_forecasts", lambda call: {"forecasts": _hours(36, 30, start=_next_boundary(30))}, calls)
     entry = make_entry(hass, options={"entity_price_buy": "sensor.old", "entity_price_sell": "sensor.old_sell"})
     form = await _open(hass, entry)
     assert form["type"] is FlowResultType.FORM and form["step_id"] == "price_source"
@@ -165,7 +175,8 @@ async def test_amber_pair_is_validated_and_saved_as_actions(hass: HomeAssistant,
 
 async def test_short_forecast_is_not_saved(hass: HomeAssistant, network_down):
     _loaded(hass, "amberelectric", "Amber home", "amb1")
-    _register(hass, "amberelectric", "get_forecasts", lambda call: {"forecasts": _hours(3)}, [])
+    _register(hass, "amberelectric", "get_forecasts",
+              lambda call: {"forecasts": _hours(3, 30, start=_next_boundary(30))}, [])
     entry = make_entry(hass)
     form = await _open(hass, entry)
     res = await hass.config_entries.options.async_configure(form["flow_id"], {"source": "action|amberelectric|amb1"})
