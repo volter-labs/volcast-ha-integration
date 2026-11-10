@@ -396,6 +396,8 @@ class TelemetrySender:
         eid = (self._entry.options.get(entity_key) or "").strip()
         st = self._hass.states.get(eid) if eid else None
         if st is None or (require_available and st.state in _UNAVAILABLE):
+            # Ustawiona encja, której (jeszcze) nie ma — także chwilowo po starcie HA — liczy się jako
+            # źródło bez danych: strona sprzedaży wstrzymuje wtedy blok. To celowe, nie „brak źródła”.
             return bool(eid), None
         return True, enrich_attributes(self._entity_platform(eid), st.attributes)
 

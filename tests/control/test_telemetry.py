@@ -271,6 +271,21 @@ def test_sell_entity_shorter_than_buy_trims_block_to_common_range():
     assert iv[-1]["startAt"] == "2026-09-23T21:00:00Z"
 
 
+def test_sell_entity_starting_after_buy_trims_the_head_of_the_block():
+    # Sprzedaż od 13:00 lokalnie (np. prognoza krocząca) — początek doby kupna, w tym bieżący
+    # przedział (12:00 lokalnie), odpada; reszta to jeden ciągły zakres z ceną sprzedaży w każdym przedziale.
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    start = datetime(2026, 9, 23, 13, tzinfo=timezone(timedelta(hours=2)))
+    h.states.set("sensor.sell", "0.2", {"currency": "PLN", "raw_today": [
+        {"start": (start + timedelta(hours=i)).isoformat(), "end": (start + timedelta(hours=i + 1)).isoformat(),
+         "value": 0.2} for i in range(11)]})
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 11 and all(p["sell"] == 0.2 for p in iv)
+    assert iv[0]["startAt"] == "2026-09-23T11:00:00Z" and iv[-1]["startAt"] == "2026-09-23T21:00:00Z"
+
+
 def test_configured_sell_entity_without_data_withholds_prices():
     h, cloud = goodwe_hass(), Cloud()
     s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.missing"})
