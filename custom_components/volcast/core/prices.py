@@ -785,7 +785,7 @@ def has_usable_prices_now(
     podstawie samego wyboru encji, tylko na podstawie tego wyniku.
 
     „Pełna seria JUŻ TERAZ" oznacza konkretnie: seria obejmuje `now` albo
-    zaczyna się dokładnie jeden przedział później (`starts_by_next_interval` —
+    zaczyna się najpóźniej jeden przedział później (`starts_by_next_interval` —
     tam też, dlaczego to przyjmuje samo „jutro" w ostatnim przedziale doby),
     trwa jeszcze w `now` i sięga co najmniej 6 h w przód — samo „jakieś dwie
     godziny `today`" albo seria sprzed miesiąca (encja martwa) to nie jest gotowość.
