@@ -402,7 +402,7 @@ class TelemetrySender:
         return True, enrich_attributes(self._entity_platform(eid), st.attributes)
 
     def _entity_platform(self, entity_id: str) -> str | None:
-        """Platforma encji z rejestru (wiedza o integracji, np. waluta Ambera); bez rejestru None."""
+        """Platforma encji z rejestru encji HA (klucz do wiedzy o integracji, np. jej waluty); bez rejestru None."""
         try:
             entry = er.async_get(self._hass).async_get(entity_id)
         except Exception:  # noqa: BLE001

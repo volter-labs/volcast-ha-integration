@@ -41,9 +41,10 @@ from .core.entity_map import KEY_DESCRIPTORS, field_group, preview_entity
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
 from .core.discovery.identify import Candidate
 from .core.price_actions import InvalidPriceSource, attributes_from_responses, build_calls, parse_source
-from .core.price_setup import (ACTION_DOMAINS, KNOWN_PLATFORMS, PLATFORM_CURRENCY, ActionCandidate, SeriesCheck,
-                               action_candidates, build_action_option, check_series, currency_conflict,
-                               effective_currency, enrich_attributes, is_gas_entity, pair_entities)
+from .core.price_integrations import ACTION_DOMAINS, ENTITY_DOMAINS, OFFERED_PLATFORMS, FieldKind
+from .core.price_setup import (ActionCandidate, SeriesCheck, action_candidates, build_action_option, check_series,
+                               currency_conflict, effective_currency, enrich_attributes, is_excluded_entity,
+                               pair_entities, platform_currency)
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
@@ -1080,7 +1081,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         if st is None:
             return SeriesCheck("unusable")
         platform = self._platform_of(entity_id)
-        if is_gas_entity(platform, entity_id):
+        if is_excluded_entity(platform, entity_id):
             return SeriesCheck("unusable")
         try:
             return check_series(enrich_attributes(platform, st.attributes), currency, ZoneInfo(self.hass.config.time_zone), dt_util.utcnow(),
@@ -1089,7 +1090,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return SeriesCheck("unusable")
 
     def _platform_of(self, entity_id: str) -> str | None:
-        """Platforma encji z rejestru (wiedza o integracji: waluta Ambera, gaz Octopusa)."""
+        """Platforma encji z rejestru encji HA — klucz do wiedzy o integracji (`core/price_integrations`)."""
         try:
             return getattr(er.async_get(self.hass).async_get(entity_id), "platform", None)
         except Exception:  # noqa: BLE001
@@ -1102,12 +1103,12 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _usable_price_entities(self) -> list[str]:
         currency = (self.config_entry.options.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
         try:
-            states = [*self.hass.states.async_all("sensor"), *self.hass.states.async_all("event")]
+            states = [st for domain in ENTITY_DOMAINS for st in self.hass.states.async_all(domain)]
         except Exception:  # noqa: BLE001
             return []
         return sorted(st.entity_id for st in states
                       if st is not None and self._price_usable(
-                          st.entity_id, currency or PLATFORM_CURRENCY.get(self._platform_of(st.entity_id))))
+                          st.entity_id, currency or platform_currency(self._platform_of(st.entity_id))))
 
     # ── źródło cen z wykrytych integracji ─────────────────────────────────
     def _option_currency(self) -> str | None:
@@ -1116,19 +1117,19 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _detected_sources(self) -> dict[str, tuple[str, Any]]:
         """Kandydaci z Home Assistanta: {id wyboru: (etykieta, EntityPair | ActionCandidate)}.
 
-        Encje: tylko znanych integracji (sensory i `event` — Octopus) i tylko z prognozą, która już teraz
+        Encje: tylko podpowiadanych integracji (domeny encji z rejestru) i tylko z prognozą, która już teraz
         obejmuje bieżącą godzinę; dopiero z nich powstają pary kupno/sprzedaż.
         """
         found: dict[str, tuple[str, Any]] = {}
         try:
             registry = er.async_get(self.hass)
             rows = [e for e in registry.entities.values()
-                    if e.domain in ("sensor", "event") and e.platform in KNOWN_PLATFORMS and e.disabled_by is None]
+                    if e.domain in ENTITY_DOMAINS and e.platform in OFFERED_PLATFORMS and e.disabled_by is None]
         except Exception:  # noqa: BLE001 — bez rejestru zostają źródła z akcji
             rows = []
         listed = []
         for e in rows:
-            fallback = self._option_currency() or PLATFORM_CURRENCY.get(e.platform)
+            fallback = self._option_currency() or platform_currency(e.platform)
             if self._price_check(e.entity_id, fallback).status in ("ok", "short"):
                 listed.append({"entity_id": e.entity_id, "platform": e.platform,
                                "config_entry_id": getattr(e, "config_entry_id", None)})
@@ -1181,7 +1182,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         errors: dict[str, str] = {}
         placeholders = dict(_NO_PLACEHOLDERS)
         option_currency = self._option_currency()
-        fallback = option_currency or PLATFORM_CURRENCY.get(pair.platform)
+        fallback = option_currency or platform_currency(pair.platform)
         hours = 0
         shown = None
         patch_currency = None
@@ -1204,7 +1205,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             declared = effective_currency(pair.platform, st.attributes) if st is not None else None
             # Seria nie podaje waluty: przyjmujemy walutę kraju integracji — i pokazujemy ją, a przy sprzecznej
             # opcji zgłaszamy niejednoznaczność zamiast cichego wyboru.
-            assumed = declared or PLATFORM_CURRENCY.get(pair.platform)
+            assumed = declared or platform_currency(pair.platform)
             if currency_conflict(assumed, option_currency):
                 errors["source"] = "currency_conflict"
                 placeholders.update(source_currency=assumed or "", option_currency=option_currency or "")
@@ -1230,19 +1231,17 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         def hint(key: str):
             return {"suggested_value": previous.get(key)}
 
+        # Pola i to, czy są wymagane, opisuje rejestr integracji; tu tylko widżet według rodzaju pola.
         fields: dict = {}
-        for name in cand.fields:
-            if name == "unit":
-                fields[vol.Required("unit", description=hint("unit"))] = selector.SelectSelector(
+        for form_field in cand.form:
+            marker = vol.Required if form_field.required else vol.Optional
+            if form_field.kind is FieldKind.FLAG:
+                fields[marker(form_field.name, default=bool(previous.get(form_field.name, True)))] = bool
+            elif form_field.kind is FieldKind.UNIT:
+                fields[marker(form_field.name, description=hint(form_field.name))] = selector.SelectSelector(
                     selector.SelectSelectorConfig(options=["kWh", "MWh"], mode=selector.SelectSelectorMode.LIST))
-            elif name == "incl_vat":
-                fields[vol.Required("incl_vat", default=bool(previous.get("incl_vat", True)))] = bool
-            elif name == "currency" and cand.domain == "tibber":
-                fields[vol.Optional("currency", description=hint("currency"))] = str
-            elif name in ("area", "currency"):
-                fields[vol.Required(name, description=hint(name))] = str
             else:
-                fields[vol.Optional(name, description=hint(name))] = str
+                fields[marker(form_field.name, description=hint(form_field.name))] = str
         return self.async_show_form(step_id="price_source_details", data_schema=vol.Schema(fields),
                                     errors=errors or {}, description_placeholders=placeholders or _NO_PLACEHOLDERS)
 
@@ -1371,7 +1370,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _prices_schema(self) -> vol.Schema:
         o = self.config_entry.options
         usable = self._usable_price_entities()
-        buy_cfg = {"domain": ["sensor", "event"]}          # Octopus trzyma stawki w encjach `event`
+        buy_cfg = {"domain": list(ENTITY_DOMAINS)}          # domeny encji z cenami (rejestr integracji)
         if usable:
             # Encje, które już teraz dają pełną serię cen — i zapisana, żeby dało się zapisać
             # resztę formularza, gdy chwilowo jej brakuje pełnej serii.
@@ -1381,7 +1380,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             _entity_field(OPT_PRICE_BUY, o.get(OPT_PRICE_BUY)):
                 selector.EntitySelector(selector.EntitySelectorConfig(**buy_cfg)),
             _entity_field(OPT_PRICE_SELL, o.get(OPT_PRICE_SELL)):
-                selector.EntitySelector(selector.EntitySelectorConfig(domain=["sensor", "event"])),
+                selector.EntitySelector(selector.EntitySelectorConfig(domain=list(ENTITY_DOMAINS))),
             vol.Optional(OPT_PRICE_CURRENCY, description={"suggested_value": o.get(OPT_PRICE_CURRENCY)}): str,
         })
 

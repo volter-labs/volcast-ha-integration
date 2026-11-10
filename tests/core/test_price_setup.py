@@ -9,7 +9,7 @@ import pytest
 from custom_components.volcast.core.price_actions import InvalidPriceSource, parse_source
 from custom_components.volcast.core.price_setup import (
     action_candidates, build_action_option, check_series, currency_conflict, effective_currency,
-    enrich_attributes, is_gas_entity, pair_entities)
+    enrich_attributes, is_excluded_entity, pair_entities)
 
 WAW = ZoneInfo("Europe/Warsaw")
 NOW = datetime(2026, 10, 31, 9, 0, tzinfo=timezone.utc)
@@ -169,8 +169,8 @@ def test_short_amber_forecast_is_short_not_unusable():
 
 def test_octopus_gas_is_not_an_electricity_candidate():
     gas = "event.octopus_energy_gas_aaa_111_current_day_rates"
-    assert is_gas_entity("octopus_energy", gas) and not is_gas_entity("pstryk", gas)
-    assert not is_gas_entity("octopus_energy", "event.octopus_energy_electricity_aaa_111_current_day_rates")
+    assert is_excluded_entity("octopus_energy", gas) and not is_excluded_entity("pstryk", gas)
+    assert not is_excluded_entity("octopus_energy", "event.octopus_energy_electricity_aaa_111_current_day_rates")
     out = pair_entities([
         _c(gas, "octopus_energy"),
         _c("event.octopus_energy_electricity_aaa_111_current_day_rates", "octopus_energy"),

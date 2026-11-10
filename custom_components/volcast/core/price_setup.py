@@ -15,24 +15,17 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Mapping, Sequence
 
-from .price_actions import InvalidPriceSource, parse_source
+from .price_actions import OPTION_KEYS, InvalidPriceSource, parse_source
+from .price_integrations import OFFERED_PLATFORMS, SELL_WORDS, SIDE_TOKENS, FieldKind, FormField, Target, integration
 from .prices import (currency_from_attributes, has_usable_prices_now, intervals_from_attributes,
                      starts_by_next_interval)
 
-#: Integracje cenowe, które podpowiadamy (platformy encji / domeny akcji).
-KNOWN_PLATFORMS = frozenset({"amberelectric", "octopus_energy", "pstryk", "entsoe", "nordpool", "tibber",
-                             "energyzero", "easyenergy"})
-_SELL_WORDS = ("export", "feed_in", "feedin", "sell", "sprzed", "return", "teruglever", "inject")
+#: Ogólny słownik ról w nazwach encji; słowa konkretnych integracji dochodzą z rejestru.
+_SELL_WORDS = ("export", "sell", "sprzed", "return", "teruglever", "inject", *SELL_WORDS)
 #: Człony nazwy encji, które mówią tylko o stronie (kupno/sprzedaż) — odpadają przy szukaniu „pnia" pary.
-_SIDE_TOKENS = frozenset({"export", "feed", "in", "feedin", "sell", "sprzedaz", "return", "buy", "import", "general",
-                          "kupno", "teruglevering"})
+_SIDE_TOKENS = frozenset({"export", "sell", "sprzedaz", "return", "buy", "import", "kupno", "teruglevering",
+                          *SIDE_TOKENS})
 _AREA = re.compile(r"[A-Za-z0-9_-]{1,16}")
-#: Waluta kraju integracji — gdy seria jej nie podaje. Każda z tych integracji działa w jednym kraju
-#: (Amber: Australia, Octopus: Wielka Brytania, Pstryk: Polska). Amber ma jeszcze regułę
-#: `enrich_attributes` dla jednostki `$`, której ogólny adapter nie rozstrzyga.
-PLATFORM_CURRENCY = {"amberelectric": "AUD", "octopus_energy": "GBP", "pstryk": "PLN"}
-#: Domeny wpisów integracji, z których akcji umiemy czytać ceny.
-ACTION_DOMAINS = ("amberelectric", "tibber", "nordpool", "entsoe", "energyzero", "easyenergy")
 
 
 @dataclass(frozen=True)
@@ -44,22 +37,37 @@ class EntityPair:
     ambiguous: bool = False
 
 
-def is_gas_entity(platform: str | None, entity_id: str) -> bool:
-    """Encja gazowa Octopusa (`…_gas_…`) ma kształt cen prądu, ale prądem nie jest."""
-    return platform == "octopus_energy" and "gas" in re.split(r"[._]", entity_id.lower())
+def platform_currency(platform: str | None) -> str | None:
+    """Waluta kraju integracji (rejestr), gdy seria jej nie podaje; None dla nieznanej albo wielokrajowej."""
+    integ = integration(platform)
+    return integ.currency if integ is not None else None
+
+
+def is_excluded_entity(platform: str | None, entity_id: str) -> bool:
+    """Encja integracji, która ma kształt cen prądu, ale ceną prądu domu nie jest (rejestr: `excluded_tokens`)."""
+    integ = integration(platform)
+    if integ is None or not integ.excluded_tokens:
+        return False
+    tokens = "_" + "_".join(re.split(r"[._]", entity_id.lower())) + "_"
+    return any(f"_{token}_" in tokens for token in integ.excluded_tokens)
 
 
 def enrich_attributes(platform: str | None, attrs: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Atrybuty encji z wiedzą o integracji: Amber (tylko Australia) z jednostką `$` i bez `currency` → AUD.
+    """Atrybuty encji z wiedzą o integracji: jednostka z symbolem jednoznacznym dla niej, bez `currency` → waluta.
 
-    Ogólny adapter odmawia waluty dla niejednoznacznego `$`; dla Ambera nie ma tu niejednoznaczności.
-    Jawny atrybut `currency` zawsze wygrywa. Inne platformy zostają bez zmian.
+    Ogólny adapter odmawia waluty dla symbolu wieloznacznego (np. `$`); integracja działająca w jednym
+    kraju tej niejednoznaczności nie ma (rejestr: `symbol_currency`). Jawny atrybut `currency` zawsze
+    wygrywa. Inne platformy zostają bez zmian.
     """
     out = dict(attrs) if isinstance(attrs, Mapping) else {}
+    integ = integration(platform)
     unit = out.get("unit_of_measurement")
-    if (platform == "amberelectric" and not (isinstance(out.get("currency"), str) and out["currency"].strip())
-            and isinstance(unit, str) and unit.strip().startswith("$")):
-        out["currency"] = PLATFORM_CURRENCY["amberelectric"]
+    if integ is None or (isinstance(out.get("currency"), str) and out["currency"].strip()) or not isinstance(unit, str):
+        return out
+    for symbol, currency in integ.symbol_currency:
+        if unit.strip().startswith(symbol):
+            out["currency"] = currency
+            break
     return out
 
 
@@ -79,21 +87,21 @@ def _stem(entity_id: str) -> str:
 
 
 def pair_entities(candidates: Sequence[Mapping[str, Any]]) -> list[EntityPair]:
-    """Encje znanych integracji (JUŻ z użyteczną prognozą) → pary kupno/sprzedaż.
+    """Encje podpowiadanych integracji (JUŻ z użyteczną prognozą) → pary kupno/sprzedaż.
 
     Grupa = platforma + wpis konfiguracji. W grupie para powstaje, gdy nazwy różnią się tylko
-    stroną (`…_buy_price` / `…_sell_price`, `…general_forecast` / `…feed_in_forecast`), a gdy
-    zostaje po jednym kupnie i sprzedaży — także wtedy (Octopus ma osobne liczniki importu
-    i eksportu). Reszta jest niejednoznaczna: wszystkie kombinacje z `ambiguous=True`.
-    Sprzedaż bez kupna nie jest podpowiadana; kanał `controlled_load` (Amber) pomijamy.
+    stroną (`…_buy_price` / `…_sell_price`, `…_import_…` / `…_export_…`), a gdy zostaje po jednym
+    kupnie i sprzedaży — także wtedy (osobne liczniki importu i eksportu). Reszta jest
+    niejednoznaczna: wszystkie kombinacje z `ambiguous=True`. Sprzedaż bez kupna nie jest
+    podpowiadana; encje wykluczone w rejestrze (`excluded_tokens`) pomijamy.
     """
     groups: dict[tuple[str, Any], tuple[list[str], list[str]]] = {}
     for cand in candidates:
         if not isinstance(cand, Mapping):
             continue
         platform, eid = cand.get("platform"), cand.get("entity_id")
-        if platform not in KNOWN_PLATFORMS or not isinstance(eid, str) or not eid or "controlled_load" in eid \
-                or is_gas_entity(platform, eid):
+        if platform not in OFFERED_PLATFORMS or not isinstance(eid, str) or not eid \
+                or is_excluded_entity(platform, eid):
             continue
         buys, sells = groups.setdefault((platform, cand.get("config_entry_id")), ([], []))
         (sells if is_sell_entity(eid) else buys).append(eid)
@@ -130,85 +138,87 @@ class ActionCandidate:
     buy: dict
     sell: dict | None
     #: Pola, o które formularz musi zapytać (kolejność = kolejność w formularzu).
-    fields: tuple[str, ...]
+    form: tuple[FormField, ...]
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return tuple(f.name for f in self.form)
 
 
 def action_candidates(entries: Mapping[str, Sequence[tuple[str, str]]]) -> list[ActionCandidate]:
-    """Wpisy znanych integracji (domena → [(entry_id, tytuł)]) → kandydaci na źródło z akcji."""
+    """Wpisy integracji z akcją (domena → [(entry_id, tytuł)]) → kandydaci na źródło z akcji (szablony z rejestru)."""
     out: list[ActionCandidate] = []
     for domain in sorted(entries):
+        integ = integration(domain)
+        if integ is None or integ.buy is None:
+            continue
         for entry_id, title in entries[domain]:
-            if domain == "amberelectric":
-                def amber(channel: str) -> dict:
-                    return {"action": "amberelectric.get_forecasts",
-                            "data": {"config_entry_id": entry_id, "channel_type": channel}}
-                cand = ActionCandidate(domain, entry_id, title, amber("general"), amber("feed_in"), ())
-            elif domain == "tibber":
-                cand = ActionCandidate(domain, entry_id, title, {"action": "tibber.get_prices", "data": {}},
-                                       None, ("home", "currency"))
-            elif domain == "nordpool":
-                cand = ActionCandidate(domain, entry_id, title,
-                                       {"action": "nordpool.get_prices_for_date", "data": {"config_entry": entry_id}},
-                                       None, ("area", "currency"))
-            elif domain == "entsoe":
-                cand = ActionCandidate(domain, entry_id, title,
-                                       {"action": "entsoe.get_energy_prices", "data": {"config_entry": entry_id}},
-                                       None, ("unit", "currency"))
-            elif domain == "energyzero":
-                cand = ActionCandidate(domain, entry_id, title,
-                                       {"action": "energyzero.get_energy_prices", "data": {"config_entry": entry_id}},
-                                       None, ("incl_vat",))
-            elif domain == "easyenergy":
-                cand = ActionCandidate(
-                    domain, entry_id, title,
-                    {"action": "easyenergy.get_energy_usage_prices", "data": {"config_entry": entry_id}},
-                    {"action": "easyenergy.get_energy_return_prices", "data": {"config_entry": entry_id}},
-                    ("incl_vat",))
-            else:
-                continue
-            out.append(cand)
+            def side(template) -> dict:
+                data = {template.entry_key: entry_id} if template.entry_key is not None else {}
+                data.update(template.data)
+                return {"action": template.action, "data": data}
+            out.append(ActionCandidate(domain, entry_id, title, side(integ.buy),
+                                       side(integ.sell) if integ.sell is not None else None, integ.form))
     return out
+
+
+def _form_value(form_field: FormField, values: Mapping[str, Any]) -> Any:
+    """Odpowiedź z formularza znormalizowana według rodzaju pola; None = pola nie zapisujemy.
+
+    Brak pola wymaganego → `InvalidPriceSource`. Wartości nie do użycia (zła waluta, skala) odrzuca
+    dopiero `parse_source` — to samo sito co w czasie działania.
+    """
+    name, kind = form_field.name, form_field.kind
+    if kind is FieldKind.FLAG:
+        if name not in values:
+            if form_field.required:
+                raise InvalidPriceSource("missing data")
+            return None
+        return bool(values[name])
+    value = values.get(name)
+    if kind is FieldKind.AREA:
+        if not isinstance(value, str) or not _AREA.fullmatch(value.strip()):
+            raise InvalidPriceSource("one area required")       # kilka stref po przecinku to nie jedna strefa
+        return value.strip()
+    if not value:
+        if form_field.required:
+            raise InvalidPriceSource("missing data")
+        return None
+    if isinstance(value, str) and kind is FieldKind.CURRENCY:
+        return value.strip().upper()
+    if isinstance(value, str) and kind is FieldKind.UNIT:
+        return value.strip()
+    return value
 
 
 def build_action_option(candidate: ActionCandidate, values: Mapping[str, Any]) -> tuple[dict, dict | None]:
     """Kandydat + odpowiedzi z formularza → (opcja kupna, opcja sprzedaży albo None).
 
-    Każda opcja przechodzi `parse_source` (to samo sito co w czasie działania); `InvalidPriceSource`,
-    gdy czegoś brakuje albo jest nie do użycia (ENTSO-e bez jednostki, Nord Pool z kilkoma strefami…).
+    Każda strona bierze tylko pola, które przyjmuje (rejestr: `SourceSide.fields`). Każda opcja przechodzi
+    `parse_source` (to samo sito co w czasie działania); `InvalidPriceSource`, gdy czegoś brakuje albo
+    jest nie do użycia (brak skali, kilka stref…).
     """
-    def side(template: dict, *, buy: bool) -> dict:
+    integ = integration(candidate.domain)
+    if integ is None or integ.buy is None:
+        raise InvalidPriceSource("unsupported action")
+    form = {f.name: f for f in candidate.form}
+
+    def side(template: dict, takes: tuple[str, ...]) -> dict:
         data = dict(template["data"])
-        option: dict[str, Any] = {"action": template["action"], "data": data}
-        domain = candidate.domain
-        if domain == "nordpool":
-            area = values.get("area")
-            if not isinstance(area, str) or not _AREA.fullmatch(area.strip()):
-                raise InvalidPriceSource("one area required")       # kilka stref po przecinku to nie jedna strefa
-            data["areas"] = area.strip()
-            data["currency"] = values.get("currency")
-        elif domain == "entsoe":
-            option["unit"] = values.get("unit")
-            option["currency"] = values.get("currency")
-        elif domain in ("energyzero", "easyenergy") and buy:
-            if "incl_vat" not in values:
-                raise InvalidPriceSource("missing data")
-            data["incl_vat"] = bool(values["incl_vat"])
-        elif domain == "tibber":
-            if values.get("currency"):
-                option["currency"] = values["currency"]
-            if values.get("home"):
-                option["home"] = values["home"]
-        for key in ("currency",):
-            if isinstance(option.get(key), str):
-                option[key] = option[key].strip().upper()
-        if isinstance(option.get("unit"), str):
-            option["unit"] = option["unit"].strip()
+        extra: dict[str, Any] = {}
+        for name in takes:
+            value = _form_value(form[name], values)
+            if value is not None:
+                (data if form[name].target is Target.DATA else extra)[form[name].key] = value
+        # Klucze opcji w stałej kolejności formatu — zapis jest taki sam bez względu na kolejność pól formularza.
+        option: dict[str, Any] = {"action": template["action"], "data": data,
+                                  **{k: extra[k] for k in OPTION_KEYS if k in extra}}
         parsed = parse_source(option)           # kontrola kształtu; wyjątek idzie do wołającego
-        option["data"] = dict(parsed.data)      # postać znormalizowana (Nord Pool: strefa wielkimi, lista)
+        option["data"] = dict(parsed.data)      # postać znormalizowana (np. strefa wielkimi literami)
         return option
 
-    buy_option = side(candidate.buy, buy=True)
-    sell_option = side(candidate.sell, buy=False) if candidate.sell is not None else None
+    buy_option = side(candidate.buy, integ.buy.fields)
+    sell_option = side(candidate.sell, integ.sell.fields) if candidate.sell is not None and integ.sell else None
     return buy_option, sell_option
 
 

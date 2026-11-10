@@ -70,8 +70,9 @@ from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.control.recommend import recommend
 from .core.price_actions import InvalidPriceSource, PriceActionPoller, parse_source
-from .core.price_setup import (ACTION_DOMAINS, PLATFORM_CURRENCY, currency_conflict, effective_currency,
-                               enrich_attributes, is_gas_entity, is_sell_entity, pair_entities)
+from .core.price_integrations import ACTION_DOMAINS
+from .core.price_setup import (currency_conflict, effective_currency, enrich_attributes, is_excluded_entity,
+                               is_sell_entity, pair_entities, platform_currency)
 from .core.prices import has_usable_prices_now
 
 _LOGGER = logging.getLogger(__name__)
@@ -302,9 +303,9 @@ class Onboarding:
         if not entity_id:
             return False
         st = self._hass.states.get(entity_id)
-        if st is None or is_gas_entity(platform, entity_id):
+        if st is None or is_excluded_entity(platform, entity_id):
             return False
-        currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or PLATFORM_CURRENCY.get(platform)
+        currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or platform_currency(platform)
         try:
             return has_usable_prices_now(enrich_attributes(platform, st.attributes), currency, self._tz(), self._utcnow())
         except Exception as err:  # noqa: BLE001 — zła encja = nieużywalna
@@ -342,7 +343,7 @@ class Onboarding:
         return source.action if usable else None
 
     def _action_integrations(self) -> list[str]:
-        """Integracje cenowe z akcją (Tibber, Nord Pool…) skonfigurowane w HA — źródło ustawia się w opcjach."""
+        """Integracje cenowe z akcją (rejestr integracji) skonfigurowane w HA — źródło ustawia się w opcjach."""
         found = []
         for domain in ACTION_DOMAINS:
             try:
@@ -520,7 +521,7 @@ class Onboarding:
             self._price_sell_candidate = pair.sell if pair is not None and not pair.ambiguous else None
             platform = cand.get("platform")
             state = self._hass.states.get(eid)
-            currency = effective_currency(platform, getattr(state, "attributes", None)) or PLATFORM_CURRENCY.get(platform)
+            currency = effective_currency(platform, getattr(state, "attributes", None)) or platform_currency(platform)
             shown = f"{platform} ({eid})" if platform else eid
             await self._set("prices", "choice", f"{shown} · {currency}" if currency else shown)
             return
@@ -763,7 +764,7 @@ class Onboarding:
                 platform = self._platform_of(self._price_candidate)
                 state = self._hass.states.get(self._price_candidate) if self._price_candidate else None
                 declared = effective_currency(platform, getattr(state, "attributes", None))
-                assumed = declared or PLATFORM_CURRENCY.get(platform)
+                assumed = declared or platform_currency(platform)
                 option_currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
                 if self._price_candidate and self._usable_price(self._price_candidate, platform) \
                         and currency_conflict(assumed, option_currency):
