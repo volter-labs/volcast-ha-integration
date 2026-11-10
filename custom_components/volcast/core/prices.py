@@ -59,7 +59,13 @@ MAX_MINUT_SERII_WPISOW = 60 * 24 * 3 + 60
 
 #: Limit liczby wpisów serii 5-minutowej (100 h). Dla 15/30/60 min obowiązuje
 #: limit w minutach powyżej; wtyczka nie agreguje, więc 5-min zostaje 5-min.
+#: Ten sam limit chmura stosuje do CAŁEGO bloku 5-minutowego.
 MAX_WPISOW_5_MIN = 1200
+
+#: Limit chmury dla całego bloku 15/30/60 min. Limity list wyżej sprawdzają każdą
+#: listę osobno (dziś, jutro), a chmura odrzuca blok ponad limit w całości — więc
+#: wynik sprawdzamy jeszcze raz w sumie (`intervals_from_attributes`).
+MAX_PRZEDZIALOW_BLOKU = 400
 
 #: Tolerancja sekundowego przesunięcia startu przedziału (np. `…T00:00:01`).
 TOLERANCJA_SEKUND = 5
@@ -684,7 +690,8 @@ def intervals_from_attributes(
     obsługuje; zepsute atrybuty ZAKUPU kasują cały wynik.
 
     Zwraca listę posortowaną chronologicznie, bez duplikatów `startAt` (zostaje
-    pierwszy napotkany wpis), albo pustą listę, gdy danych nie da się zaufać.
+    pierwszy napotkany wpis), albo pustą listę, gdy danych nie da się zaufać
+    albo gdy blok przekracza limit chmury (blok przycięty byłby częściowy).
     """
     waluta = _kod_waluty(currency)
     if waluta is None:
@@ -746,6 +753,8 @@ def intervals_from_attributes(
             "sell": sprzedaz.get(start_sprzedazy),
             "currency": waluta,
         }
+    if len(wynik) > (MAX_WPISOW_5_MIN if zakup[0][2] == 5 else MAX_PRZEDZIALOW_BLOKU):
+        return []
     return [wynik[chwila] for chwila in sorted(wynik)]
 
 

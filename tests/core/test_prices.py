@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from custom_components.volcast.core import prices as prices_mod
 from custom_components.volcast.core.prices import (
     currency_from_attributes,
     fingerprint,
@@ -1261,6 +1262,25 @@ def test_seria_5_min_powyzej_limitu_to_pusta_lista():
     assert len(intervals_from_attributes(ok, None, "EUR", _WAW)) == 1200
     za_duzo = {"prices": _raw(start, 1201, 5)}
     assert intervals_from_attributes(za_duzo, None, "EUR", _WAW) == []
+
+
+def test_limit_5_min_dotyczy_calego_bloku_nie_kazdej_listy():
+    # Dziś i jutro mieszczą się w limicie osobno, razem przekraczają limit chmury — blok pusty,
+    # nie przycięty (chmura odrzuciłaby cały blok ponad 1200 pięciominutówek).
+    start = _polnoc(2026, 9, 14)
+    attrs = {"raw_today": _raw(start, 700, 5), "raw_tomorrow": _raw(start + timedelta(minutes=5 * 700), 501, 5)}
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+    attrs["raw_tomorrow"] = attrs["raw_tomorrow"][:500]
+    assert len(intervals_from_attributes(attrs, None, "EUR", _WAW)) == 1200
+
+
+def test_limit_bloku_dla_dluzszych_krokow_to_400_przedzialow(monkeypatch):
+    # Limity pojedynczej listy trzymają dziś blok 15/30/60 min poniżej 400; limit bloku chmury
+    # obowiązuje i tak, gdyby limit listy kiedyś urósł.
+    monkeypatch.setattr(prices_mod, "MAX_MINUT_SERII", 60 * 24 * 30)
+    start = _polnoc(2026, 9, 14)
+    assert len(intervals_from_attributes({"raw_today": _raw(start, 400, 60)}, None, "EUR", _WAW)) == 400
+    assert intervals_from_attributes({"raw_today": _raw(start, 401, 60)}, None, "EUR", _WAW) == []
 
 
 def test_sprzedaz_5_min_paruje_sie_z_kupnem_5_min():
