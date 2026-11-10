@@ -3,27 +3,29 @@
 Warstwa CZYSTA — bez importów Home Assistanta. Samo wywołanie akcji wstrzykuje
 wołający (telemetria) jako `call(domain, service, data) -> odpowiedź`.
 
-Część integracji cenowych (Nord Pool z rdzenia, Tibber, EnergyZero,
-EasyEnergy) nie trzyma prognozy w atrybutach żadnej encji — daje ją tylko
-akcja z odpowiedzią. Odpowiedź zamieniamy na ATRYBUTY w kształcie, który już
-rozumie adapter atrybutów (`core/prices.py`), więc kontrakt przedziałów,
-waluta, skala (za MWh ÷1000) i reguła nadrzędna „dane niespójne → pusta lista,
-nigdy częściowa” są jedne dla encji i dla akcji.
+Część integracji cenowych nie trzyma prognozy w atrybutach żadnej encji — daje
+ją tylko akcja z odpowiedzią. Które to akcje i jak czytać ich odpowiedź, mówi
+rejestr `core/price_integrations.py` (`PriceAction`); ten moduł interpretuje go
+ogólnie. Odpowiedź zamieniamy na ATRYBUTY w kształcie, który już rozumie adapter
+atrybutów (`core/prices.py`), więc kontrakt przedziałów, waluta, skala (za MWh
+÷1000) i reguła nadrzędna „dane niespójne → pusta lista, nigdy częściowa” są
+jedne dla encji i dla akcji.
 
 Konfiguracja źródła (opcja wpisu, patrz `const.OPT_PRICE_*_ACTION`):
 
-    {"action": "nordpool.get_prices_for_date",   # jedna z SUPPORTED_ACTIONS
+    {"action": "domena.usługa",  # jedna z SUPPORTED_ACTIONS
      "data": {...},        # dane akcji od użytkownika (wpis integracji, strefa, VAT…)
-     "currency": "NOK",    # waluta, gdy odpowiedź jej nie niesie (ENTSO-e: wymagana)
-     "unit": "MWh",        # ENTSO-e (HACS): wymagana skala ceny, "kWh" albo "MWh"
-     "home": "..."}        # opcjonalnie (Tibber): który dom z odpowiedzi
+     "unit": "MWh",        # skala ceny, gdy akcja jej wymaga (`needs_unit`): "kWh" albo "MWh"
+     "currency": "NOK",    # waluta, gdy odpowiedź jej nie niesie
+     "home": "..."}        # opcjonalnie: który dom z odpowiedzi (`ResponseShape.BY_HOME`)
 
 Parametry dat (`date` / `start` / `end`) dokłada ten moduł — doba RYNKU
 (strefa wołającego), dziś i jutro osobnymi wywołaniami, bo część integracji
-(EnergyZero) odrzuca całe wywołanie, gdy jutra jeszcze nie opublikowano.
+odrzuca całe wywołanie, gdy jutra jeszcze nie opublikowano.
 
-Harmonogram (`PriceActionPoller.due`): co 6 h; po 13:00 czasu rynku co godzinę,
-dopóki dane nie sięgają jutra; po błędzie odstępy 5, 10, 20, 40, 60, 60… min.
+Harmonogram (`PriceActionPoller.due`): co 6 h (albo własne odświeżenie akcji);
+po 13:00 czasu rynku co godzinę, dopóki dane nie sięgają jutra; po błędzie
+odstępy 5, 10, 20, 40, 60, 60… min.
 Błąd wywołania na DZIŚ (wyjątek, przekroczony czas, pusta albo zła odpowiedź)
 kasuje dane źródła — brak sekcji `prices`, nigdy lista częściowa ani stara.
 Błąd albo pustka na JUTRO to zwykły stan przed publikacją: zostaje pełne dziś.
@@ -31,12 +33,8 @@ W logu jest nazwa akcji i typ błędu, nigdy dane akcji ani treść wyjątku.
 Na zewnątrz idzie tylko wynik ŚWIEŻY (`fresh_attributes`): ostatnie odświeżenie
 udane, nie starsze niż odświeżenie z zapasem i obejmujące bieżącą dobę rynku.
 
-Znane ograniczenia: doba rynku to strefa czasowa Home Assistanta (wtyczka nie zna
-strefy rynku konta). Nord Pool liczy `date` jako dobę dostawy w CET — w strefach
-EET (FI, kraje bałtyckie) doba CET zaczyna się o 01:00 lokalnie, więc para
-dziś+jutro zaczyna się godzinę PO lokalnej północy i kończy godzinę po końcu
-jutra; seria jest ciągła, przesunięta. Między 00:00 a 01:00 lokalnie bieżącej
-godziny w serii nie ma.
+Znane ograniczenie: doba rynku to strefa czasowa Home Assistanta (wtyczka nie zna
+strefy rynku konta). Ograniczenia pojedynczych integracji są przy ich wpisach w rejestrze.
 """
 
 from __future__ import annotations
@@ -48,14 +46,14 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, tzinfo
 from typing import Any, Awaitable, Callable, Mapping
 
+from .price_integrations import ACTIONS, Dates, PriceAction, ResponseShape
+
 _LOGGER = logging.getLogger(__name__)
 
 #: Limit czasu jednego wywołania akcji.
 CALL_TIMEOUT_S = 30.0
-#: Zwykłe odświeżenie.
+#: Zwykłe odświeżenie (akcja może mieć własne, `PriceAction.refresh_s`).
 REFRESH_S = 6 * 3600
-#: Odświeżenie prognozy kroczącej Ambera (cena zmienia się co 5 min).
-AMBER_REFRESH_S = 30 * 60
 #: Od tej godziny czasu rynku pytamy co godzinę, dopóki nie ma jutra.
 TOMORROW_FROM_HOUR = 13
 TOMORROW_RETRY_S = 3600
@@ -67,8 +65,10 @@ BACKOFF_MAX_S = 3600
 FRESH_GRACE_S = 600
 #: Skale cen, które umiemy podać adapterowi jako mianownik jednostki.
 _UNITS = {"KWH": "kWh", "MWH": "MWh"}
+#: Klucze opcji źródła poza `action` / `data`, w kolejności zapisu (format zapisanej opcji).
+OPTION_KEYS: tuple[str, ...] = ("unit", "currency", "home")
 #: Ogranicznik długości listy w JEDNEJ odpowiedzi (doba 5-min to 288 wpisów,
-#: prognoza Ambera kilkaset) — dłuższa lista to nie doba cen, nie budujemy jej.
+#: prognoza krocząca kilkaset) — dłuższa lista to nie doba cen, nie budujemy jej.
 MAX_RESPONSE_ENTRIES = 1500
 
 
@@ -101,6 +101,11 @@ def _date_param(day: date, _tz: tzinfo) -> dict[str, str]:
     return {"date": day.isoformat()}
 
 
+#: Parametry dat jednej doby rynku według rodzaju z rejestru (bez `ROLLING` — to jedno wywołanie bez dat).
+_DATES: dict[Dates, Callable[[date, tzinfo], dict[str, str]]] = {
+    Dates.DATE: _date_param, Dates.DAYS: _dates_as_days, Dates.DATETIMES: _dates_as_datetimes}
+
+
 def _list(value: Any) -> list:
     if not isinstance(value, list):
         raise InvalidPriceResponse("not a list")
@@ -109,73 +114,28 @@ def _list(value: Any) -> list:
     return value
 
 
-def _key(name: str) -> Callable[[Any, "PriceActionSource"], list]:
-    def extract(response: Any, _source: "PriceActionSource") -> list:
-        if not isinstance(response, Mapping):
-            raise InvalidPriceResponse("not a mapping")
-        return _list(response.get(name))
-    return extract
-
-
-def _tibber(response: Any, source: "PriceActionSource") -> list:
-    homes = response.get("prices") if isinstance(response, Mapping) else None
-    if not isinstance(homes, Mapping):
-        raise InvalidPriceResponse("no homes")
-    if source.home is not None:
-        return _list(homes.get(source.home))
-    if len(homes) != 1:
-        # Kilka domów bez wskazania — nie zgadujemy, czyj to rachunek.
-        raise InvalidPriceResponse("ambiguous home")
-    return _list(next(iter(homes.values())))
-
-
-def _nordpool(response: Any, source: "PriceActionSource") -> list:
+def _extract(response: Any, source: "PriceActionSource") -> list:
+    """Lista wpisów z odpowiedzi według kształtu z rejestru."""
+    spec = source.spec
     if not isinstance(response, Mapping):
         raise InvalidPriceResponse("not a mapping")
-    return _list(response.get(source.area))
+    if spec.response is ResponseShape.BY_AREA:
+        return _list(response.get(source.area))
+    if spec.response is ResponseShape.BY_HOME:
+        homes = response.get(spec.response_key)
+        if not isinstance(homes, Mapping):
+            raise InvalidPriceResponse("no homes")
+        if source.home is not None:
+            return _list(homes.get(source.home))
+        if len(homes) != 1:
+            # Kilka domów bez wskazania — nie zgadujemy, czyj to rachunek.
+            raise InvalidPriceResponse("ambiguous home")
+        return _list(next(iter(homes.values())))
+    return _list(response.get(spec.response_key))
 
-
-@dataclass(frozen=True)
-class _ActionSpec:
-    #: Dane od użytkownika, bez których mapowanie nie ma sensu.
-    required: tuple[str, ...]
-    #: Parametry dat jednej doby rynku; None = jedno wywołanie (prognoza krocząca).
-    dates: Callable[[date, tzinfo], dict[str, str]] | None
-    extract: Callable[[Any, "PriceActionSource"], list]
-    #: Klucz atrybutu, pod którym adapter szuka listy wpisów.
-    list_key: str = "prices"
-    #: Waluta stała dla integracji (odpowiedź jej nie niesie).
-    currency: str | None = None
-    #: Skala ceny stała dla integracji (Nord Pool: za MWh) — przez jednostkę, jak w atrybutach encji.
-    unit: str | None = None
-    #: Integracja ma własną skalę i walutę, a odpowiedź ich nie niesie — oba pola w konfiguracji.
-    needs_unit: bool = False
-    #: Zwykłe odświeżenie tego źródła (s). Prognoza krocząca (Amber) zmienia się co kilka minut, więc krócej.
-    refresh_s: float = REFRESH_S
-
-
-_SPECS: dict[str, _ActionSpec] = {
-    # Prognoza krocząca kanału (general / controlled_load / feed_in), $/kWh;
-    # feed_in w odpowiedzi jest już dodatni = zarabiasz.
-    "amberelectric.get_forecasts": _ActionSpec(
-        required=("config_entry_id", "channel_type"), dates=None, extract=_key("forecasts"),
-        list_key="forecasts", currency="AUD", refresh_s=AMBER_REFRESH_S),
-    "tibber.get_prices": _ActionSpec(required=(), dates=_dates_as_datetimes, extract=_tibber),
-    "nordpool.get_prices_for_date": _ActionSpec(
-        required=("config_entry", "areas", "currency"), dates=_date_param, extract=_nordpool, unit="MWh"),
-    # HACS: skala (`energy_scale` kWh/MWh) i waluta są ustawieniem integracji, odpowiedź ich nie niesie.
-    "entsoe.get_energy_prices": _ActionSpec(
-        required=("config_entry",), dates=_dates_as_datetimes, extract=_key("prices"), needs_unit=True),
-    "energyzero.get_energy_prices": _ActionSpec(
-        required=("config_entry", "incl_vat"), dates=_dates_as_days, extract=_key("prices"), currency="EUR"),
-    "easyenergy.get_energy_usage_prices": _ActionSpec(
-        required=("config_entry", "incl_vat"), dates=_dates_as_days, extract=_key("prices"), currency="EUR"),
-    "easyenergy.get_energy_return_prices": _ActionSpec(
-        required=("config_entry",), dates=_dates_as_days, extract=_key("prices"), currency="EUR"),
-}
 
 #: Akcje, które umiemy zamienić na ceny.
-SUPPORTED_ACTIONS: frozenset[str] = frozenset(_SPECS)
+SUPPORTED_ACTIONS: frozenset[str] = frozenset(ACTIONS)
 
 
 def _currency_code(value: Any) -> str | None:
@@ -204,11 +164,11 @@ class PriceActionSource:
 
     @property
     def refresh_s(self) -> float:
-        return self.spec.refresh_s
+        return self.spec.refresh_s or REFRESH_S
 
     @property
-    def spec(self) -> _ActionSpec:
-        return _SPECS[self.action]
+    def spec(self) -> PriceAction:
+        return ACTIONS[self.action]
 
 
 def parse_source(raw: Any) -> PriceActionSource:
@@ -216,10 +176,10 @@ def parse_source(raw: Any) -> PriceActionSource:
     if not isinstance(raw, Mapping):
         raise InvalidPriceSource("not a mapping")
     action = raw.get("action")
-    if not isinstance(action, str) or action.strip().lower() not in _SPECS:
+    if not isinstance(action, str) or action.strip().lower() not in ACTIONS:
         raise InvalidPriceSource("unsupported action")
     action = action.strip().lower()
-    spec = _SPECS[action]
+    spec = ACTIONS[action]
     data = raw.get("data", {})
     if data is None:
         data = {}
@@ -239,20 +199,20 @@ def parse_source(raw: Any) -> PriceActionSource:
         raise InvalidPriceSource("bad home")
 
     area = None
-    if action == "nordpool.get_prices_for_date":
-        areas = data["areas"]
+    if spec.area_key is not None:
+        areas = data[spec.area_key]
         areas = [areas] if isinstance(areas, str) else areas
         # Jedna strefa: odpowiedź jest słownikiem stref, a blok cen ma jedną serię.
         if not isinstance(areas, list) or len(areas) != 1 or not isinstance(areas[0], str):
             raise InvalidPriceSource("one area required")
         area = areas[0].strip().upper()
-        # Wysyłamy jeden tekst, nie listę: starszy rdzeń HA sprawdza `areas` przez `vol.In` PRZED
-        # `ensure_list`, więc lista nie przechodzi walidacji; tekst przyjmuje każda wersja.
-        data["areas"] = area
-        currency = _currency_code(data["currency"])
+        # Wysyłamy jeden tekst, nie listę (stare zapisy z listą też działają) — powód przy wpisie rejestru.
+        data[spec.area_key] = area
+    if spec.currency_key is not None:
+        currency = _currency_code(data[spec.currency_key])
         if currency is None:
             raise InvalidPriceSource("bad currency")
-        data["currency"] = currency
+        data[spec.currency_key] = currency
     if spec.currency is not None:
         currency = spec.currency
     unit = spec.unit
@@ -273,11 +233,11 @@ def build_calls(source: PriceActionSource, now: datetime, tz: tzinfo) -> list[tu
     Doby liczone w strefie RYNKU (`tz`), nie w UTC — o 23:30Z w Warszawie jest
     już jutro. Parametry dat nadpisują ewentualne klucze o tej nazwie od użytkownika.
     """
-    spec = source.spec
-    if spec.dates is None:
+    if source.spec.dates is Dates.ROLLING:
         return [(None, dict(source.data))]
+    dates = _DATES[source.spec.dates]
     today = now.astimezone(tz).date()
-    return [(offset, {**source.data, **spec.dates(today + timedelta(days=offset), tz)}) for offset in (0, 1)]
+    return [(offset, {**source.data, **dates(today + timedelta(days=offset), tz)}) for offset in (0, 1)]
 
 
 def _start_of(entry: Any) -> datetime | None:
@@ -307,18 +267,18 @@ def attributes_from_responses(
     psuje dziś; ciągłość szwu dziś/jutro sprawdza dalej adapter.
     """
     spec = source.spec
-    entries = list(spec.extract(today_response, source))
+    entries = list(_extract(today_response, source))
     if not entries:
         raise InvalidPriceResponse("empty")
     last_day = today
-    if spec.dates is None:
-        # Prognoza krocząca (Amber): ostatnia doba rynku, w której zaczyna się wpis.
+    if spec.dates is Dates.ROLLING:
+        # Prognoza krocząca: ostatnia doba rynku, w której zaczyna się wpis.
         starts = [s for s in map(_start_of, entries) if s is not None]
         if starts:
             last_day = max(starts).astimezone(tz).date()
     elif tomorrow_response is not None and not isinstance(tomorrow_response, BaseException):
         try:
-            tomorrow = spec.extract(tomorrow_response, source)
+            tomorrow = _extract(tomorrow_response, source)
         except InvalidPriceResponse:
             tomorrow = []
         if tomorrow:
