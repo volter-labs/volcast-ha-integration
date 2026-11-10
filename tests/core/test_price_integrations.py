@@ -1,7 +1,11 @@
 """Rejestr integracji cenowych: każdy wpis jest poprawny, a szablony akcji przechodzą `parse_source`."""
 from __future__ import annotations
 
+import json
 import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -9,7 +13,8 @@ from custom_components.volcast.core import price_integrations as reg
 from custom_components.volcast.core.price_actions import OPTION_KEYS, parse_source
 from custom_components.volcast.core.price_integrations import (
     INTEGRATIONS, Dates, EntityUse, FieldKind, ResponseShape, Target)
-from custom_components.volcast.core.price_setup import action_candidates, build_action_option
+from custom_components.volcast.core.price_setup import (
+    action_candidates, build_action_option, check_series, effective_currency, enrich_attributes, pair_entities)
 
 _CODE = re.compile(r"^[A-Z]{3}$")
 _IDS = [i.domain for i in INTEGRATIONS]
@@ -88,3 +93,71 @@ def test_derived_sets():
     assert reg.ENTITY_DOMAINS == ("sensor", "event")
     assert all(reg.integration(d).entities is not EntityUse.NONE for d in reg.REPORTED_PLATFORMS)
     assert reg.integration("nope") is None and reg.integration(None) is None
+
+
+# ── Granica: wiedza o integracjach tylko w rejestrze ─────────────────────────
+
+_PACKAGE = Path(__file__).resolve().parents[2] / "custom_components" / "volcast"
+_REGISTRY = _PACKAGE / "core" / "price_integrations.py"
+#: Nazwy integracji, które w tekście nie wyglądają jak ich domena.
+_NAMES = (r"\bamber", r"nord\s*pool", r"entso", r"octopus", r"zonneplan", r"\bfrank\b", r"\bepex\b", r"pstryk",
+          r"tibber", r"energy\s*zero", r"easy\s*energy", r"controlled_load")
+
+
+def test_integration_names_live_only_in_the_registry():
+    patterns = [re.compile(rf"(?<![a-z0-9_]){re.escape(i.domain)}(?![a-z0-9_])", re.I) for i in INTEGRATIONS]
+    patterns += [re.compile(n, re.I) for n in _NAMES]
+    hits = []
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        if path == _REGISTRY:
+            continue
+        for no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if any(p.search(line) for p in patterns):
+                hits.append(f"{path.relative_to(_PACKAGE)}:{no}: {line.strip()}")
+    assert hits == []
+
+
+def test_boundary_check_sees_a_planted_name(tmp_path):
+    """Kontrola wyżej naprawdę łapie domenę (żeby pusty wynik nie był przypadkiem złego wzorca)."""
+    pattern = re.compile(rf"(?<![a-z0-9_]){re.escape(INTEGRATIONS[0].domain)}(?![a-z0-9_])", re.I)
+    assert pattern.search(f'if platform == "{INTEGRATIONS[0].domain}":')
+    assert not pattern.search(f"x_{INTEGRATIONS[0].domain}_y")
+
+
+# ── Platformy podpowiadane w konfiguracji = te, których kształt potwierdziliśmy ──
+
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "prices"
+_WAW = ZoneInfo("Europe/Warsaw")
+
+
+def _frank_series(now: datetime, hours: int) -> dict:
+    """Fixture integracji (`prices` z `from` / `till` / `price`) przesunięty na „teraz”."""
+    attrs = json.loads((_FIXTURES / "frank_energie_prices.json").read_text())["attributes"]
+    start = now.replace(minute=0, second=0, microsecond=0)
+    rows = [{"from": (start + timedelta(hours=i)).isoformat(), "till": (start + timedelta(hours=i + 1)).isoformat(),
+             "price": 0.2} for i in range(hours)]
+    return {**attrs, "prices": rows}
+
+
+def test_frank_energie_is_offered_and_its_shape_parses():
+    now = datetime(2026, 10, 31, 9, 20, tzinfo=timezone.utc)
+    assert "frank_energie" in reg.OFFERED_PLATFORMS
+    attrs = _frank_series(now, 24)
+    assert effective_currency("frank_energie", attrs) == "EUR"           # z jednostki €/kWh
+    check = check_series(enrich_attributes("frank_energie", attrs), None, _WAW, now)
+    assert (check.status, check.hours) == ("ok", 23)
+    out = pair_entities([{"entity_id": "sensor.frank_energie_prices_current_electricity_price",
+                          "platform": "frank_energie", "config_entry_id": "f1"}])
+    assert [(p.platform, p.buy, p.sell) for p in out] == [
+        ("frank_energie", "sensor.frank_energie_prices_current_electricity_price", None)]
+
+
+@pytest.mark.parametrize("platform", ["epex_spot", "pstryk_aio"])
+def test_unverified_shapes_are_reported_but_not_offered(platform):
+    assert platform in reg.REPORTED_PLATFORMS and platform not in reg.OFFERED_PLATFORMS
+    assert pair_entities([{"entity_id": f"sensor.{platform}_price", "platform": platform}]) == []
+
+
+def test_discovery_and_setup_read_the_same_table():
+    from custom_components.volcast.core.discovery.known import PRICE_PLATFORMS
+    assert PRICE_PLATFORMS is reg.REPORTED_PLATFORMS

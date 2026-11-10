@@ -577,3 +577,27 @@ async def test_amber_action_source_has_no_details_form(hass: HomeAssistant, netw
     _register(hass, "amberelectric", "get_forecasts", lambda call: {"forecasts": []}, [])
     _form, res = await _choose(hass, make_entry(hass), "action|amberelectric|amb1")
     assert res["step_id"] == "price_source" and res["errors"] == {"base": "price_source_unusable"}
+
+
+def _frank_attrs(hours: int) -> dict:
+    """Atrybuty z fixture'u (`prices` z `from` / `till` / `price`), seria od bieżącej godziny."""
+    attrs = json.loads((FIXTURES / "frank_energie_prices.json").read_text())["attributes"]
+    start = _hour_start()
+    return {**attrs, "prices": [{"from": (start + timedelta(hours=i)).isoformat(),
+                                 "till": (start + timedelta(hours=i + 1)).isoformat(), "price": 0.2}
+                                for i in range(hours)]}
+
+
+async def test_frank_energie_entity_is_offered_and_saved_in_eur(hass: HomeAssistant, network_down):
+    buy = _entity(hass, "sensor", "frank_energie", "frank_energie_prices_current_electricity_price", _frank_attrs(24))
+    # Ten sam kształt pod platformą z samym raportem wykrywania nie jest podpowiadany.
+    _entity(hass, "sensor", "epex_spot", "epex_spot_price", _frank_attrs(24))
+    entry = make_entry(hass)
+    form = await _open(hass, entry)
+    values = [o["value"] for o in form["data_schema"].schema["source"].config["options"]]
+    assert values == [f"entities|{buy}|"]
+    confirm = await hass.config_entries.options.async_configure(form["flow_id"], {"source": values[0]})
+    assert confirm["step_id"] == "price_source_confirm" and confirm["description_placeholders"]["currency"] == "EUR"
+    done = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["entity_price_buy"] == buy and entry.options.get("price_buy_action") is None
