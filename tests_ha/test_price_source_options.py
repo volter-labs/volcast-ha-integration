@@ -375,6 +375,14 @@ async def test_pair_confirms_with_hours_then_saves_and_sets_platform_currency(ha
     assert entry.options["price_currency"] == "GBP"                     # seria nie podaje waluty, a opcji nie było
 
 
+async def test_pair_without_sell_side_keeps_separately_set_sell(hass: HomeAssistant, network_down):
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", _fixture("pstryk_all_prices", "All prices", 24, 60))
+    entry = make_entry(hass, options={"entity_price_sell": "sensor.my_sell"})
+    _form, confirm = await _choose(hass, entry, f"entities|{buy}")
+    await hass.config_entries.options.async_configure(confirm["flow_id"], {})
+    assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == "sensor.my_sell"
+
+
 async def test_ambiguous_sells_are_offered_not_guessed(hass: HomeAssistant, network_down):
     attrs = _fixture("pstryk_all_prices", "All prices", 24, 60)
     _entity(hass, "sensor", "pstryk", "x_buy", attrs)

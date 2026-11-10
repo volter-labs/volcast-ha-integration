@@ -1215,8 +1215,9 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 patch_currency = assumed            # seria nie podaje waluty — bez niej runtime pominie ceny
         if errors:
             return self._source_form(errors, placeholders)
-        self._price_pending = {OPT_PRICE_BUY: pair.buy, OPT_PRICE_SELL: pair.sell,
-                               OPT_PRICE_BUY_ACTION: None, OPT_PRICE_SELL_ACTION: None,
+        # Jak przy źródle z akcji: sprzedaż osobno ustawiona jako encja zostaje, gdy para nie ma strony sprzedaży.
+        self._price_pending = {OPT_PRICE_BUY: pair.buy, OPT_PRICE_BUY_ACTION: None, OPT_PRICE_SELL_ACTION: None,
+                               **({OPT_PRICE_SELL: pair.sell} if pair.sell else {}),
                                **({OPT_PRICE_CURRENCY: patch_currency} if patch_currency else {})}
         return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
                                     description_placeholders={**placeholders, "hours": str(hours), "currency": shown or ""})
