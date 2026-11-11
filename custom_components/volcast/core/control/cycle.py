@@ -44,6 +44,7 @@ zatrzasku nieużywalnym SoC. Czas `now_mono` pochodzi z zegara monotonicznego.
 """
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -56,8 +57,9 @@ from ..guard_state import DirectionLimiter, WriteBudget, WriteThrottle
 from ..guards import GuardContext, GuardResult, apply_guards, state_fresh, temperature_ok
 from ..slot import Schedule, effective_action
 from ..write_sequence import WriteReport
-from .caps import REQUIRED_WRITE_KEYS
+from .caps import required_write_keys
 from ..params import Params
+from ..registers import _DIRECTION_KEYS
 from .group_writes import order_group, power_first
 from .latch import ReserveLatch
 from .entity_fit import fit_params
@@ -234,6 +236,9 @@ class CycleDecision:
     device: dict[str, float | str] = field(default_factory=dict)
     # sprzedaż przeliczona na nastawę eksportu z odczytów (None = intencja bez przeliczenia)
     live_export: LiveExport | None = None
+    # klucz zapisu → klucz planu (`flat`): nastawa mocy wg kierunku trybu to `power_w` planu
+    # (`write_policy.power_by_direction`); puste dla pozostałych profili
+    aliases: dict[str, str] = field(default_factory=dict)
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -246,6 +251,45 @@ class CycleDecision:
             "unmapped": list(self.unmapped), "dropped_unsupported": list(self.dropped_unsupported),
             "notes": list(self.notes), "takeover": self.takeover,
         }
+
+
+def power_key(mode, profile) -> str | None:
+    """Nastawa mocy, w którą trafia `power_w` planu dla trybu `mode` w profilu z mocą wg kierunku
+    (`charge_power_w` / `discharge_power_w`); None — profil bez tej konstrukcji albo tryb bez kierunku."""
+    if not getattr(profile, "power_by_direction", False) or not isinstance(mode, str) \
+            or mode not in profile.modes:
+        return None
+    return _DIRECTION_KEYS.get(profile.mode_direction(mode))
+
+
+def _device(target: WriteTarget, flat: Mapping[str, Any], profile) -> dict[str, float | str]:
+    """Widok urządzenia w konwencji planu: `power_w` = odczyt nastawy kierunku trybu z planu.
+
+    Uzgadnianie widzi wtedy zgodność nastawy, którą i tak zapisalibyśmy — bez tego nastawa kierunku
+    szłaby do NVM co interwał. Jawny klucz kierunku w `flat` zostaje pod swoją nazwą."""
+    key = power_key(flat.get("mode"), profile)
+    if key is None or "power_w" not in flat or key in flat:
+        return target.device_view(flat, profile)
+    probe = {(key if k == "power_w" else k): v for k, v in flat.items()}
+    dev = target.device_view(probe, profile)
+    if key in dev:
+        dev["power_w"] = dev.pop(key)
+    return dev
+
+
+def _aliased(report: WriteReport, aliases: Mapping[str, str]) -> WriteReport:
+    """Raport w kluczach planu (nastawa kierunku → `power_w`); `unsupported` zostaje pod kluczem zapisu
+    — nieobsługiwana jest konkretna nastawa, nie moc planu w każdym kierunku."""
+    out = copy.copy(report)
+    for name in ("written", "failed", "adjusted", "held", "restored", "restore_failed", "restore_held",
+                 "ambiguous"):
+        value = getattr(report, name, None)
+        if value is not None:
+            setattr(out, name, [aliases.get(k, k) for k in value])
+    actual = getattr(report, "actual", None)
+    if actual:
+        out.actual = {aliases.get(k, k): v for k, v in actual.items()}
+    return out
 
 
 def same_value(a: float | str, b: float | str) -> bool:
@@ -304,7 +348,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     if profile.control_model != "mode_setpoint":
         return CycleDecision(IDLE, "tou_preview_only")
     missing = target.missing_keys(profile)
-    if any(k in REQUIRED_WRITE_KEYS for k in missing):
+    if any(k in required_write_keys(profile) for k in missing):
         return CycleDecision(IDLE, "missing_entities", unmapped=missing)
     if schedule is None:
         return CycleDecision(IDLE, "no_plan")
@@ -338,6 +382,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
 
     # Nastawy bez encji wypadają PO strażnikach (ci mogli je dopisać: I-1, I-4).
     without = tuple(k for k in _with_pair(missing) if getattr(guard.params, k, None) is not None)
+    if guard.params.power_w is not None and power_key(guard.params.mode, profile) in missing:
+        without = (*without, "power_w")      # brak nastawy kierunku trybu = brak mocy tego trybu
     planned, degraded = _degrade(guard.params, set(without), profile)
     planned = replace(planned, **{k: None for k in without})
     # Zakup z sieci przy żywej nadwyżce PV ≥ moc slotu: tryb ładowania z PV (po strażnikach
@@ -353,25 +399,35 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     planned, live, live_notes = _live_export(planned, guard.params, common["intent"], slot, profile,
                                              tele, limits, target, memory, now_mono, keep=dry)
     degraded = degraded or lx.NOTE_SELL_BELOW_MIN in live_notes or (live is not None and live.degraded)
+    if "enable" in (profile.raw.get("write") or {}):
+        # Przełącznik zdalnego sterowania: włączony, dopóki sterujemy (kolejność profilu: nastawy →
+        # przełącznik → tryb; włączenie po nieudanej nastawie wstrzymuje `write_sequence`).
+        planned = replace(planned, enable=True)
     params, adjusted, unfit = target.fit(planned, profile)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
         # Notatki sprzedaży zostają: bez nich blokada nie mówi, że sprzedaż stoi i dlaczego.
         return CycleDecision(BLOCKED, "entity_range_unknown", unmapped=unfit, notes=(*live_notes, *pv_notes),
                              live_export=live, **common)
+    pkey = power_key(params.mode, profile)
+    if getattr(profile, "power_by_direction", False) and pkey is None and params.power_w is not None:
+        # Tryb bez kierunku (neutralny, postój) nie pisze żadnej nastawy — moc planu nie jest kluczem.
+        params = replace(params, power_w=None)
     flat = params.flatten()
+    aliases = {pkey: "power_w"} if pkey is not None and "power_w" in flat else {}
     group_unsupported = _unsupported_group(flat, profile, target, memory)
     if group_unsupported:
         reason = "mode_unsupported" if group_unsupported[0].startswith("mode:") else "power_unsupported"
         return CycleDecision(BLOCKED, reason, flat=flat,
                              dropped_unsupported=group_unsupported, **common)
-    device = target.device_view(flat, profile)
+    device = _device(target, flat, profile)
     # Uzgodnienie z tym, co falownik naprawdę ma (tylko klucze planu, tylko czytelne).
     # Zły typ odczytu rzuca TypeError po drodze (pamięć wcześniejszych kluczy mogła już
     # zniknąć) — cykl kończy się bez zapisów, następny też, więc to bezpieczne.
     memory.throttle.reconcile(device)
     # Odczyt rozstrzyga niepewność — także kluczy spoza bieżącego planu.
-    memory.uncertain -= set(target.device_view(dict.fromkeys(memory.uncertain), profile))
+    probe = {**dict.fromkeys(memory.uncertain), **({"mode": flat["mode"]} if "mode" in flat else {})}
+    memory.uncertain -= set(_device(target, probe, profile)) & set(memory.uncertain)
     mode_now = device.get("mode")
     if isinstance(mode_now, str) and mode_now.startswith("?"):
         # Ktoś inny ustawił tryb, którego profil nie zna — nie walczymy i nie cofamy do
@@ -472,7 +528,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
                            if "mode" in restore_flat else None), target_kind=target.kind,
-        device=dict(device) if target.kind == "direct" else {}, live_export=live, **common)
+        device=dict(device) if target.kind == "direct" else {}, live_export=live, aliases=aliases, **common)
 
 
 def _denied_again(memory: ControlMemory, key: str, planned, current, now_mono: float) -> bool:
@@ -580,7 +636,7 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
     max_age = profile.max_state_age_s
     rated = limits.rated_power_w
     if not (math.isfinite(rated) and rated > 0.0):
-        rated = _power_entity_max_w(profile, ents)
+        rated = _power_entity_max_w(profile, ents, planned.mode)
     enabled, limit = guarded.export_limit_enabled, guarded.export_limit_w
     if enabled is None and limit is None:
         # Plan bez zdania o ograniczniku i nie my go ustawialiśmy: włączony ogranicznik
@@ -596,7 +652,7 @@ def _live_export(planned: Params, guarded: Params, intent: str, slot, profile, t
         export_limit_w=lx.export_ceiling(enabled, limit), rated_power_w=rated, memory=mem)
     notes = ([live.note()] + ([lx.NOTE_SELL_NO_LOAD] if live.no_load else [])
              + ([lx.NOTE_SELL_NO_RATED] if live.no_rated else []))
-    if _below_entity_min(live.xset_w, profile, ents):
+    if _below_entity_min(live.xset_w, planned.mode, profile, ents):
         planned, _ = _degrade(planned, {"power_w"}, profile)
         if not keep:
             memory.live_export = mem.forget_written()
@@ -716,7 +772,7 @@ def _pv_first_step(planned: Params, intent: str, slot, fallback: bool, allowed: 
         return planned, intent, ()
     rated = _rated_or_none(limits)
     if rated is None and isinstance(target, EntityTarget):
-        rated = _power_entity_max_w(profile, target.ents)
+        rated = _power_entity_max_w(profile, target.ents, planned.mode)
     max_age = profile.max_state_age_s
     battery = tele.battery_w
     if (rated is None or not isinstance(battery, (int, float)) or isinstance(battery, bool)
@@ -765,16 +821,23 @@ def _pv_first_share_left(budget: WriteBudget | None, now_wall: float) -> bool:
             and sum(counts.values()) + 2 <= budget.total // 2)
 
 
-def _below_entity_min(power_w: float, profile, ents: EntityContext) -> bool:
+def _power_entity_key(mode, profile) -> str:
+    """Klucz encji, do której trafia moc planu w trybie `mode` (nastawa kierunku albo `power_w`)."""
+    return power_key(mode, profile) or "power_w"
+
+
+def _below_entity_min(power_w: float, mode, profile, ents: EntityContext) -> bool:
     """Nastawa mocy pod minimum encji: dopasowanie nie przyjmie jej bez podniesienia.
 
-    Encja bez poprawnego zakresu to inny przypadek (cykl blokuje `entity_range_unknown`).
+    Encja bez poprawnego zakresu to inny przypadek (cykl blokuje `entity_range_unknown`). Moc wg
+    kierunku: encja nastawy kierunku trybu (`mode`); dla pozostałych profili tryb nie gra roli.
     """
-    _, _, unfit = fit_params(Params(power_w=power_w), profile, ents.domain, ents.mapped,
-                             ents.units, ents.attrs)
+    by_direction = power_key(mode, profile) is not None
+    probe = Params(mode=mode, power_w=power_w) if by_direction else Params(power_w=power_w)
+    _, _, unfit = fit_params(probe, profile, ents.domain, ents.mapped, ents.units, ents.attrs)
     if "power_w" not in unfit:
         return False
-    attrs = ents.attrs.get(ents.mapped.get("power_w", "")) or {}
+    attrs = ents.attrs.get(ents.mapped.get(_power_entity_key(mode, profile), "")) or {}
     return _entity_range(attrs) is not None
 
 
@@ -787,19 +850,21 @@ def _entity_range(attrs: Mapping[str, Any]) -> tuple[float, float] | None:
     return float(lo), float(hi)
 
 
-def _power_entity_max_w(profile, ents: EntityContext) -> float | None:
+def _power_entity_max_w(profile, ents: EntityContext, mode=None) -> float | None:
     """Największa nastawa [W], jaką przyjmie encja mocy — ta sama granica co w `fit_params`.
 
     Zakres przeliczony tą samą drogą co odczyt encji (jednostka, transformacja profilu);
-    None bez encji, bez poprawnego zakresu albo bez dodatniej granicy.
+    None bez encji, bez poprawnego zakresu albo bez dodatniej granicy. Moc wg kierunku: encja
+    nastawy kierunku trybu `mode`.
     """
-    rng = _entity_range(ents.attrs.get(ents.mapped.get("power_w", "")) or {})
+    key = _power_entity_key(mode, profile)
+    rng = _entity_range(ents.attrs.get(ents.mapped.get(key, "")) or {})
     if rng is None:
         return None
     bounds = []
     for v in rng:
         try:
-            w = entity_value("power_w", repr(v), profile, ents.domain, unit=ents.units.get("power_w"))
+            w = entity_value(key, repr(v), profile, ents.domain, unit=ents.units.get(key))
         except (KeyError, ValueError, TypeError):
             return None
         if not isinstance(w, float) or not math.isfinite(w):
@@ -920,7 +985,8 @@ def _unsupported_group(flat: Mapping[str, float | str], profile, target: WriteTa
     if isinstance(mode, str):
         if f"mode:{mode}" in memory.unsupported or target.mode_option_unknown(mode, profile):
             out.append(f"mode:{mode}")
-    if "power_w" in flat and "power_w" in memory.unsupported:
+    if "power_w" in flat and ("power_w" in memory.unsupported
+                              or power_key(mode, profile) in memory.unsupported):
         out.append("power_w")
     return tuple(out)
 
@@ -936,6 +1002,8 @@ def commit(decision: CycleDecision, report: WriteReport, memory: ControlMemory, 
     """
     if decision.status not in (WRITE, RESTORE):
         return
+    if decision.aliases:
+        report = _aliased(report, decision.aliases)      # pamięć cyklu w kluczach planu
     if decision.status == RESTORE:
         memory.restore_attempts.append(now_mono)
         memory.restore_backoff_s = (memory.backoff_base_s if memory.restore_backoff_s <= 0.0
