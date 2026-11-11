@@ -22,10 +22,13 @@ from typing import Any, Iterable, Mapping
 from ..entity_map import EntityWrite, entity_value, entity_writes
 from ..params import Params
 
-_NUMERIC_KEYS = ("power_w", "soc_min", "soc_max", "export_limit_w")
-# kierunek bezpieczny w jednostkach kanonicznych: +1 = w górę, -1 = w dół
+_SET_POINTS = ("charge_power_w", "discharge_power_w")   # moc wg kierunku (`power_by_direction`)
+_NUMERIC_KEYS = ("power_w", "soc_min", "soc_max", "export_limit_w", *_SET_POINTS)
+# kierunek bezpieczny w jednostkach kanonicznych: +1 = w górę, -1 = w dół (wspólny z celem rejestrowym)
 SAFE_DIRECTION = {"power_w": -1, "export_limit_w": -1, "soc_min": 1, "soc_max": -1}
 _SAFE_DIRECTION = SAFE_DIRECTION             # dawna nazwa
+# encje: także nastawy mocy wg kierunku — w dół, jak moc
+_ENTITY_SAFE_DIRECTION = {**SAFE_DIRECTION, **{k: -1 for k in _SET_POINTS}}
 _ROUNDING = ("nearest", "down", "up")
 # transformacje profilu odwracające kierunek (kanoniczny ↔ encja)
 _FLIPPING_TRANSFORMS = ("invert_percent", "negate")
@@ -88,7 +91,7 @@ def fit_number(value: float, attrs: Mapping[str, Any], rounding: str = "nearest"
 
 def _entity_rounding(key: str, profile, integration_domain: str) -> str:
     """Bezpieczny kierunek klucza przełożony na przestrzeń encji (transformacja profilu)."""
-    direction = _SAFE_DIRECTION[key]
+    direction = _ENTITY_SAFE_DIRECTION[key]
     for integ in profile.raw["ha"]["integrations"]:
         if integ["domain"] == integration_domain:
             if integ["entities"][key].get("transform") in _FLIPPING_TRANSFORMS:
@@ -109,7 +112,12 @@ def control_writes(params: Params, profile, integration_domain: str, mapped: Map
 def fit_params(params: Params, profile, integration_domain: str, mapped: Mapping[str, str],
                units: Mapping[str, str | None], attrs_by_entity: Mapping[str, Mapping[str, Any]]
                ) -> tuple[Params, tuple[str, ...], tuple[str, ...]]:
-    """(dopasowane nastawy, klucze zmienione, klucze niedopasowalne) — w kolejności profilu."""
+    """(dopasowane nastawy, klucze zmienione, klucze niedopasowalne) — w kolejności profilu.
+
+    Moc wg kierunku (`power_by_direction`): nastawa kierunku wyliczona z `power_w` planu jest
+    dopasowana do SWOJEJ encji, a wynik wraca jako `power_w` (konwencja planu, throttlingu i cyklu);
+    jawna nastawa kierunku zostaje pod swoim kluczem.
+    """
     writes, _ = control_writes(params, profile, integration_domain, mapped, keys=None, units=units)
     changes: dict[str, float] = {}
     adjusted: list[str] = []
@@ -117,19 +125,31 @@ def fit_params(params: Params, profile, integration_domain: str, mapped: Mapping
     for w in writes:
         if w.domain != "number" or w.key not in _NUMERIC_KEYS:
             continue
+        keys = _plan_keys(w.key, params, profile)
         raw = float(w.data["value"])
         fitted = fit_number(raw, attrs_by_entity.get(w.entity_id) or {},
                             _entity_rounding(w.key, profile, integration_domain))
         if fitted is None:
-            unfit.append(w.key)
+            unfit.append(keys[0])
             continue
         if _close(fitted, raw):
             continue
         # powrót do jednostki kanonicznej tą samą drogą co odczyt encji (jednostka, transformacja)
         back = entity_value(w.key, repr(fitted), profile, integration_domain, unit=units.get(w.key))
         if not isinstance(back, float):
-            unfit.append(w.key)
+            unfit.append(keys[0])
             continue
-        changes[w.key] = back
-        adjusted.append(w.key)
+        changes.update(dict.fromkeys(keys, back))
+        adjusted.append(keys[0])
     return replace(params, **changes), tuple(adjusted), tuple(unfit)
+
+
+def _plan_keys(key: str, params: Params, profile) -> tuple[str, ...]:
+    """Klucze `Params`, z których powstał zapis `key` (pierwszy = klucz w raporcie dopasowania).
+
+    Nastawa kierunku wyliczona z mocy planu to `power_w` (oraz jawna nastawa kierunku, jeśli równa —
+    obie muszą dostać tę samą wartość, inaczej zapis kierunku je odrzuci jako sprzeczne)."""
+    if (key in _SET_POINTS and getattr(profile, "power_by_direction", False)
+            and params.power_w is not None):
+        return ("power_w", key) if getattr(params, key) is not None else ("power_w",)
+    return (key,)

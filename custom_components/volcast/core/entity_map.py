@@ -14,9 +14,12 @@ from typing import Iterable, Mapping
 
 from .params import Params
 from .regex_safety import safe_search
-from .registers import ordered_keys
+from .registers import _direction_keys, direction_params, ordered_keys
 
 _UNAVAILABLE = ("unavailable", "unknown", "")
+# Limit odczytu zwrotnego po zapisie encji, gdy profil nie podaje `write_policy.readback_settle_s`.
+# Integracja odświeża stan zwykle w trakcie usługi albo przy następnym odpytaniu urządzenia.
+DEFAULT_ENTITY_READBACK_S = 5.0
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$")
 
 # Jednostki, w których HA może podać stan encji → przelicznik na jednostkę kanoniczną
@@ -62,6 +65,23 @@ class EntityWrite:
     domain: str
     service: str
     data: dict
+    # Limit [s] odczytu zwrotnego po zapisie (oczekiwanie na stan encji równy zamówionemu); także
+    # limit oczekiwania na dostępność encji przed zapisem. None = bez odczytu zwrotnego (jak dotąd).
+    readback_s: float | None = None
+
+
+def entity_readback_s(profile) -> float | None:
+    """Limit odczytu zwrotnego zapisów encji dla profilu; None = profil pisze jak dotąd.
+
+    Odczyt zwrotny dostają profile z przełącznikiem zdalnego sterowania (`enable`) albo z mocą wg
+    kierunku: na takich urządzeniach tryb bywa niedostępny tuż po włączeniu przełącznika, a zapis
+    nastawy, który nie doszedł, zmienia znaczenie całej komendy. Profile bez tych konstrukcji
+    zachowują dotychczasowe zachowanie (wynik = sam wynik usługi).
+    """
+    if not (getattr(profile, "power_by_direction", False) or "enable" in getattr(profile, "write_order", ())):
+        return None
+    wp = profile.raw.get("write_policy") or {}
+    return float(wp["readback_settle_s"]) if "readback_settle_s" in wp else DEFAULT_ENTITY_READBACK_S
 
 
 def _integration(profile, domain: str) -> dict:
@@ -120,9 +140,18 @@ def entity_writes(params: Params, profile, integration_domain: str, mapped: Mapp
     `units` (z `ResolveResult.units`) przelicza wartość z jednostki kanonicznej klucza
     na jednostkę encji (np. W → kW). Encja w jednostce, której nie da się dokładnie
     przeliczyć (np. limit eksportu w % zamiast W), ląduje w kluczach bez encji.
+
+    Profil z `write_policy.power_by_direction`: moc planu (`power_w`, także w filtrze `keys`)
+    trafia do nastawy zgodnej z kierunkiem trybu — ta sama reguła co w zapisie rejestrów
+    (`direction_params`); bez trybu kierunek jest nieznany → RegisterError, nic nie zapisane.
     """
     ents = _integration(profile, integration_domain)["entities"]
     wanted = None if keys is None else set(keys)
+    if getattr(profile, "power_by_direction", False):
+        if wanted is not None:
+            wanted = _direction_keys(wanted, params, profile)
+        params = direction_params(params, profile)
+    readback_s = entity_readback_s(profile)
     writes: list[EntityWrite] = []
     unmapped: list[str] = []
     for key in ordered_keys(params, profile):
@@ -146,13 +175,13 @@ def entity_writes(params: Params, profile, integration_domain: str, mapped: Mapp
                 unmapped.append(key)   # tryb spoza profilu: nie zgadujemy opcji
                 continue
             writes.append(EntityWrite(key, eid, domain, "select_option",
-                                      {"option": profile.modes[raw].ha_option}))
+                                      {"option": profile.modes[raw].ha_option}, readback_s))
         elif domain == "switch":
-            writes.append(EntityWrite(key, eid, domain, "turn_on" if raw else "turn_off", {}))
+            writes.append(EntityWrite(key, eid, domain, "turn_on" if raw else "turn_off", {}, readback_s))
         elif domain == "time":
             minutes = int(raw)
             writes.append(EntityWrite(key, eid, domain, "set_value",
-                                      {"time": f"{minutes // 60:02d}:{minutes % 60:02d}:00"}))
+                                      {"time": f"{minutes // 60:02d}:{minutes % 60:02d}:00"}, readback_s))
         else:
             factor = _unit_factor(ha_key, (units or {}).get(ha_key))
             if factor is None:
@@ -164,7 +193,7 @@ def entity_writes(params: Params, profile, integration_domain: str, mapped: Mapp
                 value = round(100.0 - value, 1)
             if factor != 1.0:
                 value = value / factor
-            writes.append(EntityWrite(key, eid, domain, "set_value", {"value": value}))
+            writes.append(EntityWrite(key, eid, domain, "set_value", {"value": value}, readback_s))
     return writes, unmapped
 
 

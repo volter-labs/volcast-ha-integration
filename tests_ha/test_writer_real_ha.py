@@ -116,3 +116,68 @@ async def test_state_change_carries_our_context(hass: HomeAssistant):
     ev = [e for e in seen if e.data["entity_id"] == "select.ems"][-1]
     assert w.is_ours(ev.data["new_state"].context.id)
     assert ev.data["new_state"].context.user_id is None and ev.data["new_state"].context.parent_id is None
+
+
+# ── odczyt zwrotny: przełącznik zdalnego sterowania, nastawa w kW, select dostępny po włączeniu ──
+
+_OPTS = {"options": ["auto", "charge_battery"]}
+
+
+def _remote_entities(hass: HomeAssistant, *, select_state: str = "unavailable", clamp_kw: float | None = None):
+    """Integracja z przełącznikiem: select trybu niedostępny, dopóki przełącznik jest wyłączony."""
+    hass.states.async_set("switch.remote", "off")
+    hass.states.async_set("select.ems", select_state, _OPTS)
+    hass.states.async_set("number.charge", "0.0", {"min": 0, "max": 12, "step": 0.01,
+                                                   "unit_of_measurement": "kW"})
+
+    async def switch_on(call):
+        hass.states.async_set("switch.remote", "on", context=call.context)
+        hass.loop.call_later(0.05, lambda: hass.states.async_set("select.ems", "auto", _OPTS))
+
+    async def select_option(call):
+        hass.states.async_set("select.ems", call.data["option"], _OPTS, context=call.context)
+
+    async def set_value(call):
+        value = call.data["value"] if clamp_kw is None else clamp_kw
+        hass.states.async_set("number.charge", str(value), context=call.context)
+    hass.services.async_register("switch", "turn_on", switch_on)
+    hass.services.async_register("select", "select_option", select_option)
+    hass.services.async_register("number", "set_value", set_value)
+
+
+def _remote_writes(limit: float = 1.0) -> list[EntityWrite]:
+    return [EntityWrite("charge_power_w", "number.charge", "number", "set_value", {"value": 2.5}, readback_s=limit),
+            EntityWrite("enable", "switch.remote", "switch", "turn_on", {}, readback_s=limit),
+            EntityWrite("mode", "select.ems", "select", "select_option", {"option": "charge_battery"},
+                        readback_s=limit)]
+
+
+async def test_remote_switch_sequence_waits_for_mode_select(hass: HomeAssistant):
+    _remote_entities(hass)
+    rep = await async_run_writes(_remote_writes(), EntityServiceWriter(hass, readback_poll_s=0.01).async_write)
+    assert rep.written == ["charge_power_w", "enable", "mode"] and not rep.failed
+    assert hass.states.get("select.ems").state == "charge_battery"
+    assert hass.states.get("number.charge").state == "2.5"
+
+
+async def test_set_point_mismatch_holds_the_mode(hass: HomeAssistant):
+    from custom_components.volcast.control.ha_writer import MISMATCH
+    _remote_entities(hass, clamp_kw=2.0)
+    writer = EntityServiceWriter(hass, readback_poll_s=0.01)
+    out = await writer.async_write(_remote_writes(0.1)[0])
+    assert out == ERROR and out.reason == MISMATCH and out.actual == "2.0"
+    charge, _, mode = _remote_writes(0.1)
+    rep = await async_run_writes([charge, mode], writer.async_write)
+    assert rep.failed == ["charge_power_w"] and rep.mode_held and "mode" not in rep.written
+    assert hass.states.get("select.ems").state == "unavailable"
+
+
+async def test_select_never_available_is_error_without_call(hass: HomeAssistant):
+    calls = []
+    hass.states.async_set("select.ems", "unavailable", _OPTS)
+
+    async def handler(call):
+        calls.append(call)
+    hass.services.async_register("select", "select_option", handler)
+    out = await EntityServiceWriter(hass, readback_poll_s=0.01).async_write(_remote_writes(0.1)[2])
+    assert out == ERROR and calls == []

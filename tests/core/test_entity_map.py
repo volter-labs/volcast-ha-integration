@@ -327,3 +327,136 @@ def test_preview_statuses():
     assert preview_entity("soc", None, None)[0] == "unavailable"
     assert preview_entity("soc", "abc", "%")[0] == "unreadable"
     assert preview_entity("mode", "Eco", None) == ("ok", None)
+
+
+# ── ścieżka encji: przełącznik zdalnego sterowania, moc wg kierunku w kW, odczyt zwrotny ──────────
+
+DIR_ORDER = ["soc_min", "charge_power_w", "discharge_power_w", "export_limit_w", "export_limit_enabled",
+             "enable", "mode"]
+DIR_MAPPED = {"mode": "select.ems_mode", "enable": "switch.remote_ems",
+              "charge_power_w": "number.charge_limit", "discharge_power_w": "number.discharge_limit",
+              "soc_min": "number.dod"}
+DIR_UNITS = {"charge_power_w": "kW", "discharge_power_w": "kW", "soc_min": "%"}
+
+
+def direction_profile_dict(**write_policy) -> dict:
+    """Profil mode_setpoint z przełącznikiem zdalnego sterowania (`enable`, encja switch) i dwiema
+    nastawami mocy wg kierunku (encje number w kW) — wzór marki sterowanej w ten sposób."""
+    from custom_components.volcast.core.profile_schema import validate_profile
+    from tests.core.profile_fixtures import ms_profile
+    p = ms_profile()
+    w = p["write"]
+    w.pop("power_w")
+    w["charge_power_w"] = {"addr": 40032, "type": "u32", "encode": "watts", "unit_id": 1}
+    w["discharge_power_w"] = {"addr": 40034, "type": "u32", "encode": "watts", "unit_id": 1}
+    w["enable"] = {"addr": 40029, "type": "u16", "encode": "on_off", "on": 1, "off": 0}
+    p["read"]["enable_state"] = {"addr": 40029, "type": "u16"}
+    p["baseline"]["enable"] = False
+    p["write_policy"].update(order=list(DIR_ORDER), power_by_direction=True, **write_policy)
+    p["modbus"]["probe_keys"] = ["mode", "charge_power_w", "discharge_power_w"]
+    p["ha"]["integrations"][0]["entities"].update(
+        mode={"domain": "select", "unique_id_regex": "^x-ems_mode-"},
+        enable={"domain": "switch", "unique_id_regex": "^x-remote_ems-"},
+        charge_power_w={"domain": "number", "unique_id_regex": "^x-charge_limit-"},
+        discharge_power_w={"domain": "number", "unique_id_regex": "^x-discharge_limit-"})
+    assert validate_profile(p) == []
+    return p
+
+
+def direction_profile(**write_policy):
+    return profile_from_dict(direction_profile_dict(**write_policy))
+
+
+DIR = direction_profile()
+
+
+def _dir_writes(params, keys=None, profile=DIR):
+    return entity_writes(params, profile, "goodwe", DIR_MAPPED, keys=keys, units=DIR_UNITS)
+
+
+def test_direction_profile_maps_switch_and_kw_numbers():
+    cands = [EntityCandidate("select.ems_mode", "goodwe", "x-ems_mode-1"),
+             EntityCandidate("switch.remote_ems", "goodwe", "x-remote_ems-1"),
+             EntityCandidate("number.charge_limit", "goodwe", "x-charge_limit-1", "kW"),
+             EntityCandidate("number.discharge_limit", "goodwe", "x-discharge_limit-1", "kW")]
+    r = resolve_entities(DIR, "goodwe", cands)
+    assert {k: r.mapped[k] for k in ("mode", "enable", "charge_power_w", "discharge_power_w")} == {
+        "mode": "select.ems_mode", "enable": "switch.remote_ems",
+        "charge_power_w": "number.charge_limit", "discharge_power_w": "number.discharge_limit"}
+    assert r.units["charge_power_w"] == "kW"
+
+
+def test_charge_mode_power_goes_to_charge_set_point_in_kw_then_enable_then_mode():
+    writes, unmapped = _dir_writes(Params(mode="charge_battery", power_w=2500.0, enable=True))
+    assert [(w.key, w.entity_id, w.service, w.data) for w in writes] == [
+        ("charge_power_w", "number.charge_limit", "set_value", {"value": 2.5}),
+        ("enable", "switch.remote_ems", "turn_on", {}),
+        ("mode", "select.ems_mode", "select_option", {"option": "charge_battery"}),
+    ]
+    assert unmapped == []
+
+
+def test_discharge_mode_power_goes_to_discharge_set_point_and_keys_filter_follows():
+    writes, _ = _dir_writes(Params(mode="sell_power", power_w=1800.0), keys={"power_w"})
+    assert [(w.key, w.entity_id, w.data) for w in writes] == [
+        ("discharge_power_w", "number.discharge_limit", {"value": 1.8})]
+
+
+def test_neutral_or_idle_mode_writes_no_set_point():
+    for mode in ("auto", "battery_standby"):
+        writes, _ = _dir_writes(Params(mode=mode, power_w=0.0))
+        assert [w.key for w in writes] == ["mode"]
+
+
+def test_power_without_mode_has_no_direction_and_raises():
+    from custom_components.volcast.core.registers import RegisterError
+    with pytest.raises(RegisterError):
+        _dir_writes(Params(power_w=1000.0))
+
+
+def test_explicit_set_point_and_switch_off():
+    writes, _ = _dir_writes(Params(charge_power_w=0.0, discharge_power_w=12000.0, enable=False))
+    assert [(w.key, w.service, w.data) for w in writes] == [
+        ("charge_power_w", "set_value", {"value": 0.0}),
+        ("discharge_power_w", "set_value", {"value": 12.0}),
+        ("enable", "turn_off", {}),
+    ]
+
+
+def test_set_point_reads_back_in_watts_from_kw_entity():
+    assert entity_value("charge_power_w", "2.5", DIR, "goodwe", unit="kW") == 2500.0
+    assert entity_value("enable", "on", DIR, "goodwe") == 1.0
+    assert entity_value("enable", "off", DIR, "goodwe") == 0.0
+
+
+def test_direction_profile_writes_ask_for_read_back_with_default_limit():
+    from custom_components.volcast.core.entity_map import DEFAULT_ENTITY_READBACK_S
+    writes, _ = _dir_writes(Params(mode="charge_battery", power_w=2500.0, enable=True, soc_min=20.0))
+    assert DEFAULT_ENTITY_READBACK_S == 5.0
+    assert [w.readback_s for w in writes] == [DEFAULT_ENTITY_READBACK_S] * 4
+
+
+def test_read_back_limit_from_profile_settle_time():
+    writes, _ = _dir_writes(Params(mode="auto"), profile=direction_profile(readback_settle_s=8))
+    assert writes[0].readback_s == 8.0
+
+
+def test_switch_only_profile_also_asks_for_read_back():
+    from tests.core.profile_fixtures import ms_profile
+    p = ms_profile()
+    p["write"]["enable"] = {"addr": 40029, "type": "u16", "encode": "on_off", "on": 1, "off": 0}
+    p["write_policy"]["order"].insert(-1, "enable")
+    p["ha"]["integrations"][0]["entities"]["enable"] = {"domain": "switch", "unique_id_regex": "^x-r-"}
+    writes, _ = entity_writes(Params(enable=True), profile_from_dict(p), "goodwe", {"enable": "switch.r"})
+    assert writes[0].readback_s is not None
+
+
+def test_existing_profile_writes_have_no_read_back():
+    """Regresja: profile bez nowych konstrukcji (GoodWe) piszą jak dotąd — bez odczytu zwrotnego."""
+    from custom_components.volcast.core.entity_map import EntityWrite
+    mapped = resolve_entities(GW, "goodwe", CANDS).mapped
+    writes, _ = entity_writes(Params(mode="sell_power", power_w=400.0, soc_min=20.0, export_limit_w=500.0),
+                              GW, "goodwe", mapped)
+    assert writes and all(w.readback_s is None for w in writes)
+    assert writes[1] == EntityWrite("power_w", "number.goodwe_ems_power_limit", "number", "set_value",
+                                    {"value": 400.0})

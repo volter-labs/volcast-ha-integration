@@ -202,3 +202,49 @@ def test_fit_number_clip_direction():
     assert fit_number(0.5, attrs) == 1 and fit_number(9.5, attrs) == 9   # najbliższy: jak dotąd
     assert fit_number(1 - 1e-12, attrs, rounding="down") == 1    # szum binarny na granicy
     assert fit_number(9 + 1e-12, attrs, rounding="up") == 9
+
+
+# ── moc wg kierunku: nastawa w kW dopasowana do encji, wynik w konwencji planu (`power_w`) ────────
+
+def _dir():
+    from tests.core.test_entity_map import DIR, DIR_MAPPED, DIR_UNITS
+    attrs = {"number.charge_limit": {"min": 0, "max": 12, "step": 0.1},
+             "number.discharge_limit": {"min": 0.5, "max": 10, "step": 0.1},
+             "number.dod": {"min": 0, "max": 99, "step": 1}}
+    return DIR, DIR_MAPPED, DIR_UNITS, attrs
+
+
+def test_direction_set_point_fitted_down_to_entity_step_as_plan_power():
+    prof, mapped, units, attrs = _dir()
+    fitted, adjusted, unfit = fit_params(Params(mode="charge_battery", power_w=2549.0), prof, "goodwe",
+                                         mapped, units, attrs)
+    assert fitted.power_w == pytest.approx(2500.0) and fitted.charge_power_w is None
+    assert adjusted == ("power_w",) and unfit == ()
+    writes, _ = control_writes(fitted, prof, "goodwe", mapped, keys=None, units=units)
+    assert [(w.key, w.data) for w in writes] == [("charge_power_w", {"value": 2.5}),
+                                                 ("mode", {"option": "charge_battery"})]
+
+
+def test_direction_set_point_clipped_to_the_direction_entity_max():
+    prof, mapped, units, attrs = _dir()
+    fitted, adjusted, _ = fit_params(Params(mode="sell_power", power_w=15000.0), prof, "goodwe",
+                                     mapped, units, attrs)
+    assert fitted.power_w == pytest.approx(10000.0) and adjusted == ("power_w",)
+
+
+def test_direction_set_point_below_entity_min_is_unfit_as_plan_power():
+    prof, mapped, units, attrs = _dir()
+    _, _, unfit = fit_params(Params(mode="sell_power", power_w=200.0), prof, "goodwe", mapped, units, attrs)
+    assert unfit == ("power_w",)
+
+
+def test_explicit_direction_set_point_is_fitted_under_its_own_key():
+    prof, mapped, units, attrs = _dir()
+    fitted, adjusted, unfit = fit_params(Params(discharge_power_w=3333.0), prof, "goodwe", mapped, units, attrs)
+    assert fitted.discharge_power_w == pytest.approx(3300.0) and adjusted == ("discharge_power_w",)
+    assert unfit == () and fitted.power_w is None
+
+
+def test_safe_direction_for_registers_is_unchanged():
+    from custom_components.volcast.core.control.entity_fit import SAFE_DIRECTION
+    assert SAFE_DIRECTION == {"power_w": -1, "export_limit_w": -1, "soc_min": 1, "soc_max": -1}

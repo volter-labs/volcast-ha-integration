@@ -251,3 +251,84 @@ def test_verified_profile_with_draft_integration_entry_is_not_ready():
 
 def test_goodwe_et_stays_entity_mode_ready():
     assert entity_mode_ready(ProfileChoice(GW, "goodwe", "GW8KN-ET"), ALL) is True
+
+
+# ── przełącznik zdalnego sterowania i moc wg kierunku (`write_policy.power_by_direction`) ──────────
+
+DIR_ALL = ("mode", "enable", "charge_power_w", "discharge_power_w", "soc_min", "export_limit_w",
+           "export_limit_enabled")
+
+
+def _dir_profile(**kw):
+    from custom_components.volcast.core.profile import profile_from_dict
+    from tests.core.test_entity_map import direction_profile_dict
+    raw = direction_profile_dict()
+    raw["capabilities"]["set_soc_ceiling"] = False      # profil nie pisze soc_max
+    raw["ha"]["integrations"][0]["status"] = "verified"
+    return profile_from_dict(raw, **kw)
+
+
+def test_direction_profile_all_mapped_gives_capabilities():
+    caps = capabilities_for(_dir_profile(), DIR_ALL)
+    assert {k for k, v in caps.items() if not v} == {"set_soc_ceiling"}
+
+
+@pytest.mark.parametrize("missing,dropped", [
+    # moc wg kierunku: nastawa ładowania niesie ładowanie z sieci, rozładowania — sprzedaż i rozładowanie
+    ("charge_power_w", {"set_power_w", "force_charge_from_grid"}),
+    ("discharge_power_w", {"set_power_w", "sell_from_battery", "force_discharge"}),
+    ("soc_min", {"set_soc_floor"}),
+])
+def test_direction_profile_set_point_drops_only_its_capabilities(missing, dropped):
+    caps = capabilities_for(_dir_profile(), [k for k in DIR_ALL if k != missing])
+    assert {k for k, v in caps.items() if not v} == dropped | {"set_soc_ceiling"}
+
+
+def test_standby_with_idle_mode_needs_no_set_point():
+    # Postój (tryb bez kierunku) nie pisze żadnej nastawy mocy — wystarczy tryb.
+    caps = capabilities_for(_dir_profile(), ("mode", "enable"))
+    assert caps["standby"] is True and caps["set_power_w"] is False
+
+
+def test_profile_with_remote_switch_needs_its_entity_for_control():
+    caps = capabilities_for(_dir_profile(), [k for k in DIR_ALL if k != "enable"])
+    assert not any(caps.values())
+    choice = ProfileChoice(_dir_profile(origin="package"), "goodwe", None)
+    assert entity_mode_ready(choice, DIR_ALL) is True
+    assert entity_mode_ready(choice, [k for k in DIR_ALL if k != "enable"]) is False
+
+
+def test_required_write_keys_follow_the_profile():
+    from custom_components.volcast.core.control.caps import REQUIRED_WRITE_KEYS, required_write_keys
+    assert REQUIRED_WRITE_KEYS == ("mode",)
+    assert required_write_keys(GW) == ("mode",)
+    assert required_write_keys(_dir_profile()) == ("mode", "enable")
+
+
+def test_direct_capabilities_by_direction_need_both_set_points():
+    from custom_components.volcast.core.control.caps import direct_capabilities
+    p = _dir_profile()
+    probe = {"mode": True, "charge_power_w": True, "discharge_power_w": True}
+    caps = direct_capabilities(p, probe, ())
+    assert caps["set_power_w"] and caps["force_charge_from_grid"] and caps["sell_from_battery"]
+    for gone in ("charge_power_w", "discharge_power_w"):
+        assert not any(direct_capabilities(p, {**probe, gone: False}, ()).values())
+        assert not any(direct_capabilities(p, probe, (gone,)).values())
+
+
+def test_direct_capabilities_probed_switch_must_be_usable():
+    from custom_components.volcast.core.control.caps import direct_capabilities
+    p = _dir_profile()
+    probe = {"mode": True, "charge_power_w": True, "discharge_power_w": True}
+    assert direct_capabilities(p, {**probe, "enable": True}, ())["set_power_w"] is True
+    assert not any(direct_capabilities(p, {**probe, "enable": False}, ()).values())
+    assert not any(direct_capabilities(p, {**probe, "enable": True}, ("enable",)).values())
+
+
+def test_direct_capabilities_unchanged_for_existing_profile():
+    from custom_components.volcast.core.control.caps import direct_capabilities
+    probe = {"mode": True, "power_w": True, "soc_min": True, "soc_max": True, "export_limit_w": True,
+             "export_limit_enabled": True}
+    caps = direct_capabilities(GW, probe, ())
+    assert all(caps.values())
+    assert not any(direct_capabilities(GW, {**probe, "power_w": False}, ()).values())

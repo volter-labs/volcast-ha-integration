@@ -20,6 +20,39 @@ _KEY_CAPS = {"set_power_w": ("power_w",), "limit_export": ("export_limit_w", "ex
 
 
 REQUIRED_WRITE_KEYS = ("mode",)
+# Moc wg kierunku (`write_policy.power_by_direction`): nastawa zamiast `power_w` wg kierunku trybu.
+_DIRECTION_SET_POINTS = {"charge": "charge_power_w", "discharge": "discharge_power_w"}
+
+
+def required_write_keys(profile) -> tuple[str, ...]:
+    """Klucze zapisu, bez których nie ma sterowania: tryb, a przy profilu z przełącznikiem zdalnego
+    sterowania (`enable` w kolejności zapisu) także przełącznik — bez niego tryb nic nie zmienia."""
+    order = (profile.raw.get("write_policy") or {}).get("order") or ()
+    return REQUIRED_WRITE_KEYS + (("enable",) if "enable" in order else ())
+
+
+def _by_direction(profile) -> bool:
+    return getattr(profile, "power_by_direction", False) is True
+
+
+def _power_keys(profile) -> tuple[str, ...]:
+    """Nastawy mocy profilu: `power_w` albo obie nastawy kierunku."""
+    return tuple(_DIRECTION_SET_POINTS.values()) if _by_direction(profile) else ("power_w",)
+
+
+def _intent_power_key(profile, spec: Mapping, kinds: Iterable[str]) -> str | None:
+    """Nastawa mocy, którą pisze intencja o rodzaju mocy z `kinds`; None = intencja jej nie pisze.
+
+    Przy mocy wg kierunku to nastawa kierunku trybu intencji; tryb bez kierunku (neutralny, postój)
+    nie pisze żadnej nastawy (ta sama reguła co zapis — `registers.direction_params`)."""
+    if spec.get("power") not in kinds:
+        return None
+    if not _by_direction(profile):
+        return "power_w"
+    mode = spec.get("mode")
+    if mode not in profile.modes:
+        return "power_w"            # tryb spoza profilu: klucz bez encji/rejestru → możliwość wypada
+    return _DIRECTION_SET_POINTS.get(profile.mode_direction(mode))
 
 
 def missing_write_keys(profile, mapped_keys: Iterable[str]) -> tuple[str, ...]:
@@ -43,9 +76,10 @@ def entity_mode_ready(choice, mapped_keys: Iterable[str]) -> bool:
 
 
 def required_missing(profile, mapped_keys: Iterable[str]) -> tuple[str, ...]:
-    """Klucze wymagane do sterowania (tryb), które nie mają encji."""
+    """Klucze wymagane do sterowania (`required_write_keys`), które nie mają encji."""
     missing = missing_write_keys(profile, mapped_keys)
-    return tuple(k for k in missing if k in REQUIRED_WRITE_KEYS)
+    required = required_write_keys(profile)
+    return tuple(k for k in missing if k in required)
 
 
 def entity_mode_options(choice) -> dict[str, str]:
@@ -67,12 +101,20 @@ def capabilities_for(profile, mapped_keys: Iterable[str]) -> dict[str, bool]:
     for cap, intent in _INTENT_CAPS.items():
         spec = intents.get(intent)
         need = {"mode"}
-        if isinstance(spec, dict) and spec.get("power") in (*SLOT_POWER_KINDS, "zero"):
-            need.add("power_w")          # standby pisze jawne 0 W — bez encji mocy nie ustoi
+        # standby pisze jawne 0 W — bez encji mocy nie ustoi (przy mocy wg kierunku: tryb postoju
+        # nie pisze nastawy wcale)
+        key = _intent_power_key(profile, spec, (*SLOT_POWER_KINDS, "zero")) if isinstance(spec, dict) else None
+        if key is not None:
+            need.add(key)
         out[cap] = complete and bool(declared.get(cap)) and isinstance(spec, dict) and need <= mapped
-    for cap, keys in _KEY_CAPS.items():
+    for cap, keys in _key_caps(profile).items():
         out[cap] = complete and bool(declared.get(cap)) and set(keys) <= mapped
     return out
+
+
+def _key_caps(profile) -> dict[str, tuple[str, ...]]:
+    """`_KEY_CAPS` profilu: moc wg kierunku wymaga obu nastaw kierunku zamiast `power_w`."""
+    return {**_KEY_CAPS, "set_power_w": _power_keys(profile)}
 
 
 def direct_capabilities(profile, probe_caps: Mapping[str, bool], unreadable: Iterable[str]) -> dict[str, bool]:
@@ -81,7 +123,9 @@ def direct_capabilities(profile, probe_caps: Mapping[str, bool], unreadable: Ite
 
     Tryb i moc to jedna grupa — bez którejkolwiek nie ma żadnej możliwości; klucz nieczytelny poza
     grupą wyłącza tylko swoją możliwość (cykl traktuje go jak nieobsługiwany). Model okien czasowych:
-    wszystko zależy od bloku programów (`tou`).
+    wszystko zależy od bloku programów (`tou`). Moc wg kierunku: w grupie obie nastawy kierunku
+    (jak w sondzie). Przełącznik zdalnego sterowania objęty sondą, ale nieużywalny (brak rejestru,
+    brak odczytu zwrotnego) wyłącza wszystko — bez niego tryb nic nie zmienia.
     """
     skip = set(unreadable)
     usable = {k for k, v in probe_caps.items() if v is True and k not in skip}
@@ -95,13 +139,16 @@ def direct_capabilities(profile, probe_caps: Mapping[str, bool], unreadable: Ite
         for cap in _KEY_CAPS:
             out[cap] = ok and declared.get(cap) is True
         return out
-    complete = {"mode", "power_w"} <= usable
+    complete = {"mode", *_power_keys(profile)} <= usable
+    if "enable" in required_write_keys(profile) and "enable" in probe_caps:
+        complete = complete and "enable" in usable
     for cap, intent in _INTENT_CAPS.items():
         spec = intents.get(intent)
         need = {"mode"}
-        if isinstance(spec, dict) and spec.get("power") in ("slot", "zero"):
-            need.add("power_w")
+        key = _intent_power_key(profile, spec, ("slot", "zero")) if isinstance(spec, dict) else None
+        if key is not None:
+            need.add(key)
         out[cap] = complete and declared.get(cap) is True and isinstance(spec, dict) and need <= usable
-    for cap, keys in _KEY_CAPS.items():
+    for cap, keys in _key_caps(profile).items():
         out[cap] = complete and declared.get(cap) is True and set(keys) <= usable
     return out
