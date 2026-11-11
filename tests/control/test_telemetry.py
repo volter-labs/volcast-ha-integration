@@ -365,6 +365,10 @@ def _sell_shifted_grid(h):
     _sell_entity(h, shift_min=30)
 
 
+def _sell_stale(h):
+    _sell_entity(h, shift_min=-2 * 24 * 60)      # integracja przestała odświeżać — seria sprzed dwóch dni
+
+
 def _warnings(caplog):
     return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
 
@@ -516,8 +520,9 @@ class _Issues:
     (_sell_unavailable, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_DATA),
     (_sell_other_currency, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_PAIR),
     (_sell_shifted_grid, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_PAIR),
+    (_sell_stale, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_DATA),
     (_sell_missing, {"price_sell_action": _NP_ACTION}, "nordpool.get_prices_for_date", _NO_DATA),
-], ids=["missing", "unavailable", "other-currency", "shifted-grid", "action-without-result"])
+], ids=["missing", "unavailable", "other-currency", "shifted-grid", "stale", "action-without-result"])
 def test_withheld_by_sell_side_raises_one_repair_issue_after_grace(setup, option, source, key, monkeypatch):
     issues = _Issues(monkeypatch)
     h, cloud = goodwe_hass(), Cloud()

@@ -815,10 +815,15 @@ def has_usable_prices_now(
     if not przedzialy:
         return False
     chwila = (now or datetime.now(tz)).astimezone(timezone.utc)
-    ostatni = datetime.fromisoformat(przedzialy[-1]["startAt"].replace("Z", "+00:00"))
-    koniec_serii = ostatni + timedelta(minutes=przedzialy[-1]["minutes"])
+    koniec_serii = series_end(przedzialy)
     return (starts_by_next_interval(przedzialy, chwila) and chwila < koniec_serii
             and koniec_serii >= chwila + timedelta(hours=6))
+
+
+def series_end(intervals: Sequence[Mapping[str, Any]]) -> datetime:
+    """Koniec niepustej, posortowanej serii przedziałów (koniec ostatniego), w UTC."""
+    ostatni = datetime.fromisoformat(intervals[-1]["startAt"].replace("Z", "+00:00"))
+    return ostatni + timedelta(minutes=intervals[-1]["minutes"])
 
 
 def starts_by_next_interval(intervals: Sequence[Mapping[str, Any]], now: datetime) -> bool:

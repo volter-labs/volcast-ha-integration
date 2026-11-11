@@ -74,7 +74,7 @@ from ..core.control.readings import RawState, manual_reading, normalize_readings
 from ..core.control.select import ProfileChoice, control_verified
 from ..core.price_actions import InvalidPriceSource, PriceActionPoller, parse_source
 from ..core.price_setup import enrich_attributes
-from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
+from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes, series_end
 from .loads_reader import LoadsReader
 from .direct_sensors import STALE_FACTOR as _STALE_FACTOR   # jedna reguła świeżości z sensorami
 
@@ -85,8 +85,8 @@ _UNAVAILABLE = ("unavailable", "unknown")
 # Rynek, gdy konfiguracja HA nie podaje kraju (instalacje sprzed tego pola).
 _DEFAULT_MARKET = "PL"
 # Powody wstrzymania bloku cen przez ustawioną stronę sprzedaży (dokończenie zdania w logu).
-_SELL_NO_DATA = ("is set but gives no prices (entity missing or unavailable, or no fresh result "
-                 "from the price action), so the buy prices are withheld too")
+_SELL_NO_DATA = ("is set but gives no current prices (entity missing, unavailable or no longer updated, or "
+                 "no fresh result from the price action), so the buy prices are withheld too")
 _SELL_NO_PAIR = ("gives prices that do not match the buy prices (different currency, or intervals "
                  "that do not line up with the buy intervals), so the buy prices are withheld too")
 # Klucz zgłoszenia naprawy (i jego tekstu) dla każdego powodu; id zgłoszenia to klucz + `_<entry_id>`.
@@ -463,10 +463,11 @@ class TelemetrySender:
             # zakres; pusty (nic się nie sparowało) — blok nie idzie wcale.
             paired = [iv for iv in intervals if iv["sell"] is not None]
             if intervals and not paired:
-                # Sprzedaż bez własnej serii (np. encja niedostępna — HA zdejmuje wtedy atrybuty) to brak
-                # danych; seria jest, a nic się nie paruje (waluta, siatka, zakres) — niedopasowanie.
+                # Sprzedaż bez własnej serii (np. encja niedostępna — HA zdejmuje wtedy atrybuty) albo z serią
+                # kończącą się przed `now` (źródło przestało odświeżać) to brak danych; seria trwa, a nic się
+                # nie paruje (waluta, siatka, zakres) — niedopasowanie.
                 own = intervals_from_attributes(sell, None, currency, self._tz(), now)
-                self._sell_withheld(_SELL_NO_PAIR if own else _SELL_NO_DATA)
+                self._sell_withheld(_SELL_NO_PAIR if own and series_end(own) > now else _SELL_NO_DATA)
                 return None
             intervals = paired
         if not intervals:
