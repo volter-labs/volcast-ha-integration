@@ -1,6 +1,7 @@
-"""Profil z podpisanego feedu jest tylko do odczytu: żadna ścieżka (drabina, bramka planu, zgoda konta,
-profil udający `verified`) nie prowadzi do zapisu na falownik. Wynik drabiny jest związany z treścią
-profilu (odcisk) — każda zmiana profilu unieważnia przejście; pakietowy `verified` bez zmian."""
+"""Profil z podpisanego feedu bez certyfikatu zapisu jest tylko do odczytu: żadna ścieżka (drabina,
+bramka planu, zgoda konta, profil udający `verified`) nie prowadzi do zapisu na falownik. Z ważnym
+certyfikatem (`feed_endorsed`) bramki są te same co dla pakietu. Wynik drabiny jest związany z treścią
+profilu (odcisk) — każda zmiana profilu spoza pakietu unieważnia przejście; pakietowy `verified` bez zmian."""
 from __future__ import annotations
 
 import dataclasses
@@ -12,7 +13,8 @@ from custom_components.volcast.core.control.cycle import WRITE
 from custom_components.volcast.core.control.ladder import VERIFIED, Ladder, device_key
 from custom_components.volcast.core.control.select import control_verified
 from custom_components.volcast.core.profile import (
-    ORIGIN_FEED, ORIGIN_PACKAGE, direct_verified, load_builtin, profile_from_dict, writes_allowed)
+    ORIGIN_FEED, ORIGIN_FEED_ENDORSED, ORIGIN_PACKAGE, ProfileError, direct_verified, is_packaged, load_builtin,
+    profile_from_dict, writes_allowed)
 from custom_components.volcast.control.executor import VolcastExecutor
 from custom_components.volcast.control.verification import start_rung_for
 from tests.control.test_executor_direct import (  # noqa: F401 — `issues` to fixture
@@ -20,6 +22,7 @@ from tests.control.test_executor_direct import (  # noqa: F401 — `issues` to f
 from tests.control.test_verification import P, Env, FakeExecutor, FakeIO, Gate
 
 GW_FEED = dataclasses.replace(GW_V, origin=ORIGIN_FEED)            # treść zweryfikowana, pochodzenie: feed
+GW_ENDORSED = dataclasses.replace(GW_V, origin=ORIGIN_FEED_ENDORSED)   # feed z ważnym certyfikatem zapisu
 
 
 def _changed(profile):
@@ -37,12 +40,20 @@ def test_packaged_profiles_have_package_origin_and_a_stable_fingerprint():
     assert _changed(a).fingerprint != a.fingerprint
 
 
-def test_feed_origin_never_counts_as_verified():
+def test_feed_origin_without_a_certificate_never_counts_as_verified():
     assert direct_verified(GW_V) and not direct_verified(GW_FEED)
     assert not writes_allowed(GW_FEED)
     for integ in GW_FEED.raw["ha"]["integrations"]:
         assert not control_verified(GW_FEED, integ["domain"])
     assert start_rung_for(GW_FEED, None, direct=True) == 1
+
+
+def test_endorsed_feed_origin_counts_like_the_package_for_write_rights():
+    assert writes_allowed(GW_ENDORSED) and direct_verified(GW_ENDORSED)
+    assert not is_packaged(GW_ENDORSED) and is_packaged(GW_V) and not is_packaged(GW_FEED)
+    for integ in GW_ENDORSED.raw["ha"]["integrations"]:
+        assert control_verified(GW_ENDORSED, integ["domain"]) == control_verified(GW_V, integ["domain"])
+    assert start_rung_for(GW_ENDORSED, None, direct=True) == start_rung_for(GW_V, None, direct=True) == 4
 
 
 # --- wykonawca: zgoda + przejście drabiny + profil z feedu = brak zapisu ----------------------------
@@ -66,6 +77,31 @@ async def test_feed_profile_without_a_ladder_gate_never_writes(make_hass, goodwe
     h = await Harness(make_hass, GW_FEED, gw_target(goodwe_udp_sim)).start()
     try:
         assert h.ex.verification is None
+        await h.ex.async_tick()
+        assert goodwe_bank.writes == [] and h.ex.last_decision.status != WRITE
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_endorsed_feed_profile_with_consent_and_a_passed_ladder_writes(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await Harness(make_hass, GW_ENDORSED, gw_target(goodwe_udp_sim)).start()
+    try:
+        h.ex.verification = Gate(True)
+        await h.ex.async_tick()
+        assert h.ex.last_decision.status == WRITE and h.ex.verification_can_write() is True
+        assert goodwe_bank.writes and h.ex.owned
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_endorsed_feed_profile_without_a_passed_ladder_never_writes(
+        make_hass, goodwe_udp_sim, goodwe_bank, issues):
+    h = await Harness(make_hass, GW_ENDORSED, gw_target(goodwe_udp_sim)).start()
+    try:
+        h.ex.verification = Gate(False)
         await h.ex.async_tick()
         assert goodwe_bank.writes == [] and h.ex.last_decision.status != WRITE
     finally:
@@ -146,6 +182,105 @@ async def test_old_record_without_a_hash_reset_for_a_feed_profile(monkeypatch):
     await env.runner.async_start()
     assert env.runner.plan_allowed() is False and env.runner.ladder.state.state != VERIFIED
     assert env.ex.verification_record.get("profile_hash") == GW_FEED.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_endorsed_profile_ladder_allows_the_plan_for_the_same_content(monkeypatch):
+    env = _env(monkeypatch, GW_ENDORSED, _verified_record(GW_ENDORSED.fingerprint), start=4)
+    await env.runner.async_start()
+    assert env.runner.plan_allowed() is True
+
+
+@pytest.mark.asyncio
+async def test_endorsed_profile_content_change_resets_the_ladder_unlike_the_package(monkeypatch):
+    # Pakiet zweryfikowany przyjmuje nowy odcisk bez zmiany stanu; profil z feedu (także certyfikowany) — nie.
+    changed = _changed(GW_ENDORSED)
+    assert changed.origin == ORIGIN_FEED_ENDORSED
+    env = _env(monkeypatch, changed, _verified_record(GW_ENDORSED.fingerprint), start=4)
+    await env.runner.async_start()
+    assert env.runner.plan_allowed() is False and env.runner.ladder.state.state != VERIFIED
+    assert env.ex.verification_record.get("profile_hash") == changed.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_old_record_without_a_hash_reset_for_an_endorsed_profile(monkeypatch):
+    env = _env(monkeypatch, GW_ENDORSED, _verified_record(start=4), start=4)
+    await env.runner.async_start()
+    assert env.runner.plan_allowed() is False and env.runner.ladder.state.state != VERIFIED
+
+
+# --- certyfikat a odcisk: profil z rejestru feedu przez `load_builtin` ------------------------------
+
+def _endorsed_gw_raw(monkeypatch) -> dict:
+    """Treść `GW_V` pod nowym id, certyfikowana kluczem testowym (klucz wydania podmieniony)."""
+    import base64
+    import json
+    from pathlib import Path
+    from types import MappingProxyType
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from custom_components.volcast.core import endorsement as en
+    vec = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "profile_feed"
+                      / "endorsement-vectors.json").read_text("utf-8"))
+    pair = vec["test_keys"][0]
+    monkeypatch.setattr(en, "PROFILE_ENDORSEMENT_PUBLIC_KEYS",
+                        MappingProxyType({pair["key_id"]: pair["public_hex"]}))
+    raw = _thaw(GW_V.raw)
+    raw["id"] = "acme-gw"
+    digest = en.endorsement_digest(raw)
+    priv = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(pair["seed_hex"]))
+    sig = base64.b64encode(priv.sign(en.endorsement_message(raw["id"], digest, pair["key_id"]))).decode()
+    raw["endorsement"] = {"key_id": pair["key_id"], "digest": digest, "signature": sig}
+    return raw
+
+
+def _load_from_registry(raw):
+    from custom_components.volcast.core import profile_feed as pf
+    pf.set_feed_profiles({raw["id"]: raw})
+    try:
+        return load_builtin(raw["id"])
+    finally:
+        pf.set_feed_profiles({})
+
+
+@pytest.mark.asyncio
+async def test_behaviour_change_after_signing_drops_write_rights_and_resets_the_ladder(monkeypatch):
+    raw = _endorsed_gw_raw(monkeypatch)
+    signed = _load_from_registry(raw)
+    assert signed.origin == ORIGIN_FEED_ENDORSED and direct_verified(signed)
+    env = _env(monkeypatch, signed, _verified_record(signed.fingerprint), start=4)
+    await env.runner.async_start()
+    assert env.runner.plan_allowed() is True
+    tampered = _thaw(raw)
+    tampered["write_policy"]["min_interval_s"] = float(tampered["write_policy"]["min_interval_s"]) + 1
+    with pytest.raises(ProfileError):                      # rejestr bez degradacji: `verified` bez certyfikatu
+        _load_from_registry(tampered)
+    from custom_components.volcast.core import profile_feed as pf
+    after = _load_from_registry(pf._as_draft(tampered))    # tak samo jak po przejściu przez feed
+    assert after.origin == ORIGIN_FEED and not writes_allowed(after)
+    assert after.fingerprint != signed.fingerprint
+    env2 = _env(monkeypatch, after, env.ex.verification_record, start=start_rung_for(after, None, direct=True))
+    await env2.runner.async_start()
+    assert env2.runner.plan_allowed() is False and env2.runner.ladder.state.state != VERIFIED
+    assert env2.ex.verification_record.get("profile_hash") == after.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_cosmetic_change_after_signing_keeps_the_passed_ladder(monkeypatch):
+    raw = _endorsed_gw_raw(monkeypatch)
+    signed = _load_from_registry(raw)
+    env = _env(monkeypatch, signed, _verified_record(signed.fingerprint), start=4)
+    await env.runner.async_start()
+    cosmetic = _thaw(raw)
+    cosmetic["label"], cosmetic["status_note"] = "Other label", "other note"
+    cosmetic["sources"] = [{"what": "other", "ref": "https://example.invalid/doc"}]
+    cosmetic["modbus"]["status_note"] = "other modbus note"
+    again = _load_from_registry(cosmetic)
+    assert again.origin == ORIGIN_FEED_ENDORSED and again.fingerprint == signed.fingerprint
+    env2 = _env(monkeypatch, again, env.ex.verification_record, start=4)
+    await env2.runner.async_start()
+    assert env2.runner.plan_allowed() is True and env2.runner.ladder.state.state == VERIFIED
 
 
 @pytest.mark.asyncio

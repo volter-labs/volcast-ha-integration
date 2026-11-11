@@ -5,6 +5,9 @@ from __future__ import annotations
 # Wersja silnika profili (`min_engine` profilu z feedu powyżej tej wartości = profil pominięty).
 # Definicja w rdzeniu (`core/profile_schema.py`), bo rdzeń importuje się bez reszty integracji.
 from .core.profile_schema import PROFILE_ENGINE  # noqa: F401
+# Klucze certyfikatów zapisu profili z feedu ({key_id: Ed25519 raw hex}; osobne od kluczy feedu, część
+# prywatna offline). Definicja i opis rotacji w `core/endorsement.py` — z tego samego powodu.
+from .core.endorsement import PROFILE_ENDORSEMENT_PUBLIC_KEYS  # noqa: F401
 
 DOMAIN = "volcast"
 

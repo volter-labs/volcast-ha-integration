@@ -52,7 +52,7 @@ from ..core.control.ladder import (RUNG_CONTROL_WRITE, RUNG_IDENTIFY, RUNG_READ,
                                    RUNNING, STOPPED, VERIFIED, WAITING, Ladder, LadderParams, device_key)
 from ..core.control.select import control_verified
 from ..core.engines.mode_setpoint import SLOT_POWER_KINDS
-from ..core.profile import direct_verified, writes_allowed
+from ..core.profile import direct_verified, is_packaged, writes_allowed
 from ..core.slot import Action, Fallback, Schedule, Slot
 
 _LOGGER = logging.getLogger(__name__)
@@ -161,7 +161,8 @@ class VerificationRunner:
 
     def plan_allowed(self) -> bool:
         """Plan steruje tylko zweryfikowanym urządzeniem — tym, które jest pod adresem teraz — z profilem
-        z pakietu, z którym drabina przeszła (profil z feedu: nigdy)."""
+        z prawem zapisu (pakiet albo feed z certyfikatem), z którym drabina przeszła (feed bez
+        certyfikatu: nigdy)."""
         lad = self.ladder
         return (lad is not None and lad.verified and lad.device_key == self._key()
                 and writes_allowed(self._ex.profile) and lad.profile_hash == self._profile_hash())
@@ -172,13 +173,13 @@ class VerificationRunner:
         * rekord sprzed powiązania (bez odcisku): profil z pakietu — przyjęty z bieżącym odciskiem (nikt
           nie traci sterowania po aktualizacji); profil spoza pakietu — wynik nieważny, od początku;
         * inny odcisk: profil z pakietu zweryfikowany dla tej ścieżki przyjmuje nowy bez zmiany stanu (jak
-          dotąd), każdy inny profil zaczyna drabinę od szczebla startowego."""
+          dotąd), każdy inny profil (także z feedu z certyfikatem) zaczyna drabinę od szczebla startowego."""
         current = self._profile_hash()
         if current is None or lad.profile_hash == current:
             return False
         profile = self._ex.profile
         # Zweryfikowany dla tej ścieżki = drabina startuje od zapisu kontrolnego (`start_rung_for`).
-        keep = writes_allowed(profile) and (lad.profile_hash is None or self._start == RUNG_CONTROL_WRITE)
+        keep = is_packaged(profile) and (lad.profile_hash is None or self._start == RUNG_CONTROL_WRITE)
         if keep:
             lad.profile_hash = current
         else:

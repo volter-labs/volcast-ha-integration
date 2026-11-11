@@ -73,7 +73,10 @@ MAX_READ_REGISTERS = 125
 _TOP_REQ = ("schema_version", "id", "label", "status", "control_model", "sources", "unit_id",
             "transports", "identify", "read", "write", "intents", "baseline", "write_policy",
             "limits", "ha", "capabilities", "modbus")
-_TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification", "work_mode", "min_engine")
+# `endorsement` (certyfikat zapisu) bez reguł kształtu tutaj: sprawdza go `endorsement.py`, a zły
+# certyfikat degraduje profil z feedu do `draft` (nigdy nie pomija wpisu jako błędu schematu).
+_TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification", "work_mode", "min_engine",
+            "endorsement")
 # Wersja silnika profili tej wersji integracji. Profil z `min_engine` wyższym niż ta wartość
 # wymaga konstrukcji, których ten silnik nie zna — feed go pomija (`profile_feed`).
 # Tu, nie w `const.py`: rdzeń importuje się bez reszty integracji (`const` ją reeksportuje).
@@ -707,7 +710,8 @@ def profile_warnings(raw: object) -> list[str]:
 
 def valid_profile_id(value: object) -> bool:
     """Id profilu w kebab-case (ta sama reguła co `$.id` w `validate_profile`)."""
-    return isinstance(value, str) and bool(_ID_RE.match(value))
+    # `fullmatch`: `$` w `match` przepuściłby końcowe "\n" (id trafia do logu i do komunikatu certyfikatu).
+    return isinstance(value, str) and _ID_RE.fullmatch(value) is not None
 
 
 def regex_issues(raw: object, *, parse_tree: bool = True) -> list[tuple[str, str]]:

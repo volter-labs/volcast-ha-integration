@@ -1,0 +1,1616 @@
+{
+  "description": "Shared write-endorsement vectors for feed profiles (copy of profiles/fixtures/endorsement-vectors.json in the cloud repo; every field except this description must match it, see tests/core/test_endorsement.py). digest = SHA-256 (lowercase hex) of the canonical bytes of the profile without excluded_fields; signature = Ed25519 (base64) of the canonical bytes of {domain, profile_id, scope, digest, key_id}. Check order and codes: missing -> malformed -> unknown_key -> digest_mismatch -> bad_signature. Keys in test_keys are TEST ONLY; the verifier knows only keys.",
+  "domain": "volcast-profile-endorsement/v1",
+  "scope": "write",
+  "excluded_fields": [
+    "label",
+    "status_note",
+    "sources",
+    "modbus.status_note",
+    "endorsement"
+  ],
+  "keys": {
+    "test-endorse-1": "0131f78bd183204922e80b269065c82537c5dfbed460b7130d03bc7b33497304"
+  },
+  "test_keys": [
+    {
+      "key_id": "test-endorse-1",
+      "seed_hex": "235aa506a6e20e14ed7abbb7640b98d351566b7a922f72529c6aee71c9365918",
+      "public_hex": "0131f78bd183204922e80b269065c82537c5dfbed460b7130d03bc7b33497304"
+    },
+    {
+      "key_id": "test-foreign-1",
+      "seed_hex": "fee3cb5d9568460fda8fd7eec66e9ac8b1f7bdad81d9cb6a1eb8dd8a14c1b665",
+      "public_hex": "64a2558a1c87dd7b1e028d286d2890b7ca5ad173793dea9452c634f67367161e"
+    }
+  ],
+  "profile": {
+    "schema_version": 1,
+    "id": "test-endorsed-hybrid",
+    "label": "Falownik testowy — certyfikat",
+    "status": "verified",
+    "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+    "control_model": "mode_register",
+    "sources": [
+      {
+        "title": "Dokumentacja testowa",
+        "url": "https://example.invalid/doc"
+      }
+    ],
+    "unit_id": 1,
+    "read": {
+      "soc": {
+        "address": 30014,
+        "type": "u16",
+        "scale": 0.1
+      },
+      "battery_power_w": {
+        "address": 30037,
+        "type": "s32",
+        "word_order": "big"
+      }
+    },
+    "write": {
+      "work_mode": {
+        "address": 40031,
+        "type": "u16"
+      },
+      "charge_power_w": {
+        "address": 40032,
+        "type": "u32",
+        "scale": 0.001,
+        "word_order": "big"
+      }
+    },
+    "modes": {
+      "self_consume": {
+        "value": 0,
+        "direction": "none"
+      },
+      "charge_grid": {
+        "value": 3,
+        "direction": "charge"
+      }
+    },
+    "neutral_mode": "self_consume",
+    "write_policy": {
+      "min_interval_s": 60,
+      "max_writes_per_hour": 30
+    },
+    "limits": {
+      "max_charge_w": 5000,
+      "max_discharge_w": 5000
+    },
+    "ha": {
+      "integrations": [
+        {
+          "domain": "test_hybrid",
+          "status": "verified",
+          "name": "Łącze testowe ⚡"
+        }
+      ]
+    },
+    "modbus": {
+      "status": "verified",
+      "status_note": "Sprawdzone na stanowisku testowym.",
+      "write_function": 16
+    }
+  },
+  "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+  "message": "{\"digest\":\"b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97\",\"domain\":\"volcast-profile-endorsement/v1\",\"key_id\":\"test-endorse-1\",\"profile_id\":\"test-endorsed-hybrid\",\"scope\":\"write\"}",
+  "endorsement": {
+    "key_id": "test-endorse-1",
+    "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+    "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+  },
+  "cases": [
+    {
+      "name": "valid",
+      "note": "certyfikat znanym kluczem, treść niezmieniona",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": true,
+        "key_id": "test-endorse-1"
+      }
+    },
+    {
+      "name": "cosmetic_changed",
+      "note": "zmiana label, status_note, sources, modbus.status_note — nadal ważny",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Inna nazwa wyświetlana",
+        "status": "verified",
+        "status_note": "Inna notatka",
+        "control_model": "mode_register",
+        "sources": [],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Inna notatka Modbus",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": true,
+        "key_id": "test-endorse-1"
+      }
+    },
+    {
+      "name": "cosmetic_removed",
+      "note": "usunięte pola kosmetyczne — nadal ważny",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "status": "verified",
+        "control_model": "mode_register",
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": true,
+        "key_id": "test-endorse-1"
+      }
+    },
+    {
+      "name": "behaviour_changed",
+      "note": "zmiana pola zachowania (limits.max_charge_w) przy starym digest",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 10000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "digest_mismatch"
+      }
+    },
+    {
+      "name": "status_changed",
+      "note": "status ścieżki (modbus.status) wchodzi do digest",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "draft",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "digest_mismatch"
+      }
+    },
+    {
+      "name": "behaviour_changed_redigested",
+      "note": "zmiana zachowania z przeliczonym digest, stary podpis",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 10000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "dea1f1da666651114bec0a1a9faf2af8cc51a05dfcdc293c90196a95df66c283",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad_signature"
+      }
+    },
+    {
+      "name": "other_profile_id",
+      "note": "podpis komunikatu z innym profile_id",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "5oxqQXwhHEjPWmVeBAAZnhpTnLVMd/pyYbZA1WA1YoLxuCNroJLvi0kEeYLtVXL5W+MwWe1umr4frsGnIxNfAw=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad_signature"
+      }
+    },
+    {
+      "name": "other_scope",
+      "note": "podpis komunikatu z zakresem innym niż write",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "Ki41sPm8jNKOew8+2jo/OifTqdZbz7RB6XrcGfSV3Esp85ZwZuveJhqJnF0u8qMl0pAqnB/kTk8cN1jVetYbBQ=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad_signature"
+      }
+    },
+    {
+      "name": "other_domain",
+      "note": "podpis komunikatu z inną domeną",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "fkWRltcTabqIgxvxcGWQqjScEl452w6Dqen2X/E1hXLUxcOZXh94p4fv9WIFDZ5BfgrKhvFLGx4+nsgM94IDBA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad_signature"
+      }
+    },
+    {
+      "name": "foreign_key_claims_known_id",
+      "note": "podpis obcym kluczem, key_id znanego klucza",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "dOi2erRzfBnsVNTGGEKIjqKXdE7JHCqGnkwdnu+kbb55WNsVMRfiUWiLLZKnBer51nNCvCKuWO0/GNuIV52VDQ=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad_signature"
+      }
+    },
+    {
+      "name": "unknown_key_id",
+      "note": "podpis obcym kluczem pod jego własnym key_id (nieznanym weryfikującemu)",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-foreign-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "NwT/8YEzIQeVOtnu+mYgOYjxVogxcsdnnQ1wjWMSw62d3540EISaCyilI7YObV68F1omFn22DlwpgrWm4FETBA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "unknown_key"
+      }
+    },
+    {
+      "name": "corrupted_signature",
+      "note": "jeden bit podpisu zmieniony",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "rL+0hC56LBaNF3lDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad_signature"
+      }
+    },
+    {
+      "name": "missing",
+      "note": "brak pola endorsement",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "missing"
+      }
+    },
+    {
+      "name": "malformed_not_object",
+      "note": "endorsement nie jest obiektem",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": "abc"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed_digest",
+      "note": "digest wielkimi literami (wymagany hex małymi, 64 znaki)",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "B0AC35DE1840701491FA09C52DB28E1BEAB5C22B764C02B1D2D92C12CE3DBD97",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed_signature",
+      "note": "podpis nie jest base64 64 bajtów",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed_extra_field",
+      "note": "nieznane pole w endorsement",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "test-endorse-1",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA==",
+          "scope": "write"
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed_empty_key_id",
+      "note": "pusty key_id",
+      "profile": {
+        "schema_version": 1,
+        "id": "test-endorsed-hybrid",
+        "label": "Falownik testowy — certyfikat",
+        "status": "verified",
+        "status_note": "Wektory testowe certyfikatu zapisu; nie jest to profil urządzenia.",
+        "control_model": "mode_register",
+        "sources": [
+          {
+            "title": "Dokumentacja testowa",
+            "url": "https://example.invalid/doc"
+          }
+        ],
+        "unit_id": 1,
+        "read": {
+          "soc": {
+            "address": 30014,
+            "type": "u16",
+            "scale": 0.1
+          },
+          "battery_power_w": {
+            "address": 30037,
+            "type": "s32",
+            "word_order": "big"
+          }
+        },
+        "write": {
+          "work_mode": {
+            "address": 40031,
+            "type": "u16"
+          },
+          "charge_power_w": {
+            "address": 40032,
+            "type": "u32",
+            "scale": 0.001,
+            "word_order": "big"
+          }
+        },
+        "modes": {
+          "self_consume": {
+            "value": 0,
+            "direction": "none"
+          },
+          "charge_grid": {
+            "value": 3,
+            "direction": "charge"
+          }
+        },
+        "neutral_mode": "self_consume",
+        "write_policy": {
+          "min_interval_s": 60,
+          "max_writes_per_hour": 30
+        },
+        "limits": {
+          "max_charge_w": 5000,
+          "max_discharge_w": 5000
+        },
+        "ha": {
+          "integrations": [
+            {
+              "domain": "test_hybrid",
+              "status": "verified",
+              "name": "Łącze testowe ⚡"
+            }
+          ]
+        },
+        "modbus": {
+          "status": "verified",
+          "status_note": "Sprawdzone na stanowisku testowym.",
+          "write_function": 16
+        },
+        "endorsement": {
+          "key_id": "",
+          "digest": "b0ac35de1840701491fa09c52db28e1beab5c22b764c02b1d2d92c12ce3dbd97",
+          "signature": "rL+0hC56LBaNF3hDt4Dwt4LztrQ4xSVIJk9SD/gWjB0pQsJosxIUl2lck0EuAZ+5uJk7guUJ0O0INOhtpkpRCA=="
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    }
+  ]
+}

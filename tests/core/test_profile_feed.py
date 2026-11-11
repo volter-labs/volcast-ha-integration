@@ -12,6 +12,7 @@ import dataclasses
 import json
 import logging
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -19,6 +20,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from custom_components.volcast.control import direct_search as ds
 from custom_components.volcast.control.verification import start_rung_for
+from custom_components.volcast.core import endorsement as en
 from custom_components.volcast.core import profile_feed as pf
 from custom_components.volcast.core.control.ladder import RUNG_CONTROL_WRITE, RUNG_IDENTIFY
 from custom_components.volcast.core.control.select import control_verified
@@ -314,7 +316,7 @@ def test_non_object_entry_still_rejects_the_whole_feed(entry):
     assert _reason(_body(feed=feed)) == "profile_invalid"
 
 
-@pytest.mark.parametrize("pid", ["Acme-Hybrid", "acme_hybrid", "../etc", "", "acme--x"])
+@pytest.mark.parametrize("pid", ["Acme-Hybrid", "acme_hybrid", "../etc", "", "acme--x", "acme\n", "acme-x\n"])
 def test_profile_id_must_be_kebab_case(pid):
     assert _reason(_body(feed=_feed([_acme(pid)]))) == "profile_invalid"
 
@@ -330,13 +332,24 @@ def test_overbroad_or_broken_identify_regex_rejects_the_feed(regex):
     assert _reason(_body(feed=_feed([raw]))) == "profile_invalid"
 
 
+@pytest.mark.parametrize("identify", [
+    ["^ACME"], {"model_regex": "^ACME"}, {"model_regex": [5]},
+    {"model_regex": ["^ACME"], "registers": {"device_type": {"addr": 1, "expect": 5}}},
+], ids=["not-object", "regex-not-list", "regex-not-string", "expect-not-list"])
+def test_malformed_identify_shape_rejects_the_whole_feed(identify):
+    # Zachowawczo: kształt identyfikacji sprawdzany przed schematem (jak reguła bram chmury).
+    raw = _acme("odd-hybrid")
+    raw["identify"] = identify
+    assert _reason(_body(feed=_feed([_acme(), raw]))) == "profile_invalid"
+
+
 def test_profiles_must_be_a_list_of_objects():
     feed = _feed()
     feed["profiles"] = {"acme-hybrid": _acme()}
     assert _reason(_body(feed=feed)) == "profile_invalid"
 
 
-def test_feed_profile_statuses_forced_to_draft():
+def test_feed_profile_statuses_forced_to_draft_without_a_certificate():
     raw = _acme(status="verified")
     raw["modbus"]["status"] = "verified"
     for integ in raw["ha"]["integrations"]:
@@ -391,7 +404,7 @@ def test_ts_fixture_merge_rules():
     assert load_builtin("acme-hybrid").status == "draft"
 
 
-def test_feed_profile_claiming_verified_never_enables_control():
+def test_feed_profile_claiming_verified_without_a_certificate_never_enables_control():
     raw = _acme(status="verified")
     raw["modbus"]["status"] = "verified"
     for integ in raw["ha"]["integrations"]:
@@ -435,6 +448,238 @@ def test_registry_holds_copies():
     v = _activate(_acme())
     v.profiles["acme-hybrid"]["label"] = "changed after activation"
     assert load_builtin("acme-hybrid").raw["label"] == "Acme Hybrid"
+
+
+# --- certyfikat zapisu: jedyna droga do prawa zapisu profilu z feedu ---------------------------------
+
+_VECTORS = json.loads((FIXTURES / "endorsement-vectors.json").read_text("utf-8"))
+_EKEY, _FKEY = _VECTORS["test_keys"][0], _VECTORS["test_keys"][1]
+_EPRIV = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(_EKEY["seed_hex"]))
+_FPRIV = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(_FKEY["seed_hex"]))
+
+
+@pytest.fixture
+def endorse_keys(monkeypatch):
+    """Klucz certyfikatów wydania podmieniony na testowy (prywatny testowy jest w wektorach)."""
+    monkeypatch.setattr(en, "PROFILE_ENDORSEMENT_PUBLIC_KEYS",
+                        MappingProxyType({_EKEY["key_id"]: _EKEY["public_hex"]}))
+
+
+def _endorse(raw: dict, *, key=_EPRIV, key_id=_EKEY["key_id"]) -> dict:
+    out = copy.deepcopy(raw)
+    out.pop("endorsement", None)
+    digest = en.endorsement_digest(out)
+    sig = base64.b64encode(key.sign(en.endorsement_message(out["id"], digest, key_id))).decode()
+    out["endorsement"] = {"key_id": key_id, "digest": digest, "signature": sig}
+    return out
+
+
+def _all_verified(raw: dict) -> dict:
+    raw = copy.deepcopy(raw)
+    raw["status"] = raw["modbus"]["status"] = "verified"
+    for integ in raw["ha"]["integrations"]:
+        integ["status"] = "verified"
+    return raw
+
+
+def _statuses(raw) -> tuple:
+    return (raw["status"], raw["modbus"]["status"], tuple(i["status"] for i in raw["ha"]["integrations"]))
+
+
+def test_endorsed_verified_feed_profile_keeps_its_statuses(endorse_keys):
+    signed = _endorse(_all_verified(_acme()))
+    v = pf.verify_feed_body(_body(feed=_feed([signed])), keys=KEYS, held=None)
+    got = v.profiles["acme-hybrid"]
+    assert _statuses(got) == ("verified", "verified", ("verified",) * len(got["ha"]["integrations"]))
+    assert got == signed and v.degraded == () and v.skipped == ()
+
+
+def test_endorsed_feed_profile_loads_with_write_rights(endorse_keys):
+    raw = _endorse(_all_verified(_acme()))
+    _activate(raw)
+    p = load_builtin("acme-hybrid")
+    assert p.origin == prof_mod.ORIGIN_FEED_ENDORSED == "feed_endorsed"
+    assert prof_mod.writes_allowed(p) and direct_verified(p) and not prof_mod.is_packaged(p)
+    assert all(control_verified(p, i["domain"]) for i in raw["ha"]["integrations"])
+    assert start_rung_for(p, None, direct=True) == RUNG_CONTROL_WRITE
+    assert "acme-hybrid" in {q.id for q in ds.load_profiles() if prof_mod.writes_allowed(q)}
+
+
+def test_cosmetic_change_after_signing_keeps_the_write_right(endorse_keys):
+    signed = _endorse(_all_verified(_acme()))
+    _activate(signed)
+    base = load_builtin("acme-hybrid")
+    raw = copy.deepcopy(signed)
+    raw["label"], raw["status_note"] = "Acme Hybrid (renamed)", "new note"
+    raw["sources"] = [{"what": "other", "ref": "https://example.invalid/other"}]
+    raw["modbus"]["status_note"] = "new modbus note"
+    pf.set_feed_profiles({})
+    _activate(raw)
+    p = load_builtin("acme-hybrid")
+    assert p.origin == prof_mod.ORIGIN_FEED_ENDORSED and direct_verified(p)
+    assert p.fingerprint == base.fingerprint and p.raw["label"] == "Acme Hybrid (renamed)"
+
+
+@pytest.mark.parametrize("edit", [
+    lambda r: r["write_policy"].update(min_interval_s=float(r["write_policy"]["min_interval_s"]) + 1),
+    lambda r: r.update(unit_id=(r["unit_id"] % 200) + 1),
+    lambda r: r["ha"]["integrations"][0].update(model_regex=["(?i)\\bacme2"]),
+    lambda r: r.update(min_engine=1),
+], ids=["write-policy", "unit-id", "ha-regex", "min-engine"])
+def test_behaviour_change_after_signing_degrades_to_a_read_only_draft(endorse_keys, edit):
+    signed = _endorse(_all_verified(_acme()))
+    endorsed_fp = profile_from_dict(signed).fingerprint
+    raw = copy.deepcopy(signed)
+    edit(raw)
+    v = _activate(raw)
+    assert _statuses(v.profiles["acme-hybrid"])[0:2] == ("draft", "draft")
+    assert v.degraded == (("acme-hybrid", "digest_mismatch"),) and v.skipped == ()
+    p = load_builtin("acme-hybrid")
+    assert p.origin == prof_mod.ORIGIN_FEED and not prof_mod.writes_allowed(p) and not direct_verified(p)
+    assert p.fingerprint != endorsed_fp                     # drabina związana z innym odciskiem → od nowa
+    assert start_rung_for(p, None, direct=True) == RUNG_IDENTIFY
+
+
+def test_draft_profile_with_a_valid_certificate_stays_a_draft(endorse_keys):
+    raw = _all_verified(_acme())
+    raw["status"] = "draft"
+    v = _activate(_endorse(raw))
+    assert _statuses(v.profiles["acme-hybrid"])[0:2] == ("draft", "draft")
+    assert v.degraded == (("acme-hybrid", "not_verified"),)
+    p = load_builtin("acme-hybrid")
+    assert p.origin == prof_mod.ORIGIN_FEED and not prof_mod.writes_allowed(p)
+
+
+@pytest.mark.parametrize("key, key_id, reason", [
+    (_FPRIV, _FKEY["key_id"], "unknown_key"),
+    (_FPRIV, _EKEY["key_id"], "bad_signature"),
+], ids=["unknown-key", "foreign-key-known-id"])
+def test_certificate_from_a_foreign_key_degrades_to_a_draft(endorse_keys, key, key_id, reason):
+    v = _activate(_endorse(_all_verified(_acme()), key=key, key_id=key_id))
+    assert v.profiles["acme-hybrid"]["status"] == "draft" and v.degraded == (("acme-hybrid", reason),)
+    assert load_builtin("acme-hybrid").origin == prof_mod.ORIGIN_FEED
+
+
+def test_test_signed_certificate_is_unknown_to_the_release_keys():
+    v = _activate(_endorse(_all_verified(_acme())))
+    assert v.degraded == (("acme-hybrid", "unknown_key"),)
+    assert not prof_mod.writes_allowed(load_builtin("acme-hybrid"))
+
+
+@pytest.mark.parametrize("cert", ["x", 5, None, [], {}, {"key_id": "k", "digest": "0" * 64, "signature": "x"}],
+                         ids=["string", "int", "null", "list", "empty", "bad-signature-shape"])
+def test_invalid_certificate_never_rejects_or_skips_the_profile(endorse_keys, cert):
+    raw = _all_verified(_acme())
+    raw["endorsement"] = cert
+    v = _activate(raw, _acme("acme-second"))
+    assert set(v.profiles) == {"acme-hybrid", "acme-second"} and v.skipped == ()
+    assert v.profiles["acme-hybrid"]["status"] == "draft"
+    assert v.degraded == (("acme-hybrid", "malformed"),)
+    assert not prof_mod.writes_allowed(load_builtin("acme-hybrid"))
+
+
+def test_profile_without_a_certificate_is_not_reported_as_degraded(endorse_keys):
+    v = _activate(_all_verified(_acme()))
+    assert v.degraded == () and v.profiles["acme-hybrid"]["status"] == "draft"
+
+
+def test_degraded_certificate_logged_with_id_and_code_only(endorse_keys, caplog):
+    raw = _endorse(_all_verified(_acme(label="SECRET-LABEL")))
+    raw["limits"]["battery_temp_c"]["max"] = raw["limits"]["battery_temp_c"]["max"] - 1
+    with caplog.at_level(logging.WARNING):
+        assert _run(_updater(MemStore()).async_check(Fetch(_ok(_body(feed=_feed([raw])))))) == "updated"
+    assert "acme-hybrid: digest_mismatch" in caplog.text and "SECRET-LABEL" not in caplog.text
+
+
+def test_registry_never_yields_a_verified_profile_without_a_valid_certificate(endorse_keys, monkeypatch):
+    pf.set_feed_profiles({"acme-hybrid": _all_verified(_acme())})
+    with pytest.raises(ProfileError):
+        load_builtin("acme-hybrid")
+    pf.set_feed_profiles({"acme-hybrid": _endorse(_all_verified(_acme()))})
+    assert load_builtin("acme-hybrid").origin == prof_mod.ORIGIN_FEED_ENDORSED
+    # Certyfikat sprawdzany przy KAŻDYM wczytaniu: klucz wycofany w wydaniu = koniec prawa zapisu.
+    monkeypatch.setattr(en, "PROFILE_ENDORSEMENT_PUBLIC_KEYS", MappingProxyType({}))
+    with pytest.raises(ProfileError):
+        load_builtin("acme-hybrid")
+
+
+def test_registry_draft_with_a_certificate_loads_read_only(endorse_keys):
+    raw = _all_verified(_acme())
+    raw["status"] = "draft"
+    pf.set_feed_profiles({"acme-hybrid": _endorse(raw)})
+    with pytest.raises(ProfileError):                     # modbus `verified` w drafcie bez prawa zapisu
+        load_builtin("acme-hybrid")
+    pf.set_feed_profiles({"acme-hybrid": pf._as_draft(_endorse(raw))})
+    assert load_builtin("acme-hybrid").origin == prof_mod.ORIGIN_FEED
+
+
+@pytest.mark.parametrize("pid", ["sofar-hyd", "goodwe-et"])
+def test_endorsed_entry_with_a_packaged_id_is_still_ignored(endorse_keys, pid):
+    raw = _all_verified(_raw(pid))
+    raw["label"] = "From the feed"
+    v = _activate(_endorse(raw), _acme())
+    assert v.ignored == (pid,) and list(v.profiles) == ["acme-hybrid"]
+    p = load_builtin(pid)
+    assert p.origin == prof_mod.ORIGIN_PACKAGE and p.raw["label"] == _raw(pid)["label"]
+
+
+def test_endorsed_entry_overlapping_a_packaged_profile_is_still_ignored(endorse_keys):
+    v = _activate(_endorse(_all_verified(_copy_as("goodwe-et", "goodwe-et-g2"))), _acme())
+    assert v.overlapping == ("goodwe-et-g2",) and list(v.profiles) == ["acme-hybrid"]
+
+
+def _endorsed_profile(raw: dict):
+    """Profil certyfikowany (pochodzenie nadawane wyłącznie przez `load_builtin` z rejestru)."""
+    pf.set_feed_profiles({raw["id"]: _endorse(_all_verified(raw))})
+    p = load_builtin(raw["id"])
+    assert p.origin == prof_mod.ORIGIN_FEED_ENDORSED
+    return p
+
+
+@pytest.mark.parametrize("model_rx, ha_rx", [
+    ("^GW10K", "(?i)goodwe gw10k"), ("^GW", "(?i)goodwe"),
+    ("^GW[0-9.]+K[A-Z]*-(ET|EH|BT|BH)", "(?i)goodwe gw"),
+], ids=["series", "superset", "same-regex"])
+def test_packaged_profile_beats_an_endorsed_feed_profile(endorse_keys, model_rx, ha_rx):
+    raw = _copy_as("goodwe-et", "goodwe-gw10k")
+    raw["identify"]["model_regex"] = [model_rx]
+    for integ in raw["ha"]["integrations"]:
+        integ["model_regex"] = [ha_rx]
+    feed = _endorsed_profile(raw)
+    hint = InverterHint("goodwe", "GoodWe", "GW10K-ET")
+    choice = select_profile([hint], [load_builtin("goodwe-et"), feed])
+    assert choice.profile.id == "goodwe-et" and choice.integration_domain == "goodwe"
+
+
+def test_packaged_draft_beats_an_endorsed_verified_feed_profile(endorse_keys):
+    package = load_builtin("sofar-hyd")
+    assert package.status == "draft" and package.origin == prof_mod.ORIGIN_PACKAGE
+    # Ta sama marka w id, te same wzorce: tekst urządzenia nie rozstrzyga, decyduje pierwszeństwo pakietu.
+    feed = _endorsed_profile(_copy_as("sofar-hyd", "sofar-hyd-g2"))
+    hint = InverterHint("solarman", "SOFAR", "HYD 6000-EP")
+    for order in ([package, feed], [feed, package]):
+        assert select_profile([hint], order).profile.id == "sofar-hyd"
+
+
+def test_endorsed_feed_profile_selected_when_no_packaged_profile_matches(endorse_keys):
+    feed = _endorsed_profile(_acme())
+    domain = feed.raw["ha"]["integrations"][0]["domain"]
+    choice = select_profile([InverterHint(domain, "Acme", "ACME-H5")], [load_builtin("goodwe-et"), feed])
+    assert choice.profile.id == "acme-hybrid" and choice.integration_domain == domain
+
+
+def test_probe_order_keeps_endorsed_feed_profiles_after_the_package(endorse_keys):
+    feed = _endorsed_profile(_acme("aaa-first"))
+    profiles = [feed, load_builtin("deye-sg"), load_builtin("goodwe-et")]
+    assert [p.id for p in identify_mod.probe_order(profiles)] == ["goodwe-et", "deye-sg", "aaa-first"]
+
+
+def test_only_the_registry_certificate_grants_the_endorsed_origin():
+    # Domyślne pochodzenie `profile_from_dict` = feed; dla certyfikowanego treść nie wystarcza.
+    p = profile_from_dict(_endorse(_all_verified(_acme())))
+    assert p.origin == prof_mod.ORIGIN_FEED and not prof_mod.writes_allowed(p)
+    assert prof_mod.writes_allowed(dataclasses.replace(p, origin=prof_mod.ORIGIN_FEED_ENDORSED))
+    assert not prof_mod.writes_allowed(dataclasses.replace(p, origin="FEED_ENDORSED"))
 
 
 # --- aktualizacja: Store, raz na dobę, ETag, zachowanie poprzedniego -----------------------------

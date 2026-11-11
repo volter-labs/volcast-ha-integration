@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from ..profile import Profile, writes_allowed
+from ..profile import Profile, is_packaged, writes_allowed
 from ..regex_safety import fits, safe_search
 
 
@@ -72,7 +72,9 @@ def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
         sub = [p for p in cands if keep(p)]
         if sub:
             cands = sub
-    for preferred in (lambda p: writes_allowed(p) and p.status == "verified", writes_allowed):
+    # Pierwszeństwo wg pochodzenia z pakietu, nie wg prawa zapisu: profil z feedu z certyfikatem też nie
+    # przesłania profilu pakietu.
+    for preferred in (lambda p: is_packaged(p) and p.status == "verified", is_packaged):
         if len(cands) <= 1:
             break
         sub = [p for p in cands if preferred(p)]
@@ -93,10 +95,10 @@ def _eligible(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
     wykazać dopasowaniem, więc feed odpada zachowawczo (nie przesłoni profilu z pakietu)."""
     text = " ".join(t for t in (hint.manufacturer, hint.model) if t)
     if not (fits(text) and fits(hint.model or "")):
-        return [p for p in ordered if writes_allowed(p)]
-    if any(writes_allowed(p) and (_entity_match(p, hint) or _maker_ok(p, hint) or _ha_text_ok(p, hint))
+        return [p for p in ordered if is_packaged(p)]
+    if any(is_packaged(p) and (_entity_match(p, hint) or _maker_ok(p, hint) or _ha_text_ok(p, hint))
            for p in ordered):
-        return [p for p in ordered if writes_allowed(p)]
+        return [p for p in ordered if is_packaged(p)]
     return list(ordered)
 
 

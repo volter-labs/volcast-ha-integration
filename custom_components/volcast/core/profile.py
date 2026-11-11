@@ -13,7 +13,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from . import profile_feed
+from . import endorsement, profile_feed
 from .profile_schema import validate_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
@@ -24,8 +24,12 @@ _BUILTIN_ID_RE = re.compile(r"[a-z0-9-]+")
 DEFAULT_READBACK_SETTLE_S = 1.5
 # Pochodzenie profilu: pakiet integracji albo podpisany feed. Profil z feedu jest TYLKO DO ODCZYTU
 # (rozpoznanie, odczyty, wykrywanie) — nigdy nie dopuszcza zapisu na falownik (`writes_allowed`).
+# Wyjątek: profil z feedu z ważnym certyfikatem zapisu i `status: verified` (`core/endorsement.py`) —
+# pochodzenie `feed_endorsed`, nadawane WYŁĄCZNIE przez `load_builtin` po ponownym sprawdzeniu certyfikatu.
 ORIGIN_PACKAGE = "package"
 ORIGIN_FEED = "feed"
+ORIGIN_FEED_ENDORSED = "feed_endorsed"
+_WRITE_ORIGINS = frozenset((ORIGIN_PACKAGE, ORIGIN_FEED_ENDORSED))
 
 
 class ProfileError(ValueError):
@@ -220,8 +224,16 @@ def _nvm_budget(b: Mapping[str, Any] | None) -> NvmBudget | None:
 
 
 def writes_allowed(profile) -> bool:
-    """Czy profil w ogóle może prowadzić do zapisu na falownik: tylko profil z pakietu integracji.
-    Profil z feedu (i obiekt bez pochodzenia) — nigdy, niezależnie od statusu, zgody i drabiny."""
+    """Czy profil w ogóle może prowadzić do zapisu na falownik: profil z pakietu integracji albo z feedu
+    z ważnym certyfikatem zapisu (`feed_endorsed`). Profil z feedu bez certyfikatu (i obiekt bez
+    pochodzenia) — nigdy, niezależnie od statusu, zgody i drabiny. Lokalne bramki (zgoda, drabina,
+    budżet zapisów) obowiązują tak samo dla obu pochodzeń."""
+    origin = getattr(profile, "origin", None)
+    return isinstance(origin, str) and origin in _WRITE_ORIGINS
+
+
+def is_packaged(profile) -> bool:
+    """Profil z pakietu integracji — pierwszeństwo wyboru i drabiny; certyfikat go nie daje."""
     return getattr(profile, "origin", None) == ORIGIN_PACKAGE
 
 
@@ -273,7 +285,8 @@ def builtin_ids() -> tuple[str, ...]:
 
 def load_builtin(profile_id: str) -> Profile:
     """Profil z pakietu (zawsze wygrywa) albo — dla id spoza pakietu — z podpisanego feedu: `draft`,
-    pochodzenie `feed`, tylko do odczytu. Feed w etapie 1 jedynie DODAJE marki."""
+    pochodzenie `feed`, tylko do odczytu; z ważnym certyfikatem zapisu i `status: verified` — pochodzenie
+    `feed_endorsed`. Feed w etapie 1 jedynie DODAJE marki."""
     # Id trafia do ścieżki pliku — bez tej kontroli "../x" wyszłoby poza katalog profili.
     if not isinstance(profile_id, str) or not _BUILTIN_ID_RE.fullmatch(profile_id):
         raise ProfileError([f"$.id: niedozwolony identyfikator profilu {profile_id!r}"])
@@ -281,8 +294,11 @@ def load_builtin(profile_id: str) -> Profile:
     from_feed = profile_feed.feed_profile(profile_id)
     if from_feed is None or path.is_file():
         return load_profile(path)
-    profile = profile_from_dict(from_feed, origin=ORIGIN_FEED)
-    # Bezpiecznik: rejestr feedu przyjmuje tylko zdegradowane profile o tym samym id.
-    if profile.id != profile_id or profile.status != "draft" or profile.modbus.status != "draft":
+    # Certyfikat sprawdzany od nowa przy każdym wczytaniu (kluczami TEGO wydania), nie z rejestru.
+    endorsed = endorsement.endorsed_for_write(from_feed)
+    profile = profile_from_dict(from_feed, origin=ORIGIN_FEED_ENDORSED if endorsed else ORIGIN_FEED)
+    # Bezpiecznik: rejestr feedu przyjmuje tylko profile o tym samym id; `verified` wyłącznie certyfikowane.
+    if profile.id != profile_id or (not endorsed and (profile.status != "draft"
+                                                      or profile.modbus.status != "draft")):
         raise ProfileError([f"$.id: profil z feedu {profile_id!r} odrzucony"])
     return profile
