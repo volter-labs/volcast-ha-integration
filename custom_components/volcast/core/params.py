@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 WRITE_PARAMS: tuple[str, ...] = (
     "soc_min", "soc_max", "power_w", "export_limit_w", "export_limit_enabled", "mode",
+    # Konstrukcje opcjonalne profilu: przełącznik zdalnego sterowania i dwie nastawy mocy wg kierunku.
+    "charge_power_w", "discharge_power_w", "enable",
 )
 TOU_FIELDS: tuple[str, ...] = ("start", "power_w", "soc", "grid_charge")
 
@@ -33,6 +35,11 @@ class Params:
     export_limit_w: float | None = None
     export_limit_enabled: bool | None = None
     tou: tuple[TouProgram, ...] | None = None
+    # Profil z `write_policy.power_by_direction`: nastawa mocy ładowania / rozładowania (W, strona
+    # baterii) zamiast `power_w`; tylko jedna z nich zgodna z kierunkiem trybu.
+    charge_power_w: float | None = None
+    discharge_power_w: float | None = None
+    enable: bool | None = None            # przełącznik zdalnego sterowania (`write.enable`)
 
     def flatten(self) -> dict[str, float | str]:
         """Płaska mapa klucz → wartość; na niej pracują throttling i uzgadnianie."""

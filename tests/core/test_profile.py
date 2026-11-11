@@ -105,6 +105,52 @@ def test_modbus_spec_and_nvm_budget_parsed():
         p.modbus.transport_options["goodwe_udp"]["port"] = 1       # tylko do odczytu
 
 
+def test_engine_construct_fields_default_off():
+    for raw in (ms_profile(), tw_profile()):
+        p = profile_from_dict(raw, origin="package")
+        assert (p.power_by_direction, p.release_without_plan_s, p.baseline_enable) == (False, None, None)
+    gw = load_builtin("goodwe-et")
+    assert (gw.power_by_direction, gw.release_without_plan_s, gw.baseline_enable) == (False, None, None)
+
+
+def _engine_raw() -> dict:
+    raw = ms_profile()
+    w = raw["write"]
+    w.pop("power_w")
+    w["charge_power_w"] = {"addr": 40032, "type": "u32", "encode": "watts"}
+    w["discharge_power_w"] = {"addr": 40034, "type": "u32", "encode": "watts"}
+    w["enable"] = {"addr": 40029, "type": "u16", "encode": "on_off", "on": 1, "off": 0}
+    raw["baseline"]["enable"] = False
+    raw["write_policy"].update(power_by_direction=True, release_without_plan_s=900,
+                               order=["soc_min", "charge_power_w", "discharge_power_w", "export_limit_w",
+                                      "export_limit_enabled", "enable", "mode"])
+    raw["modbus"]["probe_keys"] = ["mode"]
+    return raw
+
+
+def test_engine_construct_fields_parsed():
+    raw = _engine_raw()
+    p = profile_from_dict(raw, origin="package")
+    assert p.power_by_direction is True
+    assert p.release_without_plan_s == 900.0 and isinstance(p.release_without_plan_s, float)
+    assert p.baseline_enable is False
+    assert p.write_order[-2:] == ("enable", "mode")
+    raw["baseline"]["enable"] = True
+    assert profile_from_dict(raw, origin="package").baseline_enable is True
+
+
+def test_engine_constructs_change_the_fingerprint():
+    """Nowe pola wpływają na zachowanie — zmiana każdego z nich unieważnia wynik drabiny."""
+    base = profile_from_dict(_engine_raw(), origin="package").fingerprint
+    for mutate in (lambda r: r["write_policy"].update(release_without_plan_s=600),
+                   lambda r: r["baseline"].update(enable=True),
+                   lambda r: r["write"]["enable"].update(on=2),
+                   lambda r: r["write"]["charge_power_w"].update(unit_id=1)):
+        raw = _engine_raw()
+        mutate(raw)
+        assert profile_from_dict(raw, origin="package").fingerprint != base
+
+
 def test_readback_settle_default_and_override():
     from custom_components.volcast.core.profile import DEFAULT_READBACK_SETTLE_S
     assert DEFAULT_READBACK_SETTLE_S == 1.5

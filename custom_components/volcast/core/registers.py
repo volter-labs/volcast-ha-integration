@@ -52,6 +52,10 @@ class RegisterImage:
 
 
 def decode(spec: Mapping[str, Any], image: RegisterImage) -> float | str:
+    if "unit_id" in spec:
+        # Obraz pochodzi z adresu urządzenia połączenia; słowo z innego adresu nie może być
+        # odczytane z tego obrazu (brakujący odczyt, nigdy cudza wartość).
+        raise RegisterError(f"rejestr {spec['addr']}: odczyt z unit_id {spec['unit_id']} nieobsługiwany")
     typ = spec["type"]
     fc = spec.get("fc", FC_HOLDING)
     if typ == "ascii":
@@ -197,6 +201,11 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
             out.append(RegisterWrite(key, addr, value))
             continue
         s = spec[key]
+        unsupported = [f for f in ("scale", "unit_id") if f in s] + (["u32"] if s["type"] != "u16" else [])
+        if unsupported:
+            # Zapis wielosłowowy, skala i adres urządzenia per rejestr nie mają tu kodowania —
+            # odmowa zamiast słowa 16-bit bez skali na adres połączenia.
+            raise RegisterError(f"{key}: nieobsługiwana specyfikacja zapisu {unsupported}")
         raw = getattr(params, key)
         enc = s["encode"]
         if enc == "mode":
@@ -205,6 +214,8 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
             value = profile.mode_value(raw)
         elif enc == "bool":
             value = 1 if raw else 0
+        elif enc == "on_off":
+            value = s["on"] if raw else s["off"]
         elif enc == "percent":
             value = _round_clamp(raw, 100)
         else:

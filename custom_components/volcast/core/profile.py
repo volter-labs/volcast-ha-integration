@@ -101,6 +101,13 @@ class Profile:
     # odczekanie przed ponownym odczytem zwrotnym, gdy pierwszy pokazał wartość sprzed zapisu
     readback_settle_s: float = DEFAULT_READBACK_SETTLE_S
     work_mode: WorkMode | None = None
+    # Konstrukcje opcjonalne (brak w profilu = zachowanie bez zmian):
+    # moc planu do nastawy `charge_power_w` / `discharge_power_w` wg kierunku trybu
+    power_by_direction: bool = False
+    # powrót do stanu wyjściowego, gdy żaden slot planu nie pokrywa „teraz” dłużej niż tyle sekund
+    release_without_plan_s: float | None = None
+    # stan przełącznika zdalnego sterowania po oddaniu (`baseline.enable`); None = z migawki
+    baseline_enable: bool | None = None
     # Domyślnie „feed” (domknięte bezpiecznie): zapis dopuszcza wyłącznie jawne ORIGIN_PACKAGE (`load_profile`).
     origin: str = ORIGIN_FEED
     # SHA-256 treści profilu wpływającej na zachowanie (`_fingerprint`) — wiąże wynik drabiny z treścią.
@@ -167,6 +174,10 @@ def profile_from_dict(raw: dict, *, origin: str = ORIGIN_FEED) -> Profile:
         nvm_budget=_nvm_budget(wp.get("nvm_budget")),
         readback_settle_s=float(wp.get("readback_settle_s", DEFAULT_READBACK_SETTLE_S)),
         work_mode=_work_mode(raw.get("work_mode")),
+        power_by_direction=wp.get("power_by_direction", False),
+        release_without_plan_s=(float(wp["release_without_plan_s"])
+                                if "release_without_plan_s" in wp else None),
+        baseline_enable=raw["baseline"].get("enable"),
         origin=origin,
         fingerprint=_fingerprint(raw),
     )

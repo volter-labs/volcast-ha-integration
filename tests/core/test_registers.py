@@ -52,3 +52,46 @@ def test_undef_ignored_on_f32():
     # dla f32 to nie ma znaczenia, undef dotyczy tylko sum liczników PV (u32).
     img = RegisterImage.from_blocks({105: [0x3F80, 0x0000]})
     assert decode({"addr": 105, "type": "f32", "undef": 0x3F800000}, img) == 1.0
+
+
+def _engine_profile(**write_overrides):
+    from custom_components.volcast.core.profile import profile_from_dict
+    from tests.core.profile_fixtures import ms_profile
+    raw = ms_profile()
+    raw["write"]["enable"] = {"addr": 40029, "type": "u16", "encode": "on_off", "on": 0xAA, "off": 0x55}
+    raw["write_policy"]["order"].insert(-1, "enable")
+    for key, extra in write_overrides.items():
+        raw["write"][key].update(extra)
+    return profile_from_dict(raw, origin="package")
+
+
+def test_encode_on_off_writes_profile_values():
+    from custom_components.volcast.core.params import Params
+    from custom_components.volcast.core.registers import encode_writes
+    prof = _engine_profile()
+    on = encode_writes(Params(power_w=0, enable=True, mode="auto"), prof)
+    assert [(w.key, w.addr, w.value) for w in on] == [("power_w", 47512, 0), ("enable", 40029, 0xAA),
+                                                      ("mode", 47511, 1)]
+    off = encode_writes(Params(enable=False), prof)
+    assert [(w.key, w.value) for w in off] == [("enable", 0x55)]
+
+
+@pytest.mark.parametrize("extra", [{"type": "u32"}, {"scale": 10}, {"unit_id": 1}])
+def test_encode_refuses_write_construct_without_engine_support(extra):
+    """Zapis 32-bitowy, skala i adres urządzenia per rejestr kodują się dopiero w silniku zapisu
+    bezpośredniego; do tego czasu odmowa (nigdy cichy zapis słowa 16-bit na złe urządzenie)."""
+    from custom_components.volcast.core.params import Params
+    from custom_components.volcast.core.registers import encode_writes
+    prof = _engine_profile(power_w=extra)
+    with pytest.raises(RegisterError):
+        encode_writes(Params(power_w=2500), prof)
+    assert encode_writes(Params(mode="auto"), prof)[0].key == "mode"     # inne klucze bez zmian
+
+
+def test_read_with_own_unit_id_is_missing_not_misread():
+    """Odczyt z innego adresu urządzenia nie może zdekodować słowa z obrazu połączenia."""
+    img = RegisterImage.from_blocks({10: [100]})
+    v = read_values({"soc": {"addr": 10, "type": "u16", "unit_id": 1},
+                     "pv_power_w": {"sum": [{"addr": 10, "type": "u16", "unit_id": 1}]},
+                     "active_power_w": {"addr": 10, "type": "u16"}}, img)
+    assert v == {"soc": None, "pv_power_w": None, "active_power_w": 100}

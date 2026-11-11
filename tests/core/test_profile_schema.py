@@ -712,3 +712,202 @@ def test_regex_issues_report_every_unsafe_pattern_with_its_path():
     assert regex_issues(p) == []
     p["future"] = {"label_regex": "^(a+)+$"}
     assert [path for path, _ in regex_issues(p)] == ["$.future.label_regex"]
+
+
+# --- konstrukcje silnika: przełącznik zdalnego sterowania, moc wg kierunku, zapis 32-bitowy,
+# --- adres urządzenia per rejestr, stan wyjściowy i powrót bez planu ---------------------------------
+
+_ORDER_V2 = ["soc_min", "charge_power_w", "discharge_power_w", "export_limit_w", "export_limit_enabled",
+             "enable", "mode"]
+
+
+def _engine_v2() -> dict:
+    """Profil mode_setpoint z WSZYSTKIMI nowymi konstrukcjami naraz (wzór marki z przełącznikiem
+    zdalnego sterowania i dwiema nastawami mocy 32-bitowymi na innym adresie urządzenia)."""
+    p = ms_profile()
+    w = p["write"]
+    w.pop("power_w")
+    w["charge_power_w"] = {"addr": 40032, "type": "u32", "encode": "watts", "scale": 1,
+                           "word_order": "hi_lo", "unit_id": 247}
+    w["discharge_power_w"] = {"addr": 40034, "type": "u32", "encode": "watts", "word_order": "lo_hi"}
+    w["enable"] = {"addr": 40029, "type": "u16", "encode": "on_off", "on": 1, "off": 0}
+    w["soc_min"]["scale"] = 0.1
+    w["soc_min"]["unit_id"] = 1
+    p["read"]["enable_state"] = {"addr": 40029, "type": "u16"}
+    p["read"]["charge_power_w"] = {"addr": 40032, "type": "u32", "unit_id": 247}
+    p["read"]["discharge_power_w"] = {"addr": 40034, "type": "u32", "word_order": "lo_hi"}
+    p["read"]["soc"]["unit_id"] = 1
+    p["read"]["load_power_w"]["sum"].append({"addr": 30000, "type": "i16", "unit_id": 1})
+    p["baseline"]["enable"] = False
+    p["write_policy"].update(order=list(_ORDER_V2), power_by_direction=True, release_without_plan_s=900)
+    p["modbus"]["probe_keys"] = ["mode", "enable"]
+    p["ha"]["integrations"][0]["entities"].update(
+        enable={"domain": "switch", "unique_id_regex": "^x-remote_ems-"},
+        charge_power_w={"domain": "number", "unique_id_regex": "^x-charge_limit-"},
+        discharge_power_w={"domain": "number", "unique_id_regex": "^x-discharge_limit-"})
+    return p
+
+
+def test_engine_constructs_valid_profile():
+    assert validate_profile(_engine_v2()) == []
+
+
+def test_engine_constructs_are_each_optional():
+    """Każda konstrukcja z osobna (przełącznik bez mocy wg kierunku i odwrotnie)."""
+    p = ms_profile()
+    p["write"]["enable"] = {"addr": 40029, "type": "u16", "encode": "on_off", "on": 0xAA, "off": 0x55}
+    p["write_policy"]["order"].insert(-1, "enable")
+    assert validate_profile(p) == []
+    p = _engine_v2()
+    p["write"].pop("enable")
+    p["write_policy"]["order"].remove("enable")
+    p["read"].pop("enable_state")
+    p["baseline"].pop("enable")
+    p["modbus"]["probe_keys"] = ["mode"]
+    p["ha"]["integrations"][0]["entities"].pop("enable")
+    assert validate_profile(p) == []
+    p = ms_profile()
+    p["write"]["power_w"].update(type="u32", scale=10)
+    p["write_policy"]["release_without_plan_s"] = 60
+    assert validate_profile(p) == []
+
+
+def _mut(fn):
+    def run():
+        p = _engine_v2()
+        fn(p)
+        return p
+    return run
+
+
+def _drop_enable(p):
+    p["write"].pop("enable")
+    p["write_policy"]["order"].remove("enable")
+    p["modbus"]["probe_keys"] = ["mode"]
+
+
+@pytest.mark.parametrize("build,needle", [
+    # typ zapisu: tylko u16/u32; u32 tylko dla nastaw liczbowych
+    (_mut(lambda p: p["write"]["charge_power_w"].update(type="i32")), "$.write.charge_power_w.type"),
+    (_mut(lambda p: p["write"]["mode"].update(type="u32")), "$.write.mode.type"),
+    (_mut(lambda p: p["write"]["enable"].update(type="u32")), "$.write.enable.type"),
+    (_mut(lambda p: p["write"]["export_limit_enabled"].update(type="u32")),
+     "$.write.export_limit_enabled.type"),
+    (_mut(lambda p: p["write"]["charge_power_w"].update(addr=65535)), "$.write.charge_power_w.addr"),
+    # kolejność słów tylko przy u32
+    (_mut(lambda p: p["write"]["export_limit_w"].update(word_order="hi_lo")),
+     "$.write.export_limit_w.word_order"),
+    (_mut(lambda p: p["write"]["charge_power_w"].update(word_order="big")),
+     "$.write.charge_power_w.word_order"),
+    # skala: liczba > 0, tylko przy nastawach liczbowych
+    (_mut(lambda p: p["write"]["charge_power_w"].update(scale=0)), "$.write.charge_power_w.scale"),
+    (_mut(lambda p: p["write"]["charge_power_w"].update(scale=-1)), "$.write.charge_power_w.scale"),
+    (_mut(lambda p: p["write"]["charge_power_w"].update(scale=float("nan"))), "$.write.charge_power_w.scale"),
+    (_mut(lambda p: p["write"]["charge_power_w"].update(scale="1")), "$.write.charge_power_w.scale"),
+    (_mut(lambda p: p["write"]["mode"].update(scale=1)), "$.write.mode.scale"),
+    (_mut(lambda p: p["write"]["enable"].update(scale=1)), "$.write.enable.scale"),
+    # adres urządzenia per zapis i odczyt
+    (_mut(lambda p: p["write"]["charge_power_w"].update(unit_id=256)), "$.write.charge_power_w.unit_id"),
+    (_mut(lambda p: p["write"]["charge_power_w"].update(unit_id=True)), "$.write.charge_power_w.unit_id"),
+    (_mut(lambda p: p["read"]["soc"].update(unit_id=-1)), "$.read.soc.unit_id"),
+    (_mut(lambda p: p["read"]["load_power_w"]["sum"][2].update(unit_id="1")),
+     "$.read.load_power_w.sum[2].unit_id"),
+    # adres urządzenia nie w identyfikacji (czytana blokami połączenia)
+    (_mut(lambda p: p["identify"]["registers"]["rated_power_w"].update(unit_id=1)),
+     "$.identify.registers.rated_power_w.unit_id"),
+    # przełącznik: kodowanie on_off z dwiema różnymi wartościami
+    (_mut(lambda p: p["write"]["enable"].update(encode="bool")), "$.write.enable.encode"),
+    (_mut(lambda p: p["write"]["enable"].pop("on")), "$.write.enable.on"),
+    (_mut(lambda p: p["write"]["enable"].pop("off")), "$.write.enable.off"),
+    (_mut(lambda p: p["write"]["enable"].update(on=0)), "$.write.enable.off"),
+    (_mut(lambda p: p["write"]["enable"].update(on=70000)), "$.write.enable.on"),
+    (_mut(lambda p: p["write"]["enable"].update(off=True)), "$.write.enable.off"),
+    (_mut(lambda p: p["write"]["export_limit_enabled"].update(on=1, off=0)),
+     "$.write.export_limit_enabled.on"),
+    # odczyt stanu przełącznika tylko przy zapisie przełącznika
+    (_mut(lambda p: (_drop_enable(p), p["baseline"].pop("enable"))), "$.read.enable_state"),
+    # kolejność: nastawy mocy przed przełącznikiem, tryb ostatni
+    (_mut(lambda p: p["write_policy"].update(order=["soc_min", "enable", "charge_power_w",
+                                                    "discharge_power_w", "export_limit_w",
+                                                    "export_limit_enabled", "mode"])),
+     "$.write_policy.order"),
+    (_mut(lambda p: p["write_policy"].update(order=["soc_min", "charge_power_w", "discharge_power_w",
+                                                    "export_limit_w", "export_limit_enabled", "mode",
+                                                    "enable"])),
+     "$.write_policy.order"),
+    # moc wg kierunku: wymaga obu nastaw, wyklucza power_w, nastawy kierunkowe wymagają flagi
+    (_mut(lambda p: (p["write"].pop("discharge_power_w"),
+                     p["write_policy"]["order"].remove("discharge_power_w"))),
+     "$.write_policy.power_by_direction"),
+    (_mut(lambda p: (p["write"].update(power_w={"addr": 47512, "type": "u16", "encode": "watts"}),
+                     p["write_policy"]["order"].insert(0, "power_w"))),
+     "$.write_policy.power_by_direction"),
+    (_mut(lambda p: p["write_policy"].update(power_by_direction=False)), "$.write.charge_power_w"),
+    (_mut(lambda p: p["write_policy"].pop("power_by_direction")), "$.write.discharge_power_w"),
+    (_mut(lambda p: p["write_policy"].update(power_by_direction="yes")), "$.write_policy.power_by_direction"),
+    # moc ze slotu przy mocy wg kierunku tylko w trybie ładowania/rozładowania
+    (_mut(lambda p: p["intents"]["charge_grid"].update(mode="auto")), "$.intents.charge_grid.mode"),
+    (_mut(lambda p: p["write"]["charge_power_w"].update(encode="percent")),
+     "$.write.charge_power_w.encode"),
+    # stan wyjściowy przełącznika: bool i tylko przy zapisie przełącznika
+    (_mut(lambda p: p["baseline"].update(enable="off")), "$.baseline.enable"),
+    (_mut(lambda p: (_drop_enable(p), p["read"].pop("enable_state"))), "$.baseline.enable"),
+    # powrót bez planu: liczba całkowita sekund w zakresie
+    (_mut(lambda p: p["write_policy"].update(release_without_plan_s=59)),
+     "$.write_policy.release_without_plan_s"),
+    (_mut(lambda p: p["write_policy"].update(release_without_plan_s=86401)),
+     "$.write_policy.release_without_plan_s"),
+    (_mut(lambda p: p["write_policy"].update(release_without_plan_s=900.5)),
+     "$.write_policy.release_without_plan_s"),
+    (_mut(lambda p: p["write_policy"].update(release_without_plan_s=True)),
+     "$.write_policy.release_without_plan_s"),
+    # encje HA: przełącznik = switch, nastawy kierunkowe = number, stan przełącznika nie jest encją
+    (_mut(lambda p: p["ha"]["integrations"][0]["entities"]["enable"].update(domain="number")),
+     "entities.enable.domain"),
+    (_mut(lambda p: p["ha"]["integrations"][0]["entities"]["charge_power_w"].update(domain="sensor")),
+     "entities.charge_power_w.domain"),
+    (_mut(lambda p: p["ha"]["integrations"][0]["entities"].update(
+        enable_state={"domain": "switch", "unique_id_regex": "x"})), "entities.enable_state"),
+])
+def test_engine_construct_rule_errors(build, needle):
+    assert needle in _errs(build())
+
+
+@pytest.mark.parametrize("key,spec", [
+    ("enable", {"addr": 1, "type": "u16", "encode": "on_off", "on": 1, "off": 0}),
+    ("charge_power_w", {"addr": 1, "type": "u16", "encode": "watts"}),
+])
+def test_new_write_keys_only_for_mode_setpoint(key, spec):
+    p = tw_profile()
+    p["write"][key] = spec
+    p["write_policy"]["order"].insert(0, key)
+    assert f"$.write.{key}" in _errs(p)
+
+
+@pytest.mark.parametrize("field,value", [("power_by_direction", True), ("release_without_plan_s", 900)])
+def test_new_write_policy_fields_only_for_mode_setpoint(field, value):
+    p = tw_profile()
+    p["write_policy"][field] = value
+    assert f"$.write_policy.{field}" in _errs(p)
+
+
+def test_u32_write_covers_two_registers_for_verify_blocks():
+    p = _engine_v2()
+    p["modbus"]["verify_blocks"] = [{"addr": 40033, "count": 1}]     # drugie słowo nastawy u32
+    assert validate_profile(p) == []
+
+
+def test_builtin_profiles_use_no_new_engine_construct():
+    """Profile z pakietu walidują się bez zmian i nie sięgają po nowe konstrukcje (wszystkie opt-in)."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "custom_components" / "volcast" / "profiles"
+    files = sorted(root.glob("*.json"))
+    assert len(files) == 10
+    for f in files:
+        raw = json.loads(f.read_text(encoding="utf-8"))
+        assert validate_profile(raw) == [], f.name
+        assert not {"enable", "charge_power_w", "discharge_power_w"} & set(raw["write"]), f.name
+        assert not {"power_by_direction", "release_without_plan_s"} & set(raw["write_policy"]), f.name
+        assert "enable" not in raw["baseline"], f.name
+        assert all(s.get("type", "u16") == "u16" and "scale" not in s and "unit_id" not in s
+                   for k, s in raw["write"].items() if k not in ("tou_program", "tou_enable")), f.name

@@ -21,7 +21,11 @@ from .regex_safety import REGEX_HINTS, iter_regex_fields, regex_problem
 READ_KEYS = frozenset({
     *MEASURED_KEYS, *EXTRA_KEYS,
     "mode_value", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled",
+    "charge_power_w", "discharge_power_w",
 })
+# Odczyt stanu przełącznika zdalnego sterowania — tylko dostęp bezpośredni (w trybie encji stanem
+# jest sama encja `switch` klucza `enable`) i tylko przy `write.enable`.
+ENABLE_STATE_READ = "enable_state"
 # Flaga `verify: true` (rejestr z mapy producenta, niepotwierdzony na urządzeniu) — tylko przy
 # licznikach i limitach: te odczyty idą do chmury, nigdy do toru zapisu (nastawy, strażnicy, sprzedaż).
 VERIFY_KEYS = frozenset(EXTRA_KEYS)
@@ -42,7 +46,18 @@ CAPABILITY_KEYS = ("force_charge_from_grid", "sell_from_battery", "force_dischar
                    "set_power_w", "limit_export", "set_soc_floor", "set_soc_ceiling")
 REG_TYPES = ("u16", "i16", "u32", "i32", "f32", "ascii")
 ENCODE_FOR = {"mode": "mode", "power_w": "watts", "soc_min": "percent", "soc_max": "percent",
-              "export_limit_w": "watts", "export_limit_enabled": "bool"}
+              "export_limit_w": "watts", "export_limit_enabled": "bool",
+              "charge_power_w": "watts", "discharge_power_w": "watts", "enable": "on_off"}
+# Typy rejestru zapisu. `u32` (dwa słowa, `word_order`) tylko dla nastaw liczbowych; `scale` znaczy
+# to samo co przy odczycie: wartość semantyczna = surowa × scale (zapis: surowa = wartość / scale).
+WRITE_TYPES = ("u16", "u32")
+NUMERIC_ENCODINGS = ("watts", "percent")
+# Nastawy mocy wg kierunku trybu (`write_policy.power_by_direction`) i klucze tylko dla mode_setpoint.
+DIRECTION_POWER_KEYS = ("charge_power_w", "discharge_power_w")
+POWER_KEYS = ("power_w",) + DIRECTION_POWER_KEYS
+MODE_SETPOINT_WRITES = ("enable",) + DIRECTION_POWER_KEYS
+# Powrót do stanu wyjściowego, gdy żaden slot planu nie pokrywa „teraz” dłużej niż tyle sekund.
+RELEASE_WITHOUT_PLAN_S = (60, 86400)
 TOU_ENCODE = {"start": "hhmm", "power_w": "watts", "soc": "percent"}
 TRANSPORTS = ("goodwe_udp", "solarman_v5", "modbus_tcp", "modbus_rtu")
 MAX_READBACK_SETTLE_S = 10
@@ -139,13 +154,21 @@ class _V:
         return v
 
 
-def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True, verify: bool = False) -> None:
-    """Wpis rejestru; `verify` = dozwolona flaga `verify` (tylko liczniki i limity w `$.read`).
+def _reg(v: _V, raw: Any, path: str, *, need_type: bool = True, verify: bool = False,
+         unit: bool = False) -> None:
+    """Wpis rejestru; `verify` = dozwolona flaga `verify` (tylko liczniki i limity w `$.read`),
+    `unit` = dozwolony własny adres urządzenia `unit_id` (tylko `$.read`; brak = adres połączenia).
     `note` (skąd adres, co sprawdzić) wolno przy każdym wpisie — kod go nie czyta."""
     r = v.obj(raw, path, ("addr",) + (("type",) if need_type else ()),
-              ("type", "scale", "sign", "undef", "len", "word_order", "expect", "fc", "note", "verify"))
+              ("type", "scale", "sign", "undef", "len", "word_order", "expect", "fc", "note", "verify",
+               "unit_id"))
     if r is None:
         return
+    if "unit_id" in r:
+        if not unit:
+            v.err(f"{path}.unit_id", "unit_id tylko przy odczytach w $.read")
+        else:
+            v.int_(r["unit_id"], f"{path}.unit_id", 0, 255)
     if "verify" in r:
         if not verify:
             v.err(f"{path}.verify", "flaga verify tylko przy licznikach i limitach w $.read")
@@ -190,7 +213,7 @@ def _read(v: _V, raw: Any) -> None:
     edges: dict[str, list[str]] = {}
     for key, spec in raw.items():
         path = f"$.read.{key}"
-        if key not in READ_KEYS and key != TOU_ENABLED_READ:
+        if key not in READ_KEYS and key not in (TOU_ENABLED_READ, ENABLE_STATE_READ):
             v.err(path, "nieznany klucz odczytu")
             continue
         if isinstance(spec, dict) and "sum" in spec:
@@ -213,9 +236,9 @@ def _read(v: _V, raw: Any) -> None:
                     if "sign" in t and t["sign"] not in (-1, 1):
                         v.err(f"{tp}.sign", "tylko -1 albo 1")
                 else:
-                    _reg(v, t, tp)
+                    _reg(v, t, tp, unit=True)
         else:
-            _reg(v, spec, path, verify=key in VERIFY_KEYS)
+            _reg(v, spec, path, verify=key in VERIFY_KEYS, unit=True)
     _ref_cycles(v, edges)
 
 
@@ -249,12 +272,9 @@ def _write(v: _V, raw: Any, model: str, tou: dict | None) -> set[str]:
         _tou_enable(v, w)
     for key in WRITE_PARAMS:
         if key in w:
-            s = v.obj(w[key], f"$.write.{key}", ("addr", "type", "encode"))
-            if s is not None:
-                v.int_(s.get("addr"), f"$.write.{key}.addr", 0, 65535)
-                v.enum(s.get("type"), f"$.write.{key}.type", ("u16",))
-                if s.get("encode") != ENCODE_FOR[key]:
-                    v.err(f"$.write.{key}.encode", f"dla {key} wymagane {ENCODE_FOR[key]!r}")
+            _write_spec(v, key, w[key])
+            if key in MODE_SETPOINT_WRITES and model != "mode_setpoint":
+                v.err(f"$.write.{key}", "tylko dla mode_setpoint")
     if model == "mode_setpoint" and "mode" not in w:
         v.err("$.write.mode", "mode_setpoint wymaga zapisu trybu")
     if model == "time_window":
@@ -276,6 +296,50 @@ def _write(v: _V, raw: Any, model: str, tou: dict | None) -> set[str]:
     # Włącznik jest częścią sekwencji TOU (wyłączenie na początku, włączenie na końcu),
     # nie osobnym kluczem kolejności zapisu.
     return {("tou" if k == "tou_program" else k) for k in w if k != "tou_enable"}
+
+
+def _write_spec(v: _V, key: str, raw: Any) -> None:
+    """`$.write.<klucz>`: adres, typ (u16 | u32), kodowanie klucza; opcjonalnie skala i kolejność słów
+    (nastawy liczbowe), własny adres urządzenia oraz wartości on/off przełącznika (`on_off`)."""
+    path = f"$.write.{key}"
+    s = v.obj(raw, path, ("addr", "type", "encode"), ("scale", "word_order", "unit_id", "on", "off"))
+    if s is None:
+        return
+    want = ENCODE_FOR[key]
+    numeric = want in NUMERIC_ENCODINGS
+    typ = s.get("type")
+    if v.enum(typ, f"{path}.type", WRITE_TYPES) and typ == "u32" and not numeric:
+        v.err(f"{path}.type", f"u32 tylko dla nastaw {list(NUMERIC_ENCODINGS)}")
+    # Zapis 32-bitowy zajmuje dwa kolejne rejestry — drugi nie może wyjść poza przestrzeń adresów.
+    v.int_(s.get("addr"), f"{path}.addr", 0, 65534 if typ == "u32" else 65535)
+    if s.get("encode") != want:
+        v.err(f"{path}.encode", f"dla {key} wymagane {want!r}")
+    if "scale" in s:
+        if not numeric:
+            v.err(f"{path}.scale", f"skala tylko dla nastaw {list(NUMERIC_ENCODINGS)}")
+        elif v.num(s["scale"], f"{path}.scale") and s["scale"] <= 0:
+            v.err(f"{path}.scale", "oczekiwano liczby > 0")
+    if "word_order" in s:
+        if typ != "u32":
+            v.err(f"{path}.word_order", "kolejność słów tylko przy type u32")
+        else:
+            v.enum(s["word_order"], f"{path}.word_order", ("hi_lo", "lo_hi"))
+    if "unit_id" in s:
+        v.int_(s["unit_id"], f"{path}.unit_id", 0, 255)
+    if want != "on_off":
+        for f in ("on", "off"):
+            if f in s:
+                v.err(f"{path}.{f}", "wartości on/off tylko przy kodowaniu 'on_off'")
+        return
+    ok = True
+    for f in ("on", "off"):
+        if f not in s:
+            v.err(f"{path}.{f}", "brak wymaganego pola")
+            ok = False
+        elif not v.int_(s[f], f"{path}.{f}", 0, 65535):
+            ok = False
+    if ok and s["on"] == s["off"]:
+        v.err(f"{path}.off", "musi różnić się od on")
 
 
 def _tou_enable(v: _V, w: dict) -> None:
@@ -307,6 +371,8 @@ def _write_addresses(wr: Any) -> set[int]:
                     out.update(range(field["addr"], field["addr"] + count))
         elif isinstance(spec.get("addr"), int):
             out.add(spec["addr"])
+            if spec.get("type") == "u32":
+                out.add(spec["addr"] + 1)
     return out
 
 
@@ -414,7 +480,9 @@ def _nvm_budget(v: _V, raw: Any) -> None:
         v.int_(b.get("total"), f"{path}.total", 1, 1_000_000)
 
 
-def _intents(v: _V, raw: Any, model: str, modes: dict) -> None:
+def _intents(v: _V, raw: Any, model: str, modes: dict, by_direction: bool) -> None:
+    """`by_direction` (`write_policy.power_by_direction`): moc ze slotu trafia do nastawy wybranej
+    kierunkiem trybu, więc intencja z mocą ze slotu musi wskazywać tryb ładowania albo rozładowania."""
     it = v.obj(raw, "$.intents", INTENTS)
     if it is None:
         return
@@ -433,6 +501,11 @@ def _intents(v: _V, raw: Any, model: str, modes: dict) -> None:
                     if power in SLOT_POWER_KINDS and name not in POWERED_INTENTS:
                         v.err(f"{path}.power",
                               f"{power!r} dozwolone tylko dla {list(POWERED_INTENTS)}")
+                    elif power in SLOT_POWER_KINDS and by_direction and isinstance(mode, str) \
+                            and isinstance(modes.get(mode), dict) \
+                            and modes[mode].get("direction") not in ("charge", "discharge"):
+                        v.err(f"{path}.mode", "moc ze slotu przy power_by_direction wymaga trybu "
+                                              "o kierunku charge/discharge")
         else:
             if spec is None:
                 if name == "self_consume":
@@ -459,7 +532,7 @@ def _ha_entity_domain(key: str) -> str:
         return _HA_TOU_DOMAIN[tou.group(1)]
     if key == "mode":
         return "select"
-    if key == "export_limit_enabled":
+    if key in ("export_limit_enabled", "enable"):
         return "switch"
     if key in WRITE_PARAMS:
         return "number"
@@ -506,6 +579,26 @@ def _ha(v: _V, raw: Any) -> None:
             v.regex(s.get("unique_id_regex"), f"{ep}.unique_id_regex")
             if "transform" in s:
                 v.enum(s["transform"], f"{ep}.transform", ("invert_percent", "negate"))
+
+
+def _power_by_direction(v: _V, wp: dict | None, model: Any, wkeys: set[str], on: bool) -> None:
+    """Moc wg kierunku: flaga wymaga obu nastaw kierunkowych i wyklucza `power_w` (jedna droga mocy);
+    nastawy kierunkowe bez flagi nie miałyby określonego znaczenia — błąd."""
+    path = "$.write_policy.power_by_direction"
+    if wp is not None and "power_by_direction" in wp:
+        v.bool_(wp["power_by_direction"], path)
+        if model != "mode_setpoint":
+            v.err(path, "tylko dla mode_setpoint")
+    if not on:
+        for key in DIRECTION_POWER_KEYS:
+            if key in wkeys:
+                v.err(f"$.write.{key}", "dozwolone tylko przy write_policy.power_by_direction: true")
+        return
+    missing = [k for k in DIRECTION_POWER_KEYS if k not in wkeys]
+    if missing:
+        v.err(path, f"wymaga zapisu {missing}")
+    if "power_w" in wkeys:
+        v.err(path, "wyklucza write.power_w (moc idzie nastawą wg kierunku)")
 
 
 def _verification(v: _V, raw: Any) -> None:
@@ -708,30 +801,45 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
             v.err(f"$.read.{TOU_ENABLED_READ}", "dozwolone tylko przy write.tou_enable")
         elif not isinstance(spec, dict) or spec.get("addr") != enable.get("addr"):
             v.err(f"$.read.{TOU_ENABLED_READ}.addr", "musi równać się write.tou_enable.addr")
+    wkeys = set(wr) if isinstance(wr, dict) else set()
+    if isinstance(rd, dict) and ENABLE_STATE_READ in rd and "enable" not in wkeys:
+        v.err(f"$.read.{ENABLE_STATE_READ}", "dozwolone tylko przy write.enable")
     if "modbus" in top:                      # brak sekcji zgłasza już `v.obj` na `$`
         _modbus(v, top["modbus"], tr, written, _write_addresses(wr))
-    _intents(v, top.get("intents"), model, modes)
+    wp_raw = top.get("write_policy")
+    by_direction = isinstance(wp_raw, dict) and wp_raw.get("power_by_direction") is True
+    _intents(v, top.get("intents"), model, modes, by_direction)
 
     base = top.get("baseline")
     if model == "mode_setpoint":
         # Flaga eksportu w stanie bazowym jest opcjonalna: jej brak znaczy „ogranicznik
         # eksportu zostaje, jak był" (np. limit narzucony przez operatora sieci).
-        b = v.obj(base, "$.baseline", ("mode",), ("export_limit_enabled",))
+        # `enable` (opcjonalne): stan przełącznika zdalnego sterowania po oddaniu sterowania.
+        b = v.obj(base, "$.baseline", ("mode",), ("export_limit_enabled", "enable"))
         if b is not None:
             bm = b.get("mode")
             if not isinstance(bm, str) or bm not in modes:
                 v.err("$.baseline.mode", "musi wskazywać tryb z modes")
             if "export_limit_enabled" in b:
                 v.bool_(b["export_limit_enabled"], "$.baseline.export_limit_enabled")
+            if "enable" in b:
+                v.bool_(b["enable"], "$.baseline.enable")
+                if "enable" not in wkeys:
+                    v.err("$.baseline.enable", "dozwolone tylko przy write.enable")
     elif model == "time_window":
         b = v.obj(base, "$.baseline", ("intent",))
         if b is not None:
             v.enum(b.get("intent"), "$.baseline.intent", ("self_consume",))
 
-    wp = v.obj(top.get("write_policy"), "$.write_policy",
+    wp = v.obj(wp_raw, "$.write_policy",
                ("order", "min_interval_s", "nvm", "max_direction_changes_per_hour", "max_state_age_s"),
-               ("nvm_budget", "readback_settle_s"))
+               ("nvm_budget", "readback_settle_s", "power_by_direction", "release_without_plan_s"))
+    _power_by_direction(v, wp, model, wkeys, by_direction)
     if wp is not None:
+        if "release_without_plan_s" in wp:
+            v.int_(wp["release_without_plan_s"], "$.write_policy.release_without_plan_s", *RELEASE_WITHOUT_PLAN_S)
+            if model != "mode_setpoint":
+                v.err("$.write_policy.release_without_plan_s", "tylko dla mode_setpoint")
         if "nvm_budget" in wp:
             _nvm_budget(v, wp["nvm_budget"])
         # Odczekanie przed ponownym odczytem zwrotnym, gdy pierwszy pokazał wartość sprzed zapisu.
@@ -744,6 +852,10 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
                 v.err("$.write_policy.order", f"musi zawierać dokładnie raz każdy zapis: {sorted(written)}")
             elif "mode" in order and order[-1] != "mode":
                 v.err("$.write_policy.order", "tryb musi być zapisywany OSTATNI")
+            elif "enable" in order and any(order.index(k) > order.index("enable")
+                                           for k in POWER_KEYS if k in order):
+                # Przejęcie: nastawy mocy → przełącznik → tryb (włączenie nie startuje starej nastawy).
+                v.err("$.write_policy.order", "nastawy mocy muszą być zapisywane przed enable")
         if v.num(wp.get("min_interval_s"), "$.write_policy.min_interval_s") and wp["min_interval_s"] < 0:
             v.err("$.write_policy.min_interval_s", "oczekiwano liczby >= 0")
         v.bool_(wp.get("nvm"), "$.write_policy.nvm")
