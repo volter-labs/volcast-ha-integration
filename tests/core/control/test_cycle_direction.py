@@ -53,12 +53,13 @@ def _tele():
                      load_power_w=0.0, load_age_s=5.0)
 
 
-def _run(profile, slot, blocks, *, memory=None, now=1000.0, unavailable=frozenset()):
+def _run(profile, slot, blocks, *, memory=None, now=1000.0, unavailable=frozenset(), owner=None):
     memory = memory or ControlMemory.for_profile(profile)
     reading = build_reading(profile, RegisterImage.from_blocks(blocks), at_mono=now, at_utc=T0)
+    target = RegisterTarget(reading, unavailable=unavailable)
+    target.owner_values = owner or {}
     d = decide_cycle(profile=profile, schedule=one_slot(**slot), now_utc=T0, now_mono=now, tele=_tele(),
-                     limits=Limits(rated_power_w=8000.0), gates=_gates(), memory=memory,
-                     target=RegisterTarget(reading, unavailable=unavailable))
+                     limits=Limits(rated_power_w=8000.0), gates=_gates(), memory=memory, target=target)
     return d, memory
 
 
@@ -258,3 +259,90 @@ def test_entity_live_export_sell_uses_the_discharge_entity(live_sell):
 def test_entity_live_export_below_the_discharge_minimum_goes_neutral(live_sell):
     d = _entity_run(live_sell, dict(SELL, power_w=300), _ents({"mode": "auto", "enable": "off"}))
     assert "sell_below_min" in d.notes and "discharge_power_w" not in [w.key for w in d.writes]
+
+
+# ── tryb neutralny i postój: nastawy właściciela ─────────────────────────────
+
+OWNER_SP = {"charge_power_w": 5000.0, "discharge_power_w": 6000.0}
+NEUTRAL = dict(mode="self_consume")
+
+
+def test_neutral_slot_returns_both_set_points_to_the_owner_values():
+    p = directional_profile()
+    d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("sell_power"), enable=1), owner=OWNER_SP)
+    by_key = {w.key: w for w in d.writes}
+    assert by_key["charge_power_w"].value == 5000 and by_key["discharge_power_w"].value == 600
+    keys = [w.key for w in d.writes]
+    assert max(keys.index("charge_power_w"), keys.index("discharge_power_w")) < keys.index("mode")
+    assert d.flat["charge_power_w"] == 5000.0 and "power_w" not in d.flat and d.aliases == {}
+
+
+def test_idle_slot_returns_owner_set_points_and_settles():
+    p = directional_profile()
+    standby = dict(mode="idle")
+    d, _ = _run(p, standby, _blocks(enable=1, charge=5000, discharge=6000), owner=OWNER_SP)
+    assert not {"charge_power_w", "discharge_power_w"} & {w.key for w in d.writes}
+    assert d.flat["discharge_power_w"] == 6000.0
+
+
+def test_missing_owner_value_is_never_invented():
+    p = directional_profile()
+    d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("sell_power"), enable=1),
+                owner={"charge_power_w": 5000.0})
+    keys = [w.key for w in d.writes]
+    assert "charge_power_w" in keys and "discharge_power_w" not in keys and "discharge_power_w" not in d.flat
+
+
+def test_directional_slot_keeps_plan_power_not_owner_values():
+    p = directional_profile()
+    d, _ = _run(p, SELL, _blocks(), owner=OWNER_SP)
+    keys = [w.key for w in d.writes]
+    assert "charge_power_w" not in keys and d.flat["power_w"] == 2500.0 and "charge_power_w" not in d.flat
+
+
+# ── ogranicznik eksportu właściciela „bez limitu” ───────────────────────────
+
+
+def _u32_export():
+    def mutate(raw):
+        raw["write"]["export_limit_w"] = {"addr": 40038, "type": "u32", "encode": "watts", "unit_id": PLANT}
+    return directional_profile(mutate)
+
+
+def _export_blocks(limit_words, enabled=1):
+    return {**_blocks(mode=1, enable=1), (3, 40038, PLANT): list(limit_words), 47509: [enabled]}
+
+
+def test_owner_no_limit_export_restored_exactly_without_blocking_control():
+    p = _u32_export()
+    owner = {"export_limit_enabled": 1.0, "export_limit_w": 4294967295.0}
+    d, _ = _run(p, NEUTRAL, _export_blocks([0, 0]), owner=owner)      # nasz zakaz eksportu (0 W) na urządzeniu
+    assert d.status == WRITE, d.reason
+    w = next(w for w in d.writes if w.key == "export_limit_w")
+    assert w.value == 0xFFFFFFFF and w.words() == [0xFFFF, 0xFFFF]
+    assert d.guard.params.export_limit_w is None                       # strażnik tej wartości nie oceniał
+
+
+def test_owner_value_at_register_maximum_counts_as_no_limit():
+    def mutate(raw):
+        raw["write"]["export_limit_w"] = {"addr": 40038, "type": "u16", "encode": "watts", "scale": 0.1,
+                                          "unit_id": PLANT}
+    p = directional_profile(mutate)
+    owner = {"export_limit_enabled": 1.0, "export_limit_w": 6553.5}
+    d, _ = _run(p, NEUTRAL, {**_blocks(mode=1, enable=1), (3, 40038, PLANT): [0], 47509: [1]}, owner=owner)
+    assert d.status == WRITE and d.guard.params.export_limit_w is None
+    assert next(w for w in d.writes if w.key == "export_limit_w").value == 0xFFFF
+
+
+def test_real_owner_export_value_still_goes_through_the_guards():
+    p = _u32_export()
+    owner = {"export_limit_enabled": 1.0, "export_limit_w": 25000.0}
+    d, _ = _run(p, NEUTRAL, _export_blocks([0, 0]), owner=owner)
+    assert d.status == WRITE and d.guard.params.export_limit_w == 25000.0
+    assert next(w for w in d.writes if w.key == "export_limit_w").value == 25000
+
+
+def test_plan_export_limit_above_the_sanity_bound_is_still_rejected():
+    p = _u32_export()
+    d, _ = _run(p, dict(NEUTRAL, export_limit_w=40000), _export_blocks([0, 0]))
+    assert (d.status, d.reason) == (BLOCKED, "guard:I-10")

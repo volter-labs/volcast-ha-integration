@@ -54,7 +54,7 @@ from ..engines.mode_setpoint import map_slot
 from ..engines.sell_xset import sell_ceiling
 from ..entity_map import EntityWrite, entity_value
 from ..guard_state import DirectionLimiter, WriteBudget, WriteThrottle
-from ..guards import GuardContext, GuardResult, apply_guards, state_fresh, temperature_ok
+from ..guards import MAX_POWER_W, GuardContext, GuardResult, apply_guards, state_fresh, temperature_ok
 from ..slot import Schedule, effective_action
 from ..write_sequence import WriteReport
 from .caps import required_write_keys
@@ -63,7 +63,7 @@ from ..registers import _DIRECTION_KEYS
 from .group_writes import order_group, power_first
 from .latch import ReserveLatch
 from .entity_fit import fit_params
-from .target import EntityTarget, WriteTarget, _device_view
+from .target import EntityTarget, WriteTarget, _device_view, _spec_range
 from . import live_export as lx
 from . import pv_first
 from .live_export import LiveExport, LiveExportMemory
@@ -355,7 +355,7 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
 
     slot, is_fallback = schedule.effective_slot(now_utc)
     mapped_slot = map_slot(slot, profile, limits.rated_power_w, leave_uncapped_export=True)
-    mapped_slot = replace(mapped_slot, params=_owner_export(mapped_slot.params, _owner_values(target)))
+    mapped_slot = replace(mapped_slot, params=_owner_export(mapped_slot.params, _owner_values(target), profile))
     common: dict[str, Any] = dict(intent=mapped_slot.intent, fallback=is_fallback)
     # SoC i temperatura to osobne encje: świeży SoC nic nie mówi o temperaturze.
     if target.has_temperature() and tele.battery_temp_c is None:
@@ -380,11 +380,13 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     if not guard.write_allowed:
         return CycleDecision(BLOCKED, f"guard:{guard.invariant}", **common)
 
+    # Ogranicznik właściciela „bez limitu” wraca po strażnikach (jak powrót do stanu wyjściowego).
+    guarded = _owner_export(guard.params, _owner_values(target), profile, no_limit=True)
     # Nastawy bez encji wypadają PO strażnikach (ci mogli je dopisać: I-1, I-4).
-    without = tuple(k for k in _with_pair(missing) if getattr(guard.params, k, None) is not None)
-    if guard.params.power_w is not None and power_key(guard.params.mode, profile) in missing:
+    without = tuple(k for k in _with_pair(missing) if getattr(guarded, k, None) is not None)
+    if guarded.power_w is not None and power_key(guarded.mode, profile) in missing:
         without = (*without, "power_w")      # brak nastawy kierunku trybu = brak mocy tego trybu
-    planned, degraded = _degrade(guard.params, set(without), profile)
+    planned, degraded = _degrade(guarded, set(without), profile)
     planned = replace(planned, **{k: None for k in without})
     # Zakup z sieci przy żywej nadwyżce PV ≥ moc slotu: tryb ładowania z PV (po strażnikach
     # i `_degrade`, przed sprzedażą, dopasowaniem i throttlingiem — jak każda inna intencja).
@@ -396,13 +398,14 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     # Sprzedaż: moc baterii → nastawa eksportu z odczytów tego cyklu (po strażnikach, przed
     # dopasowaniem i throttlingiem — histereza i uzgadnianie widzą już nastawę eksportu).
     dry = _gate_reason(gates, memory, now_mono) is not None
-    planned, live, live_notes = _live_export(planned, guard.params, common["intent"], slot, profile,
+    planned, live, live_notes = _live_export(planned, guarded, common["intent"], slot, profile,
                                              tele, limits, target, memory, now_mono, keep=dry)
     degraded = degraded or lx.NOTE_SELL_BELOW_MIN in live_notes or (live is not None and live.degraded)
     if "enable" in (profile.raw.get("write") or {}):
         # Przełącznik zdalnego sterowania: włączony, dopóki sterujemy (kolejność profilu: nastawy →
         # przełącznik → tryb; włączenie po nieudanej nastawie wstrzymuje `write_sequence`).
         planned = replace(planned, enable=True)
+    planned = _owner_set_points(planned, _owner_values(target), profile)
     params, adjusted, unfit = target.fit(planned, profile)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
@@ -919,15 +922,45 @@ def _with_pair(keys) -> set[str]:
     return out | EXPORT_PAIR if out & EXPORT_PAIR else out
 
 
-def _owner_export(params: Params, owner: Mapping[str, float | str]) -> Params:
+def _owner_export(params: Params, owner: Mapping[str, float | str], profile=None, *,
+                  no_limit: bool = False) -> Params:
     """Plan bez zdania o ograniczniku eksportu: po naszym zaostrzeniu — powrót do wartości
-    właściciela (para razem albo wcale); bez niego ogranicznika nie ruszamy."""
+    właściciela (para razem albo wcale); bez niego ogranicznika nie ruszamy.
+
+    Wartość „bez limitu” (`_export_no_limit`) nie jest nastawą planu: wraca jak przy powrocie do stanu
+    wyjściowego — PO strażnikach (I-10 jej nie ocenia), dokładnie taka, jaką miał właściciel.
+    `no_limit=False` (przed strażnikami) bierze tylko zwykłe wartości, `True` (po nich) tylko „bez limitu”."""
     if params.export_limit_enabled is not None or params.export_limit_w is not None:
         return params
     enabled, limit = owner.get("export_limit_enabled"), owner.get("export_limit_w")
     if not isinstance(enabled, float) or not isinstance(limit, float):
         return params
+    if _export_no_limit(limit, profile) != no_limit:
+        return params
     return replace(params, export_limit_enabled=enabled >= 0.5, export_limit_w=limit)
+
+
+def _export_no_limit(limit: float, profile) -> bool:
+    """Ogranicznik właściciela „bez limitu”: co najmniej granica sanityzacji mocy (I-10) albo maksimum
+    rejestru zapisu profilu (np. u32 0xFFFFFFFF)."""
+    if limit >= MAX_POWER_W:
+        return True
+    spec = ((profile.raw.get("write") or {}).get("export_limit_w") or {}) if profile is not None else {}
+    rng = _spec_range(spec)
+    return rng is not None and limit >= rng[1]
+
+
+def _owner_set_points(params: Params, owner: Mapping[str, float | str], profile) -> Params:
+    """Moc wg kierunku, tryb neutralny albo postój: obie nastawy mocy wracają do wartości właściciela
+    (migawka) — bateria poza slotami z mocą działa jak przed przejęciem. Brak wartości w migawce = tej
+    nastawy nie piszemy (żadnej wymyślonej wartości)."""
+    if not getattr(profile, "power_by_direction", False) or params.mode not in profile.modes \
+            or power_key(params.mode, profile) is not None:
+        return params
+    values = {k: float(owner[k]) for k in _DIRECTION_KEYS.values()
+              if isinstance(owner.get(k), (int, float)) and not isinstance(owner.get(k), bool)
+              and math.isfinite(owner[k])}
+    return replace(params, power_w=None, **values)
 
 
 def _previous(device: Mapping[str, float | str], profile, memory: ControlMemory

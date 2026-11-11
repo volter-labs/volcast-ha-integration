@@ -118,6 +118,46 @@ def test_takeover_from_stored_forced_mode_zeroes_set_points_before_the_switch(mo
     assert {"charge_power_w", "discharge_power_w", "enable", "mode"} <= set(ex._state.restore_keys)
 
 
+NEUTRAL_PLAN = [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "self_consume",
+                 "price_pln_kwh": 0.5}]
+
+
+def test_neutral_plan_after_zeroing_returns_owner_set_points_in_the_same_cycle(monkeypatch):
+    h, ex = make(dhass(mode="charge_battery"), monkeypatch=monkeypatch)
+    take_over(h, ex, raw=plan(slots=NEUTRAL_PLAN))
+    seq = calls(h)
+    z, on, mode = order(seq, ("set_value", ENT["charge_power_w"], 0.0), ("turn_on", ENT["enable"]),
+                        ("select_option", ENT["mode"], "auto"))
+    c = order(seq, ("set_value", ENT["charge_power_w"], 5.0))[0]
+    d = order(seq, ("set_value", ENT["discharge_power_w"], 6.0))[0]
+    assert z < on < mode < min(c, d)
+    assert h.states.get(ENT["charge_power_w"]).state == "5.0"
+    assert h.states.get(ENT["discharge_power_w"]).state == "6.0"
+    n = len(h.services.calls)
+    ex._clock.t += 120
+    asyncio.run(ex.async_tick())
+    assert calls(h, n) == []                     # wartości właściciela zgodne — bez ponownych zapisów
+
+
+def test_neutral_slot_after_a_sell_slot_restores_owner_set_points(monkeypatch):
+    utc = Utc()
+    slots = [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T10:30:00Z", "mode": "discharge",
+              "discharge_purpose": "sell", "power_w": 2500, "price_pln_kwh": 0.8},
+             {"from": "2026-09-23T10:30:00Z", "to": "2026-09-23T11:00:00Z", "mode": "self_consume",
+              "price_pln_kwh": 0.5}]
+    h, ex = make(utc=utc, monkeypatch=monkeypatch)
+    take_over(h, ex, raw=plan(slots=slots))
+    assert h.states.get(ENT["discharge_power_w"]).state == "2.5"
+    utc.t = NOW + timedelta(minutes=31)
+    ex._clock.t += 1860
+    h.states.set(ENT["soc"], "60", reported=utc.t)          # świeży SoC (I-9)
+    n = len(h.services.calls)
+    asyncio.run(ex.async_tick())
+    d = ex.last_decision
+    assert ("set_value", ENT["discharge_power_w"], 6.0) in calls(h, n), (d.notes, d.flat, d.reason)
+    assert h.states.get(ENT["mode"]).state == "auto"
+
+
 def test_takeover_holds_switch_and_mode_when_zeroing_fails(monkeypatch):
     h, ex = make(dhass(mode="charge_battery"), monkeypatch=monkeypatch)
     h.services.fail[ENT["charge_power_w"]] = RuntimeError("x")

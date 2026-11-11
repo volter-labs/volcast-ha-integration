@@ -108,6 +108,33 @@ async def test_takeover_from_stored_forced_mode_zeroes_then_switch_mode_target(r
 
 
 @pytest.mark.asyncio
+async def test_neutral_plan_after_zeroing_returns_owner_set_points(rig, issues):
+    h, plant = await rig()
+    await h.start(raw=plan(slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z",
+                                   "mode": "self_consume", "price_pln_kwh": 0.5}]))
+    await h.cycle()
+    w = plant.writes
+    on, mode = first(w, ENABLE, 1), first(w, MODE, AUTO)
+    assert max(first(w, CHARGE + 1, 0), first(w, DISCHARGE, 0)) < on < mode
+    assert first(w, CHARGE + 1, 5000, after=mode) > mode and first(w, DISCHARGE, 600, after=mode) > mode
+    assert u32(plant, CHARGE) == [0, 5000] and u32(plant, DISCHARGE) == [600, 0]
+    n = len(w)
+    await h.cycle()
+    assert plant.writes[n:] == []
+
+
+@pytest.mark.asyncio
+async def test_neutral_plan_keeps_no_limit_owner_set_points_exact(rig, issues):
+    no_limit = (0xFFFF, 0xFFFF)
+    h, plant = await rig(plant_bank(charge=no_limit, discharge=no_limit))
+    await h.start(raw=plan(slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z",
+                                   "mode": "self_consume", "price_pln_kwh": 0.5}]))
+    await h.cycle()
+    assert u32(plant, CHARGE) == [0xFFFF, 0xFFFF] and u32(plant, DISCHARGE) == [0xFFFF, 0xFFFF]
+    assert plant.read(MODE, 1) == [AUTO] and plant.read(ENABLE, 1) == [1]
+
+
+@pytest.mark.asyncio
 async def test_takeover_from_neutral_writes_set_point_switch_mode_in_one_sequence(rig, issues):
     h, plant = await rig(plant_bank(mode=AUTO))
     await h.start(raw=plan(2000))

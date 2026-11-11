@@ -1346,10 +1346,11 @@ class VolcastExecutor:
                     self._state.snapshot.pop(key, None)
                 snapshot_unsaved = True
             cycle_in["ents"] = replace(cycle_in["ents"], mapped=live_map,
-                                       owner_values=self._owner_export_values())
+                                       owner_values={**self._owner_export_values(),
+                                                     **self._owner_set_point_values(rd.readings)})
         elif "target" in cycle_in:
             target = cycle_in["target"]
-            target.owner_values = self._owner_export_values()
+            target.owner_values = {**self._owner_export_values(), **self._owner_set_point_values(rd.readings)}
             # Rejestr z wyjątkiem 2 w tej sesji też jest brakującą nastawą (degradacja akcji, nie zgadywanie).
             target.unavailable = target.unavailable | (self._memory.unsupported & set(self._write_keys()))
         decision = decide_cycle(
@@ -1892,8 +1893,7 @@ class VolcastExecutor:
         rep.ambiguous += first.ambiguous
         rep.errors.update(first.errors)
         pre = [w for w in decision.writes if w.key != "mode" and w.key not in _POWER_KEYS]
-        steps = (pre, [w for w in decision.writes if w.key == "mode"],
-                 [w for w in decision.writes if w.key in _POWER_KEYS])
+        steps = (pre, [w for w in decision.writes if w.key == "mode"], self._planned_power_writes(decision, rd))
         need = ("enable", "mode")              # krok, bez którego następny nie idzie
         ok = not (first.failed or first.unsupported)
         for i, step in enumerate(steps):
@@ -1909,6 +1909,17 @@ class VolcastExecutor:
             if i < len(need) and any(w.key == need[i] for w in step) and need[i] not in part.written:
                 ok = False
         return rep, extra
+
+    def _planned_power_writes(self, decision: CycleDecision, rd: Reading) -> list:
+        """Nastawy mocy z planu po zerowaniu — także te, które przed zerowaniem były już zgodne (cykl ich nie
+        zapisywał, a zero je zmieniło): moc trybu kierunkowego albo wartości właściciela w trybie neutralnym."""
+        flat = decision.flat
+        keys = [k for k in _POWER_KEYS if k in flat]
+        if not keys:
+            return []
+        params = Params(mode=flat.get("mode") if isinstance(flat.get("mode"), str) else None,
+                        **{k: float(flat[k]) for k in keys})
+        return self.io.restore_writes(params, keys, rd)
 
     def _takeover_zeros(self, decision: CycleDecision, rd: Reading) -> list:
         """Zerowe nastawy mocy przed włączeniem przełącznika, gdy odczytany tryb nie jest neutralny; [] = zwykły
@@ -2220,6 +2231,19 @@ class VolcastExecutor:
         if not st.owned or not ours or any(k in st.taken_over or k not in st.snapshot for k in pair):
             return {}
         return {k: st.snapshot[k] for k in pair}
+
+    def _owner_set_point_values(self, readings: Mapping[str, float | str]) -> dict[str, float | str]:
+        """Moc wg kierunku: nastawy właściciela dla trybu neutralnego i postoju (cykl pisze je zamiast mocy).
+
+        Przy własności — migawka sprzed pierwszego zapisu (bez kluczy przejętych przez właściciela); przed
+        przejęciem — bieżący odczyt (to on trafi do migawki). Brak wartości = brak klucza (nic nie piszemy)."""
+        profile = self._profile
+        if profile is None or not profile.power_by_direction:
+            return {}
+        st = self._state
+        source = st.snapshot if st.owned else readings
+        return {k: source[k] for k in SET_POINT_KEYS
+                if k in source and not isinstance(source[k], str) and k not in st.taken_over}
 
     def _restorable_keys(self) -> frozenset[str]:
         """Klucze zapisane w tej własności (przeżywają restart), bez przejętych przez właściciela."""
