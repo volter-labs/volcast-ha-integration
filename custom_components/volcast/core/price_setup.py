@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import Any, Mapping, Sequence
 
 from .price_actions import OPTION_KEYS, InvalidPriceSource, parse_source
@@ -240,6 +240,8 @@ class SeriesCheck:
     #: bieżąca cena), unusable (brak waluty, zła seria albo encja niedostępna).
     status: str
     hours: int = 0
+    #: Seria obejmuje CAŁĄ jutrzejszą dobę lokalną (np. ceny na jutro już opublikowane).
+    tomorrow: bool = False
 
 
 def check_series(attrs: Mapping[str, Any] | None, fallback_currency: str | None, tz: tzinfo,
@@ -253,18 +255,37 @@ def check_series(attrs: Mapping[str, Any] | None, fallback_currency: str | None,
         if currency and state is not None and _numeric(state) and not _has_series_attribute(attrs):
             return SeriesCheck("current_only")
         return SeriesCheck("unusable")
+    tomorrow = _covers_tomorrow(intervals, tz, now)
     if has_usable_prices_now(attrs, fallback_currency, tz, now):
-        return SeriesCheck("ok", _hours_ahead(intervals, now))
+        return SeriesCheck("ok", _hours_ahead(intervals, now), tomorrow)
     if not starts_by_next_interval(intervals, now):
         return SeriesCheck("unusable")      # seria zaczyna się dalej niż jeden przedział po teraz — nie obejmuje teraz
     hours = _hours_ahead(intervals, now)
-    return SeriesCheck("short" if hours > 0 else "unusable", max(hours, 0))
+    return SeriesCheck("short", hours, tomorrow) if hours > 0 else SeriesCheck("unusable")
+
+
+def sell_lacks_tomorrow(buy: SeriesCheck, sell: SeriesCheck) -> bool:
+    """Kupno ma już całe jutro, a sprzedaż (z serią) jeszcze nie — informacja przy wyborze, nie błąd.
+
+    W czasie działania blok cen idzie tylko w zakresie pokrytym przez obie strony, więc jutro planer
+    liczy wtedy z cen poprzedniej doby. Przed publikacją cen na jutro żadna strona go nie ma — wtedy nic.
+    """
+    return buy.tomorrow and sell.status in ("ok", "short") and not sell.tomorrow
+
+
+def _end(intervals: Sequence[Mapping[str, Any]]) -> datetime:
+    last = intervals[-1]
+    return datetime.fromisoformat(last["startAt"].replace("Z", "+00:00")) + timedelta(minutes=last["minutes"])
 
 
 def _hours_ahead(intervals: Sequence[Mapping[str, Any]], now: datetime) -> int:
-    last = intervals[-1]
-    end = datetime.fromisoformat(last["startAt"].replace("Z", "+00:00")) + timedelta(minutes=last["minutes"])
-    return int((end - now.astimezone(timezone.utc)).total_seconds() // 3600)
+    return int((_end(intervals) - now.astimezone(timezone.utc)).total_seconds() // 3600)
+
+
+def _covers_tomorrow(intervals: Sequence[Mapping[str, Any]], tz: tzinfo, now: datetime) -> bool:
+    """Seria (ciągła) sięga końca jutrzejszej doby lokalnej — północy pojutrze w strefie `tz`."""
+    pojutrze = now.astimezone(tz).date() + timedelta(days=2)
+    return _end(intervals) >= datetime.combine(pojutrze, time(), tzinfo=tz)
 
 
 def _numeric(state: str) -> bool:

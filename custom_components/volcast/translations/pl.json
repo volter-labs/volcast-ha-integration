@@ -337,6 +337,10 @@
       "price_source_confirm": {
         "title": "Użyć tego źródła cen?",
         "description": "To źródło daje prognozę cen na {hours} h do przodu. Zatwierdź, aby użyć go do planowania. Ceny są liczone w {currency}."
+      },
+      "price_sell_tomorrow": {
+        "title": "Brak cen sprzedaży na jutro",
+        "description": "Źródło ceny sprzedaży {source} nie podaje jeszcze cen na jutro, choć ceny zakupu na jutro są już dostępne. Dopóki ich nie poda, plan na jutro będzie liczony z cen z poprzedniego dnia. Zatwierdź, aby mimo to zapisać źródło cen."
       }
     },
     "abort": {

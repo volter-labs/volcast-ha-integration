@@ -337,6 +337,10 @@
       "price_source_confirm": {
         "title": "Utiliser cette source de prix ?",
         "description": "Cette source fournit une prévision de prix sur {hours} h. Validez pour l'utiliser dans la planification. Les prix sont lus en {currency}."
+      },
+      "price_sell_tomorrow": {
+        "title": "Prix de vente de demain manquants",
+        "description": "La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille. Validez pour enregistrer quand même la source de prix."
       }
     },
     "abort": {

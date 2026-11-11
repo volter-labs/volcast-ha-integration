@@ -337,6 +337,10 @@
       "price_source_confirm": {
         "title": "Deze prijsbron gebruiken?",
         "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. Bevestig om hem voor planning te gebruiken. De prijzen worden gelezen in {currency}."
+      },
+      "price_sell_tomorrow": {
+        "title": "Verkoopprijzen voor morgen ontbreken",
+        "description": "De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag. Bevestig om de prijsbron toch op te slaan."
       }
     },
     "abort": {

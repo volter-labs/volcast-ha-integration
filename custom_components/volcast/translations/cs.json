@@ -337,6 +337,10 @@
       "price_source_confirm": {
         "title": "Použít tento zdroj cen?",
         "description": "Tento zdroj poskytuje předpověď cen na {hours} h dopředu. Potvrďte a použije se pro plánování. Ceny se čtou v {currency}."
+      },
+      "price_sell_tomorrow": {
+        "title": "Chybí prodejní ceny na zítřek",
+        "description": "Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne. Potvrďte a zdroj cen se přesto uloží."
       }
     },
     "abort": {

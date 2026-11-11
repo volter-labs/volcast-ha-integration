@@ -242,6 +242,57 @@ def test_prices_form_offers_only_usable_entities():
     assert (r["type"], r["step_id"]) == ("form", "prices")
 
 
+# ── informacja: sprzedaż nie ma jeszcze jutra, kupno już ma ───────────────
+
+
+def _from_local_midnight(hours):
+    """Seria godzinowa od dzisiejszej północy w Warszawie (strefa atrapy HA): 48 h = dziś + całe jutro."""
+    start = NOW.astimezone(__import__("zoneinfo").ZoneInfo("Europe/Warsaw")).replace(
+        hour=0, minute=0, second=0, microsecond=0).astimezone(NOW.tzinfo)
+    return {"currency": "PLN", "raw_today": [
+        {"start": (start + timedelta(hours=i)).isoformat(), "end": (start + timedelta(hours=i + 1)).isoformat(),
+         "value": 0.5} for i in range(hours)]}
+
+
+_BOTH = {"entity_price_buy": "sensor.buy", "entity_price_sell": "sensor.sell"}
+
+
+def test_prices_form_notes_sell_without_tomorrow_and_still_saves():
+    f = flow(prices={"sensor.buy": _from_local_midnight(48), "sensor.sell": _from_local_midnight(36)})
+    r = asyncio.run(f.async_step_prices(dict(_BOTH)))
+    assert (r["type"], r["step_id"]) == ("form", "price_sell_tomorrow")
+    done = asyncio.run(f.async_step_price_sell_tomorrow({}))
+    assert done["data"] == _BOTH
+
+
+@pytest.mark.parametrize("buy_h, sell_h", [(48, 48), (36, 24), (36, 36)],
+                         ids=["both-have-tomorrow", "before-publication", "neither-has-full-tomorrow"])
+def test_prices_form_without_the_sell_gap_saves_at_once(buy_h, sell_h):
+    f = flow(prices={"sensor.buy": _from_local_midnight(buy_h), "sensor.sell": _from_local_midnight(sell_h)})
+    r = asyncio.run(f.async_step_prices(dict(_BOTH)))
+    assert r["data"] == _BOTH
+
+
+def test_prices_form_without_sell_never_notes_tomorrow():
+    f = flow(prices={"sensor.buy": _from_local_midnight(48)})
+    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.buy"}))
+    assert r["data"] == {"entity_price_buy": "sensor.buy"}
+
+
+def test_prices_form_skips_the_note_when_a_sell_action_stays_in_force():
+    # Akcja sprzedaży wygrywa z encją w czasie działania — encji z formularza nie oceniamy.
+    action = {"action": "nordpool.get_prices_for_date", "data": {"config_entry": "np1", "areas": "PL"}}
+    f = flow(options={**_BOTH, "price_sell_action": action},
+             prices={"sensor.buy": _from_local_midnight(48), "sensor.sell": _from_local_midnight(36)})
+    r = asyncio.run(f.async_step_prices(dict(_BOTH)))
+    assert r["data"] == {**_BOTH, "price_sell_action": action}
+
+
+def test_sell_tomorrow_step_without_pending_options_aborts():
+    r = asyncio.run(flow().async_step_price_sell_tomorrow({}))
+    assert r == {"type": "abort", "reason": "price_source_invalid"}
+
+
 # ── powrót do trybu bazowego przed przeładowaniem ──────────────────────────
 
 

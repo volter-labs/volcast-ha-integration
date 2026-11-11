@@ -337,6 +337,10 @@
       "price_source_confirm": {
         "title": "Folosești această sursă de prețuri?",
         "description": "Această sursă oferă o prognoză de prețuri pentru următoarele {hours} h. Confirmă pentru a o folosi la planificare. Prețurile sunt citite în {currency}."
+      },
+      "price_sell_tomorrow": {
+        "title": "Lipsesc prețurile de vânzare pentru mâine",
+        "description": "Sursa prețului de vânzare {source} nu oferă încă prețuri pentru mâine, deși prețurile de cumpărare pentru mâine sunt deja disponibile. Până când le oferă, planul pentru mâine se va baza pe prețurile din ziua anterioară. Confirmă pentru a salva totuși sursa de prețuri."
       }
     },
     "abort": {

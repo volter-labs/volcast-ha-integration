@@ -337,6 +337,10 @@
       "price_source_confirm": {
         "title": "Diese Preisquelle verwenden?",
         "description": "Diese Quelle liefert eine Preisprognose für {hours} h im Voraus. Bestätige, um sie für die Planung zu nutzen. Die Preise werden in {currency} gelesen."
+      },
+      "price_sell_tomorrow": {
+        "title": "Verkaufspreise für morgen fehlen",
+        "description": "Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags. Bestätigen Sie, um die Preisquelle trotzdem zu speichern."
       }
     },
     "abort": {

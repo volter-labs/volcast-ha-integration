@@ -337,6 +337,10 @@
       "price_source_confirm": {
         "title": "Usare questa fonte prezzi?",
         "description": "Questa fonte fornisce una previsione dei prezzi per le prossime {hours} h. Conferma per usarla nella pianificazione. I prezzi sono letti in {currency}."
+      },
+      "price_sell_tomorrow": {
+        "title": "Mancano i prezzi di vendita di domani",
+        "description": "La fonte del prezzo di vendita {source} non fornisce ancora i prezzi di domani, mentre i prezzi di acquisto di domani sono già disponibili. Finché non li fornisce, il piano di domani si baserà sui prezzi del giorno precedente. Conferma per salvare comunque la fonte prezzi."
       }
     },
     "abort": {

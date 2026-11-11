@@ -337,6 +337,10 @@
       "price_source_confirm": {
         "title": "Use this price source?",
         "description": "This source provides a price forecast for {hours} h ahead. Submit to use it for planning. Prices are read in {currency}."
+      },
+      "price_sell_tomorrow": {
+        "title": "Sale prices for tomorrow are missing",
+        "description": "The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices. Submit to save the price source anyway."
       }
     },
     "abort": {

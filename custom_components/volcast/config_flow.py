@@ -44,7 +44,7 @@ from .core.price_actions import InvalidPriceSource, attributes_from_responses, b
 from .core.price_integrations import ACTION_DOMAINS, ENTITY_DOMAINS, OFFERED_PLATFORMS, FieldKind
 from .core.price_setup import (ActionCandidate, SeriesCheck, action_candidates, build_action_option, check_series,
                                currency_conflict, effective_currency, enrich_attributes, is_excluded_entity,
-                               pair_entities, platform_currency)
+                               pair_entities, platform_currency, sell_lacks_tomorrow)
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
@@ -545,6 +545,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     _price_candidate: ActionCandidate | None = None
     _price_pending: dict[str, Any] | None = None
+    #: Sprzedaż bez jutra przy źródle z formularza wyboru (encja albo akcja) — pokazywana przed zapisem.
+    _price_note: str | None = None
+    #: Opcje cen czekające na zapis po informacji o sprzedaży bez jutra i nazwa tego źródła sprzedaży.
+    _price_noted: tuple[dict[str, Any], str] | None = None
     _shown_sources: dict[str, tuple[str, Any]] | None = None
 
     def _merged(self, patch: dict[str, Any]) -> dict[str, Any]:
@@ -1071,8 +1075,44 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                                                 (OPT_PRICE_SELL, OPT_PRICE_SELL_ACTION, sell)):
                 if eid and eid != saved.get(entity_key):
                     patch[action_key] = None
-            return await self._finish(self._merged(patch))
+            options = self._merged(patch)
+            return await self._save_prices(options, self._entity_sell_note(options, currency))
         return self.async_show_form(step_id="prices", data_schema=self._prices_schema())
+
+    async def _save_prices(self, options: dict[str, Any], sell_note: str | None) -> ConfigFlowResult:
+        """Zapis opcji cen; gdy sprzedaż nie ma jeszcze jutra, a kupno już ma — najpierw informacja o tym."""
+        if sell_note is None:
+            return await self._finish(options)
+        self._price_noted = (options, sell_note)
+        return self._sell_note_form(sell_note)
+
+    def _sell_note_form(self, source: str) -> ConfigFlowResult:
+        return self.async_show_form(step_id="price_sell_tomorrow", data_schema=vol.Schema({}),
+                                    description_placeholders={"source": source})
+
+    async def async_step_price_sell_tomorrow(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Informacja, nie blokada: zatwierdzenie zapisuje wybrane źródło cen bez zmian."""
+        noted = self._price_noted
+        if noted is None:
+            return self.async_abort(reason="price_source_invalid")
+        if user_input is None:
+            return self._sell_note_form(noted[1])
+        self._price_noted = None
+        return await self._finish(noted[0])
+
+    def _entity_sell_note(self, options: dict[str, Any], currency: str | None) -> str | None:
+        """Encja sprzedaży bez jutra, gdy encja kupna już je ma — tylko gdy obie strony to encje."""
+        if options.get(OPT_PRICE_BUY_ACTION) or options.get(OPT_PRICE_SELL_ACTION):
+            return None                     # akcja wygrywa z encją w czasie działania — encji tu nie oceniamy
+        buy, sell = options.get(OPT_PRICE_BUY), options.get(OPT_PRICE_SELL)
+        if not buy or not sell:
+            return None
+        return sell if sell_lacks_tomorrow(self._entity_check(buy, currency), self._entity_check(sell, currency)) \
+            else None
+
+    def _entity_check(self, entity_id: str, currency: str | None) -> SeriesCheck:
+        """Werdykt o encji ceny z walutą opcji albo — gdy jej nie ma — walutą kraju integracji encji."""
+        return self._price_check(entity_id, currency or platform_currency(self._platform_of(entity_id)))
 
     # ── ceny ──────────────────────────────────────────────────────────────
     def _price_check(self, entity_id: str, currency: str | None) -> SeriesCheck:
@@ -1220,6 +1260,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         self._price_pending = {OPT_PRICE_BUY: pair.buy, OPT_PRICE_BUY_ACTION: None, OPT_PRICE_SELL_ACTION: None,
                                **({OPT_PRICE_SELL: pair.sell} if pair.sell else {}),
                                **({OPT_PRICE_CURRENCY: patch_currency} if patch_currency else {})}
+        self._price_note = self._entity_sell_note(self._merged(self._price_pending), option_currency)
         return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
                                     description_placeholders={**placeholders, "hours": str(hours), "currency": shown or ""})
 
@@ -1276,12 +1317,19 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             if buy_check.status != "ok":
                 error = "price_horizon_short" if buy_check.status == "short" else "price_source_unusable"
                 placeholders["hours"] = str(buy_check.hours)
-            elif sell is not None and (await self._probe(sell)).status not in ("ok", "short"):
+            elif sell is not None and (sell_check := await self._probe(sell)).status not in ("ok", "short"):
                 error = "price_sell_unusable"
             else:
                 # Sprzedaż osobno ustawiona jako encja zostaje, gdy to źródło nie ma strony sprzedaży.
                 self._price_pending = {OPT_PRICE_BUY: None, OPT_PRICE_BUY_ACTION: buy, OPT_PRICE_SELL_ACTION: sell,
                                        **({OPT_PRICE_SELL: None} if sell is not None else {})}
+                if sell is not None:
+                    note = parse_source(sell).action if sell_lacks_tomorrow(buy_check, sell_check) else None
+                else:
+                    kept = self.config_entry.options.get(OPT_PRICE_SELL)
+                    lacks = bool(kept) and sell_lacks_tomorrow(buy_check, self._entity_check(kept, option_currency))
+                    note = kept if lacks else None
+                self._price_note = note
                 return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
                                             description_placeholders={**placeholders, "hours": str(buy_check.hours),
                                                                   "currency": parsed.currency or option_currency or ""})
@@ -1292,7 +1340,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     async def async_step_price_source_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if not self._price_pending:
             return self.async_abort(reason="price_source_invalid")
-        return await self._finish(self._merged(self._price_pending))
+        return await self._save_prices(self._merged(self._price_pending), self._price_note)
 
     async def _probe(self, option: dict) -> SeriesCheck:
         """Zapytanie akcji tak jak w czasie działania (dziś + jutro) i werdykt o serii."""

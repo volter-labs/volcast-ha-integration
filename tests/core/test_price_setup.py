@@ -8,8 +8,8 @@ import pytest
 
 from custom_components.volcast.core.price_actions import InvalidPriceSource, parse_source
 from custom_components.volcast.core.price_setup import (
-    action_candidates, build_action_option, check_series, currency_conflict, effective_currency,
-    enrich_attributes, is_excluded_entity, pair_entities)
+    SeriesCheck, action_candidates, build_action_option, check_series, currency_conflict, effective_currency,
+    enrich_attributes, is_excluded_entity, pair_entities, sell_lacks_tomorrow)
 
 WAW = ZoneInfo("Europe/Warsaw")
 NOW = datetime(2026, 10, 31, 9, 0, tzinfo=timezone.utc)
@@ -113,6 +113,41 @@ def test_check_series_forecast_current_only_short():
     assert check_series({"x": 1}, None, WAW, NOW, state="0.5").status == "unusable"   # nie wygląda na cenę
     bad = check_series({"currency": "FOO", "raw_today": []}, None, WAW, NOW)
     assert bad.status == "unusable"
+
+
+def _from_local_midnight(day: datetime, hours: int) -> dict:
+    """Seria godzinowa od lokalnej (Warszawa) północy dnia `day`, liczona w UTC (ciągła także przy zmianie
+    czasu), podzielona jak u źródeł dobowych na `raw_today` i `raw_tomorrow`."""
+    start = datetime(day.year, day.month, day.day, tzinfo=WAW).astimezone(timezone.utc)
+    rows = _hourly(hours, start=start)["raw_today"]
+    jutro = datetime.combine(day.date() + timedelta(days=1), datetime.min.time(), tzinfo=WAW)
+    dzis = int((jutro - start) / timedelta(hours=1))
+    return {**_hourly(0), "raw_today": rows[:dzis], "raw_tomorrow": rows[dzis:]}
+
+
+@pytest.mark.parametrize("now, hours, tomorrow", [
+    (NOW, 48, True),                                                 # dziś + całe jutro
+    (NOW, 47, False),                                                # jutro bez ostatniej godziny
+    (NOW, 24, False),                                                # samo dziś (przed publikacją jutra)
+    (datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc), 49, True),   # jutro to doba 25 h (zmiana czasu)
+    (datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc), 48, False),
+    (datetime(2026, 3, 28, 9, 0, tzinfo=timezone.utc), 47, True),    # jutro to doba 23 h
+])
+def test_check_series_reports_whether_the_whole_of_tomorrow_is_covered(now, hours, tomorrow):
+    check = check_series(_from_local_midnight(now.astimezone(WAW), hours), None, WAW, now)
+    assert check.status == "ok" and check.tomorrow is tomorrow
+
+
+@pytest.mark.parametrize("buy, sell, expected", [
+    (SeriesCheck("ok", 38, tomorrow=True), SeriesCheck("ok", 14), True),
+    (SeriesCheck("ok", 38, tomorrow=True), SeriesCheck("short", 3), True),
+    (SeriesCheck("ok", 38, tomorrow=True), SeriesCheck("ok", 38, tomorrow=True), False),
+    (SeriesCheck("ok", 14), SeriesCheck("ok", 14), False),            # przed publikacją: obie strony bez jutra
+    (SeriesCheck("ok", 38, tomorrow=True), SeriesCheck("unusable"), False),
+    (SeriesCheck("ok", 38, tomorrow=True), SeriesCheck("current_only"), False),
+])
+def test_sell_lacks_tomorrow_only_when_buy_has_it_and_sell_series_does_not(buy, sell, expected):
+    assert sell_lacks_tomorrow(buy, sell) is expected
 
 
 def test_series_starting_in_the_future_is_not_a_forecast():

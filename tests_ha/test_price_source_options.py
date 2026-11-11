@@ -605,3 +605,72 @@ async def test_frank_energie_entity_is_not_suggested_but_can_be_picked_by_hand(h
     done = await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": buy})
     assert done["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["entity_price_buy"] == buy and entry.options.get("price_buy_action") is None
+
+
+# ── informacja: sprzedaż nie ma jeszcze jutra, kupno już ma ───────────────
+
+
+def _local_midnight(days: int = 0) -> datetime:
+    """Lokalna północ (strefa HA) za `days` dni, w UTC."""
+    from homeassistant.util import dt as dt_util
+    today = dt_util.start_of_local_day()
+    return dt_util.start_of_local_day(today.date() + timedelta(days=days)).astimezone(timezone.utc)
+
+
+def _span_h(start: datetime, end: datetime) -> int:
+    return int((end - start) / timedelta(hours=1))
+
+
+def _until(end: datetime, step_min: int = 30) -> list[dict]:
+    """Prognoza Ambera od najbliższej granicy siatki do `end`."""
+    start = _next_boundary(step_min)
+    return [
+        {"start_time": (start + timedelta(minutes=i * step_min)).isoformat(),
+         "end_time": (start + timedelta(minutes=(i + 1) * step_min)).isoformat(), "per_kwh": 0.3}
+        for i in range(int((end - start) / timedelta(minutes=step_min)))]
+
+
+async def test_pair_with_sell_lacking_tomorrow_notes_it_after_confirm_and_still_saves(
+        hass: HomeAssistant, network_down):
+    midnight, day_after, noon_tomorrow = _local_midnight(), _local_midnight(2), _local_midnight(1) + timedelta(hours=12)
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price",
+                  _fixture("pstryk_all_prices", "All prices", _span_h(midnight, day_after), 60, start=midnight))
+    sell = _entity(hass, "sensor", "pstryk", "pstryk_current_sell_price",
+                   _fixture("pstryk_all_prices", "All prices", _span_h(midnight, noon_tomorrow), 60, start=midnight))
+    entry = make_entry(hass)
+    _form, confirm = await _choose(hass, entry, f"entities|{buy}")
+    assert confirm["step_id"] == "price_source_confirm"
+    note = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
+    assert note["type"] is FlowResultType.FORM and note["step_id"] == "price_sell_tomorrow"
+    assert note["description_placeholders"] == {"source": sell}
+    assert "entity_price_buy" not in entry.options                      # dopiero po informacji
+    done = await hass.config_entries.options.async_configure(note["flow_id"], {})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == sell
+
+
+async def test_pair_with_both_sides_covering_tomorrow_saves_after_confirm(hass: HomeAssistant, network_down):
+    midnight, day_after = _local_midnight(), _local_midnight(2)
+    attrs = _fixture("pstryk_all_prices", "All prices", _span_h(midnight, day_after), 60, start=midnight)
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price", attrs)
+    _entity(hass, "sensor", "pstryk", "pstryk_current_sell_price", attrs)
+    entry = make_entry(hass)
+    _form, confirm = await _choose(hass, entry, f"entities|{buy}")
+    done = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
+    assert done["type"] is FlowResultType.CREATE_ENTRY and entry.options["entity_price_buy"] == buy
+
+
+async def test_action_source_with_sell_lacking_tomorrow_names_the_sell_action(hass: HomeAssistant, network_down):
+    _loaded(hass, "amberelectric", "Amber home", "amb1")
+    day_after, noon_tomorrow = _local_midnight(2), _local_midnight(1) + timedelta(hours=12)
+    _register(hass, "amberelectric", "get_forecasts", lambda call: {"forecasts": _until(
+        day_after if call.data["channel_type"] == "general" else noon_tomorrow)}, [])
+    entry = make_entry(hass)
+    form = await _open(hass, entry)
+    confirm = await hass.config_entries.options.async_configure(form["flow_id"], {"source": "action|amberelectric|amb1"})
+    note = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
+    assert note["step_id"] == "price_sell_tomorrow"
+    assert note["description_placeholders"] == {"source": "amberelectric.get_forecasts"}
+    done = await hass.config_entries.options.async_configure(note["flow_id"], {})
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["price_sell_action"]["data"]["channel_type"] == "feed_in"
