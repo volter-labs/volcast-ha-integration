@@ -231,21 +231,54 @@ def test_sell_price_entity_used():
     assert iv[0]["buy"] == 0.5 and iv[0]["sell"] == 0.2
 
 
-def _kwadranse(h, eid, value):
-    """Encja z dobą 96 kwadransów (seria 15-min) na 2026-09-23 w czasie lokalnym +02:00."""
-    start = datetime(2026, 9, 23, tzinfo=timezone(timedelta(hours=2)))
-    h.states.set(eid, str(value), {"currency": "PLN", "raw_today": [
-        {"start": (start + timedelta(minutes=15 * i)).isoformat(),
-         "end": (start + timedelta(minutes=15 * (i + 1))).isoformat(), "value": value} for i in range(96)]})
+_DAY_START = datetime(2026, 9, 23, tzinfo=timezone(timedelta(hours=2)))
 
 
-def test_hourly_buy_with_quarter_hour_sell_entity_pairs_every_interval():
+def _kwadranse(h, eid, value, *, first=0, count=96):
+    """Encja z kwadransami (seria 15-min) na 2026-09-23 w czasie lokalnym +02:00: od kwadransu `first`
+    doby, `count` kolejnych; `value` stała albo funkcja numeru kwadransu doby."""
+    h.states.set(eid, "0", {"currency": "PLN", "raw_today": [
+        {"start": (_DAY_START + timedelta(minutes=15 * i)).isoformat(),
+         "end": (_DAY_START + timedelta(minutes=15 * (i + 1))).isoformat(),
+         "value": value(i) if callable(value) else value} for i in range(first, first + count)]})
+
+
+def _quarter_price(i):
+    # Inna cena w każdym kwadransie doby — średnia godziny ≠ jej pierwszy kwadrans.
+    return round(0.1 + 0.01 * i + (0.08 if i % 4 == 3 else 0.0), 4)
+
+
+def _hour_mean(hour):
+    return pytest.approx(sum(_quarter_price(4 * hour + j) for j in range(4)) / 4)
+
+
+def _start_at(iv):
+    return datetime.fromisoformat(iv["startAt"].replace("Z", "+00:00"))
+
+
+def test_hourly_buy_with_quarter_hour_sell_entity_sends_the_mean_of_each_hour():
     h, cloud = goodwe_hass(), Cloud()
     s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
-    _kwadranse(h, "sensor.sell", 0.2)
+    _kwadranse(h, "sensor.sell", _quarter_price)
     asyncio.run(s.async_flush())
     iv = cloud.sent[0]["prices"]["intervals"]
-    assert len(iv) == 24 and all(p["minutes"] == 60 and p["sell"] == 0.2 for p in iv)
+    assert len(iv) == 24 and all(p["minutes"] == 60 for p in iv)
+    assert [p["sell"] for p in iv] == [_hour_mean(hour) for hour in range(24)]
+
+
+@pytest.mark.parametrize("first, count, hours", [
+    (4 * 13 + 1, 96 - (4 * 13 + 1), range(14, 24)),   # od 13:15 — godzina 13 pokryta tylko częściowo
+    (0, 4 * 20 + 2, range(0, 20)),                    # do 20:30 — godzina 20 pokryta tylko częściowo
+], ids=["head", "tail"])
+def test_quarter_hour_sell_partly_covering_an_hour_trims_it_and_keeps_block_contiguous(first, count, hours):
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _kwadranse(h, "sensor.sell", _quarter_price, first=first, count=count)
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert [p["sell"] for p in iv] == [_hour_mean(hour) for hour in hours]
+    assert _start_at(iv[0]) == _DAY_START + timedelta(hours=hours[0])
+    assert all(_start_at(b) - _start_at(a) == timedelta(minutes=a["minutes"]) for a, b in zip(iv, iv[1:]))
 
 
 def test_quarter_hour_buy_with_hourly_sell_entity_pairs_every_interval():

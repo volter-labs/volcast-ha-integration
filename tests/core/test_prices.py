@@ -409,15 +409,119 @@ def test_zepsute_atrybuty_sprzedazy_nie_kasuja_zakupu():
     assert [w["sell"] for w in out] == [None, None, None]
 
 
-def test_sell_o_innej_rozdzielczosci_paruje_tylko_wspolne_chwile():
-    """Sprzedaż drobniejsza i zagnieżdżona: przedział kupna bierze kwadrans ze swojego startu."""
+def test_sell_drobniejszy_zagniezdzony_to_srednia_kwadransow_godziny_kupna():
+    """Sprzedaż drobniejsza i zagnieżdżona: przedział kupna dostaje średnią WSZYSTKICH kwadransów w nim."""
     buy = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
     sell = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=lambda i: 0.1 * (i + 1))}
 
     out = intervals_from_attributes(buy, sell, "PLN", _WAW)
 
     assert [w["minutes"] for w in out] == [60, 60]
-    assert [w["sell"] for w in out] == [pytest.approx(0.1), pytest.approx(0.5)]
+    assert [w["sell"] for w in out] == [pytest.approx(0.25), pytest.approx(0.65)]
+
+
+def _raw_utc(start_utc: datetime, ile: int, minuty: int, tz, wartosc):
+    """Wpisy `raw_*` liczone w UTC (ciągłe także w dniu zmiany czasu), zapisane z lokalnym offsetem `tz`."""
+    krok = timedelta(minutes=minuty)
+    return [
+        {"start": (start_utc + i * krok).astimezone(tz).isoformat(),
+         "end": (start_utc + (i + 1) * krok).astimezone(tz).isoformat(),
+         "value": wartosc(i)}
+        for i in range(ile)
+    ]
+
+
+def _srednie(wartosc, ile_kupna: int, na_kupno: int, od: int = 0) -> list:
+    """Oczekiwane średnie sprzedaży kolejnych przedziałów kupna (po `na_kupno` drobnych, od wpisu `od`)."""
+    return [
+        pytest.approx(sum(wartosc(od + k * na_kupno + j) for j in range(na_kupno)) / na_kupno)
+        for k in range(ile_kupna)
+    ]
+
+
+def _zmienna(i: int) -> float:
+    # Inna wartość w każdym drobnym przedziale (także ujemna) — średnia ≠ wartość ze startu.
+    return round(0.05 * ((i * 7) % 11) - 0.12, 4)
+
+
+@pytest.mark.parametrize("krok_kupna, krok_sprzedazy", [
+    (15, 5), (30, 5), (60, 5), (30, 15), (60, 15), (60, 30),
+])
+def test_sell_drobniejszy_kazde_zagniezdzenie_to_srednia(krok_kupna, krok_sprzedazy):
+    na_kupno = krok_kupna // krok_sprzedazy
+    buy = {"raw_today": _raw(_polnoc(), 3, krok_kupna, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 3 * na_kupno, krok_sprzedazy, wartosc=_zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == _srednie(_zmienna, 3, na_kupno)
+    assert [w["sell"] for w in out] != [_zmienna(k * na_kupno) for k in range(3)]
+
+
+def test_sell_drobniejszy_zaczynajacy_sie_w_srodku_godziny_kupna_nie_paruje_jej():
+    """Sprzedaż od 00:30: godzina 00:00 ma tylko 2 z 4 kwadransów — bez sprzedaży, nie średnia z połowy."""
+    buy = {"raw_today": _raw(_polnoc(), 3, 60, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc() + timedelta(minutes=30), 10, 15, wartosc=_zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [None, *_srednie(_zmienna, 2, 4, od=2)]
+
+
+def test_sell_drobniejszy_konczacy_sie_w_srodku_godziny_kupna_nie_paruje_jej():
+    """Sprzedaż do 01:30: godzina 01:00 ma tylko 2 z 4 kwadransów — bez sprzedaży."""
+    buy = {"raw_today": _raw(_polnoc(), 3, 60, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 6, 15, wartosc=_zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [*_srednie(_zmienna, 1, 4), None, None]
+
+
+@pytest.mark.parametrize("dzien, godziny", [(date(2026, 3, 29), 23), (date(2026, 10, 25), 25)])
+def test_sell_drobniejszy_w_dniu_zmiany_czasu_to_srednia_kazdej_godziny(dzien, godziny):
+    polnoc_utc = datetime(dzien.year, dzien.month, dzien.day, tzinfo=_WAW).astimezone(_UTC)
+    buy = {"raw_today": _raw_utc(polnoc_utc, godziny, 60, _WAW, lambda _i: 1.0)}
+    sell = {"raw_today": _raw_utc(polnoc_utc, 4 * godziny, 15, _WAW, _zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert len(out) == godziny
+    assert [w["sell"] for w in out] == _srednie(_zmienna, godziny, 4)
+
+
+def test_sell_drobniejszy_w_strefie_z_polgodzinnym_offsetem_to_srednia():
+    kolkata = ZoneInfo("Asia/Kolkata")  # +05:30 — lokalna pełna godzina to :30 w UTC
+    polnoc_utc = datetime(2026, 9, 15, tzinfo=kolkata).astimezone(_UTC)
+    buy = {"raw_today": _raw_utc(polnoc_utc, 24, 60, kolkata, lambda _i: 1.0)}
+    sell = {"raw_today": _raw_utc(polnoc_utc, 96, 15, kolkata, _zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "INR", kolkata)
+
+    assert out[0]["startAt"] == "2026-09-14T18:30:00Z"
+    assert [w["sell"] for w in out] == _srednie(_zmienna, 24, 4)
+
+
+@pytest.mark.parametrize("krok_kupna, krok_sprzedazy, wartosc", [
+    (15, 5, 0.1), (60, 5, 0.1), (30, 5, 0.07), (60, 15, 0.3),
+])
+def test_srednia_stalej_sprzedazy_to_dokladnie_ta_stala(krok_kupna, krok_sprzedazy, wartosc):
+    # Bez szumu zmiennoprzecinkowego (np. 0.10000000000000002 ze średniej trzech 0.1).
+    buy = {"raw_today": _raw(_polnoc(), 2, krok_kupna, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 2 * krok_kupna // krok_sprzedazy, krok_sprzedazy, wartosc=wartosc)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [wartosc, wartosc]
+
+
+def test_srednia_dwoch_wartosci_bez_szumu_zmiennoprzecinkowego():
+    buy = {"raw_today": _raw(_polnoc(), 1, 30, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 2, 15, wartosc=lambda i: (0.1, 0.2)[i])}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert out[0]["sell"] == 0.15
 
 
 def test_sell_grubszy_zagniezdzony_kopiowany_na_kazdy_przedzial_kupna():
@@ -1334,12 +1438,12 @@ def test_sprzedaz_5_min_paruje_sie_z_kupnem_5_min():
     assert all(p["sell"] == pytest.approx(0.1) for p in out)
 
 
-def test_sprzedaz_5_min_przy_kupnie_15_min_bierze_wartosc_ze_startu():
+def test_sprzedaz_5_min_przy_kupnie_15_min_to_srednia_trzech():
     kupno = {"raw_today": _raw(_polnoc(), 4, 15, wartosc=0.5)}
     sprzedaz = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=lambda i: 0.1 * i)}
     out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
     assert len(out) == 4
-    assert [p["sell"] for p in out] == pytest.approx([0.0, 0.3, 0.6, 0.9])
+    assert [p["sell"] for p in out] == pytest.approx([0.1, 0.4, 0.7, 1.0])
 
 
 def test_sprzedaz_5_min_przesunieta_faza_przy_kupnie_15_min_to_none():

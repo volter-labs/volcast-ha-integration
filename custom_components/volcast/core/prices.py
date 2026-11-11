@@ -73,6 +73,11 @@ MAX_PRZEDZIALOW_BLOKU = 400
 #: Tolerancja sekundowego przesunięcia startu przedziału (np. `…T00:00:01`).
 TOLERANCJA_SEKUND = 5
 
+#: Miejsca po przecinku średniej sprzedaży drobniejszej niż kupno. Żadne źródło
+#: nie podaje ceny za kWh dokładniej, a zaokrąglenie usuwa szum zmiennoprzecinkowy
+#: (średnia trzech 0.1 to 0.1, nie 0.10000000000000002).
+MIEJSCA_SREDNIEJ = 10
+
 #: Litery skandynawskie i polskie w symbolach jednostek (`Øre` DKK/NOK, `Öre`
 #: SEK, `zł` PLN) — sprowadzamy je do zwykłych liter ASCII, żeby porównanie
 #: z listami niżej działało bez względu na diakrytyk.
@@ -733,8 +738,8 @@ def intervals_from_attributes(
             drobniejszy = min(krok_kupna, krok_sprzedazy)
             # Siatki muszą się ZAGNIEŻDŻAĆ: dłuższy krok jest wielokrotnością
             # krótszego i obie mają tę samą fazę względem krótszego. Wtedy każdy
-            # przedział kupna albo zaczyna się na starcie przedziału sprzedaży
-            # (sprzedaż drobniejsza — bierzemy cenę z tego startu), albo w całości
+            # przedział kupna albo składa się z całych przedziałów sprzedaży
+            # (sprzedaż drobniejsza — średnia ich wszystkich), albo w całości
             # leży w jednym przedziale sprzedaży (sprzedaż grubsza — cena
             # dokładna). Siatki przesunięte albo niewspółmierne dałyby sprzedaż
             # CZĘŚCIOWĄ (np. co któryś przedział) — woli się brak sprzedaży.
@@ -752,17 +757,30 @@ def intervals_from_attributes(
         chwila = start.astimezone(timezone.utc).replace(microsecond=0)
         if chwila in wynik:
             continue  # duplikat — zostaje pierwszy napotkany
-        # Start przedziału sprzedaży, w którym leży `chwila` (przy sprzedaży
-        # drobniejszej albo równej to sama `chwila`). Chwile sprzedaży poza
-        # zakresem kupna po prostu się nie parują.
-        start_sprzedazy = chwila - timedelta(
-            seconds=(int(chwila.timestamp()) - faza_sprzedazy) % krok_sprzedazy if krok_sprzedazy else 0
-        )
+        if krok_sprzedazy and krok_sprzedazy < minuty * 60:
+            # Sprzedaż drobniejsza: średnia WSZYSTKICH jej przedziałów w przedziale
+            # kupna; brak choć jednego (seria zaczyna się albo kończy w środku
+            # przedziału kupna) — brak sprzedaży, nie średnia z części.
+            drobne = [
+                sprzedaz.get(chwila + timedelta(seconds=krok_sprzedazy * i))
+                for i in range(minuty * 60 // krok_sprzedazy)
+            ]
+            cena_sprzedazy = (
+                None if None in drobne else round(math.fsum(drobne) / len(drobne), MIEJSCA_SREDNIEJ)
+            )
+        else:
+            # Start przedziału sprzedaży, w którym leży `chwila` (przy sprzedaży
+            # równej to sama `chwila`). Chwile sprzedaży poza zakresem kupna po
+            # prostu się nie parują.
+            start_sprzedazy = chwila - timedelta(
+                seconds=(int(chwila.timestamp()) - faza_sprzedazy) % krok_sprzedazy if krok_sprzedazy else 0
+            )
+            cena_sprzedazy = sprzedaz.get(start_sprzedazy)
         wynik[chwila] = {
             "startAt": chwila.isoformat().replace("+00:00", "Z"),
             "minutes": minuty,
             "buy": cena,
-            "sell": sprzedaz.get(start_sprzedazy),
+            "sell": cena_sprzedazy,
             "currency": waluta,
         }
     if len(wynik) > (MAX_WPISOW_5_MIN if zakup[0][2] == 5 else MAX_PRZEDZIALOW_BLOKU):
