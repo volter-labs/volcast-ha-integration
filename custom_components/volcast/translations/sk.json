@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "Striedač neprijíma riadiace príkazy",
-      "description": "Striedač odmietol alebo nevykonal riadiaci príkaz z Volcastu ({settings}). Zápis do striedača je pravdepodobne vypnutý. Zapni zápis alebo diaľkové ovládanie v možnostiach integrácie striedača alebo priamo v striedači. Volcast to potom sám skúsi znova a toto upozornenie zmizne. Dovtedy Volcast striedač neriadi."
+      "description": "Striedač odmietol alebo nevykonal riadiaci príkaz z Volcastu ({settings}). Zápis do striedača je pravdepodobne vypnutý. Zapni zápis alebo diaľkové ovládanie v možnostiach integrácie striedača alebo priamo v striedači. Potom znova načítaj integráciu Volcast (Nastavenia > Zariadenia a služby > Volcast) alebo reštartuj Home Assistant; toto upozornenie zmizne, keď sa zápisy prijmú. Dovtedy Volcast striedač neriadi."
     },
     "controller_conflict": {
       "title": "Iný regulátor riadi váš striedač",

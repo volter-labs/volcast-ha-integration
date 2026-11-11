@@ -190,6 +190,7 @@ class Onboarding:
         self._profiles = list(profiles)
         self._direct_report = None             # raport sondy z rozpoznanym falownikiem (bez integracji w HA)
         self._inverter_integration = False
+        self._rejection_tasks: set = set()
         self._offer: dict | None = None        # oferta kroku `control_mode` (gdy w stanie `choice`)
         self._searched = False                 # wyszukiwanie falownika już było (start albo wybór `direct`)
         self.account_state = None              # ostatni `AccountState` z chmury (None: brak/błąd)
@@ -303,9 +304,34 @@ class Onboarding:
             update["options"] = {k: v for k, v in options.items() if v is not None}
         self._hass.config_entries.async_update_entry(entry, **update)
 
-    @staticmethod
-    def _write_rejected(rt) -> bool:
-        return getattr(getattr(rt, "executor", None), "write_rejected", False) is True
+    def watch_rejection(self) -> None:
+        """Odrzucenie zapisu po przejęciu (wykonawca już działa) trafia do kroku `control_mode`.
+
+        Wykonawca zgłasza zmianę wywołaniem zwrotnym; wołane po starcie sesji, po zastosowaniu wyboru i przy
+        pierwszych odczytach nowego przebiegu (przeładowanie wpisu daje nowego wykonawcę)."""
+        ex = getattr(self._runtime(), "executor", None)
+        if ex is None or not hasattr(ex, "on_write_rejected_change"):
+            return
+        ex.on_write_rejected_change = lambda: self._on_rejection_change(ex)
+
+    def _on_rejection_change(self, executor) -> None:
+        if not self._live() or self.stopped:
+            return
+        task = asyncio.get_running_loop().create_task(self._apply_rejection(executor))
+        self._rejection_tasks.add(task)
+        task.add_done_callback(self._rejection_tasks.discard)
+
+    async def _apply_rejection(self, executor) -> None:
+        if not self._live() or self.stopped:
+            return
+        try:
+            if getattr(executor, "write_rejected", False) is True:
+                if self._options().get(OPT_CONTROL_MODE) == CONTROL_MODE_ENTITIES:
+                    await self._set("control_mode", "error", CONTROL_REJECTED)
+            elif self._steps.get("control_mode") == ("error", CONTROL_REJECTED):
+                await self._set("control_mode", "done", self._options().get(OPT_CONTROL_MODE))
+        except Exception as err:  # noqa: BLE001 — sygnał pomocniczy nigdy nie przerywa sesji
+            _LOGGER.debug("Volcast onboarding: rejection update skipped (%s)", type(err).__name__)
 
     @staticmethod
     def _open_gap_issues(rt) -> None:
@@ -406,6 +432,7 @@ class Onboarding:
     # ── przebieg ───────────────────────────────────────────────────────────
     async def _run(self) -> None:
         await self._set("account", "done")
+        self.watch_rejection()
         await self._set("inverter", "active")
         report = await self._wait_report() or {}
         rt = self._runtime()
@@ -421,9 +448,7 @@ class Onboarding:
         else:
             await self._set("capabilities", "done", "read only")
         mode = self._options().get(OPT_CONTROL_MODE)
-        if mode == CONTROL_MODE_ENTITIES and self._write_rejected(rt):
-            await self._set("control_mode", "error", CONTROL_REJECTED)
-        elif mode in (CONTROL_MODE_ENTITIES, CONTROL_MODE_DIRECT):
+        if mode in (CONTROL_MODE_ENTITIES, CONTROL_MODE_DIRECT):
             await self._set("control_mode", "done", mode)
         elif "control_mode" in self._applied():
             await self._set("control_mode", "done")      # zastosowany wcześniej; opcje wygrywają
@@ -678,6 +703,7 @@ class Onboarding:
         prób i odstępem cooldownu chmury). Wynik inny niż „brak odczytów/błąd planera" — nic nie robi."""
         if self._readings_retry_busy or self.stopped:
             return
+        self.watch_rejection()                    # nowy przebieg po przeładowaniu wpisu = nowy wykonawca
         self._readings_retry_busy = True
         try:
             if not self._may_retry_on_readings():
@@ -746,9 +772,6 @@ class Onboarding:
         if mode == CONTROL_MODE_ENTITIES:
             if not self._control_ready(rt):
                 return "error", self._not_ready_reason(rt), False
-            if self._write_rejected(rt):
-                self._open_gap_issues(rt)
-                return "error", CONTROL_REJECTED, False
             patch.update(entity_mode_options(rt.choice))
             await self._leave_plan_only(rt)
             return "done", CONTROL_MODE_ENTITIES, True

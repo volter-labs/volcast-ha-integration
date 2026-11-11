@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "Invertorul nu acceptă comenzi de control",
-      "description": "Invertorul a refuzat sau nu a aplicat o comandă de control de la Volcast ({settings}). Scrierea în invertor este probabil dezactivată. Activează scrierea sau controlul de la distanță în opțiunile integrării invertorului sau în invertor. Volcast încearcă din nou singur, iar această notificare dispare. Până atunci Volcast nu controlează invertorul."
+      "description": "Invertorul a refuzat sau nu a aplicat o comandă de control de la Volcast ({settings}). Scrierea în invertor este probabil dezactivată. Activează scrierea sau controlul de la distanță în opțiunile integrării invertorului sau în invertor. Apoi reîncarcă integrarea Volcast (Setări > Dispozitive și servicii > Volcast) sau repornește Home Assistant; această notificare dispare când scrierile sunt acceptate. Până atunci Volcast nu controlează invertorul."
     },
     "controller_conflict": {
       "title": "Un alt controler îți controlează invertorul",

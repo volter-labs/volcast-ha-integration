@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "Střídač nepřijímá řídicí příkazy",
-      "description": "Střídač odmítl nebo neprovedl řídicí příkaz z Volcastu ({settings}). Zápis do střídače je pravděpodobně vypnutý. Zapni zápis nebo dálkové ovládání v možnostech integrace střídače či přímo ve střídači. Volcast to pak sám zkusí znovu a toto upozornění zmizí. Do té doby Volcast střídač neřídí."
+      "description": "Střídač odmítl nebo neprovedl řídicí příkaz z Volcastu ({settings}). Zápis do střídače je pravděpodobně vypnutý. Zapni zápis nebo dálkové ovládání v možnostech integrace střídače či přímo ve střídači. Poté znovu načti integraci Volcast (Nastavení > Zařízení a služby > Volcast) nebo restartuj Home Assistant; toto upozornění zmizí, jakmile budou zápisy přijaty. Do té doby Volcast střídač neřídí."
     },
     "controller_conflict": {
       "title": "Jiný regulátor řídí váš střídač",

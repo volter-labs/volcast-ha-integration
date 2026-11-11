@@ -265,6 +265,7 @@ class ControlGaps:
     disabled: tuple[str, ...] = ()
     missing: tuple[str, ...] = ()
     recovered: tuple[str, ...] = ()
+    gapped: tuple[str, ...] = ()        # klucze zapisu, których dotyczą `disabled` i `missing`
 
     def __bool__(self) -> bool:
         return bool(self.disabled or self.missing or self.recovered)
@@ -329,7 +330,8 @@ class VolcastExecutor:
         self.request_reload: Callable[[], None] | None = None     # przeładowanie wpisu po włączeniu encji
         self._gaps_requested = False                  # onboarding poprosił o zgłoszenie przed wyborem sterowania
         self._gaps_shown: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
-        self._gaps_seen = False                       # w tym przebiegu była luka (tylko wtedy przeładowanie)
+        self._gap_keys: set[str] = set()              # klucze, które w tym przebiegu były luką
+        self.on_write_rejected_change: Callable[[], None] | None = None   # onboarding: zmiana odrzucenia zapisu
         self._reload_asked = False
         self._rejected_issue: tuple[str, ...] = ()    # klucze zapisu odrzucone przez urządzenie
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
@@ -937,11 +939,13 @@ class VolcastExecutor:
                                        {"entities": ", ".join(shown[1])})
                 else:
                     ir.async_delete_issue(self._hass, DOMAIN, self._gaps_missing_issue_id)
-        if shown[0] or shown[1]:
-            self._gaps_seen = True
-        if not gaps.recovered:
+        self._gap_keys |= set(gaps.gapped)
+        # Przeładowanie tylko dla klucza, który w TYM przebiegu był luką i teraz ma encję; klucz, którego
+        # encji mapowanie nie przyjmuje (niejednoznaczna, zła jednostka), nigdy nie wywołuje pętli przeładowań.
+        fixed = self._gap_keys & set(gaps.recovered)
+        if not fixed:
             self._reload_asked = False
-        elif self._gaps_seen and not self._reload_asked and self.request_reload is not None:
+        elif not self._reload_asked and self.request_reload is not None:
             self._reload_asked = True
             _LOGGER.info("Volcast control: inverter control entities are available again — reloading")
             self.request_reload()
@@ -957,6 +961,11 @@ class VolcastExecutor:
         if keys == self._rejected_issue:
             return
         self._rejected_issue = keys
+        if self.on_write_rejected_change is not None:
+            try:
+                self.on_write_rejected_change()
+            except Exception as err:  # noqa: BLE001 — sygnał dla onboardingu nie psuje cyklu
+                _LOGGER.debug("Volcast control: rejection signal failed (%s)", type(err).__name__)
         if keys:
             _LOGGER.warning("Volcast control: the inverter did not accept the control write of %s", list(keys))
             self._create_issue(self._rejected_issue_id, "control_write_rejected", {"settings": ", ".join(keys)})
@@ -1385,11 +1394,12 @@ class VolcastExecutor:
         trial = direct is not None and direct.trial
         gates = self._gates()
         live = entities and self._control_on(gates)
+        if not self._control_on(gates):
+            self._set_write_rejected(None)          # sterowanie stoi (obie ścieżki): odrzucenie nieaktualne
         if entities:
             self._track_unsupported(absent, now_mono, live)
             self.refresh_entity_gaps()
             if not live:
-                self._set_write_rejected(None)
                 self._consistent = {}        # wyłączone sterowanie: żadnego odniesienia przejęcia
         if trial and self._state.owned:
             # Próba przy własności z wcześniejszej sesji: pisarz bez zapisu nie odda falownika.
@@ -1521,8 +1531,7 @@ class VolcastExecutor:
             commit(decision, report, self._memory, now_mono,
                    now_wall=now_utc.timestamp() if self._direct is None else None)
             self._log_report(decision, report)
-            if self._direct is None:
-                self._note_rejection(report, taking)
+            self._note_rejection(report, taking)
             if self._note_written([*report.written, *report.ambiguous, *report.restored, *extra]):
                 await self._async_save("control state")
             if self._direct is None:
@@ -1578,7 +1587,7 @@ class VolcastExecutor:
 
     def _finish(self, decision) -> None:
         self.last_decision = decision
-        if decision.reason in _REJECTED_REASONS:
+        if decision.reason in _REJECTED_REASONS and not self._switch_unreadable():
             self._set_write_rejected((_SWITCH_KEY,))
         self._count(decision)
 
@@ -2665,6 +2674,10 @@ class VolcastExecutor:
         if (failed or report.unsupported) and not report.error:
             _LOGGER.info("Volcast control: failed=%s unsupported=%s group_held=%s",
                          failed, report.unsupported, report.group_skipped)
+
+    def _switch_unreadable(self) -> bool:
+        """Tryb bezpośredni: przełącznik bez odczytu zwrotnego z sondy to „nieobsługiwany”, nie „odrzucony”."""
+        return self._direct is not None and _SWITCH_KEY in self._direct.unsupported_seed()
 
     def _note_rejection(self, report: GroupReport, taking: bool) -> None:
         """Zapis odrzucony przez urządzenie: przy przejęciu każda nastawa, później przełącznik zdalnego

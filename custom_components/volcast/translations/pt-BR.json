@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "O inversor não aceita comandos de controle",
-      "description": "O inversor recusou ou não aplicou um comando de controle do Volcast ({settings}). A gravação no inversor provavelmente está desativada. Ative a gravação ou o controle remoto nas opções da integração do inversor ou no próprio inversor. O Volcast tenta de novo sozinho e este aviso desaparece. Até lá, o Volcast não controla o inversor."
+      "description": "O inversor recusou ou não aplicou um comando de controle do Volcast ({settings}). A gravação no inversor provavelmente está desativada. Ative a gravação ou o controle remoto nas opções da integração do inversor ou no próprio inversor. Depois recarregue a integração Volcast (Configurações > Dispositivos e serviços > Volcast) ou reinicie o Home Assistant; este aviso desaparece quando as gravações forem aceitas. Até lá, o Volcast não controla o inversor."
     },
     "controller_conflict": {
       "title": "Outro controlador está controlando seu inversor",

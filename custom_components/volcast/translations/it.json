@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "L'inverter non accetta comandi di controllo",
-      "description": "L'inverter ha rifiutato o non ha applicato un comando di controllo di Volcast ({settings}). La scrittura sull'inverter è probabilmente disattivata. Attiva la scrittura o il controllo remoto nelle opzioni dell'integrazione dell'inverter o direttamente sull'inverter. Volcast riprova da solo e questo avviso scompare. Fino ad allora Volcast non controlla l'inverter."
+      "description": "L'inverter ha rifiutato o non ha applicato un comando di controllo di Volcast ({settings}). La scrittura sull'inverter è probabilmente disattivata. Attiva la scrittura o il controllo remoto nelle opzioni dell'integrazione dell'inverter o direttamente sull'inverter. Poi ricarica l'integrazione Volcast (Impostazioni > Dispositivi e servizi > Volcast) oppure riavvia Home Assistant; questo avviso scompare quando le scritture vengono accettate. Fino ad allora Volcast non controlla l'inverter."
     },
     "controller_conflict": {
       "title": "Un altro controllore sta controllando il tuo inverter",

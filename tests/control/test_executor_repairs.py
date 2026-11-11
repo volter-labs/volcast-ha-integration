@@ -89,10 +89,10 @@ def test_entities_that_appear_later_request_one_reload(monkeypatch):
     h, ex = make(monkeypatch=monkeypatch)
     reloads = []
     ex.request_reload = lambda: reloads.append(1)
-    gaps = {"now": ControlGaps(disabled=("switch.x_remote",))}
+    gaps = {"now": ControlGaps(disabled=("switch.x_remote",), gapped=("enable",))}
     ex.entity_gaps_source = lambda: gaps["now"]
     take_over(h, ex)
-    gaps["now"] = ControlGaps(recovered=("enable",))       # włączona, jeszcze niezmapowana
+    gaps["now"] = ControlGaps(recovered=("enable",))       # włączona, jeszcze niezmapowana; zgłoszona wcześniej jako luka
     _tick(ex)
     _tick(ex)
     assert reloads == [1] and _deleted("control_entities_disabled_e1")
@@ -162,3 +162,58 @@ def test_profile_without_gaps_source_is_unchanged(monkeypatch):
     asyncio.run(ex.async_tick())
     assert not _issues("control_entities_disabled_e1") and not _issues("control_entities_missing_e1")
     assert not _issues("control_write_rejected_e1")
+
+
+def test_unmappable_entity_beside_a_gap_never_reloads_across_executors(monkeypatch):
+    # Jeden klucz ma lukę (wyłączona encja), drugi ma encję, której mapowanie nie przyjmuje
+    # (niejednoznaczna / zła jednostka): kolejne przebiegi nie przeładowują wpisu w kółko.
+    reloads = []
+    for _ in range(3):
+        h, ex = make(monkeypatch=monkeypatch)
+        ex.request_reload = lambda: reloads.append(1)
+        ex.entity_gaps_source = lambda: ControlGaps(disabled=("switch.x_remote",), recovered=("mode",),
+                                                    gapped=("enable",))
+        take_over(h, ex)
+        _tick(ex)
+    assert reloads == []
+
+
+def test_rejection_is_cleared_when_control_is_switched_off(monkeypatch):
+    _reset()
+    h, ex = make(monkeypatch=monkeypatch)
+    h.services.fail[ENT["enable"]] = ServiceNotFound("switch", "turn_on")
+    take_over(h, ex)
+    assert ex.write_rejected
+    ex._state.local_switch = False
+    _tick(ex)
+    assert not ex.write_rejected and _deleted("control_write_rejected_e1")
+
+
+def test_rejection_signal_fires_on_change(monkeypatch):
+    h, ex = make(monkeypatch=monkeypatch)
+    seen = []
+    ex.on_write_rejected_change = lambda: seen.append(ex.write_rejected)
+    h.services.fail[ENT["enable"]] = ServiceNotFound("switch", "turn_on")
+    take_over(h, ex)
+    assert seen and seen[0] is True
+
+
+def test_direct_path_clean_write_clears_the_rejection(monkeypatch):
+    from types import SimpleNamespace
+    from custom_components.volcast.core.control.group_writes import GroupReport
+    _reset()
+    h, ex = make(monkeypatch=monkeypatch)
+    ex._direct = SimpleNamespace(unsupported_seed=lambda: set())
+    ex._set_write_rejected(("enable",))
+    ex._note_rejection(GroupReport(written=["mode"]), False)
+    assert not ex.write_rejected and _deleted("control_write_rejected_e1")
+
+
+def test_switch_unreadable_at_probe_is_unsupported_not_rejected(monkeypatch):
+    from types import SimpleNamespace
+    from custom_components.volcast.core.control.cycle import BLOCKED, CycleDecision
+    _reset()
+    h, ex = make(monkeypatch=monkeypatch)
+    ex._direct = SimpleNamespace(unsupported_seed=lambda: {"enable"})
+    ex._finish(CycleDecision(BLOCKED, "enable_unsupported"))
+    assert not ex.write_rejected and not _issues("control_write_rejected_e1")

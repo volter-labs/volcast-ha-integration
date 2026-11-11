@@ -659,7 +659,8 @@ def control_entity_gaps(hass, choice: ProfileChoice | None, mapped: Mapping[str,
             disabled.extend(sorted(e.entity_id for e in hits))
         else:
             missing.append(key)
-    return ControlGaps(tuple(dict.fromkeys(disabled)), tuple(missing), tuple(recovered))
+    gapped = tuple(k for k in absent if k not in recovered)
+    return ControlGaps(tuple(dict.fromkeys(disabled)), tuple(missing), tuple(recovered), gapped)
 
 
 def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:

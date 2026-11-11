@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "De omvormer accepteert geen besturingscommando's",
-      "description": "De omvormer heeft een besturingscommando van Volcast geweigerd of niet uitgevoerd ({settings}). Schrijven naar de omvormer staat waarschijnlijk uit. Schakel schrijven of bediening op afstand in bij de opties van de omvormerintegratie of in de omvormer zelf. Volcast probeert het dan zelf opnieuw en deze melding verdwijnt. Tot die tijd stuurt Volcast de omvormer niet aan."
+      "description": "De omvormer heeft een besturingscommando van Volcast geweigerd of niet uitgevoerd ({settings}). Schrijven naar de omvormer staat waarschijnlijk uit. Schakel schrijven of bediening op afstand in bij de opties van de omvormerintegratie of in de omvormer zelf. Laad daarna de Volcast-integratie opnieuw (Instellingen > Apparaten en services > Volcast) of start Home Assistant opnieuw; deze melding verdwijnt zodra het schrijven wordt geaccepteerd. Tot die tijd stuurt Volcast de omvormer niet aan."
     },
     "controller_conflict": {
       "title": "Een andere regelaar bestuurt je omvormer",

@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "Falownik nie przyjmuje poleceń sterujących",
-      "description": "Falownik odrzucił lub nie zastosował polecenia sterującego z Volcast ({settings}). Zapis do falownika jest prawdopodobnie wyłączony. Włącz zapis lub zdalne sterowanie w opcjach integracji falownika albo w samym falowniku. Volcast sam ponowi próbę, a to zgłoszenie zniknie. Do tego czasu Volcast nie steruje falownikiem."
+      "description": "Falownik odrzucił lub nie zastosował polecenia sterującego z Volcast ({settings}). Zapis do falownika jest prawdopodobnie wyłączony. Włącz zapis lub zdalne sterowanie w opcjach integracji falownika albo w samym falowniku. Potem przeładuj integrację Volcast (Ustawienia > Urządzenia i usługi > Volcast) albo uruchom ponownie Home Assistanta; to zgłoszenie zniknie, gdy zapisy zostaną przyjęte. Do tego czasu Volcast nie steruje falownikiem."
     },
     "controller_conflict": {
       "title": "Falownikiem steruje inny sterownik",

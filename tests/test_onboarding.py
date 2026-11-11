@@ -68,7 +68,7 @@ class Client:
 
 
 def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, prices=None, options=None,
-         imported=None, choice=None, entry=None, rated=8000.0, inverter_entities=(), gaps=None, rejected=False):
+         imported=None, choice=None, entry=None, rated=8000.0, inverter_entities=(), gaps=None):
     t = [NOW]
 
     def utcnow():
@@ -93,7 +93,7 @@ def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, p
                          inverter_entities=frozenset(inverter_entities))
     if gaps is not None:
         rt.entity_gaps = lambda: gaps
-    rt.executor = SimpleNamespace(write_rejected=rejected, refresh_entity_gaps=MagicMock())
+    rt.executor = SimpleNamespace(write_rejected=False, on_write_rejected_change=None, refresh_entity_gaps=MagicMock())
     rt.executor_calls = rt.executor.refresh_entity_gaps
     client = Client(polls, plan)
     ob = Onboarding(hass, "e1", client=client, session=S, live_until=NOW + timedelta(minutes=30),
@@ -190,21 +190,39 @@ def test_missing_control_entities_keep_the_not_found_phrase():
     ob.test_rt.executor_calls.assert_called_with(force=True)
 
 
-def test_rejected_control_writes_give_the_rejects_phrase_and_no_option():
-    ob, client, entry = _entities_choice(rejected=True)
-    asyncio.run(ob.async_run())
-    assert "control_mode" not in entry.options
+def _reject_after_run(ob, *values):
+    """Wykonawca odrzuca zapis PO starcie sesji (przejęcie na żywo) i zgłasza zmianę wywołaniem zwrotnym."""
+    async def go():
+        await ob.async_run()
+        ex = ob.test_rt.executor
+        assert callable(ex.on_write_rejected_change)             # onboarding się zarejestrował
+        ob._live_until = NOW + timedelta(days=1)                 # okno sesji jeszcze otwarte
+        for value in values:
+            ex.write_rejected = value
+            ex.on_write_rejected_change()
+            for _ in range(3):
+                await asyncio.sleep(0)
+    asyncio.run(go())
+
+
+def test_rejection_after_takeover_reaches_the_control_mode_step():
+    ob, client, entry = _entities_choice()
+    _reject_after_run(ob, True)
+    assert entry.options["control_mode"] == "entities"
     assert last(client)["control_mode"] == {"key": "control_mode", "state": "error",
                                             "detail": "inverter rejects control writes"}
 
 
-def test_rejected_writes_with_entity_control_already_chosen_show_the_phrase():
-    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, rejected=True,
-                         options={"control_mode": "entities", "profile_id": "goodwe-et",
-                                  "inverter_domain": "goodwe"})
-    asyncio.run(ob.async_run())
-    assert last(client)["control_mode"] == {"key": "control_mode", "state": "error",
-                                            "detail": "inverter rejects control writes"}
+def test_rejection_cleared_returns_the_step_to_done():
+    ob, client, _ = _entities_choice()
+    _reject_after_run(ob, True, False)
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "done", "detail": "entities"}
+
+
+def test_rejection_is_ignored_when_entity_control_was_not_chosen():
+    ob, client, entry = make([PollResult("consumed", choices={})], plan=OK_PLAN)
+    _reject_after_run(ob, True)
+    assert last(client)["control_mode"]["state"] == "choice"
 
 
 def test_capabilities_list_the_remote_switch_and_directional_set_points():

@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "El inversor no acepta comandos de control",
-      "description": "El inversor rechazó o no aplicó un comando de control de Volcast ({settings}). Probablemente la escritura en el inversor está desactivada. Activa la escritura o el control remoto en las opciones de la integración del inversor o en el propio inversor. Volcast lo intentará de nuevo por sí solo y este aviso desaparecerá. Hasta entonces Volcast no controla el inversor."
+      "description": "El inversor rechazó o no aplicó un comando de control de Volcast ({settings}). Probablemente la escritura en el inversor está desactivada. Activa la escritura o el control remoto en las opciones de la integración del inversor o en el propio inversor. Después vuelve a cargar la integración de Volcast (Ajustes > Dispositivos y servicios > Volcast) o reinicia Home Assistant; este aviso desaparecerá cuando se acepten las escrituras. Hasta entonces Volcast no controla el inversor."
     },
     "controller_conflict": {
       "title": "Otro controlador está controlando tu inversor",

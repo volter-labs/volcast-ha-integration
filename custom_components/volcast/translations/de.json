@@ -475,7 +475,7 @@
     },
     "control_write_rejected": {
       "title": "Der Wechselrichter nimmt keine Steuerbefehle an",
-      "description": "Der Wechselrichter hat einen Steuerbefehl von Volcast abgelehnt oder nicht umgesetzt ({settings}). Das Schreiben auf den Wechselrichter ist wahrscheinlich ausgeschaltet. Aktiviere das Schreiben oder die Fernsteuerung in den Optionen der Wechselrichter-Integration oder am Wechselrichter selbst. Volcast versucht es dann von selbst erneut und dieser Hinweis verschwindet. Bis dahin steuert Volcast den Wechselrichter nicht."
+      "description": "Der Wechselrichter hat einen Steuerbefehl von Volcast abgelehnt oder nicht umgesetzt ({settings}). Das Schreiben auf den Wechselrichter ist wahrscheinlich ausgeschaltet. Aktiviere das Schreiben oder die Fernsteuerung in den Optionen der Wechselrichter-Integration oder am Wechselrichter selbst. Lade danach die Volcast-Integration neu (Einstellungen > Geräte & Dienste > Volcast) oder starte Home Assistant neu; dieser Hinweis verschwindet, sobald die Schreibvorgänge angenommen werden. Bis dahin steuert Volcast den Wechselrichter nicht."
     },
     "controller_conflict": {
       "title": "Ein anderer Regler steuert deinen Wechselrichter",
