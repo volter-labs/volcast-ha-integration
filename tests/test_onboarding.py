@@ -342,6 +342,41 @@ def test_hanging_price_action_is_bounded_in_onboarding(monkeypatch, today_ok, st
     assert entry.options["price_buy_action"] == action
 
 
+@pytest.mark.parametrize("today_delay, tomorrow_hangs, state", [
+    (0.4, False, "done"),      # dziś wolniej niż połowa budżetu, ale w całości → ceny użyteczne
+    (None, True, "error"),     # dziś wisi → wynik w całkowitym limicie
+    (0.0, True, "done"),       # dziś szybko, jutro wisi → dziś zostaje, całość w limicie
+    (0.5, True, "done"),       # dziś zjada prawie budżet, jutro dostaje resztę i wygasa
+])
+def test_price_action_probe_budget_is_shared_between_today_and_tomorrow(
+        monkeypatch, today_delay, tomorrow_hangs, state):
+    """Budżet sondy jest wspólny: dziś może zużyć cały `PRICE_PROBE_TOTAL_S`, jutro dostaje tylko resztę."""
+    monkeypatch.setattr(ob_mod, "PRICE_PROBE_TOTAL_S", 0.6)
+    action = {"action": "tibber.get_prices", "currency": "SEK"}
+    ob, client, entry = make([PollResult("pending")], plan=OK_PLAN, prices={}, options={"price_buy_action": action})
+    calls = []
+
+    async def slow(domain, service, data, blocking=False, return_response=False):
+        calls.append(data)
+        if len(calls) == 1 and today_delay is not None:
+            await asyncio.sleep(today_delay)
+            return _tibber_day(data)
+        if len(calls) == 2 and not tomorrow_hangs:
+            return _tibber_day(data)
+        await asyncio.Event().wait()
+
+    ob._hass.services = SimpleNamespace(async_call=slow)
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        await asyncio.wait_for(ob._prices_step(REPORT), 5.0)
+        return loop.time() - start
+
+    assert asyncio.run(run()) < 0.6 + 0.3                                # limit łączny + zapas na obciążone CI
+    assert last(client)["prices"]["state"] == state
+
+
 def test_action_only_integrations_point_to_the_options_menu():
     ob, client, entry = make([PollResult("pending")], plan=OK_PLAN, prices={}, report=dict(REPORT, price_entities=[]))
     ob._hass.config_entries.async_entries = lambda domain: (

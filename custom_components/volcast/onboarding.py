@@ -331,15 +331,22 @@ class Onboarding:
         """Czy źródło z akcji JUŻ TERAZ daje pełną serię — ta sama reguła co dla encji (`has_usable_prices_now`).
 
         Sama poprawna konfiguracja to jeszcze nie ceny (zła strefa, inny dom): jedno odświeżenie tak jak
-        w runtime (dziś + jutro), ale z krótkim limitem — najwyżej dwa wywołania po połowie
-        `PRICE_PROBE_TOTAL_S`, więc zawieszona akcja nie wstrzymuje kolejnych kroków. Połowa na wywołanie,
-        a nie jeden limit na całość: zawieszone jutro nie kasuje dzisiejszej serii."""
+        w runtime (dziś + jutro), ale z krótkim, wspólnym budżetem `PRICE_PROBE_TOTAL_S`, więc zawieszona akcja
+        nie wstrzymuje kolejnych kroków. Dziś może zużyć cały budżet (wolna, lecz działająca akcja nie jest
+        błędem), jutro dostaje tylko resztę — zawieszone lub pominięte jutro nie kasuje dzisiejszej serii."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + PRICE_PROBE_TOTAL_S
 
         async def call(domain: str, service: str, data: dict):
-            return await self._hass.services.async_call(domain, service, data, blocking=True, return_response=True)
+            left = deadline - loop.time()
+            if left <= 0:
+                raise TimeoutError                   # budżet wyczerpany — jutra nie pytamy
+            async with asyncio.timeout(left):
+                return await self._hass.services.async_call(domain, service, data, blocking=True, return_response=True)
 
         tz, now = self._tz(), self._utcnow()
-        poller = PriceActionPoller(source, call, timeout_s=PRICE_PROBE_TOTAL_S / 2)
+        poller = PriceActionPoller(source, call, timeout_s=PRICE_PROBE_TOTAL_S)
         await poller.async_refresh(now, tz)          # nie rzuca — błąd akcji to brak cen
         currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
         try:
