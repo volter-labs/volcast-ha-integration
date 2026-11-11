@@ -85,6 +85,9 @@ def _merge(rep: GroupReport, part: WriteReport) -> None:
     rep.errors.update(part.errors)
     rep.adjusted += [k for k in part.adjusted if k not in rep.adjusted]
     rep.actual.update(part.actual)
+    # włączenie przełącznika wstrzymane po nieudanej nastawie (`write_sequence`); grupa czeka wtedy
+    # także, bo wstrzymanie zawsze idzie z nieudanym albo nieobsługiwanym kluczem przed nim
+    rep.held += [k for k in part.held if k not in rep.held]
 
 
 def _hold(rep: GroupReport, held: Sequence) -> None:

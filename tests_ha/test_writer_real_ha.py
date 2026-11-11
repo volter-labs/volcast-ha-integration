@@ -166,10 +166,27 @@ async def test_set_point_mismatch_holds_the_mode(hass: HomeAssistant):
     writer = EntityServiceWriter(hass, readback_poll_s=0.01)
     out = await writer.async_write(_remote_writes(0.1)[0])
     assert out == ERROR and out.reason == MISMATCH and out.actual == "2.0"
-    charge, _, mode = _remote_writes(0.1)
-    rep = await async_run_writes([charge, mode], writer.async_write)
-    assert rep.failed == ["charge_power_w"] and rep.mode_held and "mode" not in rep.written
+    rep = await async_run_writes(_remote_writes(0.1), writer.async_write)
+    assert rep.failed == ["charge_power_w"] and rep.held == ["enable"] and rep.mode_held
+    assert hass.states.get("switch.remote").state == "off"           # przełącznik nie włączony
     assert hass.states.get("select.ems").state == "unavailable"
+
+
+async def test_hand_back_switch_off_is_sent_after_failed_set_point(hass: HomeAssistant):
+    from custom_components.volcast.core.control.group_writes import async_run_group_writes
+    _remote_entities(hass, clamp_kw=2.0)
+    hass.states.async_set("switch.remote", "on")
+    offs = []
+
+    async def switch_off(call):
+        offs.append(call)
+        hass.states.async_set("switch.remote", "off", context=call.context)
+    hass.services.async_register("switch", "turn_off", switch_off)
+    writes = [EntityWrite("charge_power_w", "number.charge", "number", "set_value", {"value": 0.0}, readback_s=0.1),
+              EntityWrite("enable", "switch.remote", "switch", "turn_off", {}, readback_s=0.1)]
+    rep = await async_run_group_writes(writes, EntityServiceWriter(hass, readback_poll_s=0.01).async_write)
+    assert rep.failed == ["charge_power_w"] and "enable" in rep.written and len(offs) == 1
+    assert hass.states.get("switch.remote").state == "off"
 
 
 async def test_select_never_available_is_error_without_call(hass: HomeAssistant):

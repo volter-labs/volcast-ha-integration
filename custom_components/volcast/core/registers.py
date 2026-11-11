@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import struct
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, Sequence
 
 from .params import Params
@@ -150,6 +150,9 @@ class RegisterWrite:
     count: int = 1
     word_order: str = "hi_lo"
     unit_id: int | None = None
+    # przełącznik `on_off`: włączenie (True) / wyłączenie (False); None = inny klucz. Poza równością —
+    # o kolejności wstrzymań decyduje sekwencja zapisów (`write_sequence`), nie treść ramki.
+    turns_on: bool | None = field(default=None, compare=False)
 
     def words(self) -> list[int]:
         """Słowa ramki zapisu w kolejności adresów; wartość spoza zakresu → RegisterError."""
@@ -328,7 +331,8 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
             value = _round_clamp(raw, 100)
         else:
             value = _round_clamp(raw, hi)
-        out.append(RegisterWrite(key, s["addr"], value, count=count, word_order=order, unit_id=unit))
+        out.append(RegisterWrite(key, s["addr"], value, count=count, word_order=order, unit_id=unit,
+                                 turns_on=bool(raw) if enc == "on_off" else None))
     return out
 
 

@@ -69,6 +69,11 @@ class EntityWrite:
     # limit oczekiwania na dostępność encji przed zapisem. None = bez odczytu zwrotnego (jak dotąd).
     readback_s: float | None = None
 
+    @property
+    def turns_on(self) -> bool | None:
+        """Kierunek zapisu przełącznika (`switch`): włączenie / wyłączenie; None = to nie przełącznik."""
+        return {"turn_on": True, "turn_off": False}.get(self.service) if self.domain == "switch" else None
+
 
 def entity_readback_s(profile) -> float | None:
     """Limit odczytu zwrotnego zapisów encji dla profilu; None = profil pisze jak dotąd.

@@ -23,6 +23,7 @@ from ..entity_map import EntityWrite, entity_value, entity_writes
 from ..params import Params
 
 _SET_POINTS = ("charge_power_w", "discharge_power_w")   # moc wg kierunku (`power_by_direction`)
+_DIRECTION_SET_POINT = {"charge": "charge_power_w", "discharge": "discharge_power_w"}
 _NUMERIC_KEYS = ("power_w", "soc_min", "soc_max", "export_limit_w", *_SET_POINTS)
 # kierunek bezpieczny w jednostkach kanonicznych: +1 = w górę, -1 = w dół (wspólny z celem rejestrowym)
 SAFE_DIRECTION = {"power_w": -1, "export_limit_w": -1, "soc_min": 1, "soc_max": -1}
@@ -147,9 +148,12 @@ def fit_params(params: Params, profile, integration_domain: str, mapped: Mapping
 def _plan_keys(key: str, params: Params, profile) -> tuple[str, ...]:
     """Klucze `Params`, z których powstał zapis `key` (pierwszy = klucz w raporcie dopasowania).
 
-    Nastawa kierunku wyliczona z mocy planu to `power_w` (oraz jawna nastawa kierunku, jeśli równa —
-    obie muszą dostać tę samą wartość, inaczej zapis kierunku je odrzuci jako sprzeczne)."""
+    Nastawa kierunku TRYBU wyliczona z mocy planu to `power_w` (oraz jawna nastawa tego kierunku, jeśli
+    równa — obie muszą dostać tę samą wartość, inaczej zapis kierunku je odrzuci jako sprzeczne; jawna
+    sprzeczna nie dochodzi tutaj — `direction_params` rzuca już w `control_writes`). Nastawa kierunku
+    przeciwnego to zawsze jej własny klucz — nigdy nie zmienia mocy planu."""
     if (key in _SET_POINTS and getattr(profile, "power_by_direction", False)
-            and params.power_w is not None):
+            and params.power_w is not None and params.mode in profile.modes
+            and _DIRECTION_SET_POINT.get(profile.mode_direction(params.mode)) == key):
         return ("power_w", key) if getattr(params, key) is not None else ("power_w",)
     return (key,)

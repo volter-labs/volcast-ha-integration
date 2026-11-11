@@ -245,6 +245,40 @@ def test_explicit_direction_set_point_is_fitted_under_its_own_key():
     assert unfit == () and fitted.power_w is None
 
 
+def test_opposite_direction_set_point_never_becomes_plan_power():
+    """Jawna nastawa PRZECIWNEGO kierunku jest dopasowana pod swoim kluczem i nie nadpisuje `power_w`."""
+    prof, mapped, units, attrs = _dir()
+    params = Params(mode="sell_power", power_w=3000.0, charge_power_w=13000.0)
+    fitted, adjusted, unfit = fit_params(params, prof, "goodwe", mapped, units, attrs)
+    assert fitted.power_w == pytest.approx(3000.0) and fitted.charge_power_w == pytest.approx(12000.0)
+    assert adjusted == ("charge_power_w",) and unfit == ()
+    writes, _ = control_writes(fitted, prof, "goodwe", mapped, keys=None, units=units)
+    assert [(w.key, w.data) for w in writes] == [("charge_power_w", {"value": 12.0}),
+                                                 ("discharge_power_w", {"value": 3.0}),
+                                                 ("mode", {"option": "sell_power"})]
+
+
+def test_same_direction_equal_set_point_is_fitted_together_with_plan_power():
+    prof, mapped, units, attrs = _dir()
+    params = Params(mode="sell_power", power_w=3333.0, discharge_power_w=3333.0)
+    fitted, adjusted, _ = fit_params(params, prof, "goodwe", mapped, units, attrs)
+    assert fitted.power_w == pytest.approx(3300.0) and fitted.discharge_power_w == pytest.approx(3300.0)
+    assert adjusted == ("power_w",)
+    writes, _ = control_writes(fitted, prof, "goodwe", mapped, keys=None, units=units)
+    assert [(w.key, w.data) for w in writes][0] == ("discharge_power_w", {"value": 3.3})
+
+
+def test_same_direction_conflicting_set_point_fails_closed():
+    """Jak zapis rejestrów: jawna nastawa kierunku trybu sprzeczna z mocą planu → nic nie zapisane."""
+    from custom_components.volcast.core.registers import RegisterError
+    prof, mapped, units, attrs = _dir()
+    params = Params(mode="sell_power", power_w=3000.0, discharge_power_w=5000.0)
+    with pytest.raises(RegisterError):
+        fit_params(params, prof, "goodwe", mapped, units, attrs)
+    with pytest.raises(RegisterError):
+        control_writes(params, prof, "goodwe", mapped, keys=None, units=units)
+
+
 def test_safe_direction_for_registers_is_unchanged():
     from custom_components.volcast.core.control.entity_fit import SAFE_DIRECTION
     assert SAFE_DIRECTION == {"power_w": -1, "export_limit_w": -1, "soc_min": 1, "soc_max": -1}

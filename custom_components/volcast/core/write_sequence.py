@@ -5,6 +5,12 @@ parametr się nie zapisał (błąd, odmowa), tryb jest WSTRZYMANY — nowy tryb 
 starych nastawach wykonałby komendę, której nikt nie zamówił (zmierzone: standby
 ze starym Xset ładował z sieci). „Nieobsługiwany" (wyjątek Modbus 2) nie jest
 błędem: falownik definitywnie tego nie umie, nie ma na co czekać.
+
+Przełącznik zdalnego sterowania (klucz `enable`, tylko profile, które go mają) przy WŁĄCZANIU jest
+warunkiem jak tryb: gdy wcześniejszy zapis w sekwencji nie doszedł (błąd, odmowa, ale też
+„nieobsługiwany”), włączenie jest WSTRZYMANE (`WriteReport.held`), a za nim tryb — urządzenie nie
+może przejąć zapamiętanego trybu na starych nastawach. Wyłączenie (oddanie sterowania) idzie zawsze.
+Zapis bez informacji o kierunku przełącznika (`turns_on` brak/None) liczy się jak włączenie.
 """
 from __future__ import annotations
 
@@ -50,9 +56,20 @@ class WriteReport:
     # klucze zapisane z wartością inną niż zamówiona (OK_ADJUSTED) i ich wartości rzeczywiste
     adjusted: list[str] = field(default_factory=list)
     actual: dict[str, float | str] = field(default_factory=dict)
+    # klucze poza trybem wstrzymane po nieudanym wcześniejszym zapisie (włączenie przełącznika)
+    held: list[str] = field(default_factory=list)
 
 
 OnException = Callable[[str, BaseException], None]
+
+SWITCH_KEY = "enable"
+
+
+def _switch_on_held(rep: WriteReport, w) -> bool:
+    """Czy zapis to włączenie przełącznika, a wcześniejszy zapis sekwencji nie doszedł."""
+    if w.key != SWITCH_KEY or getattr(w, "turns_on", None) is False:
+        return False
+    return bool(rep.failed or rep.unsupported)
 
 
 def run_writes(writes: Sequence[W], write: Callable[[W], str], *,
@@ -68,6 +85,10 @@ def run_writes(writes: Sequence[W], write: Callable[[W], str], *,
     for w in writes:
         if w.key == "mode" and param_failed:
             rep.mode_held = True
+            continue
+        if _switch_on_held(rep, w):
+            rep.held.append(w.key)
+            param_failed = True
             continue
         try:
             outcome = write(w)
@@ -88,6 +109,10 @@ async def async_run_writes(writes: Sequence[W], write: Callable[[W], Awaitable[s
     for w in writes:
         if w.key == "mode" and param_failed:
             rep.mode_held = True
+            continue
+        if _switch_on_held(rep, w):
+            rep.held.append(w.key)
+            param_failed = True
             continue
         try:
             outcome = await write(w)
