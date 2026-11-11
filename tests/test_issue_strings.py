@@ -58,3 +58,12 @@ def test_write_budget_issue_does_not_claim_a_return_that_may_not_have_happened()
     # Zgłoszenie idzie przy każdej blokadzie budżetu, także przy trybie neutralnym (bez powrotu).
     text = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))["issues"]["nvm_budget"]["description"]
     assert "was returned" not in text and "If the inverter was in a forced charge or discharge" in text
+
+
+@pytest.mark.parametrize("path", [COMPONENT / "strings.json", COMPONENT / "translations" / "en.json"])
+def test_withheld_prices_issues_have_texts_naming_the_sell_source(path):
+    # Klucze z danych (`_SELL_ISSUES`), nie z literału w wywołaniu — wzorce wyżej ich nie widzą.
+    from custom_components.volcast.control.telemetry import _SELL_ISSUES
+    issues = json.loads(path.read_text(encoding="utf-8"))["issues"]
+    for key in _SELL_ISSUES.values():
+        assert issues[key]["title"] and "{source}" in issues[key]["description"], key

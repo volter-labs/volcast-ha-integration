@@ -420,6 +420,14 @@
       "title": "Volcast nie może odczytać falownika",
       "description": "Volcast nie otrzymuje odczytów stanu naładowania baterii, mocy PV ani mocy sieci, więc nie może planować ani sterować. Sprawdź, czy integracja falownika jest załadowana i jej encje są dostępne, albo wybierz odczyty ręcznie w opcjach Volcast, a potem sprawdź logi Home Assistant."
     },
+    "prices_sell_no_data": {
+      "title": "Źródło ceny sprzedaży nie podaje cen",
+      "description": "Volcast nie wysyła cen energii do chmury Volcast, ponieważ źródło ceny sprzedaży {source} nie podaje cen: encji nie ma albo jest niedostępna, albo akcja cenowa nie zwraca aktualnego wyniku. Ceny zakupu i sprzedaży są wysyłane razem, więc bez cen sprzedaży plan nie może korzystać z aktualnych cen. Sprawdź, czy to źródło działa, albo zmień lub wyczyść źródło ceny sprzedaży w opcjach Volcast."
+    },
+    "prices_sell_no_pair": {
+      "title": "Ceny sprzedaży nie pasują do cen zakupu",
+      "description": "Volcast nie wysyła cen energii do chmury Volcast, ponieważ cen ze źródła ceny sprzedaży {source} nie da się dopasować do cen zakupu: są w innej walucie albo ich przedziały czasu nie pokrywają się z przedziałami cen zakupu. Bez dopasowanych cen sprzedaży plan nie może korzystać z aktualnych cen. Sprawdź to źródło albo wybierz inne źródło ceny sprzedaży w opcjach Volcast."
+    },
     "control_choice_failed": {
       "title": "Volcast nie mógł zastosować Twojego wyboru sterowania",
       "description": "Wybór sterowania zrobiony w aplikacji Volcast nie został zastosowany mimo kilku prób. Sprawdź ustawienia sterowania w opcjach Volcast i logi Home Assistant, a potem wybierz ponownie w aplikacji."

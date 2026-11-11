@@ -420,6 +420,14 @@
       "title": "Volcast kann den Wechselrichter nicht auslesen",
       "description": "Volcast erhält keine Messwerte für Batterieladestand, PV-Leistung oder Netzleistung und kann daher nicht planen oder steuern. Prüfe, ob die Wechselrichter-Integration geladen ist und ihre Entitäten verfügbar sind, oder wähle die Messwerte manuell in den Volcast-Optionen. Prüfe danach die Home-Assistant-Protokolle."
     },
+    "prices_sell_no_data": {
+      "title": "Die Verkaufspreisquelle liefert keine Preise",
+      "description": "Volcast sendet keine Energiepreise an die Volcast-Cloud, weil die Verkaufspreisquelle {source} keine Preise liefert: Die Entität fehlt oder ist nicht verfügbar, oder die Preisaktion liefert kein aktuelles Ergebnis. Einkaufs- und Verkaufspreise werden zusammen gesendet, daher kann der Plan ohne Verkaufspreise keine aktuellen Preise verwenden. Prüfen Sie, ob diese Quelle funktioniert, oder ändern oder entfernen Sie die Verkaufspreisquelle in den Volcast-Optionen."
+    },
+    "prices_sell_no_pair": {
+      "title": "Verkaufspreise passen nicht zu den Einkaufspreisen",
+      "description": "Volcast sendet keine Energiepreise an die Volcast-Cloud, weil sich die Preise der Verkaufspreisquelle {source} nicht den Einkaufspreisen zuordnen lassen: Diese Preise haben eine andere Währung, oder ihre Zeitintervalle passen nicht zu den Intervallen der Einkaufspreise. Ohne passende Verkaufspreise kann der Plan keine aktuellen Preise verwenden. Prüfen Sie diese Quelle oder wählen Sie in den Volcast-Optionen eine andere Verkaufspreisquelle."
+    },
     "control_choice_failed": {
       "title": "Volcast konnte deine Steuerungswahl nicht anwenden",
       "description": "Eine in der Volcast-App getroffene Steuerungswahl konnte nach mehreren Versuchen nicht angewendet werden. Prüfe die Steuerungseinstellungen in den Volcast-Optionen und die Home-Assistant-Logs und wähle dann erneut in der App."

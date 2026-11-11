@@ -420,6 +420,14 @@
       "title": "Volcast nemôže načítať údaje zo meniča",
       "description": "Volcast nedostáva údaje o stave nabitia batérie, výkone FV ani výkone zo siete, takže nemôže plánovať ani riadiť. Skontrolujte, či je integrácia meniča načítaná a jej entity sú dostupné, alebo vyberte údaje ručne v možnostiach Volcast a potom skontrolujte protokoly Home Assistant."
     },
+    "prices_sell_no_data": {
+      "title": "Zdroj predajnej ceny neposkytuje ceny",
+      "description": "Volcast neodosiela ceny energie do cloudu Volcast, pretože zdroj predajnej ceny {source} neposkytuje ceny: entita chýba alebo nie je dostupná, alebo cenová akcia nevracia aktuálny výsledok. Nákupné a predajné ceny sa odosielajú spolu, takže bez predajných cien nemôže plán používať aktuálne ceny. Skontrolujte, či tento zdroj funguje, alebo zdroj predajnej ceny zmeňte či odstráňte v možnostiach Volcast."
+    },
+    "prices_sell_no_pair": {
+      "title": "Predajné ceny nezodpovedajú nákupným cenám",
+      "description": "Volcast neodosiela ceny energie do cloudu Volcast, pretože ceny zo zdroja predajnej ceny {source} sa nedajú priradiť k nákupným cenám: sú v inej mene alebo ich časové intervaly nesedia s intervalmi nákupných cien. Bez zodpovedajúcich predajných cien nemôže plán používať aktuálne ceny. Skontrolujte tento zdroj alebo v možnostiach Volcast zvoľte iný zdroj predajnej ceny."
+    },
     "control_choice_failed": {
       "title": "Volcast nemohol uplatniť vašu voľbu riadenia",
       "description": "Voľba riadenia vykonaná v aplikácii Volcast sa po viacerých pokusoch nepodarilo uplatniť. Skontrolujte nastavenia riadenia v možnostiach Volcast a v protokoloch Home Assistant a potom voľbu v aplikácii zopakujte."

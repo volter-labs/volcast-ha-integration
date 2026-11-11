@@ -420,6 +420,14 @@
       "title": "Volcast nemůže načíst data ze střídače",
       "description": "Volcast nedostává údaje o stavu nabití baterie, výkonu FV ani výkonu ze sítě, takže nemůže plánovat ani řídit. Zkontrolujte, zda je integrace střídače načtena a její entity jsou dostupné, nebo vyberte údaje ručně v možnostech Volcast a pak zkontrolujte protokoly Home Assistant."
     },
+    "prices_sell_no_data": {
+      "title": "Zdroj prodejní ceny neposkytuje ceny",
+      "description": "Volcast neodesílá ceny energie do cloudu Volcast, protože zdroj prodejní ceny {source} neposkytuje ceny: entita chybí nebo není dostupná, nebo cenová akce nevrací aktuální výsledek. Nákupní a prodejní ceny se odesílají společně, takže bez prodejních cen nemůže plán používat aktuální ceny. Zkontrolujte, zda tento zdroj funguje, nebo zdroj prodejní ceny změňte či odeberte v možnostech Volcast."
+    },
+    "prices_sell_no_pair": {
+      "title": "Prodejní ceny neodpovídají nákupním cenám",
+      "description": "Volcast neodesílá ceny energie do cloudu Volcast, protože ceny ze zdroje prodejní ceny {source} nelze přiřadit k nákupním cenám: jsou v jiné měně, nebo jejich časové intervaly nesedí s intervaly nákupních cen. Bez odpovídajících prodejních cen nemůže plán používat aktuální ceny. Zkontrolujte tento zdroj, nebo v možnostech Volcast zvolte jiný zdroj prodejní ceny."
+    },
     "control_choice_failed": {
       "title": "Volcast nemohl uplatnit vaši volbu řízení",
       "description": "Volba řízení provedená v aplikaci Volcast se po několika pokusech nepodařila uplatnit. Zkontrolujte nastavení řízení v možnostech Volcast a v protokolech Home Assistant a poté volbu v aplikaci zopakujte."

@@ -420,6 +420,14 @@
       "title": "Volcast kan uw omvormer niet uitlezen",
       "description": "Volcast ontvangt geen metingen van batterijlading, PV-vermogen of netvermogen en kan daardoor niet plannen of regelen. Controleer of de omvormerintegratie is geladen en de entiteiten beschikbaar zijn, of kies de metingen handmatig in de Volcast-opties en controleer daarna de Home Assistant-logs."
     },
+    "prices_sell_no_data": {
+      "title": "De bron voor de verkoopprijs levert geen prijzen",
+      "description": "Volcast stuurt geen energieprijzen naar de Volcast-cloud, omdat de bron voor de verkoopprijs {source} geen prijzen levert: de entiteit ontbreekt of is niet beschikbaar, of de prijsactie geeft geen actueel resultaat. Inkoop- en verkoopprijzen worden samen verstuurd, dus zonder verkoopprijzen kan het plan geen actuele prijzen gebruiken. Controleer of deze bron werkt, of wijzig of wis de bron voor de verkoopprijs in de Volcast-opties."
+    },
+    "prices_sell_no_pair": {
+      "title": "Verkoopprijzen passen niet bij de inkoopprijzen",
+      "description": "Volcast stuurt geen energieprijzen naar de Volcast-cloud, omdat de prijzen van de bron voor de verkoopprijs {source} niet aan de inkoopprijzen te koppelen zijn: ze hebben een andere valuta, of hun tijdsintervallen sluiten niet aan op de intervallen van de inkoopprijzen. Zonder passende verkoopprijzen kan het plan geen actuele prijzen gebruiken. Controleer deze bron of kies een andere bron voor de verkoopprijs in de Volcast-opties."
+    },
     "control_choice_failed": {
       "title": "Volcast kon je besturingskeuze niet toepassen",
       "description": "Een besturingskeuze die in de Volcast-app is gemaakt, kon na meerdere pogingen niet worden toegepast. Controleer de besturingsinstellingen in de Volcast-opties en de Home Assistant-logs en kies daarna opnieuw in de app."

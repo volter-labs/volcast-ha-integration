@@ -63,9 +63,10 @@ from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 
-from ..const import (CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_BUY_ACTION,
+from ..const import (CONTROL_MODE_ENTITIES, DOMAIN, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_BUY_ACTION,
                      OPT_PRICE_CURRENCY, OPT_PRICE_SELL, OPT_PRICE_SELL_ACTION)
 from ..core.control.caps import capabilities_for
 from ..core.control.limits import BMS_POWER_FIELDS, PeakLimit, register_limits
@@ -88,6 +89,9 @@ _SELL_NO_DATA = ("is set but gives no prices (entity missing or unavailable, or 
                  "from the price action), so the buy prices are withheld too")
 _SELL_NO_PAIR = ("gives prices that do not match the buy prices (different currency, or intervals "
                  "that do not line up with the buy intervals), so the buy prices are withheld too")
+# Klucz zgłoszenia naprawy (i jego tekstu) dla każdego powodu; id zgłoszenia to klucz + `_<entry_id>`.
+_SELL_ISSUES = {_SELL_NO_DATA: "prices_sell_no_data", _SELL_NO_PAIR: "prices_sell_no_pair"}
+_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 TELEMETRY_FIELDS = {
     "soc": "battery_soc", "pv_power_w": "pv_power_w", "battery_power_w": "battery_power_w",
     "grid_power_w": "grid_power_w", "load_power_w": "load_power_w",
@@ -299,6 +303,8 @@ class TelemetrySender:
         # Powód wstrzymania cen przez sprzedaż: widziany w poprzednim cyklu i już zgłoszony w logu.
         self._sell_seen: str | None = None
         self._sell_warned: str | None = None
+        # Klucz zgłoszenia naprawy dla wstrzymanych cen, które ten nadawca utworzył (None = żadne).
+        self._sell_issue: str | None = None
         # Źródła cen z akcji: klucz opcji → (konfiguracja, z której powstał, poller albo None = zła).
         self._price_actions: dict[str, tuple[object, PriceActionPoller | None]] = {}
         self._price_tasks: dict[str, object] = {}
@@ -330,6 +336,7 @@ class TelemetrySender:
         for task in self._price_tasks.values():
             task.cancel()
         self._price_tasks.clear()
+        self._sync_sell_issue(None, "")
 
     async def _timer(self, _now=None) -> None:
         try:
@@ -456,7 +463,10 @@ class TelemetrySender:
             # zakres; pusty (nic się nie sparowało) — blok nie idzie wcale.
             paired = [iv for iv in intervals if iv["sell"] is not None]
             if intervals and not paired:
-                self._sell_withheld(_SELL_NO_PAIR)
+                # Sprzedaż bez własnej serii (np. encja niedostępna — HA zdejmuje wtedy atrybuty) to brak
+                # danych; seria jest, a nic się nie paruje (waluta, siatka, zakres) — niedopasowanie.
+                own = intervals_from_attributes(sell, None, currency, self._tz(), now)
+                self._sell_withheld(_SELL_NO_PAIR if own else _SELL_NO_DATA)
                 return None
             intervals = paired
         if not intervals:
@@ -485,6 +495,7 @@ class TelemetrySender:
         seen, self._sell_seen = self._sell_seen, reason
         if reason is None:
             self._sell_warned = None
+            self._sync_sell_issue(None, "")
             return
         if reason != seen or reason == self._sell_warned:
             return
@@ -495,6 +506,21 @@ class TelemetrySender:
         else:
             source = (self._entry.options.get(OPT_PRICE_SELL) or "").strip()
         _LOGGER.warning("Volcast prices are not sent: the sell price source %s %s", source, reason)
+        self._sync_sell_issue(_SELL_ISSUES[reason], source)
+
+    def _sync_sell_issue(self, key: str | None, source: str) -> None:
+        """Zgłoszenie naprawy „ceny nie idą przez stronę sprzedaży”: najwyżej jedno na wpis, z powodem
+        `key`; inny powód zastępuje poprzednie, None je kasuje. Błąd rejestru nigdy nie zabiera cen."""
+        old, self._sell_issue = self._sell_issue, key
+        try:
+            if old is not None and old != key:
+                ir.async_delete_issue(self._hass, DOMAIN, f"{old}_{self._entry.entry_id}")
+            if key is not None and key != old:
+                ir.async_create_issue(self._hass, DOMAIN, f"{key}_{self._entry.entry_id}", is_fixable=False,
+                                      severity=_WARNING, translation_key=key,
+                                      translation_placeholders={"source": source})
+        except Exception as err:  # noqa: BLE001 — zgłoszenie to informacja, nie warunek wysyłki
+            _LOGGER.debug("Volcast price issue update skipped (%s)", type(err).__name__)
 
     def _unsupported(self) -> tuple[str, ...]:
         """Nastawy, które wykonawca uznał za nieobsługiwane (brak encji, długo niedostępna)."""

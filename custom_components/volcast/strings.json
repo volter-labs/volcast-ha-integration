@@ -424,6 +424,14 @@
       "title": "Volcast cannot read your inverter",
       "description": "Volcast receives no battery charge, PV power or grid power readings, so it cannot plan or control. Check that the inverter integration is loaded and its entities are available, or choose the readings manually in the Volcast options, then check the Home Assistant logs."
     },
+    "prices_sell_no_data": {
+      "title": "The sale price source gives no prices",
+      "description": "Volcast is not sending energy prices to the Volcast cloud because the sale price source {source} gives no prices: the entity is missing or unavailable, or the price action returns no current result. Purchase and sale prices are sent together, so without sale prices the plan cannot use current prices. Check that this source works, or change or clear the sale price source in the Volcast options."
+    },
+    "prices_sell_no_pair": {
+      "title": "Sale prices do not match the purchase prices",
+      "description": "Volcast is not sending energy prices to the Volcast cloud because the prices from the sale price source {source} cannot be matched with the purchase prices: they use a different currency, or their time intervals do not line up with the purchase price intervals. Without matching sale prices the plan cannot use current prices. Check this source, or choose a different sale price source in the Volcast options."
+    },
     "control_choice_failed": {
       "title": "Volcast could not apply your control choice",
       "description": "A control choice made in the Volcast app could not be applied after several attempts. Check the control settings in the Volcast options and the Home Assistant logs, then choose again in the app."

@@ -420,6 +420,14 @@
       "title": "Volcast ne peut pas lire votre onduleur",
       "description": "Volcast ne reçoit aucune mesure de charge de batterie, de puissance PV ou de puissance réseau, il ne peut donc ni planifier ni piloter. Vérifiez que l’intégration de l’onduleur est chargée et que ses entités sont disponibles, ou choisissez les mesures manuellement dans les options de Volcast, puis consultez les journaux de Home Assistant."
     },
+    "prices_sell_no_data": {
+      "title": "La source du prix de vente ne fournit aucun prix",
+      "description": "Volcast n'envoie pas de prix de l'énergie au cloud Volcast, car la source du prix de vente {source} ne fournit aucun prix : l'entité est absente ou indisponible, ou l'action de prix ne renvoie pas de résultat à jour. Les prix d'achat et de vente sont envoyés ensemble ; sans prix de vente, le plan ne peut donc pas utiliser de prix à jour. Vérifiez que cette source fonctionne, ou modifiez ou retirez la source du prix de vente dans les options de Volcast."
+    },
+    "prices_sell_no_pair": {
+      "title": "Les prix de vente ne correspondent pas aux prix d'achat",
+      "description": "Volcast n'envoie pas de prix de l'énergie au cloud Volcast, car les prix de la source du prix de vente {source} ne peuvent pas être associés aux prix d'achat : ils sont dans une autre devise, ou leurs intervalles de temps ne correspondent pas à ceux des prix d'achat. Sans prix de vente correspondants, le plan ne peut pas utiliser de prix à jour. Vérifiez cette source ou choisissez une autre source du prix de vente dans les options de Volcast."
+    },
     "control_choice_failed": {
       "title": "Volcast n'a pas pu appliquer votre choix de pilotage",
       "description": "Un choix de pilotage fait dans l'application Volcast n'a pas pu être appliqué après plusieurs tentatives. Vérifiez les réglages de pilotage dans les options de Volcast et les journaux de Home Assistant, puis choisissez à nouveau dans l'application."

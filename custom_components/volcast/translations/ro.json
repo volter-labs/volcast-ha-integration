@@ -420,6 +420,14 @@
       "title": "Volcast nu poate citi invertorul",
       "description": "Volcast nu primește citiri ale încărcării bateriei, ale puterii FV sau ale puterii din rețea, așa că nu poate planifica sau controla. Verificați dacă integrarea invertorului este încărcată și entitățile sunt disponibile sau alegeți citirile manual în opțiunile Volcast, apoi verificați jurnalele Home Assistant."
     },
+    "prices_sell_no_data": {
+      "title": "Sursa prețului de vânzare nu oferă prețuri",
+      "description": "Volcast nu trimite prețurile energiei în cloudul Volcast, deoarece sursa prețului de vânzare {source} nu oferă prețuri: entitatea lipsește sau nu este disponibilă, ori acțiunea de prețuri nu returnează un rezultat actual. Prețurile de cumpărare și de vânzare sunt trimise împreună, așa că fără prețuri de vânzare planul nu poate folosi prețuri actuale. Verificați dacă această sursă funcționează sau schimbați ori ștergeți sursa prețului de vânzare în opțiunile Volcast."
+    },
+    "prices_sell_no_pair": {
+      "title": "Prețurile de vânzare nu se potrivesc cu prețurile de cumpărare",
+      "description": "Volcast nu trimite prețurile energiei în cloudul Volcast, deoarece prețurile din sursa prețului de vânzare {source} nu pot fi asociate cu prețurile de cumpărare: sunt în altă monedă sau intervalele lor de timp nu se potrivesc cu intervalele prețurilor de cumpărare. Fără prețuri de vânzare potrivite, planul nu poate folosi prețuri actuale. Verificați această sursă sau alegeți altă sursă a prețului de vânzare în opțiunile Volcast."
+    },
     "control_choice_failed": {
       "title": "Volcast nu a putut aplica alegerea ta de control",
       "description": "O alegere de control făcută în aplicația Volcast nu a putut fi aplicată după mai multe încercări. Verifică setările de control din opțiunile Volcast și jurnalele Home Assistant, apoi alege din nou în aplicație."

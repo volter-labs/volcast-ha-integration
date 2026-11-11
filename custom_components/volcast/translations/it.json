@@ -420,6 +420,14 @@
       "title": "Volcast non riesce a leggere il tuo inverter",
       "description": "Volcast non riceve letture di carica della batteria, potenza FV o potenza di rete, quindi non può pianificare né controllare. Verifica che l’integrazione dell’inverter sia caricata e le sue entità disponibili, oppure scegli le letture manualmente nelle opzioni di Volcast, poi controlla i log di Home Assistant."
     },
+    "prices_sell_no_data": {
+      "title": "La fonte del prezzo di vendita non fornisce prezzi",
+      "description": "Volcast non sta inviando i prezzi dell'energia al cloud di Volcast perché la fonte del prezzo di vendita {source} non fornisce prezzi: l'entità manca o non è disponibile, oppure l'azione dei prezzi non restituisce un risultato aggiornato. I prezzi di acquisto e di vendita vengono inviati insieme, quindi senza prezzi di vendita il piano non può usare prezzi aggiornati. Controlla che questa fonte funzioni, oppure cambia o rimuovi la fonte del prezzo di vendita nelle opzioni di Volcast."
+    },
+    "prices_sell_no_pair": {
+      "title": "I prezzi di vendita non corrispondono ai prezzi di acquisto",
+      "description": "Volcast non sta inviando i prezzi dell'energia al cloud di Volcast perché i prezzi della fonte del prezzo di vendita {source} non possono essere abbinati ai prezzi di acquisto: usano un'altra valuta, oppure i loro intervalli di tempo non coincidono con quelli dei prezzi di acquisto. Senza prezzi di vendita corrispondenti, il piano non può usare prezzi aggiornati. Controlla questa fonte oppure scegli un'altra fonte del prezzo di vendita nelle opzioni di Volcast."
+    },
     "control_choice_failed": {
       "title": "Volcast non è riuscito ad applicare la tua scelta di controllo",
       "description": "Una scelta di controllo fatta nell'app Volcast non è stata applicata dopo più tentativi. Controlla le impostazioni di controllo nelle opzioni di Volcast e nei log di Home Assistant, poi scegli di nuovo nell'app."
