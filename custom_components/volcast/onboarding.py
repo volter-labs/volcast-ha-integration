@@ -17,7 +17,8 @@ Pierwszy plan zawsze ma jawny wynik (`plan_outcome`), nigdy ogólne „gotowe":
   planer nieosiągalny → `error "planner unavailable"` (nieosiągalny: z ponowieniem).
 
 Encję ceny proponujemy (a źródło z akcji uznajemy) tylko wtedy, gdy JUŻ TERAZ daje pełną
-serię (`has_usable_prices_now`); inaczej „none found" — właściciel wybiera inne źródło.
+serię (`has_usable_prices_now`); inaczej „none found" — właściciel wybiera inne źródło. Poprawna
+akcja bez cen w tej chwili to `error "none found"` bez oferty encji (wybór „ha" skasowałby akcję).
 
 Wybory zdalne:
 - stosujemy je najwyżej RAZ na sesję: zastosowany wybór (sesja, wartość, czas) trafia do
@@ -69,7 +70,7 @@ from .control.runtime import readings_missing
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.control.recommend import recommend
-from .core.price_actions import InvalidPriceSource, PriceActionPoller, parse_source
+from .core.price_actions import InvalidPriceSource, PriceActionPoller, PriceActionSource, parse_source
 from .core.price_integrations import ACTION_DOMAINS
 from .core.price_setup import (currency_conflict, effective_currency, enrich_attributes, is_excluded_entity,
                                is_sell_entity, pair_entities, platform_currency)
@@ -94,6 +95,9 @@ _AUTO_LOAD = "load_energy"
 _REPOST_MIN_S = 5.0
 _REPOST_MAX_S = 60.0
 _PRICE_SOURCE = re.compile(r"[A-Za-z0-9_:.-]{1,64}")
+# Łączny limit sondy źródła cen z akcji w onboardingu (dziś + jutro); runtime ma własny, dłuższy
+# (`CALL_TIMEOUT_S` na wywołanie). Rząd sondy z opcji (`PROBE_TIMEOUT_S`), ale na całą sondę.
+PRICE_PROBE_TOTAL_S = 8.0
 
 PLAN_UNAVAILABLE = "planner unavailable"
 QUEUED = "queued"
@@ -315,32 +319,34 @@ class Onboarding:
     def _platform_of(self, entity_id: str | None) -> str | None:
         return self._price_platforms.get(entity_id)
 
-    async def _usable_price_action(self) -> str | None:
-        """Nazwa akcji skonfigurowanego źródła kupna (opcje), gdy JUŻ TERAZ daje pełną serię — wygrywa z encją.
-
-        Sama poprawna konfiguracja to jeszcze nie ceny (zła strefa, inny dom): jedno odświeżenie tak jak
-        w runtime (dziś + jutro, z limitem czasu) i ta sama reguła co dla encji (`has_usable_prices_now`)."""
+    def _price_action(self) -> PriceActionSource | None:
+        """Poprawne skonfigurowane źródło kupna z akcji (opcje); nieparsowalne = brak źródła."""
         raw = self._options().get(OPT_PRICE_BUY_ACTION)
         try:
-            source = parse_source(raw) if raw else None
+            return parse_source(raw) if raw else None
         except InvalidPriceSource:
             return None
-        if source is None:
-            return None
+
+    async def _price_action_usable(self, source: PriceActionSource) -> bool:
+        """Czy źródło z akcji JUŻ TERAZ daje pełną serię — ta sama reguła co dla encji (`has_usable_prices_now`).
+
+        Sama poprawna konfiguracja to jeszcze nie ceny (zła strefa, inny dom): jedno odświeżenie tak jak
+        w runtime (dziś + jutro), ale z krótkim limitem — najwyżej dwa wywołania po połowie
+        `PRICE_PROBE_TOTAL_S`, więc zawieszona akcja nie wstrzymuje kolejnych kroków. Połowa na wywołanie,
+        a nie jeden limit na całość: zawieszone jutro nie kasuje dzisiejszej serii."""
 
         async def call(domain: str, service: str, data: dict):
             return await self._hass.services.async_call(domain, service, data, blocking=True, return_response=True)
 
         tz, now = self._tz(), self._utcnow()
-        poller = PriceActionPoller(source, call)
+        poller = PriceActionPoller(source, call, timeout_s=PRICE_PROBE_TOTAL_S / 2)
         await poller.async_refresh(now, tz)          # nie rzuca — błąd akcji to brak cen
         currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
         try:
-            usable = has_usable_prices_now(poller.fresh_attributes(now, tz), currency, tz, now)
+            return has_usable_prices_now(poller.fresh_attributes(now, tz), currency, tz, now)
         except Exception as err:  # noqa: BLE001 — zła odpowiedź = źródło nieużywalne
             _LOGGER.debug("Volcast onboarding: price action check failed (%s)", type(err).__name__)
-            return None
-        return source.action if usable else None
+            return False
 
     def _action_integrations(self) -> list[str]:
         """Integracje cenowe z akcją (rejestr integracji) skonfigurowane w HA — źródło ustawia się w opcjach."""
@@ -490,9 +496,14 @@ class Onboarding:
         return state
 
     async def _prices_step(self, report: dict) -> None:
-        action = await self._usable_price_action()
-        if action:
-            await self._set("prices", "done", action)             # akcja wygrywa z encją, nie nadpisujemy jej
+        source = self._price_action()
+        if source is not None:
+            # Akcja wygrywa z encją. Gdy chwilowo nie daje cen (integracja jeszcze się ładuje, przerwa API),
+            # to błąd, nie wybór: oferta encji HA skasowałaby źródło ustawione świadomie przez właściciela.
+            if await self._price_action_usable(source):
+                await self._set("prices", "done", source.action)
+            else:
+                await self._set("prices", "error", NONE_FOUND)
             return
         current = self._options().get(OPT_PRICE_BUY)
         if self._usable_price(current):

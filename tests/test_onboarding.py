@@ -283,8 +283,63 @@ def test_configured_buy_action_without_prices_is_not_done(respond):
     _action_services(ob, respond)
     asyncio.run(ob.async_run())
     step = last(client)["prices"]
-    assert step["state"] == "choice" and step["detail"] != "tibber.get_prices"
+    # Błąd, nie wybór: bez oferty zastępczego źródła, które skasowałoby akcję właściciela.
+    assert step == {"key": "prices", "state": "error", "detail": "none found"}
     assert entry.options["price_buy_action"] == action                  # konfiguracja zostaje, nic nie nadpisane
+
+
+def test_configured_buy_action_failing_then_ha_choice_keeps_the_action():
+    """Chwilowy błąd akcji przy usable encji HA: krok nie oferuje encji, a wybór „ha" niczego nie nadpisuje."""
+    action = {"action": "tibber.get_prices", "currency": "SEK"}
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
+                             options={"price_buy_action": action})
+    _action_services(ob, lambda _d: (_ for _ in ()).throw(RuntimeError("not loaded yet")))
+    asyncio.run(ob.async_run())
+    assert all(s.get("state") != "choice" for p in client.progress for s in p if s["key"] == "prices")
+    assert last(client)["prices"]["state"] == "error"
+    assert entry.options["price_buy_action"] == action and "entity_price_buy" not in entry.options
+
+
+def test_invalid_configured_buy_action_still_offers_the_ha_entity():
+    """Nieparsowalna akcja to brak źródła — jak dotąd encja HA jest proponowana i może ją zastąpić."""
+    ob, client, entry = make([PollResult("consumed", choices={"price_source": "ha"})], plan=OK_PLAN,
+                             options={"price_buy_action": {"action": "nope.unknown"}})
+    _action_services(ob, lambda _d: pytest.fail("invalid action must not be called"))
+    asyncio.run(ob.async_run())
+    assert entry.options["entity_price_buy"] == PRICE and "price_buy_action" not in entry.options
+
+
+@pytest.mark.parametrize("today_ok, state", [(False, "error"), (True, "done")])
+def test_hanging_price_action_is_bounded_in_onboarding(monkeypatch, today_ok, state):
+    """Zawieszona akcja nie wstrzymuje onboardingu: łączny limit sondy (dziś + jutro), nie 2 × 30 s z runtime.
+    Gdy wisi tylko jutro, dzisiejsza seria z sondy zostaje."""
+    from custom_components.volcast.core import price_actions
+    assert price_actions.CALL_TIMEOUT_S == 30.0                          # runtime bez zmian
+    assert ob_mod.PRICE_PROBE_TOTAL_S < 10.0                             # krótki limit całej sondy
+    monkeypatch.setattr(ob_mod, "PRICE_PROBE_TOTAL_S", 0.2)
+    action = {"action": "tibber.get_prices", "currency": "SEK"}
+    ob, client, entry = make([PollResult("pending")], plan=OK_PLAN, prices={}, options={"price_buy_action": action})
+    calls = []
+
+    async def hang(domain, service, data, blocking=False, return_response=False):
+        calls.append(data)
+        if today_ok and len(calls) == 1:
+            await asyncio.sleep(0.09)                                    # dziś: wolno, ale w limicie
+            return _tibber_day(data)
+        await asyncio.Event().wait()
+
+    ob._hass.services = SimpleNamespace(async_call=hang)
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        await asyncio.wait_for(ob._prices_step(REPORT), 5.0)
+        return loop.time() - start
+
+    elapsed = asyncio.run(run())
+    assert elapsed < 0.2 + 0.15
+    assert last(client)["prices"]["state"] == state
+    assert entry.options["price_buy_action"] == action
 
 
 def test_action_only_integrations_point_to_the_options_menu():
