@@ -703,6 +703,12 @@ async def test_prices_form_with_sell_lacking_tomorrow_saves_before_the_note(hass
     sell = _entity(hass, "sensor", "pstryk", "pstryk_current_sell_price",
                    _fixture("pstryk_all_prices", "All prices", _span_h(midnight, noon_tomorrow), 60, start=midnight))
     entry = make_entry(hass)
+    updates = []
+
+    async def on_update(_hass, changed):
+        updates.append(changed.entry_id)
+
+    entry.async_on_unload(entry.add_update_listener(on_update))
     menu = await hass.config_entries.options.async_init(entry.entry_id)
     form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
     res = await hass.config_entries.options.async_configure(
@@ -710,3 +716,5 @@ async def test_prices_form_with_sell_lacking_tomorrow_saves_before_the_note(hass
     assert res["type"] is FlowResultType.ABORT and res["reason"] == "price_sell_tomorrow"
     assert res["description_placeholders"] == {"source": sell}
     assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == sell
+    await hass.async_block_till_done()
+    assert updates == [entry.entry_id]                   # zapis przed informacją przeładowuje wpis jak create_entry
