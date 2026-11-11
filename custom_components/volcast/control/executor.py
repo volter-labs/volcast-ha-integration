@@ -145,7 +145,8 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from ..const import (DOMAIN, ERROR_ISSUE_AFTER, EXECUTOR_INTERVAL_S, OPT_CONTROL_MODE, SIGNAL_CONTROL_UPDATED,
                      STOP_WRITE_TIMEOUT_S)
-from ..core.control.baseline import baseline_params, needs_restore, snapshot_missing, take_snapshot
+from ..core.control.baseline import (SET_POINT_KEYS, baseline_params, needs_restore, release_without_plan,
+                                     snapshot_missing, take_snapshot)
 from ..core.control.conflict import drifted_keys
 from ..core.control.cycle import (BLOCKED, DRY_RUN, ERROR, IDLE, WRITE, ControlMemory, CycleDecision, Gates, Limits,
                                   Telemetry, commit, decide_cycle, same_value)
@@ -203,6 +204,29 @@ _DIRECT_BRAKE_EXEMPT = (*_BRAKE_EXEMPT, "owner_kept")
 # i przełącznik idą powrotem do trybu bazowego, rezerwa w pauzie — `_reserve_neutral` (bez zwłoki).
 _TRANSIENT_REASONS = frozenset({"temperature_unknown"})
 _TRANSIENT_GUARD_CODES = frozenset({"soc_jump"})
+# Przełącznik zdalnego sterowania (`write.enable`) przy zatrzymaniu: rezerwa budżetu zatrzymania na jego
+# wyłączenie (tryb neutralny i nastawy z migawki dostają resztę) — najważniejszy zapis oddania nie może
+# zostać ucięty przez wolniejsze zapisy przed nim. Najwyżej 1/3 budżetu.
+_STOP_SWITCH_RESERVE_S = 3.0
+# Nastawy mocy zerowane przed włączeniem przełącznika, gdy urządzenie ma zapamiętany tryb inny niż neutralny.
+_POWER_KEYS = ("power_w", *SET_POINT_KEYS)
+
+
+def _merge_report(rep: GroupReport, part: GroupReport) -> None:
+    """Raport kolejnego kroku sekwencji dopisany do zbiorczego (dla `commit` i logu)."""
+    rep.written += [k for k in part.written if k not in rep.written]
+    rep.unsupported += part.unsupported
+    rep.failed += part.failed
+    rep.mode_held = rep.mode_held or part.mode_held
+    rep.errors.update(part.errors)
+    rep.adjusted += [k for k in part.adjusted if k not in rep.adjusted]
+    rep.actual.update(part.actual)
+    rep.held += [k for k in part.held if k not in rep.held]
+    rep.ambiguous += [k for k in part.ambiguous if k not in rep.ambiguous]
+    rep.restored += part.restored
+    rep.restore_failed += part.restore_failed
+    rep.restore_held += part.restore_held
+    rep.group_skipped = rep.group_skipped or part.group_skipped
 
 
 def transient_block(d: CycleDecision | None) -> bool:
@@ -318,6 +342,10 @@ class VolcastExecutor:
         self.verification = None
         self._window: Schedule | None = None           # okno próbne drabiny: plan zastępczy
         self._verify_restore = False                   # powrót po oknie/stopie drabiny w toku
+        # oddanie po obcym sterowaniu (profil z przełącznikiem zdalnego sterowania) czeka na cykl
+        self._handback_pending = False
+        # pierwszy cykl (czas ścienny): odniesienie `release_without_plan_s`, gdy plan nie ma slotu w przeszłości
+        self._started_utc = None
         # lustro zgody konta: flaga z ostatniego planu i stan w pamięci (nie przeżywa przeładowania)
         self._consent_mirror = False
         self._cloud_consent: bool | None = None        # ostatnia zgoda z chmury w tym przebiegu
@@ -663,6 +691,9 @@ class VolcastExecutor:
         odczyt przed zapisem poddaje się po ≈ 7 s bez ramki zapisu; po przekroczeniu budżetu zadanie jest
         przerywane — przerwany zostaje najwyżej odczyt albo odczyt zwrotny po wysłanej ramce trybu
         neutralnego (bezpieczny w każdym stanie).
+
+        Profil z przełącznikiem zdalnego sterowania, który włączyliśmy: pełne oddanie (`_stop_handback`) —
+        tryb neutralny, nastawy z migawki, przełącznik w stanie wyjściowym, z rezerwą budżetu na przełącznik.
         """
         if self._disabled or self._stopped or self._profile is None or self._memory is None:
             return False
@@ -701,21 +732,9 @@ class VolcastExecutor:
                 return False
             neutral, now_mono = profile.neutral_mode, self._clock()
             rd = self.io.read(self._utcnow())
-            if self._direct is not None:
-                if self._reading_fresh(rd):
-                    current = rd.readings.get("mode")
-                    if not isinstance(current, str) or current == neutral or not self._mode_ours(current):
-                        return False
-                    words = {profile.mode_value(current)}
-                else:
-                    words = self._our_mode_words()   # świeży odczyt rejestru trybu rozstrzyga przed ramką
-                written = await self._async_direct_neutral(rd, words, now_mono, throttle=False) if words else None
-            else:
-                current = rd.readings.get("mode")
-                if "mode" in self._absent_keys() or not isinstance(current, str) or current == neutral \
-                        or not self._mode_ours(current):
-                    return False
-                written = await self._async_entity_neutral(rd, now_mono)
+            if self._switch_ours():
+                return await self._stop_handback(rd, now_mono)
+            written = await self._stop_mode(rd, now_mono)
             if written is None:
                 return False
             if self._memory.last_written.get("mode") == neutral:
@@ -725,6 +744,91 @@ class VolcastExecutor:
             _LOGGER.warning("Volcast control: stopping — setting the inverter to its neutral mode failed; it may "
                             "keep the last mode Volcast applied")
             return False
+
+    async def _stop_mode(self, rd: Reading, now_mono: float, *, quick: bool = False) -> list | None:
+        """Tryb neutralny przy zatrzymaniu, jeśli falownik ma NASZ tryb inny niż neutralny; None = nic nie poszło."""
+        profile, neutral = self._profile, self._profile.neutral_mode
+        if self._direct is not None:
+            if self._reading_fresh(rd):
+                current = rd.readings.get("mode")
+                if not isinstance(current, str) or current == neutral or not self._mode_ours(current):
+                    return None
+                words = {profile.mode_value(current)}
+            else:
+                words = self._our_mode_words()   # świeży odczyt rejestru trybu rozstrzyga przed ramką
+            return await self._async_direct_neutral(rd, words, now_mono, throttle=False) if words else None
+        current = rd.readings.get("mode")
+        if "mode" in self._absent_keys() or not isinstance(current, str) or current == neutral \
+                or not self._mode_ours(current):
+            return None
+        return await self._async_entity_neutral(rd, now_mono, quick=quick)
+
+    def _switch_ours(self) -> bool:
+        """Profil z przełącznikiem zdalnego sterowania, który w tej własności włączyliśmy my (i którego
+        właściciel potem nie przejął) — oddanie musi go zwrócić do stanu wyjściowego."""
+        st, profile = self._state, self._profile
+        if profile is None or "enable" not in (profile.raw.get("write") or {}) or not st.owned \
+                or "enable" in st.taken_over:
+            return False
+        return st.restore_keys is None or "enable" in st.restore_keys or profile.baseline_enable is not None
+
+    async def _stop_handback(self, rd: Reading, now_mono: float) -> bool:
+        """Oddanie przy zatrzymaniu (profil z przełącznikiem): tryb neutralny → nastawy z migawki → przełącznik
+        w stanie wyjściowym, każdy krok osobno. Własność i migawka zostają (restart przejmuje od nowa).
+
+        Encje bez odczytu zwrotnego (sam wynik usługi), a tryb i nastawy dostają budżet bez rezerwy na
+        przełącznik — jego zapis idzie zawsze, nawet gdy wcześniejsze kroki nie zdążyły. True = przełącznik
+        w stanie wyjściowym zapisany."""
+        reserve = min(_STOP_SWITCH_RESERVE_S, self._stop_timeout_s / 3.0)
+        deadline = self._stop_deadline if self._stop_deadline is not None \
+            else time.monotonic() + self._stop_timeout_s
+
+        async def bounded(coro):
+            left = deadline - reserve - time.monotonic()
+            if left <= 0:
+                coro.close()
+                return None
+            try:
+                return await asyncio.wait_for(coro, left)
+            except asyncio.TimeoutError:
+                return None
+
+        await bounded(self._stop_mode(rd, now_mono, quick=True))
+        params = baseline_params(self._profile, self._state.snapshot)
+        fitted, unfit = self.io.restore_fit(rd, params)
+        ours = self._state.restore_keys            # None = cała migawka (stan sprzed listy kluczy)
+        keys = [k for k in SET_POINT_KEYS if getattr(fitted, k) is not None and k not in unfit
+                and (ours is None or k in ours) and k not in self._state.taken_over]
+        if keys:
+            await bounded(self._stop_writes(fitted, keys, rd, now_mono))
+        switch = Params(enable=bool(fitted.enable))       # brak stanu w migawce = wyłączony
+        report = await self._stop_writes(switch, ["enable"], rd, now_mono)
+        if "enable" in report.written:
+            _LOGGER.warning("Volcast control: stopping — inverter handed back (neutral mode, settings from "
+                            "before control, remote control switch restored) until control resumes")
+            return True
+        _LOGGER.warning("Volcast control: stopping — returning the remote control switch failed; the inverter "
+                        "may stay under remote control with the last mode Volcast applied")
+        return False
+
+    async def _stop_writes(self, fitted: Params, keys: list[str], rd: Reading, now_mono: float) -> GroupReport:
+        """Zapisy oddania przy zatrzymaniu: encje bez odczytu zwrotnego, tryb bezpośredni przez pisarza powrotu
+        przy potwierdzonej tożsamości urządzenia."""
+        writes = self.io.restore_writes(fitted, keys, rd)
+        if not writes:
+            return GroupReport()
+        direct = self._direct is not None
+        if direct and not await self._direct.async_identity_ok():
+            return GroupReport()
+        if not direct:
+            writes = [replace(w, readback_s=None) if getattr(w, "readback_s", None) is not None else w
+                      for w in writes]
+        write = getattr(self._writer, "async_write_restore", None) if direct else None
+        report = await async_run_group_writes(writes, write or self._writer.async_write,
+                                              on_exception=self._log_write_exception)
+        self._end_direct_writes()
+        self._account_restore(fitted.flatten(), [report], now_mono)
+        return report
 
     @property
     def _foreign_issue_id(self) -> str:
@@ -822,6 +926,8 @@ class VolcastExecutor:
         try:
             if self._on_state_event(event):
                 await self._async_save("control state")
+                if self._handback_pending:
+                    await self.async_tick()          # oddanie od razu, nie dopiero w następnym cyklu
         except Exception as err:  # noqa: BLE001 — obserwator nie może wywrócić pętli zdarzeń HA
             _LOGGER.warning("Volcast control: settings change check failed (%s)", type(err).__name__)
 
@@ -845,9 +951,13 @@ class VolcastExecutor:
         if foreign_option:
             value = "?" + raw_state          # czytelna opcja spoza profilu ≠ brak odczytu
         expected = self._memory.last_written.get(key, self._consistent.get(key))
+        # Przełącznik zdalnego sterowania, który włączyliśmy, wyłączony bez naszego zapisu: to zawsze koniec
+        # zdalnego sterowania przez kogoś innego (inny sterownik, urządzenie) — także bez aktora w kontekście.
+        switch_off = (key == "enable" and value == 0.0 and self._state.owned
+                      and self._memory.last_written.get("enable") == 1.0)
         if not is_foreign_change(ours=self._writer.is_ours(getattr(ctx, "id", None)),
                                  has_actor=bool(getattr(ctx, "user_id", None)
-                                                or getattr(ctx, "parent_id", None)),
+                                                or getattr(ctx, "parent_id", None)) or switch_off,
                                  new_value=value, expected=expected):
             return False
         if foreign_option:
@@ -857,6 +967,10 @@ class VolcastExecutor:
         return True
 
     def _pause_for_foreign(self, key: str, eid: str | None) -> None:
+        if self._state.owned and "enable" in ((self._profile.raw.get("write") or {}) if self._profile else {}):
+            # Profil z przełącznikiem zdalnego sterowania: ktoś inny steruje — oddanie (tryb neutralny,
+            # nastawy z migawki, przełącznik) zamiast trzymania naszej komendy przez pauzę.
+            self._handback_pending = True
         self._memory.paused_until = self._clock() + FOREIGN_PAUSE_S
         # Ktoś inny zmienia falownik: zapisana nastawa sprzedaży nie jest już pewna.
         self._memory.live_export = self._memory.live_export.forget_written()
@@ -1172,14 +1286,28 @@ class VolcastExecutor:
             return
         if self._verify_restore and not self._state.owned:
             self._verify_restore = False             # nic do oddania (albo powrót już doszedł)
+        if not self._state.owned:
+            self._handback_pending = False
+        # `write_policy.release_without_plan_s`: żaden slot planu nie pokrywa „teraz” dłużej niż próg (także
+        # po restarcie z zapisanym planem) — oddanie i bez przejęcia, dopóki plan nie wróci.
+        if self._started_utc is None:
+            self._started_utc = now_utc              # pierwszy cykl po starcie
+        released = (self._profile.control_model == "mode_setpoint"
+                    and release_without_plan(self._profile, self._window or self.schedule, now_utc,
+                                             self._started_utc))
         if (needs_restore(owned=self._state.owned, consent=gates.consent, local_switch=gates.local_switch,
                           control_mode=gates.control_mode, active_mode=self.io.kind)
-                or (self._state.owned and self._verification_hold())) and self._io_ready():
+                or (self._state.owned and (self._verification_hold() or released or self._handback_pending))) \
+                and self._io_ready():
             # Także w pauzie i przy kolizji: powrót nie rusza kluczy, które zmienił właściciel.
             await self._restore(rd)
             if not self._state.owned:
                 self._verify_restore = False
+                self._handback_pending = False
             await self._persist_budget()
+            return
+        if released:
+            self._finish(CycleDecision(IDLE, "no_plan"))
             return
         if direct is not None:
             self._update_conflict_issue()
@@ -1191,6 +1319,12 @@ class VolcastExecutor:
                 return
             if self._note_drift(rd, now_mono):
                 await self._async_save("control state")
+                if self._handback_pending and self._state.owned:
+                    await self._restore(rd)              # obce sterowanie: oddanie w tym samym cyklu
+                    if not self._state.owned:
+                        self._handback_pending = False
+                    await self._persist_budget()
+                    return
             if self._tou_restore_pending:
                 await self._tou_restore_after_failure()
                 await self._persist_budget()
@@ -1266,9 +1400,7 @@ class VolcastExecutor:
                 # Zgoda, przełącznik, pauza albo zatrzymanie zmieniły się w trakcie zapisu migawki.
                 decision = replace(decision, status=BLOCKED, reason="gates_changed")
         if decision.status == WRITE:
-            report = await async_run_group_writes(
-                decision.writes, self._unless_stopping(self._writer.async_write), restore=decision.restore,
-                ambiguous_safe=decision.restore_ambiguous_safe, on_exception=self._log_write_exception)
+            report, extra = await self._async_run_plan(decision, rd)
             self._end_direct_writes()
             if self._abandoned:
                 _LOGGER.warning("Volcast control: stopping — the remaining writes of this cycle were abandoned")
@@ -1276,7 +1408,7 @@ class VolcastExecutor:
             commit(decision, report, self._memory, now_mono,
                    now_wall=now_utc.timestamp() if self._direct is None else None)
             self._log_report(decision, report)
-            if self._note_written([*report.written, *report.ambiguous, *report.restored]):
+            if self._note_written([*report.written, *report.ambiguous, *report.restored, *extra]):
                 await self._async_save("control state")
             if self._direct is None:
                 await self._persist_budget()
@@ -1446,7 +1578,10 @@ class VolcastExecutor:
             if seen is not None and same_value(seen, value):
                 continue                    # ta sama wartość co w policzonym już rozjeździe
             self._drift_values[key] = value
-            if drift.note_drift(key, now_mono):
+            # Wyłączony przełącznik zdalnego sterowania (włączony przez nas) = koniec zdalnego sterowania
+            # przez kogoś innego — od pierwszego odczytu, bez czekania na drugi rozjazd.
+            switch_off = key == "enable" and value == 0.0
+            if switch_off or drift.note_drift(key, now_mono):
                 _LOGGER.warning("Volcast control paused for 30 min: %s changed outside Volcast", key)
                 memory.last_written[key] = value          # wartość właściciela = punkt odniesienia
                 self._drift_values.pop(key, None)
@@ -1734,6 +1869,61 @@ class VolcastExecutor:
         ir.async_delete_issue(self._hass, DOMAIN, self._record_dropped_issue_id)
         return decision
 
+    async def _async_run_plan(self, decision: CycleDecision, rd: Reading) -> tuple[GroupReport, list[str]]:
+        """Zapisy planu: (raport dla `commit`, klucze zapisane dodatkowo — do powrotu, poza pamięcią cyklu).
+
+        Zwykle jedna sekwencja grupowa (kolejność profilu, grupa tryb+moc na końcu). Włączenie przełącznika
+        zdalnego sterowania, gdy urządzenie ma zapamiętany tryb inny niż neutralny (albo trybu nie widać):
+        przełącznik od razu uruchomiłby ten tryb na obecnych nastawach, więc najpierw nastawy mocy = 0,
+        potem warunki i przełącznik, potem tryb, na końcu nastawy docelowe — każdy krok osobnym wywołaniem,
+        a nieudany krok wstrzymuje wszystkie następne."""
+        write = self._unless_stopping(self._writer.async_write)
+        zeros = self._takeover_zeros(decision, rd)
+        if not zeros:
+            report = await async_run_group_writes(
+                decision.writes, write, restore=decision.restore,
+                ambiguous_safe=decision.restore_ambiguous_safe, on_exception=self._log_write_exception)
+            return report, []
+        rep = GroupReport()
+        first = await async_run_group_writes(zeros, write, on_exception=self._log_write_exception)
+        extra = list(first.written)
+        rep.failed += first.failed
+        rep.unsupported += first.unsupported
+        rep.ambiguous += first.ambiguous
+        rep.errors.update(first.errors)
+        pre = [w for w in decision.writes if w.key != "mode" and w.key not in _POWER_KEYS]
+        steps = (pre, [w for w in decision.writes if w.key == "mode"],
+                 [w for w in decision.writes if w.key in _POWER_KEYS])
+        need = ("enable", "mode")              # krok, bez którego następny nie idzie
+        ok = not (first.failed or first.unsupported)
+        for i, step in enumerate(steps):
+            if not step:
+                continue
+            if not ok:
+                rep.held += [w.key for w in step if w.key == "enable"]
+                rep.mode_held = rep.mode_held or any(w.key == "mode" for w in step)
+                rep.group_skipped = True
+                continue
+            part = await async_run_group_writes(step, write, on_exception=self._log_write_exception)
+            _merge_report(rep, part)
+            if i < len(need) and any(w.key == need[i] for w in step) and need[i] not in part.written:
+                ok = False
+        return rep, extra
+
+    def _takeover_zeros(self, decision: CycleDecision, rd: Reading) -> list:
+        """Zerowe nastawy mocy przed włączeniem przełącznika, gdy odczytany tryb nie jest neutralny; [] = zwykły
+        zapis (profil bez przełącznika, przełącznik już włączony, tryb neutralny)."""
+        if not any(w.key == "enable" and getattr(w, "turns_on", None) is not False for w in decision.writes):
+            return []
+        profile = self._profile
+        if rd.readings.get("mode") == profile.neutral_mode:
+            return []
+        spec = profile.raw.get("write") or {}
+        keys = [k for k in _POWER_KEYS if k in spec and not (k == "power_w" and profile.power_by_direction)]
+        if not keys:
+            return []
+        return self.io.restore_writes(Params(**{k: 0.0 for k in keys}), keys, rd)
+
     async def _async_neutral_brake(self, d: CycleDecision, rd: _Reading, live_map: Mapping[str, str],
                                    now_mono: float) -> CycleDecision | None:
         """Planu nie da się bezpiecznie wykonać = stan neutralny, nigdy „zamrożenie".
@@ -1767,12 +1957,16 @@ class VolcastExecutor:
                             "neutral mode", d.reason)
         return replace(d, writes=writes, notes=(*d.notes, "neutral_brake"))
 
-    async def _async_entity_neutral(self, rd: Reading, now_mono: float) -> list | None:
-        """Tryb encji: sam zapis trybu neutralnego usługą (jak powrót, bez innej encji); własność zostaje."""
+    async def _async_entity_neutral(self, rd: Reading, now_mono: float, *, quick: bool = False) -> list | None:
+        """Tryb encji: sam zapis trybu neutralnego usługą (jak powrót, bez innej encji); własność zostaje.
+        `quick` (zatrzymanie) = bez odczytu zwrotnego, sam wynik usługi."""
         neutral = self._profile.neutral_mode
         writes = self.io.restore_writes(Params(mode=neutral), ["mode"], rd)
         if not writes:
             return None
+        if quick:
+            writes = [replace(w, readback_s=None) if getattr(w, "readback_s", None) is not None else w
+                      for w in writes]
         report = await async_run_group_writes(writes, self._writer.async_write,
                                               on_exception=self._log_write_exception)
         self._account_restore({"mode": neutral}, [report], now_mono)
@@ -2120,6 +2314,8 @@ class VolcastExecutor:
         Tryb bazowy jest neutralny i nie potrzebuje warunków, więc nie czeka na żadną
         inną encję. Obie części idą przez wykonawcę grupowego; własność zostaje, dopóki
         wszystko nie dojdzie — każdy tik ponawia tylko to, czego falownik jeszcze nie ma.
+        Profil z przełącznikiem zdalnego sterowania: przełącznik osobno, po trybie i nastawach
+        (`_restore_switch`).
 
         Tryb bezpośredni: tylko przy potwierdzonej tożsamości urządzenia (kolizja na łączu powrotu
         nie blokuje), na świeżym odczycie; okna czasowe wracają do programów właściciela.
@@ -2167,6 +2363,9 @@ class VolcastExecutor:
         allowed = None if self._state.restore_keys is None else set(self._state.restore_keys)
         if allowed is not None and allowed & set(GROUP_KEYS) and "mode" not in self._state.taken_over:
             allowed.add("mode")          # tryb i moc to jedna grupa — nasza moc = nasz tryb
+        if allowed is not None and self._profile.baseline_enable is not None \
+                and "enable" not in self._state.taken_over:
+            allowed.add("enable")        # stan przełącznika po oddaniu ustala profil (`baseline.enable`)
         owner_kept = [k for k in target if k in self._state.taken_over]
         # To, co falownik już ma, nie jedzie (NVM) — ta sama zasada co w cyklu.
         # Tryb bezpośredni: o każdym kluczu rozstrzyga świeży odczyt pisarza przed zapisem (bez ramki,
@@ -2179,7 +2378,11 @@ class VolcastExecutor:
         if "mode" in keys and rd.foreign_mode:
             keys.remove("mode")          # ktoś wybrał tryb spoza profilu — zostaje jego
         group_writes = self.io.restore_writes(fitted, [k for k in keys if k in GROUP_KEYS], rd)
-        rest_writes = self.io.restore_writes(fitted, [k for k in keys if k not in GROUP_KEYS], rd)
+        rest_writes = self.io.restore_writes(fitted, [k for k in keys if k not in GROUP_KEYS and k != "enable"],
+                                             rd)
+        # Przełącznik zdalnego sterowania (tylko profile, które go mają): OSOBNO i na końcu — tryb neutralny,
+        # potem nastawy z migawki, potem przełącznik.
+        switch_writes = self.io.restore_writes(fitted, ["enable"], rd) if "enable" in keys else []
         # Moc (gdyby profil ją kiedyś miał w stanie bazowym) po trybie: tryb bazowy ją ignoruje.
         reports = []
         write = getattr(self._writer, "async_write_restore", None) if direct else None
@@ -2187,10 +2390,12 @@ class VolcastExecutor:
             if writes:
                 reports.append(await async_run_group_writes(writes, write or self._writer.async_write,
                                                             on_exception=self._log_write_exception))
+        if switch_writes:
+            reports.append(await self._restore_switch(switch_writes, reports, write))
         self._end_direct_writes()
         self._account_restore(target, reports, now_mono)
-        writes = [*group_writes, *rest_writes]
-        failed = [k for r in reports for k in (*r.failed, *r.unsupported, *r.restore_failed)]
+        writes = [*group_writes, *rest_writes, *switch_writes]
+        failed = [k for r in reports for k in (*r.failed, *r.unsupported, *r.restore_failed, *r.held)]
         if failed or any(r.group_skipped for r in reports):
             self.last_decision = CycleDecision(ERROR, "restore_failed", writes=writes, flat=target)
             if tuple(failed) != self._restore_failed:
@@ -2217,6 +2422,16 @@ class VolcastExecutor:
         else:
             _LOGGER.warning("Volcast control: inverter returned to its baseline mode")
         self._count(self.last_decision)
+
+    async def _restore_switch(self, writes: list, before: list[GroupReport], write) -> GroupReport:
+        """Przełącznik w stanie wyjściowym po trybie i nastawach. Wyłączenie idzie zawsze (urządzenie wraca
+        do własnego sterowania); włączenie (właściciel miał je włączone) tylko, gdy wszystko przed nim doszło."""
+        turns_on = any(getattr(w, "turns_on", None) is not False for w in writes)
+        if turns_on and any(r.failed or r.unsupported or r.restore_failed or r.group_skipped or r.held
+                            for r in before):
+            return GroupReport(held=[w.key for w in writes])
+        return await async_run_group_writes(writes, write or self._writer.async_write,
+                                            on_exception=self._log_write_exception)
 
     async def _release_ownership(self) -> None:
         self._state.owned = False

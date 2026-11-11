@@ -478,6 +478,13 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     held_by = [k for k in runtime_unmapped if k != "mode"]
     # Zmieniony warunek, który w tym cyklu nie dojdzie („nieobsługiwany" nie dojdzie nigdy).
     unsettled = (need - allowed - unsupported) - {"mode"}
+    if "enable" in allowed and (held_by or unsettled):
+        # Włączenie przełącznika zdalnego sterowania jest warunkiem jak tryb: urządzenie od razu
+        # wykonuje zapamiętany tryb na nastawach, które ma — nastawa, która nie dojdzie w tym cyklu
+        # (interwał po nieudanym zapisie, odmowa), wstrzymuje je także w kolejnych cyklach.
+        allowed.discard("enable")
+        unsettled = unsettled | {"enable"}
+        notes.append("enable_held")
     if held_by or ("mode" in need and unsettled):
         allowed.discard("mode")
         notes.append("mode_held")

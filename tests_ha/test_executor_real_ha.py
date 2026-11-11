@@ -289,3 +289,133 @@ async def test_no_write_without_consent_or_with_switch_off_first_write_when_all_
     await ex.async_tick()
     await hass.async_block_till_done()
     assert inv["mode"].calls == 1 and ex.owned              # wszystkie bramki otwarte
+
+
+# ── przełącznik zdalnego sterowania i moc wg kierunku: przejęcie i oddanie na prawdziwych encjach ──
+
+_REMOTE = {"mode": "select.x_ems", "enable": "switch.x_remote", "charge_power_w": "number.x_charge",
+           "discharge_power_w": "number.x_discharge", "soc_min": "number.x_dod", "soc": "sensor.x_soc"}
+
+
+def _remote_profile():
+    from tests.core.modbus.engine_profile import directional_profile
+
+    def mutate(raw):
+        raw["ha"]["integrations"][0]["entities"]["mode"] = {"domain": "select", "unique_id_regex": "^x-ems-"}
+    return directional_profile(mutate)
+
+
+def _remote_device(hass: HomeAssistant, *, mode: str) -> list[tuple[str, str, object]]:
+    """Encje urządzenia ze zdalnym sterowaniem; usługi ustawiają stan z kontekstem wywołania."""
+    calls: list[tuple[str, str, object]] = []
+    kw = {"min": 0, "max": 10, "step": 0.01, "unit_of_measurement": "kW"}
+    hass.states.async_set(_REMOTE["mode"], mode, {"options": ["auto", "charge_battery", "sell_power",
+                                                              "discharge_battery", "battery_standby"]})
+    hass.states.async_set(_REMOTE["enable"], "off", {})
+    hass.states.async_set(_REMOTE["charge_power_w"], "5.0", kw)
+    hass.states.async_set(_REMOTE["discharge_power_w"], "6.0", kw)
+    hass.states.async_set(_REMOTE["soc_min"], "85", {"min": 0, "max": 100, "step": 1, "unit_of_measurement": "%"})
+    hass.states.async_set(_REMOTE["soc"], "60", {"unit_of_measurement": "%"})
+
+    def keep(eid, state):
+        old = hass.states.get(eid)
+        return state, dict(old.attributes) if old else {}
+
+    async def select_option(call):
+        calls.append(("select_option", call.data["entity_id"], call.data["option"]))
+        hass.states.async_set(call.data["entity_id"], *keep(call.data["entity_id"], call.data["option"]),
+                              context=call.context)
+
+    async def set_value(call):
+        calls.append(("set_value", call.data["entity_id"], float(call.data["value"])))
+        hass.states.async_set(call.data["entity_id"], *keep(call.data["entity_id"], str(call.data["value"])),
+                              context=call.context)
+
+    def switch(service, state):
+        async def handler(call):
+            calls.append((service, call.data["entity_id"], None))
+            hass.states.async_set(call.data["entity_id"], state, {}, context=call.context)
+        return handler
+
+    hass.services.async_register("select", "select_option", select_option)
+    hass.services.async_register("number", "set_value", set_value)
+    hass.services.async_register("switch", "turn_on", switch("turn_on", "on"))
+    hass.services.async_register("switch", "turn_off", switch("turn_off", "off"))
+    return calls
+
+
+async def _remote_executor(hass: HomeAssistant, monkeypatch):
+    from types import SimpleNamespace
+
+    from custom_components.volcast.control import executor as ex_mod
+    from custom_components.volcast.control.ha_writer import EntityServiceWriter
+    from custom_components.volcast.core.control.select import ProfileChoice
+    from custom_components.volcast.core.slot import parse_schedule
+    monkeypatch.setattr(ex_mod, "control_verified", lambda *_: True)
+    entry = SimpleNamespace(entry_id="remote1", options={"control_mode": "entities"})
+    ex = ex_mod.VolcastExecutor(hass, entry, choice=ProfileChoice(_remote_profile(), "goodwe", "X"),
+                                mapped=_REMOTE, rated_power_w=8000.0, store=ControlStore(hass, "remote1"),
+                                writer=EntityServiceWriter(hass))
+    plan = {"schedule_id": "p1", "control_enabled": True,
+            "slots": [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "discharge",
+                       "discharge_purpose": "sell", "power_w": 2500, "price_pln_kwh": 0.8}],
+            "fallback": {"mode": "self_consume", "soc_reserve": 10}}
+    await ex.async_start()
+    await ex.async_on_plan(plan, parse_schedule(plan))
+    await ex.async_set_consent(True)
+    await ex.async_set_local_switch(True)
+    return ex
+
+
+def _first(calls, *item) -> int:
+    return next(i for i, c in enumerate(calls) if c[:len(item)] == item)
+
+
+async def test_remote_switch_takeover_and_hand_back_order_on_real_entities(
+        hass: HomeAssistant, hass_storage, freezer, monkeypatch):
+    freezer.move_to("2026-09-23T10:00:30+00:00")
+    calls = _remote_device(hass, mode="charge_battery")          # zapamiętany tryb wymuszony
+    ex = await _remote_executor(hass, monkeypatch)
+    try:
+        await ex.async_tick()
+        await hass.async_block_till_done()
+        zc, zd = _first(calls, "set_value", _REMOTE["charge_power_w"], 0.0), \
+            _first(calls, "set_value", _REMOTE["discharge_power_w"], 0.0)
+        on = _first(calls, "turn_on", _REMOTE["enable"])
+        mode = _first(calls, "select_option", _REMOTE["mode"], "sell_power")
+        target = _first(calls, "set_value", _REMOTE["discharge_power_w"], 2.5)
+        assert max(zc, zd) < on < mode < target
+        assert not ex.paused                                       # nasze zapisy to nie obce sterowanie
+        n = len(calls)
+        await ex.async_set_consent(False)
+        await ex.async_tick()
+        await hass.async_block_till_done()
+        back = calls[n:]
+        assert _first(back, "select_option", _REMOTE["mode"], "auto") \
+            < _first(back, "set_value", _REMOTE["discharge_power_w"], 6.0) \
+            < _first(back, "turn_off", _REMOTE["enable"])
+        assert hass.states.get(_REMOTE["enable"]).state == "off" and not ex.owned
+    finally:
+        await ex.async_stop()
+
+
+async def test_remote_switch_turned_off_outside_pauses_and_hands_back(
+        hass: HomeAssistant, hass_storage, freezer, monkeypatch):
+    freezer.move_to("2026-09-23T10:00:30+00:00")
+    calls = _remote_device(hass, mode="auto")
+    ex = await _remote_executor(hass, monkeypatch)
+    try:
+        await ex.async_tick()
+        await hass.async_block_till_done()
+        assert hass.states.get(_REMOTE["enable"]).state == "on" and ex.owned
+        n = len(calls)
+        # inny sterownik wyłącza zdalne sterowanie — odświeżenie integracji bez aktora
+        hass.states.async_set(_REMOTE["enable"], "off", {}, context=Context())
+        await hass.async_block_till_done()
+        assert ex.paused and not ex.owned
+        assert ir.async_get(hass).async_get_issue(DOMAIN, "foreign_control_remote1") is not None
+        back = calls[n:]
+        assert ("select_option", _REMOTE["mode"], "auto") in back
+        assert not any(c[0] == "turn_on" for c in back)
+    finally:
+        await ex.async_stop()
