@@ -86,3 +86,66 @@ async def test_timer_polls_on_the_event_loop(hass: HomeAssistant, monkeypatch, c
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=60))
     await hass.async_block_till_done()
     assert client.reads == reads and client.transport.closed
+
+
+# ── przełącznik zdalnego sterowania i nastawy u32 na drugim adresie urządzenia (symulator Modbus TCP) ──
+
+
+async def test_remote_switch_takeover_and_stop_hand_back_on_real_core(hass: HomeAssistant, socket_enabled,
+                                                                      monkeypatch):
+    from custom_components.volcast.control import executor as ex_mod
+    from custom_components.volcast.control.device_io import DirectIO
+    from custom_components.volcast.control.executor import VolcastExecutor
+    from custom_components.volcast.control.store import ControlStore
+    from custom_components.volcast.core.control.select import ProfileChoice
+    from custom_components.volcast.core.slot import parse_schedule
+    from tests.control.test_direct_connection import _factory
+    from tests.control.test_executor_direct_handback import (
+        AUTO, CHARGE, DISCHARGE, ENABLE, LINK, MODE, SELL, TwoUnitServer, plant_bank, profile, target)
+    from tests.core.modbus.engine_profile import PLANT
+    from tests.sim.device import Faults, RegisterBank
+    from tests.sim.fixtures import goodwe_words
+
+    monkeypatch.setattr(ex_mod.ir, "async_create_issue", lambda *a, **k: None)
+    prof = profile()
+    plant = plant_bank()                                  # zapamiętany tryb wymuszony, przełącznik wyłączony
+    sim = await TwoUnitServer({LINK: RegisterBank({**goodwe_words(), 47509: 1}), PLANT: plant}, Faults()).start()
+    tgt = target(sim, prof)
+    entry = make_entry(hass, options={"control_mode": "direct", "direct_target": tgt})
+    salt = bytes(range(16))
+    conn = DirectConnection(hass, entry, prof, tgt, trial=False, salt=salt, transport_factory=_factory(1.0),
+                            allow_loopback=True, unreadable=())
+    io = DirectIO(conn, prof, trial=False, unreadable=(), capabilities=tgt["capabilities"], salt=salt)
+    ex = VolcastExecutor(hass, entry, choice=ProfileChoice(prof, None, None), mapped={}, rated_power_w=8000.0,
+                         store=ControlStore(hass, entry.entry_id), io=io)
+    now = dt_util.utcnow().replace(microsecond=0)
+    iso = lambda t: t.isoformat().replace("+00:00", "Z")  # noqa: E731
+    plan = {"schedule_id": "p1", "control_enabled": True,
+            "slots": [{"from": iso(now - timedelta(minutes=5)), "to": iso(now + timedelta(minutes=55)),
+                       "mode": "discharge", "discharge_purpose": "sell", "power_w": 2000, "price_pln_kwh": 0.8}],
+            "fallback": {"mode": "self_consume", "soc_reserve": 10}}
+    try:
+        await conn.async_start()
+        await ex.async_start()
+        await ex.async_on_plan(plan, parse_schedule(plan))
+        await ex.async_set_consent(True)
+        await ex.async_set_local_switch(True)
+        await conn.async_poll()
+        await ex.async_tick()
+        w = plant.writes
+        idx = lambda addr, value, after=-1: next(  # noqa: E731
+            i for i, (a, v) in enumerate(w) if i > after and a == addr and v == value)
+        mode = idx(MODE, SELL)
+        assert max(idx(CHARGE + 1, 0), idx(DISCHARGE, 0)) < idx(ENABLE, 1) < mode < idx(DISCHARGE, 200, mode)
+        assert ex.owned
+        await conn.async_poll()
+        n = len(w)
+        assert await ex.async_neutral_at_stop() is True
+        back = w[n:]
+        first = lambda addr, value: next(i for i, (a, v) in enumerate(back) if a == addr and v == value)  # noqa: E731
+        assert first(MODE, AUTO) < first(DISCHARGE, 600) < first(ENABLE, 0)
+        assert plant.read(ENABLE, 1) == [0] and plant.read(CHARGE, 2) == [0, 5000]
+    finally:
+        await ex.async_stop()
+        await conn.async_stop()
+        await sim.close()
