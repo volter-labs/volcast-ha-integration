@@ -338,9 +338,9 @@
         "title": "Folosești această sursă de prețuri?",
         "description": "Această sursă oferă o prognoză de prețuri pentru următoarele {hours} h. Confirmă pentru a o folosi la planificare. Prețurile sunt citite în {currency}."
       },
-      "price_sell_tomorrow": {
-        "title": "Lipsesc prețurile de vânzare pentru mâine",
-        "description": "Sursa prețului de vânzare {source} nu oferă încă prețuri pentru mâine, deși prețurile de cumpărare pentru mâine sunt deja disponibile. Până când le oferă, planul pentru mâine se va baza pe prețurile din ziua anterioară. Confirmă pentru a salva totuși sursa de prețuri."
+      "price_source_confirm_sell": {
+        "title": "Folosești această sursă de prețuri?",
+        "description": "Această sursă oferă o prognoză de prețuri pentru următoarele {hours} h. Prețurile sunt citite în {currency}. Sursa prețului de vânzare {source} nu oferă încă prețuri pentru mâine, deși prețurile de cumpărare pentru mâine sunt deja disponibile. Până când le oferă, planul pentru mâine se va baza pe prețurile din ziua anterioară. Confirmă pentru a folosi totuși această sursă de prețuri la planificare."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "Volcast nu a putut readuce invertorul la setările de dinaintea controlului, așa că nu s-a modificat nimic. Încearcă din nou când invertorul este accesibil sau oprește comutatorul de control Volcast (Volcast continuă să încerce să readucă invertorul).",
       "no_ev_chargers": "Încă nu a fost găsit niciun încărcător EV. Rulează mai întâi detectarea și verifică dacă integrarea încărcătorului este configurată.",
       "no_price_sources": "Nu a fost găsită nicio integrare de prețuri cunoscută în Home Assistant. Alege un senzor la Prețurile energiei.",
-      "price_source_invalid": "Setările sursei de prețuri nu mai sunt valide. Începe din nou."
+      "price_source_invalid": "Setările sursei de prețuri nu mai sunt valide. Începe din nou.",
+      "price_sell_tomorrow": "Setările prețurilor energiei sunt salvate. Sursa prețului de vânzare {source} nu oferă încă prețuri pentru mâine, deși prețurile de cumpărare pentru mâine sunt deja disponibile. Până când le oferă, planul pentru mâine se va baza pe prețurile din ziua anterioară."
     },
     "error": {
       "prices_not_usable": "Acest senzor nu oferă acum o serie completă de prețuri.",

@@ -338,9 +338,9 @@
         "title": "Usar esta fonte de preços?",
         "description": "Esta fonte fornece uma previsão de preços para as próximas {hours} h. Confirme para a usar no planeamento. Os preços são lidos em {currency}."
       },
-      "price_sell_tomorrow": {
-        "title": "Faltam os preços de venda de amanhã",
-        "description": "A fonte do preço de venda {source} ainda não fornece preços para amanhã, embora os preços de compra de amanhã já estejam disponíveis. Até que os forneça, o plano de amanhã será baseado nos preços do dia anterior. Confirme para guardar a fonte de preços mesmo assim."
+      "price_source_confirm_sell": {
+        "title": "Usar esta fonte de preços?",
+        "description": "Esta fonte fornece uma previsão de preços para as próximas {hours} h. Os preços são lidos em {currency}. A fonte do preço de venda {source} ainda não fornece preços para amanhã, embora os preços de compra de amanhã já estejam disponíveis. Até que os forneça, o plano de amanhã será baseado nos preços do dia anterior. Confirme para usar esta fonte de preços no planeamento mesmo assim."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "O Volcast não conseguiu repor o inversor nas definições anteriores ao controlo, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controlo do Volcast (o Volcast continua a tentar repor o inversor).",
       "no_ev_chargers": "Ainda não foi encontrado nenhum carregador de VE. Execute primeiro a deteção e confirme que a integração do carregador está configurada.",
       "no_price_sources": "Não foi encontrada nenhuma integração de preços conhecida no Home Assistant. Escolha um sensor em Preços de energia.",
-      "price_source_invalid": "As definições da fonte de preços já não são válidas. Comece de novo."
+      "price_source_invalid": "As definições da fonte de preços já não são válidas. Comece de novo.",
+      "price_sell_tomorrow": "As definições de preços de energia foram guardadas. A fonte do preço de venda {source} ainda não fornece preços para amanhã, embora os preços de compra de amanhã já estejam disponíveis. Até que os forneça, o plano de amanhã será baseado nos preços do dia anterior."
     },
     "error": {
       "prices_not_usable": "Este sensor não fornece neste momento uma série de preços completa.",

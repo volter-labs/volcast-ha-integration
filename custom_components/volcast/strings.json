@@ -338,9 +338,9 @@
         "title": "Use this price source?",
         "description": "This source provides a price forecast for {hours} h ahead. Submit to use it for planning. Prices are read in {currency}."
       },
-      "price_sell_tomorrow": {
-        "title": "Sale prices for tomorrow are missing",
-        "description": "The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices. Submit to save the price source anyway."
+      "price_source_confirm_sell": {
+        "title": "Use this price source?",
+        "description": "This source provides a price forecast for {hours} h ahead. Prices are read in {currency}. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices. Submit to use this price source for planning anyway."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "Volcast could not return the inverter to its settings from before control, so nothing was changed. Try again when the inverter is reachable, or turn off the Volcast control switch (Volcast keeps trying to return the inverter).",
       "no_ev_chargers": "No EV charger was found yet. Run discovery first and make sure the charger integration is set up.",
       "no_price_sources": "No known price integration was found in Home Assistant. Use Energy prices to pick a sensor.",
-      "price_source_invalid": "The price source settings are no longer valid. Start again."
+      "price_source_invalid": "The price source settings are no longer valid. Start again.",
+      "price_sell_tomorrow": "The energy price settings are saved. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices."
     },
     "error": {
       "prices_not_usable": "This sensor does not provide a complete price series right now.",

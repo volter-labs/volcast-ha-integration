@@ -338,9 +338,9 @@
         "title": "Deze prijsbron gebruiken?",
         "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. Bevestig om hem voor planning te gebruiken. De prijzen worden gelezen in {currency}."
       },
-      "price_sell_tomorrow": {
-        "title": "Verkoopprijzen voor morgen ontbreken",
-        "description": "De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag. Bevestig om de prijsbron toch op te slaan."
+      "price_source_confirm_sell": {
+        "title": "Deze prijsbron gebruiken?",
+        "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. De prijzen worden gelezen in {currency}. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag. Bevestig om deze prijsbron toch voor planning te gebruiken."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten).",
       "no_ev_chargers": "Er is nog geen EV-lader gevonden. Voer eerst detectie uit en controleer of de integratie van de lader is ingesteld.",
       "no_price_sources": "Er is in Home Assistant geen bekende prijsintegratie gevonden. Kies een sensor bij Energieprijzen.",
-      "price_source_invalid": "De instellingen van de prijsbron zijn niet meer geldig. Begin opnieuw."
+      "price_source_invalid": "De instellingen van de prijsbron zijn niet meer geldig. Begin opnieuw.",
+      "price_sell_tomorrow": "De instellingen voor energieprijzen zijn opgeslagen. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag."
     },
     "error": {
       "prices_not_usable": "Deze sensor levert op dit moment geen volledige prijsreeks.",

@@ -545,10 +545,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     _price_candidate: ActionCandidate | None = None
     _price_pending: dict[str, Any] | None = None
-    #: Sprzedaż bez jutra przy źródle z formularza wyboru (encja albo akcja) — pokazywana przed zapisem.
+    #: Sprzedaż bez jutra przy źródle z formularza wyboru (encja albo akcja) — w opisie kroku potwierdzenia.
     _price_note: str | None = None
-    #: Opcje cen czekające na zapis po informacji o sprzedaży bez jutra i nazwa tego źródła sprzedaży.
-    _price_noted: tuple[dict[str, Any], str] | None = None
     _shown_sources: dict[str, tuple[str, Any]] | None = None
 
     def _merged(self, patch: dict[str, Any]) -> dict[str, Any]:
@@ -566,7 +564,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     async def _finish(self, options: dict[str, Any], *,
                       retry_form: Callable[[dict[str, str]], ConfigFlowResult] | None = None,
-                      leave_plan_only: bool = False) -> ConfigFlowResult:
+                      leave_plan_only: bool = False,
+                      saved_notice: tuple[str, dict[str, str]] | None = None) -> ConfigFlowResult:
         """Zapis opcji; zmiana sterowania najpierw oddaje falownik przez obecnego wykonawcę.
 
         Nieudany powrót blokuje zapis (nic nie zapisane: błąd formularza `retry_form` albo przerwanie),
@@ -576,6 +575,9 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
         `leave_plan_only` (wybór sterowania: encje, bezpośrednio): tryb „tylko plan” kończy się i jest zapisany
         w magazynie, zanim przeładowanie złoży nowego wykonawcę.
+
+        `saved_notice` (powód z `abort`, placeholdery): informacja PO zapisie — opcje zapisane od razu, okno
+        z informacją kończy przepływ, więc jego zamknięcie niczego nie cofa.
         """
         if not await async_control_change_allowed(self._runtime(), self.config_entry.options, options):
             if retry_form is not None:
@@ -584,6 +586,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         rt = self._runtime()
         if leave_plan_only and rt is not None and hasattr(rt, "async_leave_plan_only"):
             await rt.async_leave_plan_only()
+        if saved_notice is not None:
+            self.hass.config_entries.async_update_entry(self.config_entry, options=options)
+            reason, placeholders = saved_notice
+            return self.async_abort(reason=reason, description_placeholders=placeholders)
         return self.async_create_entry(data=options)
 
     def _forecast_options(self, user_input: dict[str, Any]) -> dict[str, Any]:
@@ -1076,29 +1082,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 if eid and eid != saved.get(entity_key):
                     patch[action_key] = None
             options = self._merged(patch)
-            return await self._save_prices(options, self._entity_sell_note(options, currency))
+            # Ten formularz nie ma kroku potwierdzenia: informacja, że sprzedaż nie ma jeszcze jutra
+            # (a kupno już ma), przychodzi PO zapisie — zamknięcie jej okna niczego nie cofa.
+            note = self._entity_sell_note(options, currency)
+            return await self._finish(options, saved_notice=("price_sell_tomorrow", {"source": note}) if note else None)
         return self.async_show_form(step_id="prices", data_schema=self._prices_schema())
-
-    async def _save_prices(self, options: dict[str, Any], sell_note: str | None) -> ConfigFlowResult:
-        """Zapis opcji cen; gdy sprzedaż nie ma jeszcze jutra, a kupno już ma — najpierw informacja o tym."""
-        if sell_note is None:
-            return await self._finish(options)
-        self._price_noted = (options, sell_note)
-        return self._sell_note_form(sell_note)
-
-    def _sell_note_form(self, source: str) -> ConfigFlowResult:
-        return self.async_show_form(step_id="price_sell_tomorrow", data_schema=vol.Schema({}),
-                                    description_placeholders={"source": source})
-
-    async def async_step_price_sell_tomorrow(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Informacja, nie blokada: zatwierdzenie zapisuje wybrane źródło cen bez zmian."""
-        noted = self._price_noted
-        if noted is None:
-            return self.async_abort(reason="price_source_invalid")
-        if user_input is None:
-            return self._sell_note_form(noted[1])
-        self._price_noted = None
-        return await self._finish(noted[0])
 
     def _entity_sell_note(self, options: dict[str, Any], currency: str | None) -> str | None:
         """Encja sprzedaży bez jutra, gdy encja kupna już je ma — tylko gdy obie strony to encje."""
@@ -1261,8 +1249,16 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                                **({OPT_PRICE_SELL: pair.sell} if pair.sell else {}),
                                **({OPT_PRICE_CURRENCY: patch_currency} if patch_currency else {})}
         self._price_note = self._entity_sell_note(self._merged(self._price_pending), option_currency)
-        return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
-                                    description_placeholders={**placeholders, "hours": str(hours), "currency": shown or ""})
+        return self._confirm_form({**placeholders, "hours": str(hours), "currency": shown or ""})
+
+    def _confirm_form(self, placeholders: dict[str, str]) -> ConfigFlowResult:
+        """Potwierdzenie źródła cen. Gdy sprzedaż nie ma jeszcze jutra, a kupno już ma — wariant kroku z tą
+        informacją w opisie: jedno zatwierdzenie zapisuje, bez drugiego okna, którego zamknięcie gubi zapis."""
+        if self._price_note is None:
+            return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
+                                        description_placeholders=placeholders)
+        return self.async_show_form(step_id="price_source_confirm_sell", data_schema=vol.Schema({}),
+                                    description_placeholders={**placeholders, "source": self._price_note})
 
     def _details_form(self, cand: ActionCandidate, previous: dict[str, Any] | None,
                       errors: dict[str, str] | None = None,
@@ -1330,9 +1326,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                     lacks = bool(kept) and sell_lacks_tomorrow(buy_check, self._entity_check(kept, option_currency))
                     note = kept if lacks else None
                 self._price_note = note
-                return self.async_show_form(step_id="price_source_confirm", data_schema=vol.Schema({}),
-                                            description_placeholders={**placeholders, "hours": str(buy_check.hours),
-                                                                  "currency": parsed.currency or option_currency or ""})
+                return self._confirm_form({**placeholders, "hours": str(buy_check.hours),
+                                           "currency": parsed.currency or option_currency or ""})
         if cand.fields:
             return self._details_form(cand, values, {field: error}, placeholders)
         return self._source_form({"base": error}, placeholders)
@@ -1340,7 +1335,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     async def async_step_price_source_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if not self._price_pending:
             return self.async_abort(reason="price_source_invalid")
-        return await self._save_prices(self._merged(self._price_pending), self._price_note)
+        return await self._finish(self._merged(self._price_pending))
+
+    # Wariant potwierdzenia z informacją o braku jutra po stronie sprzedaży — ten sam zapis.
+    async_step_price_source_confirm_sell = async_step_price_source_confirm
 
     async def _probe(self, option: dict) -> SeriesCheck:
         """Zapytanie akcji tak jak w czasie działania (dziś + jutro) i werdykt o serii."""

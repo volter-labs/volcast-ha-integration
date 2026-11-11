@@ -338,9 +338,9 @@
         "title": "Použiť tento zdroj cien?",
         "description": "Tento zdroj poskytuje predpoveď cien na {hours} h dopredu. Potvrďte a použije sa na plánovanie. Ceny sa čítajú v {currency}."
       },
-      "price_sell_tomorrow": {
-        "title": "Chýbajú predajné ceny na zajtra",
-        "description": "Zdroj predajnej ceny {source} zatiaľ neposkytuje ceny na zajtra, hoci nákupné ceny na zajtra sú už k dispozícii. Kým ich neposkytne, plán na zajtra bude vychádzať z cien predchádzajúceho dňa. Potvrďte a zdroj cien sa aj tak uloží."
+      "price_source_confirm_sell": {
+        "title": "Použiť tento zdroj cien?",
+        "description": "Tento zdroj poskytuje predpoveď cien na {hours} h dopredu. Ceny sa čítajú v {currency}. Zdroj predajnej ceny {source} zatiaľ neposkytuje ceny na zajtra, hoci nákupné ceny na zajtra sú už k dispozícii. Kým ich neposkytne, plán na zajtra bude vychádzať z cien predchádzajúceho dňa. Potvrďte a tento zdroj cien sa aj tak použije na plánovanie."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "Volcast nemohol vrátiť striedač do nastavení spred riadenia, takže sa nič nezmenilo. Skúste to znova, keď bude striedač dostupný, alebo vypnite prepínač riadenia Volcast (Volcast sa striedač stále snaží vrátiť).",
       "no_ev_chargers": "Nabíjačka EV zatiaľ nebola nájdená. Najprv spustite zisťovanie a overte, že je integrácia nabíjačky nastavená.",
       "no_price_sources": "V Home Assistante sa nenašla žiadna známa cenová integrácia. Vyberte senzor v Cenách energie.",
-      "price_source_invalid": "Nastavenia zdroja cien už neplatia. Začnite odznova."
+      "price_source_invalid": "Nastavenia zdroja cien už neplatia. Začnite odznova.",
+      "price_sell_tomorrow": "Nastavenia cien energie sú uložené. Zdroj predajnej ceny {source} zatiaľ neposkytuje ceny na zajtra, hoci nákupné ceny na zajtra sú už k dispozícii. Kým ich neposkytne, plán na zajtra bude vychádzať z cien predchádzajúceho dňa."
     },
     "error": {
       "prices_not_usable": "Tento senzor teraz neposkytuje úplný cenový rad.",

@@ -630,7 +630,7 @@ def _until(end: datetime, step_min: int = 30) -> list[dict]:
         for i in range(int((end - start) / timedelta(minutes=step_min)))]
 
 
-async def test_pair_with_sell_lacking_tomorrow_notes_it_after_confirm_and_still_saves(
+async def test_pair_with_sell_lacking_tomorrow_notes_it_on_the_confirm_step(
         hass: HomeAssistant, network_down):
     midnight, day_after, noon_tomorrow = _local_midnight(), _local_midnight(2), _local_midnight(1) + timedelta(hours=12)
     buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price",
@@ -639,12 +639,12 @@ async def test_pair_with_sell_lacking_tomorrow_notes_it_after_confirm_and_still_
                    _fixture("pstryk_all_prices", "All prices", _span_h(midnight, noon_tomorrow), 60, start=midnight))
     entry = make_entry(hass)
     _form, confirm = await _choose(hass, entry, f"entities|{buy}")
-    assert confirm["step_id"] == "price_source_confirm"
-    note = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
-    assert note["type"] is FlowResultType.FORM and note["step_id"] == "price_sell_tomorrow"
-    assert note["description_placeholders"] == {"source": sell}
-    assert "entity_price_buy" not in entry.options                      # dopiero po informacji
-    done = await hass.config_entries.options.async_configure(note["flow_id"], {})
+    # Informacja w samym potwierdzeniu: jedno zatwierdzenie zapisuje, drugiego okna (do zamknięcia) nie ma.
+    assert confirm["type"] is FlowResultType.FORM and confirm["step_id"] == "price_source_confirm_sell"
+    assert confirm["description_placeholders"]["source"] == sell
+    assert {"hours", "currency"} <= set(confirm["description_placeholders"])
+    assert "entity_price_buy" not in entry.options                      # dopiero po zatwierdzeniu
+    done = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
     assert done["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == sell
 
@@ -668,9 +668,25 @@ async def test_action_source_with_sell_lacking_tomorrow_names_the_sell_action(ha
     entry = make_entry(hass)
     form = await _open(hass, entry)
     confirm = await hass.config_entries.options.async_configure(form["flow_id"], {"source": "action|amberelectric|amb1"})
-    note = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
-    assert note["step_id"] == "price_sell_tomorrow"
-    assert note["description_placeholders"] == {"source": "amberelectric.get_forecasts"}
-    done = await hass.config_entries.options.async_configure(note["flow_id"], {})
+    assert confirm["step_id"] == "price_source_confirm_sell"
+    assert confirm["description_placeholders"]["source"] == "amberelectric.get_forecasts"
+    done = await hass.config_entries.options.async_configure(confirm["flow_id"], {})
     assert done["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["price_sell_action"]["data"]["channel_type"] == "feed_in"
+
+
+async def test_prices_form_with_sell_lacking_tomorrow_saves_before_the_note(hass: HomeAssistant, network_down):
+    """Formularz bez potwierdzenia: zapis od razu, informacja po nim (zamknięcie okna niczego nie cofa)."""
+    midnight, day_after, noon_tomorrow = _local_midnight(), _local_midnight(2), _local_midnight(1) + timedelta(hours=12)
+    buy = _entity(hass, "sensor", "pstryk", "pstryk_current_buy_price",
+                  _fixture("pstryk_all_prices", "All prices", _span_h(midnight, day_after), 60, start=midnight))
+    sell = _entity(hass, "sensor", "pstryk", "pstryk_current_sell_price",
+                   _fixture("pstryk_all_prices", "All prices", _span_h(midnight, noon_tomorrow), 60, start=midnight))
+    entry = make_entry(hass)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
+    res = await hass.config_entries.options.async_configure(
+        form["flow_id"], {"entity_price_buy": buy, "entity_price_sell": sell})
+    assert res["type"] is FlowResultType.ABORT and res["reason"] == "price_sell_tomorrow"
+    assert res["description_placeholders"] == {"source": sell}
+    assert entry.options["entity_price_buy"] == buy and entry.options["entity_price_sell"] == sell

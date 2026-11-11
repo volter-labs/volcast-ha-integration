@@ -338,9 +338,9 @@
         "title": "Utiliser cette source de prix ?",
         "description": "Cette source fournit une prévision de prix sur {hours} h. Validez pour l'utiliser dans la planification. Les prix sont lus en {currency}."
       },
-      "price_sell_tomorrow": {
-        "title": "Prix de vente de demain manquants",
-        "description": "La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille. Validez pour enregistrer quand même la source de prix."
+      "price_source_confirm_sell": {
+        "title": "Utiliser cette source de prix ?",
+        "description": "Cette source fournit une prévision de prix sur {hours} h. Les prix sont lus en {currency}. La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille. Validez pour utiliser quand même cette source de prix dans la planification."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "Volcast n'a pas pu remettre l'onduleur dans ses réglages d'avant le pilotage, donc rien n'a été modifié. Réessayez lorsque l'onduleur est joignable, ou désactivez l'interrupteur de pilotage Volcast (Volcast continue d'essayer de remettre l'onduleur en état).",
       "no_ev_chargers": "Aucune borne de recharge VE n'a encore été trouvée. Lancez d'abord la détection et vérifiez que l'intégration de la borne est configurée.",
       "no_price_sources": "Aucune intégration de prix connue n'a été trouvée dans Home Assistant. Choisissez un capteur dans Prix de l'énergie.",
-      "price_source_invalid": "Les réglages de la source de prix ne sont plus valides. Recommencez."
+      "price_source_invalid": "Les réglages de la source de prix ne sont plus valides. Recommencez.",
+      "price_sell_tomorrow": "Les réglages des prix de l'énergie sont enregistrés. La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille."
     },
     "error": {
       "prices_not_usable": "Ce capteur ne fournit pas de série de prix complète pour le moment.",

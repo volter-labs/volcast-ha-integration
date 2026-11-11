@@ -338,9 +338,9 @@
         "title": "¿Usar esta fuente de precios?",
         "description": "Esta fuente ofrece una previsión de precios para las próximas {hours} h. Confirma para usarla en la planificación. Los precios se leen en {currency}."
       },
-      "price_sell_tomorrow": {
-        "title": "Faltan los precios de venta de mañana",
-        "description": "La fuente del precio de venta {source} aún no ofrece precios para mañana, aunque los precios de compra de mañana ya están disponibles. Hasta que los ofrezca, el plan de mañana se basará en los precios del día anterior. Confirma para guardar la fuente de precios de todos modos."
+      "price_source_confirm_sell": {
+        "title": "¿Usar esta fuente de precios?",
+        "description": "Esta fuente ofrece una previsión de precios para las próximas {hours} h. Los precios se leen en {currency}. La fuente del precio de venta {source} aún no ofrece precios para mañana, aunque los precios de compra de mañana ya están disponibles. Hasta que los ofrezca, el plan de mañana se basará en los precios del día anterior. Confirma para usar de todos modos esta fuente de precios en la planificación."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "Volcast no pudo devolver el inversor a sus ajustes anteriores al control, por lo que no se cambió nada. Inténtalo de nuevo cuando el inversor sea accesible, o apaga el interruptor de control de Volcast (Volcast sigue intentando devolver el inversor).",
       "no_ev_chargers": "Todavía no se ha encontrado ningún cargador de VE. Ejecuta primero la detección y comprueba que la integración del cargador esté configurada.",
       "no_price_sources": "No se encontró ninguna integración de precios conocida en Home Assistant. Elige un sensor en Precios de energía.",
-      "price_source_invalid": "Los ajustes de la fuente de precios ya no son válidos. Empieza de nuevo."
+      "price_source_invalid": "Los ajustes de la fuente de precios ya no son válidos. Empieza de nuevo.",
+      "price_sell_tomorrow": "Los ajustes de precios de la energía están guardados. La fuente del precio de venta {source} aún no ofrece precios para mañana, aunque los precios de compra de mañana ya están disponibles. Hasta que los ofrezca, el plan de mañana se basará en los precios del día anterior."
     },
     "error": {
       "prices_not_usable": "Este sensor no proporciona ahora una serie de precios completa.",

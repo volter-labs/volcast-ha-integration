@@ -257,12 +257,16 @@ def _from_local_midnight(hours):
 _BOTH = {"entity_price_buy": "sensor.buy", "entity_price_sell": "sensor.sell"}
 
 
-def test_prices_form_notes_sell_without_tomorrow_and_still_saves():
+def test_prices_form_saves_first_then_notes_sell_without_tomorrow():
+    """Bez kroku potwierdzenia: zapis od razu, informacja po nim — zamknięcie okna niczego nie cofa."""
     f = flow(prices={"sensor.buy": _from_local_midnight(48), "sensor.sell": _from_local_midnight(36)})
+    saved = []
+    f.hass.config_entries = SimpleNamespace(
+        async_update_entry=lambda entry, *, options: saved.append(options) or setattr(entry, "options", options))
     r = asyncio.run(f.async_step_prices(dict(_BOTH)))
-    assert (r["type"], r["step_id"]) == ("form", "price_sell_tomorrow")
-    done = asyncio.run(f.async_step_price_sell_tomorrow({}))
-    assert done["data"] == _BOTH
+    assert r == {"type": "abort", "reason": "price_sell_tomorrow"}
+    assert saved == [_BOTH] and f.config_entry.options == _BOTH
+    assert not hasattr(f, "async_step_price_sell_tomorrow")             # bez osobnego kroku do zatwierdzenia
 
 
 @pytest.mark.parametrize("buy_h, sell_h", [(48, 48), (36, 24), (36, 36)],
@@ -288,9 +292,17 @@ def test_prices_form_skips_the_note_when_a_sell_action_stays_in_force():
     assert r["data"] == {**_BOTH, "price_sell_action": action}
 
 
-def test_sell_tomorrow_step_without_pending_options_aborts():
-    r = asyncio.run(flow().async_step_price_sell_tomorrow({}))
-    assert r == {"type": "abort", "reason": "price_source_invalid"}
+def test_sell_tomorrow_texts_live_on_the_confirm_step_and_the_saved_notice():
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "custom_components" / "volcast"
+    for path in [root / "strings.json", *sorted((root / "translations").glob("*.json"))]:
+        opts = json.loads(path.read_text(encoding="utf-8"))["options"]
+        assert "price_sell_tomorrow" not in opts["step"], path.name
+        confirm = opts["step"]["price_source_confirm_sell"]
+        assert all(p in confirm["description"] for p in ("{hours}", "{currency}", "{source}")), path.name
+        assert confirm["title"] == opts["step"]["price_source_confirm"]["title"], path.name
+        assert "{source}" in opts["abort"]["price_sell_tomorrow"], path.name
 
 
 # ── powrót do trybu bazowego przed przeładowaniem ──────────────────────────

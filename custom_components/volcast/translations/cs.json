@@ -338,9 +338,9 @@
         "title": "Použít tento zdroj cen?",
         "description": "Tento zdroj poskytuje předpověď cen na {hours} h dopředu. Potvrďte a použije se pro plánování. Ceny se čtou v {currency}."
       },
-      "price_sell_tomorrow": {
-        "title": "Chybí prodejní ceny na zítřek",
-        "description": "Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne. Potvrďte a zdroj cen se přesto uloží."
+      "price_source_confirm_sell": {
+        "title": "Použít tento zdroj cen?",
+        "description": "Tento zdroj poskytuje předpověď cen na {hours} h dopředu. Ceny se čtou v {currency}. Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne. Potvrďte a tento zdroj cen se přesto použije pro plánování."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "Volcast nemohl vrátit střídač do nastavení před řízením, takže se nic nezměnilo. Zkuste to znovu, až bude střídač dostupný, nebo vypněte přepínač řízení Volcast (Volcast se střídač stále snaží vrátit).",
       "no_ev_chargers": "Nabíječka EV zatím nebyla nalezena. Nejprve spusťte zjišťování a ověřte, že je integrace nabíječky nastavená.",
       "no_price_sources": "V Home Assistantu nebyla nalezena žádná známá cenová integrace. Vyberte senzor v Cenách energie.",
-      "price_source_invalid": "Nastavení zdroje cen už neplatí. Začněte znovu."
+      "price_source_invalid": "Nastavení zdroje cen už neplatí. Začněte znovu.",
+      "price_sell_tomorrow": "Nastavení cen energie je uloženo. Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne."
     },
     "error": {
       "prices_not_usable": "Tento senzor teď neposkytuje úplnou cenovou řadu.",

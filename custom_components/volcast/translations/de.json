@@ -338,9 +338,9 @@
         "title": "Diese Preisquelle verwenden?",
         "description": "Diese Quelle liefert eine Preisprognose für {hours} h im Voraus. Bestätige, um sie für die Planung zu nutzen. Die Preise werden in {currency} gelesen."
       },
-      "price_sell_tomorrow": {
-        "title": "Verkaufspreise für morgen fehlen",
-        "description": "Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags. Bestätigen Sie, um die Preisquelle trotzdem zu speichern."
+      "price_source_confirm_sell": {
+        "title": "Diese Preisquelle verwenden?",
+        "description": "Diese Quelle liefert eine Preisprognose für {hours} h im Voraus. Die Preise werden in {currency} gelesen. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags. Bestätige, um diese Preisquelle trotzdem für die Planung zu nutzen."
       }
     },
     "abort": {
@@ -352,7 +352,8 @@
       "restore_failed": "Volcast konnte den Wechselrichter nicht auf seine Einstellungen von vor der Steuerung zurücksetzen, daher wurde nichts geändert. Versuche es erneut, wenn der Wechselrichter erreichbar ist, oder schalte den Volcast-Steuerungsschalter aus (Volcast versucht weiter, den Wechselrichter zurückzusetzen).",
       "no_ev_chargers": "Es wurde noch kein E-Auto-Ladegerät gefunden. Starte zuerst die Erkennung und stelle sicher, dass die Integration des Ladegeräts eingerichtet ist.",
       "no_price_sources": "In Home Assistant wurde keine bekannte Preisintegration gefunden. Wähle unter Energiepreise einen Sensor.",
-      "price_source_invalid": "Die Einstellungen der Preisquelle sind nicht mehr gültig. Beginne neu."
+      "price_source_invalid": "Die Einstellungen der Preisquelle sind nicht mehr gültig. Beginne neu.",
+      "price_sell_tomorrow": "Die Einstellungen der Energiepreise sind gespeichert. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags."
     },
     "error": {
       "prices_not_usable": "Dieser Sensor liefert derzeit keine vollständige Preisreihe.",
