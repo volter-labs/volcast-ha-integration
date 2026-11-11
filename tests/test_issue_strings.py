@@ -67,3 +67,14 @@ def test_withheld_prices_issues_have_texts_naming_the_sell_source(path):
     issues = json.loads(path.read_text(encoding="utf-8"))["issues"]
     for key in _SELL_ISSUES.values():
         assert issues[key]["title"] and "{source}" in issues[key]["description"], key
+
+
+def test_german_sell_price_texts_use_the_informal_address_of_the_file():
+    """de.json mówi do właściciela na „du” — teksty o stronie sprzedaży też (bez „Sie”/„Ihr”)."""
+    from custom_components.volcast.control.telemetry import _SELL_ISSUES
+    de = json.loads((COMPONENT / "translations" / "de.json").read_text(encoding="utf-8"))
+    texts = [de["issues"][key][part] for key in _SELL_ISSUES.values() for part in ("title", "description")]
+    texts += [de["options"]["step"]["price_source_confirm_sell"]["description"],
+              de["options"]["abort"]["price_sell_tomorrow"]]
+    formal = re.compile(r"\b(Sie|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres)\b")
+    assert [t for t in texts if formal.search(t)] == []
