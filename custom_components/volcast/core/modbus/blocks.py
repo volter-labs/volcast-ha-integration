@@ -8,6 +8,10 @@ Rejestry input (`fc: 4`) to osobna przestrzeń adresów: bloki planuje się per 
 nie scala bloku holding z blokiem input. Blok to `(adres, liczba)` dla holding (FC 3 — postać sprzed
 FC 4, bez zmian dla istniejących profili) albo `(adres, liczba, 4)` dla input; `block_fc` i `block_key`
 rozkładają obie postacie.
+
+Rejestr z własnym adresem urządzenia (`unit_id` w specyfikacji odczytu albo zapisu) jest czytany z tego
+adresu: bloki planuje się per (funkcja, adres urządzenia) i nigdy nie scala z blokami adresu połączenia.
+Taki blok ma postać `(adres, liczba, funkcja, urządzenie)`; profile bez `unit_id` — bez zmian.
 """
 from __future__ import annotations
 
@@ -39,21 +43,34 @@ def block_fc(block: Block) -> int:
     return block[2] if len(block) > 2 else FC_HOLDING
 
 
-def make_block(addr: int, count: int, fc: int = FC_HOLDING) -> Block:
+def block_unit(block: Block) -> int | None:
+    """Adres urządzenia bloku: czwarty element albo None (adres połączenia)."""
+    return block[3] if len(block) > 3 else None
+
+
+def make_block(addr: int, count: int, fc: int = FC_HOLDING, unit: int | None = None) -> Block:
+    if unit is not None:
+        return (addr, count, fc, unit)
     return (addr, count) if fc == FC_HOLDING else (addr, count, fc)
 
 
-def block_key(block: Block) -> int | tuple[int, int]:
-    """Klucz bloku w `RegisterImage.from_blocks`: adres (holding) albo `(funkcja, adres)`."""
-    fc = block_fc(block)
+def block_key(block: Block) -> int | tuple[int, ...]:
+    """Klucz bloku w `RegisterImage.from_blocks`: adres (holding), `(funkcja, adres)` albo
+    `(funkcja, adres, urządzenie)`."""
+    fc, unit = block_fc(block), block_unit(block)
+    if unit is not None:
+        return (fc, block[0], unit)
     return block[0] if fc == FC_HOLDING else (fc, block[0])
 
 
 def read_kwargs(block: Block) -> dict[str, int]:
-    """Argument `fc` dla `transport.read` — wyłącznie dla input; odczyt holding woła transport
-    dokładnie jak przed FC 4 (transporty i atrapy bez parametru `fc` działają bez zmian)."""
-    fc = block_fc(block)
-    return {} if fc == FC_HOLDING else {"fc": fc}
+    """Argumenty `fc` i `unit` dla `transport.read` — tylko gdy inne niż domyślne; odczyt holding
+    z adresu połączenia woła transport dokładnie jak przed FC 4 (atrapy bez tych parametrów działają)."""
+    fc, unit = block_fc(block), block_unit(block)
+    out = {} if fc == FC_HOLDING else {"fc": fc}
+    if unit is not None:
+        out["unit"] = unit
+    return out
 
 
 def plan_blocks(addrs: Iterable[int], max_count: int, max_gap: int = 16) -> list[tuple[int, int]]:
@@ -74,19 +91,22 @@ def plan_blocks(addrs: Iterable[int], max_count: int, max_gap: int = 16) -> list
     return blocks
 
 
+Run = tuple[str, int, int, int, "int | None"]
+
+
 def _named_runs(profile, *, include_write_keys: bool = True, include_tou: bool = True,
-                include_identify: bool = False) -> list[tuple[str, int, int, int]]:
+                include_identify: bool = False) -> list[Run]:
     """Ciągłe zakresy słów per klucz (a dla składników sumy — per składnik):
-    (klucz, start, liczba, funkcja odczytu).
+    (klucz, start, liczba, funkcja odczytu, adres urządzenia albo None).
 
     Klucze TOU (pola programów i włącznik) mają nazwę `tou`; identyfikacja — `identify`.
-    Rejestry zapisu (i ich odczyt zwrotny) są zawsze holding.
+    Rejestry zapisu (i ich odczyt zwrotny) są zawsze holding, z adresu urządzenia klucza zapisu.
     """
-    runs: list[tuple[str, int, int, int]] = []
+    runs: list[Run] = []
 
-    def add(key: str, addrs: list[int], fc: int = FC_HOLDING) -> None:
+    def add(key: str, addrs: list[int], fc: int = FC_HOLDING, unit: int | None = None) -> None:
         if addrs:
-            runs.append((key, addrs[0], len(addrs), fc))
+            runs.append((key, addrs[0], len(addrs), fc, unit))
 
     for key, spec in profile.raw["read"].items():
         if key == "tou_enabled" and not include_tou:
@@ -95,27 +115,27 @@ def _named_runs(profile, *, include_write_keys: bool = True, include_tou: bool =
         if "sum" in spec:
             for term in spec["sum"]:
                 if "ref" not in term:
-                    add(name, spec_addresses(term), term.get("fc", FC_HOLDING))
+                    add(name, spec_addresses(term), term.get("fc", FC_HOLDING), term.get("unit_id"))
         else:
-            add(name, spec_addresses(spec), spec.get("fc", FC_HOLDING))
+            add(name, spec_addresses(spec), spec.get("fc", FC_HOLDING), spec.get("unit_id"))
     write = profile.raw["write"]
     if include_write_keys:
         for key, spec in write.items():
             if key not in ("tou_program", "tou_enable"):
-                add(key, spec_addresses(spec))
+                add(key, spec_addresses(spec), FC_HOLDING, spec.get("unit_id"))
     if include_tou and "tou_program" in write:
         tp = write["tou_program"]
         for field in _TOU_REG_FIELDS:
-            runs.append(("tou", tp[field]["addr"], tp["count"], FC_HOLDING))
+            runs.append(("tou", tp[field]["addr"], tp["count"], FC_HOLDING, None))
         if "tou_enable" in write:
-            runs.append(("tou", write["tou_enable"]["addr"], 1, FC_HOLDING))
+            runs.append(("tou", write["tou_enable"]["addr"], 1, FC_HOLDING, None))
     if include_identify:
-        runs.extend(("identify", b[0], b[1], block_fc(b)) for b in profile.modbus.identify_reads)
+        runs.extend(("identify", b[0], b[1], block_fc(b), block_unit(b)) for b in profile.modbus.identify_reads)
     return runs
 
 
-def _key_runs(profile, fc: int = FC_HOLDING, **kw) -> list[tuple[int, int]]:
-    return [(start, n) for _, start, n, f in _named_runs(profile, **kw) if f == fc]
+def _key_runs(profile, fc: int = FC_HOLDING, unit: int | None = None, **kw) -> list[tuple[int, int]]:
+    return [(start, n) for _, start, n, f, u in _named_runs(profile, **kw) if f == fc and u == unit]
 
 
 def read_plan(profile, *, include_write_keys: bool = True, include_tou: bool = True,
@@ -127,10 +147,14 @@ def read_plan(profile, *, include_write_keys: bool = True, include_tou: bool = T
     skip = set(exclude)
     runs = _named_runs(profile, include_write_keys=include_write_keys, include_tou=include_tou,
                        include_identify=include_identify)
+    # adres połączenia najpierw (holding, input — kolejność sprzed adresów per rejestr), potem adresy własne
+    units = sorted({u for *_, u in runs if u is not None})
     out: list[Block] = []
-    for fc in (FC_HOLDING, FC_INPUT):
-        keep = {a for k, start, n, f in runs if f == fc and k not in skip for a in range(start, start + n)}
-        out.extend(make_block(a, n, fc) for a, n in plan_blocks(keep, profile.modbus.max_read_registers))
+    for unit in (None, *units):
+        for fc in (FC_HOLDING, FC_INPUT):
+            keep = {a for k, start, n, f, u in runs if f == fc and u == unit and k not in skip
+                    for a in range(start, start + n)}
+            out.extend(make_block(a, n, fc, unit) for a, n in plan_blocks(keep, profile.modbus.max_read_registers))
     return out
 
 
@@ -138,13 +162,13 @@ def split_block(block: Block, profile) -> list[Block]:
     """Blok scalony przez dziurę → osobne bloki per klucz (gdy dziura jest nieczytelna).
 
     Zakres klucza częściowo poza blokiem jest przycinany do bloku; bez identyfikacji. Podbloki
-    mają funkcję odczytu bloku (zakresy kluczy innej przestrzeni adresów są pomijane).
+    mają funkcję odczytu i adres urządzenia bloku (zakresy kluczy innej przestrzeni są pomijane).
     """
-    b0, bn, fc = block[0], block[1], block_fc(block)
+    b0, bn, fc, unit = block[0], block[1], block_fc(block), block_unit(block)
     b1 = b0 + bn
     out: set[Block] = set()
-    for start, n in _key_runs(profile, fc):
+    for start, n in _key_runs(profile, fc, unit):
         s, e = max(start, b0), min(start + n, b1)
         if s < e:
-            out.add(make_block(s, e - s, fc))
+            out.add(make_block(s, e - s, fc, unit))
     return sorted(out)

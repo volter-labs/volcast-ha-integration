@@ -112,7 +112,7 @@ class GoodweUdpTransport(BaseTransport):
         return False
 
     def _encode(self, req: Request) -> tuple[bytes, object]:
-        return rtu(self.cfg.unit, req.pdu), None
+        return rtu(self._unit(req), req.pdu), None
 
     def _send(self, data: bytes) -> None:
         proto = self._proto
@@ -144,7 +144,7 @@ class GoodweUdpTransport(BaseTransport):
     def _match(self, frame: bytes, req: Request, ctx):
         if frame[:2] != b"\xaa\x55":
             raise Stray("header")
-        return match_rtu(frame[2:], self.cfg.unit, req)
+        return match_rtu(frame[2:], self._unit(req), req)
 
 
 async def _wait_closed(proto) -> None:

@@ -21,14 +21,14 @@ class ModbusTcpTransport(StreamTransport):
 
     def _encode(self, req: Request) -> tuple[bytes, object]:
         self._tid = (self._tid + 1) & 0xFFFF
-        return mbap(self._tid, self.cfg.unit, req.pdu), self._tid
+        return mbap(self._tid, self._unit(req), req.pdu), self._tid
 
     def _match(self, frame: bytes, req: Request, tid):
         try:
             got_tid, unit, pdu = parse_mbap(frame)
         except FrameError:
             raise Stray("mbap") from None
-        if got_tid != tid or unit != self.cfg.unit:
+        if got_tid != tid or unit != self._unit(req):
             raise Stray("tid or unit")
         if pdu and pdu[0] & 0x80 and pdu[0] != req.fc | 0x80:
             raise Stray("exception for another function")

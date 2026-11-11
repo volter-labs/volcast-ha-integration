@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping, Sequence
 
 from .params import Params
@@ -22,29 +22,42 @@ class RegisterImage:
     """Migawka rejestrów: adres → słowo 16-bit (z jednego lub wielu bloków odczytu).
 
     Rejestry holding (FC 3) i input (FC 4) to OSOBNE przestrzenie adresów — ten sam adres
-    w obu to dwa różne rejestry. `words` bez przestrzeni = holding.
+    w obu to dwa różne rejestry. `words` bez przestrzeni = holding. Tak samo osobne są przestrzenie
+    urządzeń: słowa czytane z własnym adresem urządzenia (`unit_id` rejestru profilu) leżą pod
+    `(funkcja, adres urządzenia)`; `unit` None = adres połączenia (jedyna przestrzeń dotychczas).
     """
 
-    def __init__(self, words: Mapping[int, int], input_words: Mapping[int, int] | None = None) -> None:
+    def __init__(self, words: Mapping[int, int], input_words: Mapping[int, int] | None = None,
+                 units: Mapping[tuple[int, int], Mapping[int, int]] | None = None) -> None:
         self._spaces: dict[int, dict[int, int]] = {FC_HOLDING: dict(words), FC_INPUT: dict(input_words or {})}
+        # przestrzenie rejestrów czytanych z własnym adresem urządzenia: (funkcja, adres urządzenia) → słowa
+        self._unit_spaces: dict[tuple[int, int], dict[int, int]] = {}
+        for (fc, unit), space in (units or {}).items():
+            if fc not in (FC_HOLDING, FC_INPUT):
+                raise ValueError(f"nieznana funkcja odczytu {fc!r}")
+            self._unit_spaces[(fc, unit)] = dict(space)
 
     @classmethod
-    def from_blocks(cls, blocks: Mapping[int | tuple[int, int], Sequence[int]]) -> "RegisterImage":
-        """Klucz bloku: adres początkowy (holding) albo `(funkcja, adres)`."""
-        spaces: dict[int, dict[int, int]] = {FC_HOLDING: {}, FC_INPUT: {}}
+    def from_blocks(cls, blocks: Mapping[int | tuple[int, ...], Sequence[int]]) -> "RegisterImage":
+        """Klucz bloku: adres początkowy (holding), `(funkcja, adres)` albo `(funkcja, adres, urządzenie)`."""
+        spaces: dict[tuple[int, int | None], dict[int, int]] = {(FC_HOLDING, None): {}, (FC_INPUT, None): {}}
         for key, words in blocks.items():
-            fc, base = key if isinstance(key, tuple) else (FC_HOLDING, key)
-            if fc not in spaces:
+            if isinstance(key, tuple):
+                fc, base, unit = (*key, None) if len(key) == 2 else key
+            else:
+                fc, base, unit = FC_HOLDING, key, None
+            if fc not in (FC_HOLDING, FC_INPUT):
                 raise ValueError(f"nieznana funkcja odczytu {fc!r}")
-            out = spaces[fc]
+            out = spaces.setdefault((fc, unit), {})
             for i, w in enumerate(words):
                 out[base + i] = w & 0xFFFF
-        return cls(spaces[FC_HOLDING], spaces[FC_INPUT])
+        units = {k: v for k, v in spaces.items() if k[1] is not None}
+        return cls(spaces[(FC_HOLDING, None)], spaces[(FC_INPUT, None)], units)
 
-    def words(self, addr: int, n: int, fc: int = FC_HOLDING) -> list[int]:
-        space = self._spaces.get(fc)
-        if space is None:
+    def words(self, addr: int, n: int, fc: int = FC_HOLDING, unit: int | None = None) -> list[int]:
+        if fc not in (FC_HOLDING, FC_INPUT):
             raise RegisterError(f"nieznana funkcja odczytu {fc!r}")
+        space = self._spaces[fc] if unit is None else self._unit_spaces.get((fc, unit), {})
         try:
             return [space[addr + i] for i in range(n)]
         except KeyError as err:
@@ -52,16 +65,14 @@ class RegisterImage:
 
 
 def decode(spec: Mapping[str, Any], image: RegisterImage) -> float | str:
-    if "unit_id" in spec:
-        # Obraz pochodzi z adresu urządzenia połączenia; słowo z innego adresu nie może być
-        # odczytane z tego obrazu (brakujący odczyt, nigdy cudza wartość).
-        raise RegisterError(f"rejestr {spec['addr']}: odczyt z unit_id {spec['unit_id']} nieobsługiwany")
+    """Wartość rejestru; rejestr z własnym `unit_id` wyłącznie z bloków czytanych z tego adresu."""
     typ = spec["type"]
     fc = spec.get("fc", FC_HOLDING)
+    unit = spec.get("unit_id")
     if typ == "ascii":
-        raw = b"".join(w.to_bytes(2, "big") for w in image.words(spec["addr"], spec["len"], fc))
+        raw = b"".join(w.to_bytes(2, "big") for w in image.words(spec["addr"], spec["len"], fc, unit))
         return raw.decode("latin-1").strip(" \x00")
-    words = image.words(spec["addr"], _WORDS[typ], fc)
+    words = image.words(spec["addr"], _WORDS[typ], fc, unit)
     if spec.get("word_order") == "lo_hi":
         words = list(reversed(words))
     if typ == "f32":
@@ -130,9 +141,48 @@ def read_values(read_map: Mapping[str, Any], image: RegisterImage) -> dict[str, 
 
 @dataclass(frozen=True)
 class RegisterWrite:
+    """Zapis jednego klucza. `value` to surowa liczba całkowita rejestru — słowo 16-bit albo, przy
+    `count` 2 (`type: u32`), liczba 32-bit dzielona na słowa wg `word_order`. `unit_id` None = adres
+    urządzenia połączenia. Pola domyślne = dotychczasowy zapis jednego słowa (równość bez zmian)."""
     key: str      # parametr płaski albo "tou.<i>.<pole>"
     addr: int
     value: int
+    count: int = 1
+    word_order: str = "hi_lo"
+    unit_id: int | None = None
+
+    def words(self) -> list[int]:
+        """Słowa ramki zapisu w kolejności adresów; wartość spoza zakresu → RegisterError."""
+        return split_words(self.value, self.count, self.word_order)
+
+
+def split_words(value: int, count: int, word_order: str = "hi_lo") -> list[int]:
+    if count not in (1, 2) or word_order not in ("hi_lo", "lo_hi"):
+        raise RegisterError(f"nieobsługiwany układ słów: {count} / {word_order!r}")
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 1 << (16 * count):
+        raise RegisterError(f"wartość {value!r} poza zakresem {count} słów")
+    words = [(value >> (16 * i)) & 0xFFFF for i in reversed(range(count))]      # starsze słowo pierwsze
+    return list(reversed(words)) if word_order == "lo_hi" else words
+
+
+def join_words(words: Sequence[int], word_order: str = "hi_lo") -> int:
+    """Odwrotność `split_words`: słowa w kolejności adresów → surowa liczba."""
+    ordered = list(reversed(words)) if word_order == "lo_hi" else list(words)
+    out = 0
+    for w in ordered:
+        out = (out << 16) | (int(w) & 0xFFFF)
+    return out
+
+
+def write_layout(spec: Mapping[str, Any]) -> tuple[int, str, int | None]:
+    """Układ rejestru zapisu z profilu: (liczba słów, kolejność słów, adres urządzenia albo None)."""
+    count = 2 if spec.get("type") == "u32" else 1
+    return count, spec.get("word_order", "hi_lo"), spec.get("unit_id")
+
+
+def write_scale(spec: Mapping[str, Any]) -> float:
+    """Skala rejestru zapisu (wartość = surowa × skala, jak przy odczycie); brak = 1."""
+    return spec.get("scale", 1)
 
 
 def _round_clamp(v: float, hi: int) -> int:
@@ -144,6 +194,58 @@ def _round_clamp(v: float, hi: int) -> int:
     if v > hi:
         return hi
     return int(v + 0.5)
+
+
+# Strona bezpieczna zaokrąglenia nastawy ze skalą: -1 = w dół (moc, limit eksportu, górny próg),
+# +1 = w górę (dolny próg). Wartość niecałkowita w jednostkach rejestru nie może dać więcej mocy niż plan.
+_SCALED_ROUNDING = {"power_w": -1, "charge_power_w": -1, "discharge_power_w": -1, "export_limit_w": -1,
+                    "soc_max": -1, "soc_min": 1}
+_DIRECTION_KEYS = {"charge": "charge_power_w", "discharge": "discharge_power_w"}
+
+
+def _scaled_raw(key: str, v: float, scale: float, hi: int, value_hi: float | None) -> int:
+    """Surowa wartość nastawy ze skalą: najpierw zakres w jednostkach wartości (np. 0–100 %), potem
+    podział przez skalę, zaokrąglenie w stronę bezpieczną klucza i zakres typu rejestru."""
+    if not math.isfinite(v):
+        raise RegisterError(f"nastawa nie jest liczbą skończoną: {v!r}")
+    if value_hi is not None:
+        v = min(v, value_hi)
+    x = max(v, 0.0) / scale
+    near = round(x)
+    if math.isclose(x, near, rel_tol=1e-9, abs_tol=1e-9):
+        raw = int(near)                                   # 0,3 / 0,1 = 2,9999… → 3
+    elif _SCALED_ROUNDING.get(key, -1) > 0:
+        raw = math.ceil(x)
+    else:
+        raw = math.floor(x)
+    return max(0, min(raw, hi))
+
+
+def direction_params(params: Params, profile) -> Params:
+    """Profil z `write_policy.power_by_direction`: moc planu (`power_w`) trafia do nastawy zgodnej
+    z kierunkiem trybu (`charge_power_w` / `discharge_power_w`); drugiej nastawy nie ruszamy, tryb
+    bez kierunku (neutralny, postój) nie pisze żadnej. Bez trybu w parametrach kierunek jest nieznany —
+    RegisterError (nic nie wysłane), tak samo przy sprzecznej jawnej nastawie tego kierunku."""
+    if not getattr(profile, "power_by_direction", False) or params.power_w is None:
+        return params
+    if params.mode is None or params.mode not in profile.modes:
+        raise RegisterError(f"power_w: kierunek nastawy nieznany bez trybu z profilu (tryb {params.mode!r})")
+    key = _DIRECTION_KEYS.get(profile.mode_direction(params.mode))
+    changes: dict[str, Any] = {"power_w": None}
+    if key is not None:
+        explicit = getattr(params, key)
+        if explicit is not None and not math.isclose(float(explicit), float(params.power_w)):
+            raise RegisterError(f"{key}: nastawa {explicit!r} sprzeczna z mocą planu {params.power_w!r}")
+        changes[key] = params.power_w
+    return replace(params, **changes)
+
+
+def _direction_keys(wanted: set[str], params: Params, profile) -> set[str]:
+    """Filtr kluczy w konwencji planu: `power_w` obejmuje nastawę kierunku trybu."""
+    if "power_w" not in wanted:
+        return wanted
+    key = _DIRECTION_KEYS.get(profile.mode_direction(params.mode)) if params.mode in profile.modes else None
+    return (wanted - {"power_w"}) | ({key} if key is not None else set())
 
 
 def ordered_keys(params: Params, profile) -> list[str]:
@@ -168,6 +270,10 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
     migawki rejestrów, bo zapisują pojedynczy bit bez ruszania reszty słowa.
     """
     wanted = None if keys is None else set(keys)
+    if getattr(profile, "power_by_direction", False):
+        if wanted is not None:
+            wanted = _direction_keys(wanted, params, profile)
+        params = direction_params(params, profile)
     spec = profile.raw["write"]
     out: list[RegisterWrite] = []
     for key in ordered_keys(params, profile):
@@ -201,11 +307,11 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
             out.append(RegisterWrite(key, addr, value))
             continue
         s = spec[key]
-        unsupported = [f for f in ("scale", "unit_id") if f in s] + (["u32"] if s["type"] != "u16" else [])
-        if unsupported:
-            # Zapis wielosłowowy, skala i adres urządzenia per rejestr nie mają tu kodowania —
-            # odmowa zamiast słowa 16-bit bez skali na adres połączenia.
-            raise RegisterError(f"{key}: nieobsługiwana specyfikacja zapisu {unsupported}")
+        count, order, unit = write_layout(s)
+        if count == 2 and s["encode"] not in ("watts", "percent"):
+            raise RegisterError(f"{key}: zapis 32-bitowy tylko dla nastaw liczbowych")
+        hi = 0xFFFFFFFF if count == 2 else 0xFFFF
+        scale = write_scale(s)
         raw = getattr(params, key)
         enc = s["encode"]
         if enc == "mode":
@@ -216,11 +322,13 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
             value = 1 if raw else 0
         elif enc == "on_off":
             value = s["on"] if raw else s["off"]
+        elif scale != 1:
+            value = _scaled_raw(key, float(raw), scale, hi, 100.0 if enc == "percent" else None)
         elif enc == "percent":
             value = _round_clamp(raw, 100)
         else:
-            value = _round_clamp(raw, 65535)
-        out.append(RegisterWrite(key, s["addr"], value))
+            value = _round_clamp(raw, hi)
+        out.append(RegisterWrite(key, s["addr"], value, count=count, word_order=order, unit_id=unit))
     return out
 
 

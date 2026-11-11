@@ -18,7 +18,7 @@ class RtuTcpTransport(StreamTransport):
         return rtu_frame_length(prefix)
 
     def _encode(self, req: Request) -> tuple[bytes, object]:
-        return rtu(self.cfg.unit, req.pdu), None
+        return rtu(self._unit(req), req.pdu), None
 
     def _match(self, frame: bytes, req: Request, ctx):
-        return match_rtu(frame, self.cfg.unit, req)
+        return match_rtu(frame, self._unit(req), req)

@@ -182,10 +182,11 @@ class RegisterTransport(Protocol):
     stats: TransportStats
 
     async def read(self, addr: int, count: int, *, tries: int | None = None,
-                   fc: int = FC_READ) -> list[int]: ...
+                   fc: int = FC_READ, unit: int | None = None) -> list[int]: ...
 
     async def write(self, addr: int, values: Sequence[int], *, function: int,
-                    on_send: OnSend | None = None, may_resend: Callable[[], bool] | None = None) -> None: ...
+                    on_send: OnSend | None = None, may_resend: Callable[[], bool] | None = None,
+                    unit: int | None = None) -> None: ...
 
     async def reset_channel(self) -> None: ...
 
@@ -202,21 +203,30 @@ class Request:
     count: int
     pdu: bytes
     echo: int = 0                   # FC 6: wartość, FC 16: liczba rejestrów
+    unit: int | None = None         # adres urządzenia żądania; None = adres połączenia (`cfg.unit`)
 
 
-def read_req(addr: int, count: int, fc: int = FC_READ) -> Request:
+def _unit_ok(unit: int | None) -> int | None:
+    if unit is not None and (not _int(unit) or not 0 <= unit <= 255):
+        raise ValueError("unit id out of range")
+    return unit
+
+
+def read_req(addr: int, count: int, fc: int = FC_READ, unit: int | None = None) -> Request:
     """Żądanie odczytu: FC 3 (holding, domyślnie) albo FC 4 (input)."""
-    return Request(fc, addr, count, pdu_read(addr, count, fc))
+    return Request(fc, addr, count, pdu_read(addr, count, fc), unit=_unit_ok(unit))
 
 
-def write_req(function: int, addr: int, values: Sequence[int]) -> Request:
+def write_req(function: int, addr: int, values: Sequence[int], unit: int | None = None) -> Request:
     values = list(values)
+    unit = _unit_ok(unit)
     if function == FC_WRITE_SINGLE:
         if len(values) != 1:
             raise ValueError("function 6 writes exactly one register")
-        return Request(function, addr, 1, pdu_write_single(addr, values[0]), echo=values[0])
+        return Request(function, addr, 1, pdu_write_single(addr, values[0]), echo=values[0], unit=unit)
     if function == FC_WRITE_MULTIPLE:
-        return Request(function, addr, len(values), pdu_write_multiple(addr, values), echo=len(values))
+        return Request(function, addr, len(values), pdu_write_multiple(addr, values), echo=len(values),
+                       unit=unit)
     raise ValueError("write function must be 6 or 16")
 
 
@@ -305,10 +315,11 @@ class BaseTransport:
                 self._session_owner = None
 
     async def read(self, addr: int, count: int, *, tries: int | None = None,
-                   fc: int = FC_READ) -> list[int]:
+                   fc: int = FC_READ, unit: int | None = None) -> list[int]:
         """`tries` — mniej prób niż `read_tries` (limit czasu cyklu u wołającego); nigdy więcej.
-        `fc` — 3 (holding) albo 4 (input); odpowiedź musi nieść tę samą funkcję."""
-        req = read_req(addr, count, fc)
+        `fc` — 3 (holding) albo 4 (input); odpowiedź musi nieść tę samą funkcję.
+        `unit` — adres urządzenia tego żądania (rejestr profilu z własnym `unit_id`); None = połączenia."""
+        req = read_req(addr, count, fc, unit)
         n = self.cfg.read_tries if tries is None else max(1, min(int(tries), self.cfg.read_tries))
         async with self.exclusive(), self._lock:
             self.last_read_count = count
@@ -321,10 +332,12 @@ class BaseTransport:
         raise AssertionError("unreachable")
 
     async def write(self, addr: int, values: Sequence[int], *, function: int,
-                    on_send: OnSend | None = None, may_resend: Callable[[], bool] | None = None) -> None:
+                    on_send: OnSend | None = None, may_resend: Callable[[], bool] | None = None,
+                    unit: int | None = None) -> None:
         """`may_resend` — pytane PRZED ponowną wysyłką (np. budżet NVM); False = bez niej, wychodzi
-        przekroczenie czasu pierwszej wysyłki (wynik rozstrzyga odczyt zwrotny wołającego)."""
-        req = write_req(function, addr, values)
+        przekroczenie czasu pierwszej wysyłki (wynik rozstrzyga odczyt zwrotny wołającego).
+        `unit` — adres urządzenia tego żądania; None = adres połączenia."""
+        req = write_req(function, addr, values, unit)
         sends = 2 if self.resend_writes else 1
         async with self.exclusive(), self._lock:
             for i in range(sends):
@@ -456,6 +469,11 @@ class BaseTransport:
 
     def _encode(self, req: Request) -> tuple[bytes, object]:
         raise NotImplementedError
+
+    def _unit(self, req: Request) -> int:
+        """Adres urządzenia żądania: własny (`Request.unit`) albo połączenia — ramka i dopasowanie
+        odpowiedzi używają tego samego."""
+        return self.cfg.unit if req.unit is None else req.unit
 
     def _send(self, data: bytes) -> None:
         raise NotImplementedError

@@ -23,13 +23,17 @@ odczytów przed zapisem (ERROR, nic nie wysłano), nie fałszywy wynik.
 
 Łącza z korelacją odpowiedzi (Modbus TCP — identyfikator transakcji, V5 — numer sekwencji) i łącze
 strumieniowe RTU (kanał resetowany po każdym przekroczeniu czasu) czytają po staremu.
+
+Rejestr zapisu wielosłowowy (`type: u32`) ma widoki obejmujące WSZYSTKIE jego słowa; rejestr z własnym
+adresem urządzenia (`unit_id`) czyta każdy swój widok — także blok weryfikacyjny — z tego adresu.
+Bloki rozdzielające idą z adresu połączenia (rozdzielają długością odpowiedzi na łączu, nie treścią).
 """
 from __future__ import annotations
 
 from typing import Iterable
 
 from ..registers import FC_HOLDING
-from .blocks import block_fc
+from .blocks import block_fc, make_block
 
 Block = tuple[int, int]
 
@@ -45,11 +49,18 @@ def _covers(block: Block, addr: int) -> bool:
     return block[0] <= addr < block[0] + block[1]
 
 
-def key_views(profile, addr: int, *, skip: Iterable[Block] = ()) -> tuple[Block, ...]:
-    """Odczyty obejmujące rejestr: znane bloki (bez `skip` — odrzuconych przez urządzenie), potem sam rejestr."""
+def _covers_all(block: Block, addr: int, count: int) -> bool:
+    return block[0] <= addr and addr + count <= block[0] + block[1]
+
+
+def key_views(profile, addr: int, *, count: int = 1, unit: int | None = None,
+              skip: Iterable[Block] = ()) -> tuple[Block, ...]:
+    """Odczyty obejmujące rejestr (wszystkie `count` słów): znane bloki (bez `skip` — odrzuconych przez
+    urządzenie), potem sam rejestr; z adresu urządzenia rejestru (`unit` None = połączenia)."""
     bad = set(skip)
-    blocks = tuple(b for b in profile.modbus.verify_blocks if _covers(b, addr) and b not in bad)
-    return (*blocks, (addr, 1))
+    blocks = tuple(make_block(b[0], b[1], FC_HOLDING, unit) for b in profile.modbus.verify_blocks
+                   if _covers_all(b, addr, count))
+    return (*(b for b in blocks if b not in bad), make_block(addr, count, FC_HOLDING, unit))
 
 
 def pick_view(views: Iterable[Block], prev_count: int | None) -> Block | None:
@@ -68,13 +79,13 @@ def _holding_known(profile) -> tuple[Block, ...]:
                  if block_fc(b) == FC_HOLDING)
 
 
-def separator_blocks(profile, addr: int) -> tuple[Block, ...]:
+def separator_blocks(profile, addr: int, *, count: int = 1) -> tuple[Block, ...]:
     """Znane bloki (weryfikacyjne, potem identyfikacja) o długości różnej od każdego widoku rejestru
     i nieobejmujące go, w kolejności prób; pusto = profil takiego nie ma. Wołający bierze następny,
     gdy blok nie dał poprawnej odpowiedzi (inny model może nie mieć rejestru bloku)."""
-    counts = {n for _, n in key_views(profile, addr)}
+    counts = {v[1] for v in key_views(profile, addr, count=count)}
     return tuple(dict.fromkeys(b for b in _holding_known(profile)
-                               if b[1] not in counts and not _covers(b, addr)))
+                               if b[1] not in counts and not any(_covers(b, a) for a in range(addr, addr + count))))
 
 
 def separators_for(profile, block: Block) -> tuple[Block, ...]:

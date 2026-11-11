@@ -20,9 +20,13 @@ odpowiedzią — jeden nieaktualny wyjątek (albo seria nieaktualnych ramek) nie
 Inny werdykt za drugim razem albo brak bloku rozdzielającego → klucz bez werdyktu, próba przerwana.
 
 `direct_available`: werdykt dla każdego klucza próby, a do tego dla profilu trybu i nastawy —
-`mode` i `power_w` czytelne i obsługiwane;
+`mode` i `power_w` (przy `write_policy.power_by_direction`: `charge_power_w` i `discharge_power_w`)
+czytelne i obsługiwane;
 dla profilu okien czasowych — blok harmonogramu czytelny, a kod `device_type` urządzenia na
 liście profilu (profil opisuje mapę trójfazową; inny kod = inna mapa, harmonogram nieobsługiwany).
+
+Rejestr klucza z własnym adresem urządzenia (`unit_id`) jest czytany z tego adresu — także przez bloki
+weryfikacyjne na łączu bez korelacji (`modbus/views.py`); rejestr u32 — oba słowa.
 
 Raport nie niesie adresu, numeru seryjnego, numeru loggera ani odcisku urządzenia w `to_dict()`
 i `repr()`; kandydat (adres) jest dołączony wyłącznie dla wołającego, który z niego składa cel.
@@ -32,7 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Sequence
 
-from ..modbus.blocks import plan_blocks, spec_addresses
+from ..modbus.blocks import block_unit, make_block, plan_blocks, spec_addresses
 from ..modbus.client import RegisterClient
 from ..modbus.identity import MIN_SALT_BYTES
 from ..modbus.views import key_views, needs_disambiguation, pick_view, prev_read_count, separator_blocks
@@ -43,6 +47,7 @@ from .identify import (
 
 _TOU_FIELDS = ("start", "power_w", "soc", "grid_charge")
 _GROUP = ("mode", "power_w")
+_GROUP_BY_DIRECTION = ("mode", "charge_power_w", "discharge_power_w")
 _OK, _UNSUPPORTED, _UNREADABLE, _ABORT = "ok", "unsupported", "unreadable", "abort"
 
 
@@ -81,8 +86,8 @@ def _empty(*, requests: int = 0, errors: Iterable[str] = (), modbus_status: str 
                        candidate)
 
 
-def _key_blocks(profile, key: str) -> list[tuple[int, int]]:
-    """Bloki odczytu klucza sondy; puste = profil nie zna rejestru klucza."""
+def _key_blocks(profile, key: str) -> list[tuple[int, ...]]:
+    """Bloki odczytu klucza sondy (z adresu urządzenia klucza); puste = profil nie zna rejestru klucza."""
     write = profile.raw.get("write", {})
     if key == "tou":
         tp = write.get("tou_program")
@@ -95,7 +100,8 @@ def _key_blocks(profile, key: str) -> list[tuple[int, int]]:
     spec = write.get(key) or profile.raw.get("read", {}).get(key)
     if not isinstance(spec, dict) or "addr" not in spec:
         return []
-    return plan_blocks(spec_addresses(spec), profile.modbus.max_read_registers)
+    unit = spec.get("unit_id")
+    return [make_block(a, n, 3, unit) for a, n in plan_blocks(spec_addresses(spec), profile.modbus.max_read_registers)]
 
 
 def _tou_device_ok(profile, identity: Identity) -> bool:
@@ -130,8 +136,9 @@ class _Prober:
         if name not in self.errors:
             self.errors.append(name)
 
-    async def block(self, addr: int, count: int) -> str:
-        """Jeden blok: wszystkie `read_tries` próby, reset kanału między nimi."""
+    async def block(self, addr: int, count: int, fc: int = 3, unit: int | None = None) -> str:
+        """Jeden blok (z adresu urządzenia `unit`; None = połączenia): wszystkie `read_tries` próby,
+        reset kanału między nimi."""
         left = self.read_tries
         while left > 0:
             remaining = self.budget - self.used()
@@ -141,7 +148,7 @@ class _Prober:
             before = requests_of(self.transport)
             self._last = count
             try:
-                await self.client.read_block(addr, count, tries=min(left, remaining))
+                await self.client.read_block(addr, count, fc, unit, tries=min(left, remaining))
                 return _OK
             except ModbusException as err:
                 self.note(type(err).__name__)
@@ -161,19 +168,19 @@ class _Prober:
                 await self.transport.reset_channel()
         return _UNREADABLE
 
-    async def single(self, addr: int) -> str:
+    async def single(self, addr: int, unit: int | None = None) -> str:
         """Klucz jednego rejestru na łączu bez korelacji odpowiedzi (`modbus/views.py`): odczyt o długości
         innej niż poprzedni. Werdykt trwały (wyjątek 2 albo „nieczytelny”) dopiero, gdy powtórzy się
         w odczycie samego rejestru po bloku rozdzielającym z poprawną odpowiedzią — wyjątek nie ma
         długości, a seria nieaktualnych ramek (moduł powtarza poprzednią odpowiedź) wygląda jak rejestr
         nieczytelny. Wartość w tym odczycie → rejestr jest; inny werdykt niż za pierwszym razem →
         brak werdyktu (próba przerwana, „Bezpośrednio” wraca po ponownym wyszukaniu)."""
-        out = await self._view_read(addr)
+        out = await self._view_read(addr, unit)
         if out in (_OK, _ABORT):
             return out
         if await self._separate(addr) != _OK:
             return _ABORT
-        again = await self.block(addr, 1)
+        again = await self.block(*make_block(addr, 1, 3, unit))
         if again in (_OK, _ABORT, out):
             return again
         self.note("unconfirmed")
@@ -182,17 +189,18 @@ class _Prober:
     def _prev(self) -> int | None:
         return prev_read_count(self.transport, self._last)
 
-    async def _view_read(self, addr: int) -> str:
-        skip: set[tuple[int, int]] = set()
+    async def _view_read(self, addr: int, unit: int | None = None) -> str:
+        own = make_block(addr, 1, 3, unit)
+        skip: set[tuple[int, ...]] = set()
         while True:
-            views = key_views(self.profile, addr, skip=skip)
+            views = key_views(self.profile, addr, unit=unit, skip=skip)
             view = pick_view(views, self._prev())
             if view is None:
                 if await self._separate(addr) != _OK:
                     return _ABORT
                 view = pick_view(views, self._prev()) or views[0]
             out = await self.block(*view)
-            if out in (_OK, _ABORT) or view == (addr, 1):
+            if out in (_OK, _ABORT) or view == own:
                 return out
             skip.add(view)                     # blok nie przeszedł — to nie werdykt o rejestrze
 
@@ -208,12 +216,12 @@ class _Prober:
         self.note("unconfirmed")
         return _ABORT
 
-    async def key(self, blocks: Sequence[tuple[int, int]]) -> str:
+    async def key(self, blocks: Sequence[tuple[int, ...]]) -> str:
         if self.disambiguate and len(blocks) == 1 and blocks[0][1] == 1:
-            return await self.single(blocks[0][0])
+            return await self.single(blocks[0][0], block_unit(blocks[0]))
         worst = _OK
-        for addr, count in blocks:
-            out = await self.block(addr, count)
+        for b in blocks:
+            out = await self.block(*b)
             if out == _ABORT:
                 return _ABORT
             if out == _UNSUPPORTED:
@@ -254,7 +262,8 @@ async def probe(client: RegisterClient, profile, identity: Identity, *, budget: 
     if has_tou:
         available = complete and tou_readable is True
     else:
-        available = complete and all(caps.get(k) is True and k not in echo_only for k in _GROUP)
+        group = _GROUP_BY_DIRECTION if getattr(profile, "power_by_direction", False) else _GROUP
+        available = complete and all(caps.get(k) is True and k not in echo_only for k in group)
     return ProbeReport(identity, caps, tuple(echo_only), available, tou_readable, profile.modbus.status,
                        p.used(), tuple(p.errors))
 

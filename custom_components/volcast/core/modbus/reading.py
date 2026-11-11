@@ -5,6 +5,11 @@
 `"?<wartość>"` dla wartości spoza profilu (obcy tryb), przełącznik jako 1.0/0.0, dla modelu
 okien czasowych pola programów `tou.<i>.<pole>` i `tou_enabled`. Klucz bez odczytu nie
 trafia do `device` (brak odczytu, nigdy zero).
+
+Nastawa tylko do zapisu (bez klucza w mapie `read`) jest czytana z własnego rejestru zapisu według
+jego typu, skali, kolejności słów i adresu urządzenia — ta sama wartość, którą zapis by ustawił
+(migawka stanu wyjściowego przywraca ją potem zapisem). Przełącznik zdalnego sterowania (`enable`):
+z odczytu `enable_state` albo z rejestru zapisu; wartość inna niż `on`/`off` profilu to brak odczytu.
 """
 from __future__ import annotations
 
@@ -12,9 +17,9 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from ..params import TouProgram
-from ..registers import RegisterError, RegisterImage, read_values
+from ..registers import RegisterError, RegisterImage, decode, read_values
 
-_FLAT_KEYS = ("soc_min", "soc_max", "power_w", "export_limit_w")
+_FLAT_KEYS = ("soc_min", "soc_max", "power_w", "export_limit_w", "charge_power_w", "discharge_power_w")
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,30 @@ def _word(image: RegisterImage, addr: int) -> int | None:
 
 def _num(v) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _write_register_value(spec, image: RegisterImage) -> float | None:
+    """Wartość rejestru zapisu jak przy odczycie: typ (u16/u32), skala, kolejność słów, adres urządzenia."""
+    read_spec = {"addr": spec["addr"], "type": spec.get("type", "u16")}
+    for field in ("scale", "word_order", "unit_id"):
+        if field in spec:
+            read_spec[field] = spec[field]
+    try:
+        return _num(decode(read_spec, image))
+    except RegisterError:
+        return None
+
+
+def _enable_state(write, read_map, values, image: RegisterImage) -> float | None:
+    spec = write["enable"]
+    raw = _num(values.get("enable_state")) if "enable_state" in read_map else _write_register_value(spec, image)
+    if raw is None:
+        return None
+    if raw == spec["on"]:
+        return 1.0
+    if raw == spec["off"]:
+        return 0.0
+    return None                                    # wartość spoza profilu — nie zgadujemy stanu
 
 
 def current_programs(profile, image: RegisterImage) -> tuple[TouProgram, ...] | None:
@@ -81,10 +110,13 @@ def build_reading(profile, image: RegisterImage, *, at_mono: float, at_utc: date
         v = _num(values.get(key))
         if v is None and key in write and key not in read_map:
             # Klucz tylko do zapisu (np. górny próg SoC): odczyt z jego własnego rejestru.
-            word = _word(image, write[key]["addr"])
-            v = None if word is None else float(word)
+            v = _write_register_value(write[key], image)
         if key in write and v is not None:
             device[key] = v
+    if "enable" in write:
+        v = _enable_state(write, read_map, values, image)
+        if v is not None:
+            device["enable"] = v
     if "export_limit_enabled" in write:
         v = _num(values.get("export_limit_enabled"))
         if v is not None:

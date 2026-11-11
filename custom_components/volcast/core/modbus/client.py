@@ -34,7 +34,7 @@ from typing import Callable, Iterable
 
 from ..registers import RegisterImage
 from ..transports.base import LinkDown, ModbusException, RegisterTransport, RequestTimeout, TransportError
-from .blocks import block_key, make_block, read_kwargs, read_plan, split_block
+from .blocks import block_key, block_unit, make_block, read_kwargs, read_plan, split_block
 from .identity import device_fingerprint
 from .reading import DirectReading, build_reading
 from .views import needs_disambiguation, poll_order, prev_read_count, separators_for
@@ -80,7 +80,8 @@ class RegisterClient:
             transport.recorder = self._on_frame
         # łącze bez korelacji odpowiedzi: kolejność bloków, wyjątek 2 bloku potwierdzany, podział ostrożny
         self._disambiguate = needs_disambiguation(transport)
-        self._known: dict[int, int] = {}            # słowa z ostatnich odczytów całych bloków
+        # słowa z ostatnich odczytów całych bloków: adres (adres połączenia) albo (urządzenie, adres)
+        self._known: dict[int | tuple[int, int], int] = {}
 
     def _on_frame(self, req, request: bytes, response: bytes | None) -> None:
         if getattr(req, "fc", None) != 3:
@@ -96,9 +97,11 @@ class RegisterClient:
         return [{"offset": a, "count": c, "request": req, "response": resp}
                 for (a, c), (req, resp) in sorted(self._raw.items())]
 
-    async def read_block(self, addr: int, count: int, fc: int = 3, *, tries: int | None = None) -> list[int]:
-        """Blok `(adres, liczba[, funkcja])` — `read_block(*blok)`; funkcja 3 (holding) albo 4 (input)."""
-        return await self.transport.read(addr, count, tries=tries, **read_kwargs(make_block(addr, count, fc)))
+    async def read_block(self, addr: int, count: int, fc: int = 3, unit: int | None = None, *,
+                         tries: int | None = None) -> list[int]:
+        """Blok `(adres, liczba[, funkcja[, urządzenie]])` — `read_block(*blok)`; funkcja 3 (holding)
+        albo 4 (input); urządzenie None = adres połączenia."""
+        return await self.transport.read(addr, count, tries=tries, **read_kwargs(make_block(addr, count, fc, unit)))
 
     async def read_register(self, addr: int, *, tries: int | None = None) -> int:
         """`tries` — mniej prób transportu niż `read_tries` (None = pełna liczba prób)."""
@@ -214,7 +217,7 @@ class RegisterClient:
     def _remember(self, block, words: list[int]) -> list[int]:
         """Słowa bloku przeczytanego w całości — punkt odniesienia dla wartości z podziału bloku."""
         if self._disambiguate:
-            self._known.update(zip(range(block[0], block[0] + block[1]), words))
+            self._known.update(zip(_known_keys(block), words))
         return words
 
     async def _separated(self, block, lost: list[float], *, tries: int | None = None) -> list[int]:
@@ -265,7 +268,7 @@ class RegisterClient:
             if sub == tuple(block):
                 continue
             try:
-                span = range(sub[0], sub[0] + sub[1])
+                span = _known_keys(sub)
                 async with self._session():
                     words = await self._separated(sub, lost)
                     # bez wartości odniesienia (pierwszy cykl) albo inna niż ostatnia — drugi odczyt
@@ -295,6 +298,13 @@ class RegisterClient:
             except TransportError:
                 return None
         return device_fingerprint(self._salt, self.profile, RegisterImage.from_blocks(blocks))
+
+
+def _known_keys(block) -> list:
+    """Klucze słów bloku w pamięci wartości odniesienia: adres albo (urządzenie, adres)."""
+    unit = block_unit(block)
+    span = range(block[0], block[0] + block[1])
+    return list(span) if unit is None else [(unit, a) for a in span]
 
 
 def _frame(block, ok: bool) -> dict:

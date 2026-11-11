@@ -82,3 +82,36 @@ def test_split_block_per_key():
     tou = split_block((146, 32), DEYE)
     assert (148, 6) in tou and (172, 6) in tou and (146, 1) in tou
     assert split_block((1000, 5), GW) == []
+
+
+# --- rejestry z własnym adresem urządzenia ---------------------------------------------------------
+
+def test_plan_reads_own_unit_registers_in_their_own_blocks():
+    from custom_components.volcast.core.modbus.blocks import block_key, block_unit, make_block, read_kwargs
+    from .engine_profile import PLANT, directional_profile
+    p = directional_profile()
+    plan = read_plan(p)
+    plant = [b for b in plan if block_unit(b) == PLANT]
+    # holding zapisu i odczytu na adresie zakładu: 40029..40035 + 40046 (dziura ≤ 16)
+    assert plant == [(40029, 18, 3, PLANT)]
+    assert all(block_unit(b) is None for b in plan if b not in plant)
+    link = {a for b in plan if block_unit(b) is None for a in range(b[0], b[0] + b[1])}
+    assert not {40029, 40031, 40032, 40046} & link          # nic z adresu zakładu na adresie połączenia
+    assert block_key(plant[0]) == (3, 40029, PLANT)
+    assert read_kwargs(plant[0]) == {"unit": PLANT}
+    assert read_kwargs(make_block(1, 2, 4, 5)) == {"fc": 4, "unit": 5}
+    assert make_block(1, 2) == (1, 2) and make_block(1, 2, 4) == (1, 2, 4)
+
+
+def test_split_block_keeps_the_unit():
+    from .engine_profile import PLANT, directional_profile
+    p = directional_profile()
+    subs = split_block((40029, 18, 3, PLANT), p)
+    assert subs == [(40029, 1, 3, PLANT), (40031, 1, 3, PLANT), (40032, 2, 3, PLANT), (40034, 2, 3, PLANT),
+                    (40046, 1, 3, PLANT)]
+
+
+def test_existing_profiles_plan_unchanged_by_units():
+    from custom_components.volcast.core.modbus.blocks import block_unit
+    for pid in ("goodwe-et", "deye-sg"):
+        assert all(block_unit(b) is None and len(b) <= 3 for b in read_plan(load_builtin(pid)))

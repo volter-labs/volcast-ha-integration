@@ -73,6 +73,13 @@ w niej wybiera długość odczytu.
 Zapis warunkowy powrotu (`only_from`, hamulec do trybu neutralnego): ramka idzie tylko, gdy odczyt
 przed zapisem pokazał jedną z dozwolonych wartości; inna → `KEPT` bez ramki (klucz tylko z echem —
 zawsze `KEPT`, bo warunku nie da się potwierdzić).
+
+Rejestr wielosłowowy (`type: u32`): jedna ramka FC 16 ze wszystkimi słowami (kolejność słów z profilu),
+odczyt przed zapisem i zwrotny czytają WSZYSTKIE słowa; porównania (w tym tabela wyżej) idą na liczbie
+złożonej ze słów, więc rozjazd jednego słowa to rozjazd wartości. Wartość rzeczywista OK_ADJUSTED jest
+w jednostkach wartości (surowa × skala rejestru). Rejestr z własnym adresem urządzenia (`unit_id`) jest
+czytany i pisany wyłącznie z tego adresu. Zapis, którego adres, liczba słów, kolejność słów albo adres
+urządzenia nie zgadzają się z profilem, nie jest wysyłany (ERROR) — nigdy słowo na inne urządzenie.
 Pisarz nigdy nie rzuca.
 """
 from __future__ import annotations
@@ -84,10 +91,12 @@ from dataclasses import dataclass
 from typing import Callable, Collection, Iterable
 
 from ..profile import DEFAULT_READBACK_SETTLE_S
-from ..registers import RegisterWrite
+from ..registers import RegisterError, RegisterWrite, join_words, write_layout, write_scale
 from ..transports.base import ModbusException, TransportError
+from ..transports.modbus_frames import FC_WRITE_MULTIPLE
 from ..transports.stream import StreamTransport
 from ..write_sequence import DENIED, ERROR, OK, OK_ADJUSTED, UNSUPPORTED, AdjustedOutcome
+from .blocks import make_block
 from .client import RegisterClient
 from .views import key_views, needs_disambiguation, pick_view, prev_read_count, separator_blocks
 
@@ -152,25 +161,54 @@ def expected_address(profile, key: str) -> int | None:
     return s.get("addr") if isinstance(s, dict) else None
 
 
+def expected_layout(profile, key: str) -> tuple[int, str, int | None]:
+    """(liczba słów, kolejność słów, adres urządzenia) rejestru klucza według profilu; pola programów
+    i słowo włącznika harmonogramu — jedno słowo z adresu połączenia."""
+    if key.startswith("tou.") or key in _TOU_WORD_KEYS:
+        return 1, "hi_lo", None
+    return write_layout(profile.raw["write"][key])
+
+
+def _layout_ok(profile, w: RegisterWrite) -> bool:
+    """Zapis zgodny z profilem: adres, układ słów, adres urządzenia i wartość w zakresie liczby słów."""
+    if expected_address(profile, w.key) != w.addr:
+        return False
+    if (w.count, w.word_order, w.unit_id) != expected_layout(profile, w.key):
+        return False
+    try:
+        w.words()
+    except RegisterError:
+        return False
+    return True
+
+
 # Kierunek bezpieczny odchylenia: -1 = rzeczywista nie większa niż zamówiona (moc, limit eksportu,
 # górny próg), +1 = nie mniejsza (dolny próg). Odchylenie w drugą stronę = ERROR (np. minimalna moc
 # urządzenia ponad zamówioną: tryb pracowałby na większej mocy niż w planie).
-_SAFE_DEVIATION = {"power_w": -1, "export_limit_w": -1, "soc_max": -1, "soc_min": 1, "tou.power_w": -1}
+_SAFE_DEVIATION = {"power_w": -1, "export_limit_w": -1, "soc_max": -1, "soc_min": 1, "tou.power_w": -1,
+                   "charge_power_w": -1, "discharge_power_w": -1}
 
 
 def _numeric_actual(profile, key: str, word: int, requested: int) -> float | None:
-    """Rzeczywista wartość klucza liczbowego z odczytu, gdy odchylenie jest w stronę bezpieczną;
-    None dla trybu, przełączników, bitów, startów, SoC programów i odchylenia w stronę groźną."""
+    """Rzeczywista wartość klucza liczbowego z odczytu (w jednostkach wartości: surowa × skala), gdy
+    odchylenie jest w stronę bezpieczną; None dla trybu, przełączników, bitów, startów, SoC programów
+    i odchylenia w stronę groźną. `word` i `requested` to surowe liczby (u32 — złożone ze słów)."""
+    scale = 1
     if key.startswith("tou."):
         name = "tou." + key.split(".")[-1]
     else:
         name = key
-        if ((profile.raw["write"].get(key) or {}).get("encode")) not in _NUMERIC_ENCODINGS:
+        spec = profile.raw["write"].get(key) or {}
+        if spec.get("encode") not in _NUMERIC_ENCODINGS:
             return None
+        scale = write_scale(spec)
     direction = _SAFE_DEVIATION.get(name)
     if direction is None or (word - requested) * direction < 0:
         return None
-    return float(word)
+    if scale == 1:
+        return float(word)
+    actual = round(word * scale, 6)
+    return float(actual)
 
 
 def _fresh_value(profile, key: str, value: int, before: int) -> int:
@@ -253,9 +291,8 @@ class RegisterWriter:
 
     async def _write(self, w: RegisterWrite, *, skip_equal: bool = False,
                      only_from: Collection[int] | None = None) -> str:
-        if expected_address(self.profile, w.key) != w.addr or isinstance(w.value, bool) \
-                or not isinstance(w.value, int) or not 0 <= w.value <= 0xFFFF:
-            _LOGGER.error("direct write of %s refused: address or value outside the profile", w.key)
+        if not _layout_ok(self.profile, w):
+            _LOGGER.error("direct write of %s refused: address, layout or value outside the profile", w.key)
             return ERROR                   # nic nie wysłano — to nie odmowa urządzenia
         if _matches(w.key, self.unreadable):
             return UNSUPPORTED             # bez odczytu zwrotnego nie piszemy (nie da się przywrócić)
@@ -268,7 +305,7 @@ class RegisterWriter:
         # Łącze zwolnione na czas odczekania (odpytywanie nie czeka sekund); każdy ponowny odczyt
         # bierze je znowu i dopiero wtedy wybiera długość (`_read_once`).
         w, before = out.w, out.before
-        back = await self._settle(w.addr, before)
+        back = await self._settle(w, before)
         if back is None:
             return ERROR
         if back == w.value:
@@ -298,13 +335,15 @@ class RegisterWriter:
         if _matches(w.key, self.echo_only):
             return await self._write_echo_only(w)
         try:
-            before = await self._read_before(w.addr)
+            before = await self._read_before(w)
         except TransportError as err:
             if _is_illegal_address(err):
                 return UNSUPPORTED
             _LOGGER.debug("pre-write read of %s failed: %s", w.key, type(err).__name__)
             return ERROR                   # nic nie wysłano; chwilowa awaria, nie odmowa
-        w = RegisterWrite(w.key, w.addr, _fresh_value(self.profile, w.key, w.value, before))
+        if w.count == 1:
+            w = RegisterWrite(w.key, w.addr, _fresh_value(self.profile, w.key, w.value, before),
+                              unit_id=w.unit_id)
         if (skip_equal or w.key in _TOU_WORD_KEYS) and w.value == before:
             return OK                      # rejestr już w tym stanie (świeży odczyt) — bez ramki NVM
         if only_from is not None and before not in only_from:
@@ -314,13 +353,13 @@ class RegisterWriter:
             if not self._first_illegal(w.key):
                 return UNSUPPORTED
             # Pierwszy wyjątek 2 na zapis: odczyt zwrotny rozstrzyga, czy rejestr jest nietknięty.
-            back = await self._read_back(w.addr)
+            back = await self._read_back(w)
             if back is None:
                 return ERROR
             if back == w.value:
                 return OK                  # zapis doszedł — wyjątek był cudzą/starą odpowiedzią
             return DENIED if back == before else ERROR
-        back = await self._read_back(w.addr)
+        back = await self._read_back(w)
         if back is None:
             return ERROR
         if back == w.value:
@@ -334,8 +373,12 @@ class RegisterWriter:
     async def _send(self, w: RegisterWrite) -> str:
         gate = self._may_resend is not None and self._budgeted     # powrót do bazy — bez bramki budżetu
         extra = {"may_resend": lambda: self._resend_ok(w.key)} if gate else {}
+        if w.unit_id is not None:
+            extra["unit"] = w.unit_id
+        # Wiele słów — jedna ramka FC 16 (FC 6 pisze jeden rejestr); jedno słowo — funkcja profilu.
+        function = FC_WRITE_MULTIPLE if w.count > 1 else self._function
         try:
-            await self.client.transport.write(w.addr, [w.value], function=self._function,
+            await self.client.transport.write(w.addr, w.words(), function=function,
                                               on_send=lambda: self._sent(w.key), **extra)
             return _ECHO_OK
         except ModbusException as err:
@@ -361,7 +404,7 @@ class RegisterWriter:
         self._illegal_once.add(key)
         return True
 
-    async def _settle(self, addr: int, before: int) -> int | None:
+    async def _settle(self, w: RegisterWrite, before: int) -> int | None:
         """Echo potwierdzone, a odczyt zwrotny pokazał wartość sprzed zapisu: falownik stosuje nastawę
         z opóźnieniem (GW8KN-ET: nowa wartość < 1 s po echu). Najwyżej `READBACK_SETTLE_READS`
         ponownych odczytów, każdy po `readback_settle_s` profilu; pierwsza wartość inna niż sprzed
@@ -371,14 +414,14 @@ class RegisterWriter:
         for _ in range(READBACK_SETTLE_READS):
             await _sleep(settle)
             async with self._link():
-                back = await self._read_back(addr)
+                back = await self._read_back(w)
             if back != before:
                 break
         return back
 
-    async def _read_back(self, addr: int) -> int | None:
+    async def _read_back(self, w: RegisterWrite) -> int | None:
         try:
-            return await self._read(addr)
+            return await self._read(w)
         except TransportError as err:
             _LOGGER.debug("read-back failed: %s", type(err).__name__)
             return None
@@ -397,7 +440,7 @@ class RegisterWriter:
             return (READ_RETRY_BACKOFF_S,) * READ_RETRIES
         return (READ_RETRY_FALLBACK_S,) * READ_RETRIES
 
-    async def _read_before(self, addr: int) -> int:
+    async def _read_before(self, w: RegisterWrite) -> int:
         """Wartość sprzed zapisu. Łącze z korelacją odpowiedzi: jeden odczyt (`_read`).
 
         Łącze bez korelacji (`views.py`): dwa odczyty o RÓŻNEJ długości odpowiedzi muszą się zgodzić
@@ -406,17 +449,17 @@ class RegisterWriter:
         w odczycie samego rejestru po bloku rozdzielającym z poprawną odpowiedzią; wartość w tym
         odczycie albo wyjątek 2 tylko w drugim odczycie → `_Unconfirmed`."""
         if not self._disambiguate:
-            return await self._read(addr)
+            return await self._read(w)
         try:
-            first = await self._read(addr)
+            first = await self._read(w)
         except TransportError as err:
             if not _is_illegal_address(err):
                 raise
-            await self._separate(addr, None)
-            await self._read_view(addr, (addr, 1), None)       # wyjątek 2 ponownie → wychodzi
+            await self._separate(w, None)
+            await self._read_view(w, _own_view(w), None)       # wyjątek 2 ponownie → wychodzi
             raise _Unconfirmed("exception 2 not repeated") from None
         try:
-            second = await self._read(addr)
+            second = await self._read(w)
         except TransportError as err:
             if _is_illegal_address(err):
                 raise _Unconfirmed("exception 2 after a value") from None
@@ -425,7 +468,7 @@ class RegisterWriter:
             raise _Unconfirmed("pre-write reads disagree")
         return first
 
-    async def _read(self, addr: int) -> int:
+    async def _read(self, w: RegisterWrite) -> int:
         """Odczyt jednego rejestru z ograniczonym ponowieniem (tylko odczyt, nigdy zapis).
 
         Pierwsza próba z pełną liczbą prób transportu; po porażce (cisza, zerwanie, wyjątek
@@ -434,7 +477,7 @@ class RegisterWriter:
         (inny klient odpytujący ten sam moduł Wi-Fi). Woła się pod zamkiem pisarza.
         Ostatni błąd wychodzi do wołającego."""
         try:
-            return await self._read_once(addr, None)
+            return await self._read_once(w, None)
         except TransportError as err:
             if _is_illegal_address(err):
                 raise
@@ -442,46 +485,54 @@ class RegisterWriter:
         for delay in self.read_retry_delays():
             await _sleep(delay)
             try:
-                return await self._read_once(addr, 1)
+                return await self._read_once(w, 1)
             except TransportError as err:
                 if _is_illegal_address(err):
                     raise
                 last = err
         raise last
 
-    async def _read_once(self, addr: int, tries: int | None) -> int:
-        """Jedna próba odczytu rejestru. Łącze bez korelacji: widok o długości innej niż poprzedni odczyt
-        (gdy rejestr czyta się tylko pojedynczo — najpierw blok rozdzielający); wyjątek 2 na bloku to
-        nie werdykt o rejestrze — próba wraca do samego rejestru."""
+    async def _read_once(self, w: RegisterWrite, tries: int | None) -> int:
+        """Jedna próba odczytu rejestru (wszystkich słów klucza, z jego adresu urządzenia). Łącze bez
+        korelacji: widok o długości innej niż poprzedni odczyt (gdy rejestr czyta się tylko pojedynczo —
+        najpierw blok rozdzielający); wyjątek 2 na bloku to nie werdykt o rejestrze — próba wraca do
+        samego rejestru."""
         if not self._disambiguate:
-            if tries is None:
-                return await self.client.read_register(addr)
-            return await self.client.read_register(addr, tries=tries)
-        skip: set[tuple[int, int]] = set()
+            if w.count == 1 and w.unit_id is None:
+                if tries is None:
+                    return await self.client.read_register(w.addr)
+                return await self.client.read_register(w.addr, tries=tries)
+            return await self._read_view(w, _own_view(w), tries)
+        own = _own_view(w)
+        skip: set[tuple[int, ...]] = set()
         while True:
-            views = key_views(self.profile, addr, skip=skip)
+            views = key_views(self.profile, w.addr, count=w.count, unit=w.unit_id, skip=skip)
             view = pick_view(views, prev_read_count(self.client.transport, self._last_count))
             if view is None:
-                await self._separate(addr, tries)
+                await self._separate(w, tries)
                 view = pick_view(views, prev_read_count(self.client.transport, self._last_count)) or views[0]
             try:
-                return await self._read_view(addr, view, tries)
+                return await self._read_view(w, view, tries)
             except ModbusException as err:
-                if err.code != 2 or view == (addr, 1):
+                if err.code != 2 or view == own:
                     raise
                 skip.add(view)
 
-    async def _read_view(self, addr: int, view: tuple[int, int], tries: int | None) -> int:
+    async def _read_view(self, w: RegisterWrite, view: tuple[int, ...], tries: int | None) -> int:
+        """Odczyt widoku (blok z adresem urządzenia klucza) → surowa wartość klucza złożona ze słów."""
         self._last_count = view[1]
-        words = await self.client.read_block(view[0], view[1], tries=tries)
-        return words[addr - view[0]]
+        words = await self.client.read_block(*view, tries=tries)
+        start = w.addr - view[0]
+        if w.count == 1:
+            return words[start]
+        return join_words([words[start + i] for i in range(w.count)], w.word_order)
 
-    async def _separate(self, addr: int, tries: int | None) -> None:
+    async def _separate(self, w: RegisterWrite, tries: int | None) -> None:
         """Blok rozdzielający (znany, innej długości niż każdy widok rejestru) z poprawną odpowiedzią —
         po nim poprzednia odpowiedź modułu nie pasuje do odczytu rejestru. Wyjątek Modbus na bloku →
         następny kandydat (inny model może nie mieć rejestru bloku); inna porażka albo brak kandydata
         → `_Unconfirmed`."""
-        for block in separator_blocks(self.profile, addr):
+        for block in separator_blocks(self.profile, w.addr, count=w.count):
             self._last_count = block[1]
             try:
                 await self.client.read_block(block[0], block[1], tries=tries)
@@ -508,6 +559,11 @@ class RegisterWriter:
             self._on_send(key)
         except Exception as err:  # noqa: BLE001 — licznik nie może zepsuć wymiany
             _LOGGER.error("write counter failed for %s: %s", key, type(err).__name__)
+
+
+def _own_view(w: RegisterWrite) -> tuple[int, ...]:
+    """Sam rejestr klucza: wszystkie jego słowa, holding, z adresu urządzenia klucza."""
+    return make_block(w.addr, w.count, 3, w.unit_id)
 
 
 class NoWriteWriter:

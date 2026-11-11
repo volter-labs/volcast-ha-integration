@@ -25,7 +25,7 @@ class SolarmanV5Transport(StreamTransport):
 
     def _encode(self, req: Request) -> tuple[bytes, object]:
         self._seq = (self._seq + 1) & 0xFFFF
-        return v5.encode_request(self.cfg.logger_serial, self._seq, rtu(self.cfg.unit, req.pdu)), self._seq
+        return v5.encode_request(self.cfg.logger_serial, self._seq, rtu(self._unit(req), req.pdu)), self._seq
 
     def _idle_frame(self, frame: bytes) -> None:
         ack = v5.protocol_ack(frame, self.cfg.logger_serial)
@@ -49,4 +49,4 @@ class SolarmanV5Transport(StreamTransport):
             if err.kind == "asleep":
                 raise InverterAsleep("logger reply without inverter frame") from None
             raise Stray(err.kind) from None
-        return match_rtu(payload, self.cfg.unit, req)
+        return match_rtu(payload, self._unit(req), req)

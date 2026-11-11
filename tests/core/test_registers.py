@@ -76,22 +76,116 @@ def test_encode_on_off_writes_profile_values():
     assert [(w.key, w.value) for w in off] == [("enable", 0x55)]
 
 
-@pytest.mark.parametrize("extra", [{"type": "u32"}, {"scale": 10}, {"unit_id": 1}])
-def test_encode_refuses_write_construct_without_engine_support(extra):
-    """Zapis 32-bitowy, skala i adres urządzenia per rejestr kodują się dopiero w silniku zapisu
-    bezpośredniego; do tego czasu odmowa (nigdy cichy zapis słowa 16-bit na złe urządzenie)."""
-    from custom_components.volcast.core.params import Params
-    from custom_components.volcast.core.registers import encode_writes
-    prof = _engine_profile(power_w=extra)
+# --- zapis 32-bitowy, skala, adres urządzenia per rejestr, moc wg kierunku -----------------------------
+
+from custom_components.volcast.core.params import Params  # noqa: E402
+from custom_components.volcast.core.registers import RegisterWrite, encode_writes  # noqa: E402
+from tests.core.modbus.engine_profile import PLANT, directional_profile  # noqa: E402
+
+
+def test_u32_write_two_words_high_first_on_own_unit():
+    w, = encode_writes(Params(charge_power_w=2500), directional_profile())
+    assert w == RegisterWrite("charge_power_w", 40032, 2500, count=2, word_order="hi_lo", unit_id=PLANT)
+    assert w.words() == [0, 2500]
+    big, = encode_writes(Params(charge_power_w=70000), directional_profile())
+    assert big.words() == [1, 70000 - 65536]
+
+
+def test_u32_low_word_first_and_scale_divides():
+    """Kierunek skali jak przy odczycie (wartość = surowa × skala), więc przy zapisie surowa = wartość / skala."""
+    w, = encode_writes(Params(discharge_power_w=70000), directional_profile())
+    assert (w.value, w.count, w.word_order, w.unit_id) == (7000, 2, "lo_hi", PLANT)
+    assert w.words() == [7000, 0]
+
+
+def test_scaled_value_rounds_toward_the_safe_side():
+    prof = directional_profile()
+    # moc: w dół (nigdy więcej niż w planie); dolny próg SoC: w górę
+    assert encode_writes(Params(discharge_power_w=2509), prof)[0].value == 250
+    assert encode_writes(Params(soc_min=55.55), prof)[0].value == 556
+    assert encode_writes(Params(soc_min=55), prof)[0].value == 550
+    assert encode_writes(Params(soc_min=0.3), prof)[0].value == 3          # 0.3 / 0.1 bez błędu float
+
+
+def test_u32_and_scaled_range_clamped():
+    prof = directional_profile()
+    assert encode_writes(Params(charge_power_w=2 ** 40), prof)[0].value == 0xFFFFFFFF
+    assert encode_writes(Params(charge_power_w=-5), prof)[0].value == 0
+    assert encode_writes(Params(soc_min=150), prof)[0].value == 1000           # 100 % / 0,1
     with pytest.raises(RegisterError):
-        encode_writes(Params(power_w=2500), prof)
-    assert encode_writes(Params(mode="auto"), prof)[0].key == "mode"     # inne klucze bez zmian
+        encode_writes(Params(charge_power_w=float("nan")), prof)
 
 
-def test_read_with_own_unit_id_is_missing_not_misread():
-    """Odczyt z innego adresu urządzenia nie może zdekodować słowa z obrazu połączenia."""
-    img = RegisterImage.from_blocks({10: [100]})
+def test_u16_without_new_fields_is_unchanged():
+    """Klucz bez typu u32, skali i unit_id: to samo słowo, jedno, na adresie połączenia."""
+    w, = encode_writes(Params(export_limit_w=4000.4), directional_profile())
+    assert w == RegisterWrite("export_limit_w", 47510, 4000)
+    assert (w.count, w.word_order, w.unit_id, w.words()) == (1, "hi_lo", None, [4000])
+
+
+@pytest.mark.parametrize("mode,key", [("charge_battery", "charge_power_w"), ("sell_power", "discharge_power_w"),
+                                      ("discharge_battery", "discharge_power_w")])
+def test_power_by_direction_picks_the_set_point_of_the_mode(mode, key):
+    writes = encode_writes(Params(mode=mode, power_w=3000), directional_profile())
+    assert [w.key for w in writes] == [key, "mode"]
+    assert writes[0].unit_id == PLANT and writes[1].unit_id == PLANT
+    # filtr kluczy w konwencji planu (`power_w`) obejmuje nastawę kierunku
+    only = encode_writes(Params(mode=mode, power_w=3000), directional_profile(), keys={"power_w"})
+    assert [w.key for w in only] == [key]
+
+
+@pytest.mark.parametrize("mode", ["auto", "battery_standby"])
+def test_power_by_direction_neutral_mode_writes_no_set_point(mode):
+    assert [w.key for w in encode_writes(Params(mode=mode, power_w=0), directional_profile())] == ["mode"]
+
+
+def test_power_by_direction_without_mode_or_with_conflict_refused():
+    prof = directional_profile()
+    with pytest.raises(RegisterError):
+        encode_writes(Params(power_w=3000), prof)            # kierunek nieznany — nic nie wysłane
+    with pytest.raises(RegisterError):
+        encode_writes(Params(mode="charge_battery", power_w=3000, charge_power_w=2000), prof)
+    same = encode_writes(Params(mode="charge_battery", power_w=3000, charge_power_w=3000), prof)
+    assert [w.key for w in same] == ["charge_power_w", "mode"]
+    # jawne nastawy obu kierunków (np. zero obu przy przejęciu) — bez planu mocy
+    both = encode_writes(Params(charge_power_w=0, discharge_power_w=0), prof)
+    assert [(w.key, w.words()) for w in both] == [("charge_power_w", [0, 0]), ("discharge_power_w", [0, 0])]
+
+
+def test_enable_and_mode_on_own_unit():
+    writes = encode_writes(Params(enable=True, mode="auto"), directional_profile())
+    assert [(w.key, w.addr, w.value, w.unit_id) for w in writes] == [("enable", 40029, 1, PLANT),
+                                                                     ("mode", 40031, 1, PLANT)]
+
+
+def test_power_w_without_direction_flag_unchanged():
+    """Profil bez `power_by_direction`: `power_w` jak dotąd (bez trybu też)."""
+    w, = encode_writes(Params(power_w=2500), _engine_profile())
+    assert w == RegisterWrite("power_w", 47512, 2500)
+
+
+def test_u32_power_w_without_direction_flag():
+    w, = encode_writes(Params(power_w=100000), _engine_profile(power_w={"type": "u32", "word_order": "lo_hi"}))
+    assert (w.addr, w.words()) == (47512, [100000 - 65536, 1])
+
+
+def test_register_write_word_split_refuses_out_of_range():
+    with pytest.raises(RegisterError):
+        RegisterWrite("x", 1, 0x10000).words()
+    with pytest.raises(RegisterError):
+        RegisterWrite("x", 1, 1 << 32, count=2).words()
+    with pytest.raises(RegisterError):
+        RegisterWrite("x", 1, 5, count=2, word_order="??").words()
+
+
+def test_read_with_own_unit_id_from_its_unit_image_only():
+    """Odczyt z innego adresu urządzenia czyta wyłącznie bloki tego adresu — nigdy słowo połączenia."""
+    img = RegisterImage.from_blocks({10: [100], (3, 10, 1): [7], (4, 20, 1): [0, 9]})
     v = read_values({"soc": {"addr": 10, "type": "u16", "unit_id": 1},
-                     "pv_power_w": {"sum": [{"addr": 10, "type": "u16", "unit_id": 1}]},
+                     "pv_power_w": {"sum": [{"addr": 20, "type": "u32", "fc": 4, "unit_id": 1}]},
+                     "grid": {"addr": 10, "type": "u16", "unit_id": 2},
                      "active_power_w": {"addr": 10, "type": "u16"}}, img)
-    assert v == {"soc": None, "pv_power_w": None, "active_power_w": 100}
+    assert v == {"soc": 7, "pv_power_w": 9, "grid": None, "active_power_w": 100}
+    assert img.words(10, 1, 3, 1) == [7] and img.words(10, 1) == [100]
+    with pytest.raises(RegisterError):
+        img.words(20, 2, 4)                     # input połączenia nie ma tego słowa

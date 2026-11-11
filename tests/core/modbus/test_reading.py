@@ -127,3 +127,55 @@ def test_reading_takes_input_registers_from_their_own_space():
     r = _read(p, RegisterImage.from_blocks({47509: [0, 0, 1, 0], (4, 47511): [55]}))
     assert r.values["soc"] == 55
     assert _read(p, RegisterImage.from_blocks({47509: [0, 0, 1, 0]})).values["soc"] is None
+
+
+# --- rejestry na własnym adresie urządzenia, u32 i skala w kluczach tylko do zapisu ------------------
+
+def _directional(**write_over):
+    from .engine_profile import directional_profile
+
+    def mutate(raw):
+        raw["read"].pop("enable_state")
+        for key, extra in write_over.items():
+            raw["write"][key].update(extra)
+    return directional_profile(mutate)
+
+
+def test_write_only_u32_scaled_key_decoded_from_its_unit():
+    """Klucz tylko do zapisu czytany z własnego rejestru według typu, skali, kolejności słów i adresu
+    urządzenia zapisu — nie jedno surowe słowo z adresu połączenia."""
+    from .engine_profile import PLANT
+    p = _directional()
+    img = RegisterImage.from_blocks({(3, 40031, PLANT): [1], (3, 40032, PLANT): [0, 2500, 700, 0],
+                                     (3, 40046, PLANT): [555], 40032: [9, 9, 9, 9], 40046: [9]})
+    dev = _read(p, img).device
+    assert dev["charge_power_w"] == 2500.0
+    assert dev["discharge_power_w"] == 7000.0            # lo_hi, skala 10
+    assert dev["soc_min"] == pytest.approx(55.5)          # skala 0,1
+    assert dev["mode"] == "auto"
+
+
+def test_write_only_key_on_other_unit_missing_when_only_link_unit_read():
+    p = _directional()
+    dev = _read(p, RegisterImage.from_blocks({40031: [1], 40032: [0, 2500, 700, 0], 40046: [555]})).device
+    assert not {"mode", "charge_power_w", "discharge_power_w", "soc_min"} & set(dev)
+
+
+def test_enable_state_maps_on_off_and_unknown_value_is_not_a_reading():
+    from .engine_profile import PLANT, directional_profile
+    p = directional_profile()
+    on = _read(p, RegisterImage.from_blocks({(3, 40029, PLANT): [1]}))
+    assert on.device["enable"] == 1.0 and on.values["enable_state"] == 1
+    assert _read(p, RegisterImage.from_blocks({(3, 40029, PLANT): [0]})).device["enable"] == 0.0
+    assert "enable" not in _read(p, RegisterImage.from_blocks({(3, 40029, PLANT): [7]})).device
+    assert "enable" not in _read(p, RegisterImage.from_blocks({40029: [1]})).device
+
+
+def test_enable_without_state_read_comes_from_its_write_register():
+    from .engine_profile import PLANT
+    p = _directional()
+    assert _read(p, RegisterImage.from_blocks({(3, 40029, PLANT): [0]})).device["enable"] == 0.0
+
+
+def test_goodwe_device_view_has_no_new_keys():
+    assert not {"enable", "charge_power_w", "discharge_power_w"} & set(_read(GW, goodwe_image()).device)
