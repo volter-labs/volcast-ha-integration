@@ -499,6 +499,8 @@ class ProfileFeedUpdater:
         self._load_lock = asyncio.Lock()
         self._busy = False
         self._last_hint_check: float | None = None
+        self._hinted_etag: str | None = None      # ETag, dla którego zrobiono sprawdzenie z podpowiedzi
+        self._hint_retryable = False              # ... i czy jego wynik pozwala powtórzyć (błąd, limit czasu)
         self.held: VerifiedFeed | None = None
         # Najnowsze przyjęte `generated_at` (zapisywane obok feedu) — anty-rollback także wtedy, gdy
         # trzymanego feedu nie da się już zweryfikować (np. po rotacji klucza).
@@ -521,10 +523,14 @@ class ProfileFeedUpdater:
             return False
         if self.held is not None and etag == self.held.etag:
             return False
+        if etag == self._hinted_etag and not self._hint_retryable:
+            return False             # ten ETag został już sprawdzony i odrzucony/rozstrzygnięty — czeka rytm dobowy
         now = self._clock()
         if self._last_hint_check is not None and now - self._last_hint_check < FEED_HINT_MIN_INTERVAL_S:
             return False
         self._last_hint_check = now
+        self._hinted_etag = etag
+        self._hint_retryable = True   # do czasu wyniku (błąd, limit czasu, anulowanie) powtórzenie dozwolone
         return True
 
     def defer(self) -> None:
@@ -592,7 +598,10 @@ class ProfileFeedUpdater:
         self._next_check = self._clock() + FEED_CHECK_INTERVAL_S
         try:
             await self.async_load()
-            return await self._check(fetch)
+            outcome = await self._check(fetch)
+            if outcome != "error":
+                self._hint_retryable = False
+            return outcome
         except asyncio.CancelledError:
             self._next_check = previous_due          # rozładunek w trakcie — sprawdzenie nie przepada
             raise

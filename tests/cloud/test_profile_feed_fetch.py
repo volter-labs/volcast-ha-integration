@@ -286,6 +286,7 @@ class _HintCloud(_Cloud):
         self.etag = etag
         self.with_field = with_field
         self.hang = False
+        self.result = pf.FeedFetch("error")
 
     async def async_get_schedule(self):
         raw = await super().async_get_schedule()
@@ -295,7 +296,7 @@ class _HintCloud(_Cloud):
 
     async def async_get_profile_feed(self, etag):
         self.feed_calls += 1
-        return pf.FeedFetch("error")
+        return self.result
 
 
 def _loaded_updater(held_etag='"held"'):
@@ -333,6 +334,62 @@ async def test_second_different_etag_waits_for_the_minimum_interval():
     await _refresh(f)
     assert cloud.feed_calls == 1
     clock.t += 600                                       # razem 15 min od poprzedniego
+    await _refresh(f)
+    assert cloud.feed_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_rejected_hinted_feed_is_not_refetched_for_the_same_etag():
+    cloud = _HintCloud('"new"')
+    cloud.result = pf.FeedFetch("ok", b"not a feed")           # odrzucony przy weryfikacji
+    upd, clock = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    assert cloud.feed_calls == 1
+    for _ in range(3):
+        clock.t += pf.FEED_HINT_MIN_INTERVAL_S
+        await _refresh(f)
+    assert cloud.feed_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_new_etag_after_a_rejected_one_triggers_once_more():
+    cloud = _HintCloud('"new"')
+    cloud.result = pf.FeedFetch("ok", b"not a feed")
+    upd, clock = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    cloud.etag = '"newer"'
+    clock.t += pf.FEED_HINT_MIN_INTERVAL_S
+    await _refresh(f)
+    assert cloud.feed_calls == 2
+    clock.t += pf.FEED_HINT_MIN_INTERVAL_S
+    await _refresh(f)
+    assert cloud.feed_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_errored_hinted_check_is_retried_after_the_floor():
+    cloud = _HintCloud('"new"')                                # wynik "error" (sieć)
+    upd, clock = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    clock.t += pf.FEED_HINT_MIN_INTERVAL_S
+    await _refresh(f)
+    assert cloud.feed_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_timed_out_hinted_check_is_retried_after_the_floor(monkeypatch):
+    monkeypatch.setattr(pf, "FEED_CHECK_TIMEOUT_S", 0.05)
+    cloud = _HintCloud('"new"')
+    cloud.hang = True
+    upd, clock = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    assert cloud.feed_calls == 1
+    clock.t += pf.FEED_HINT_MIN_INTERVAL_S
+    cloud.hang = False
     await _refresh(f)
     assert cloud.feed_calls == 2
 
