@@ -73,6 +73,8 @@ from ..core.discovery.known import INVERTER_DOMAINS
 from ..core.entity_map import EntityCandidate, _integration, resolve_entities, resolve_work_mode_entity
 from ..core.regex_safety import safe_search
 from ..core.modbus.views import UNCORRELATED_KINDS
+from ..core import endorsement
+from ..core.profile import ORIGIN_FEED_ENDORSED, load_builtin, profile_from_dict
 from ..registry_compat import all_devices, device_config_entry_ids
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
@@ -227,6 +229,9 @@ class ControlRuntime:
     # wykonawca slotów ładowarki EV (`LoadsExecutor`), obok wykonawcy falownika
     loads_executor: object | None = None
     _meta_dirty: bool = False
+    # ponowne sprawdzenie profilu z prawem zapisu po aktualizacji feedu (`watch_profile_withdrawal`)
+    feed_recheck: bool = False
+    withdrawal_task: object | None = None
 
     def entity_gaps(self) -> ControlGaps:
         """Encje sterujące profilu wyłączone albo nieobecne (z rejestru encji), z bieżącą mapą."""
@@ -558,6 +563,59 @@ async def async_control_change_allowed(runtime, old: Mapping, new: Mapping) -> b
     if not control_options_changed(old, new) or not getattr(executor, "owned", False):
         return True
     return _binding(old) == _binding(new)
+
+
+async def async_withdraw_if_revoked(hass, entry, rt) -> bool:
+    """Po aktualizacji feedu: profil z prawem zapisu działającego wykonawcy wczytany od nowa
+    (`load_builtin`, certyfikat sprawdzany kluczami wydania). Zniknął, nie ma już prawa zapisu albo ma inną
+    treść → `async_withdraw`: koniec zapisów, powrót mapą zaufaną przy przejęciu, potem przeładowanie wpisu.
+    True = wycofanie rozpoczęte. Profil z pakietu i zwykły profil z feedu — nic."""
+    executor = getattr(rt, "executor", None)
+    running = getattr(executor, "profile", None)
+    if getattr(running, "origin", None) != ORIGIN_FEED_ENDORSED or getattr(executor, "withdrawn", True):
+        return False
+    try:
+        fresh = await hass.async_add_executor_job(load_builtin, running.id)
+    except Exception:  # noqa: BLE001 — brak w pakiecie i w feedzie albo odrzucony: jak wycofanie
+        fresh = None
+    if profile_still_endorsed(running, fresh):
+        return False
+    _LOGGER.warning("Volcast control: the inverter profile %s is no longer endorsed for control — returning the "
+                    "inverter to its settings from before control", running.id)
+    await executor.async_withdraw(lambda: _schedule_reload(hass, entry.entry_id))
+    return True
+
+
+def watch_profile_withdrawal(hass, entry, rt: ControlRuntime, feed) -> None:
+    """Wykonawca z profilem z prawem zapisu z feedu: każda przyjęta aktualizacja feedu sprawdza ten profil od
+    nowa (zadanie HA, nie zadanie pobierania feedu — limit czasu i anulowanie pobierania nie przerywają
+    powrotu). Aktualizacja w trakcie sprawdzenia: jeszcze jedno po nim. Zdjęcie przy rozładunku (`rt.unsubs`)."""
+    add = getattr(feed, "add_update_listener", None)
+    executor = rt.executor
+    if add is None or getattr(getattr(executor, "profile", None), "origin", None) != ORIGIN_FEED_ENDORSED \
+            or getattr(executor, "withdrawn", True):
+        return
+
+    async def _recheck() -> None:
+        while rt.feed_recheck:
+            rt.feed_recheck = False
+            try:
+                if await async_withdraw_if_revoked(hass, entry, rt):
+                    return
+            except Exception as err:  # noqa: BLE001 — zadanie w tle nie zostawia wyjątku
+                _LOGGER.warning("Volcast control: profile check after a feed update failed (%s)",
+                                type(err).__name__)
+                return
+
+    @callback
+    def _updated() -> None:
+        rt.feed_recheck = True
+        task = rt.withdrawal_task
+        if task is not None and not task.done():
+            return
+        rt.withdrawal_task = hass.async_create_background_task(_recheck(), "volcast_profile_withdrawal")
+
+    rt.unsubs.append(add(_updated))
 
 
 def _schedule_reload(hass, entry_id: str) -> None:
@@ -893,15 +951,52 @@ class _Composed:
     conn: DirectConnection | None
     # True = wykonawca sposobu sterowania z rekordu własności, tylko do powrotu (potem przeładowanie)
     returning: bool = False
+    # True = profil z kopii w rekordzie (feed nie daje już tej treści z prawem zapisu): wyłącznie powrót
+    withdrawn: bool = False
 
 
-async def _async_owner_record(store: ControlStore) -> dict | None:
-    """Rekord własności z magazynu; nieczytelny magazyn rozstrzyga sam wykonawca (wyłącza się)."""
+async def _async_owner_record(store: ControlStore) -> tuple[dict | None, dict | None]:
+    """(rekord własności, kopia profilu z prawem zapisu z feedu) z magazynu; nieczytelny magazyn rozstrzyga
+    sam wykonawca (wyłącza się)."""
     try:
         state = await store.async_load()
     except Exception:  # noqa: BLE001
+        return None, None
+    if not (state.owned and state.owner):
+        return None, None
+    return dict(state.owner), state.trusted_profile
+
+
+def _certified_digest(profile) -> str | None:
+    cert = (getattr(profile, "raw", None) or {}).get("endorsement")
+    digest = cert.get("digest") if isinstance(cert, Mapping) else None
+    return digest if isinstance(digest, str) else None
+
+
+def profile_still_endorsed(running, fresh) -> bool:
+    """Czy profil wczytany od nowa (`load_builtin`) nadal daje prawo zapisu dla TEJ treści, którą wykonawca
+    przejął falownik: to samo id, pochodzenie `feed_endorsed`, ten sam digest certyfikatu (pola kosmetyczne
+    się nie liczą). Brak profilu albo każda inna sytuacja — False (domknięte bezpiecznie)."""
+    digest = _certified_digest(running)
+    return (fresh is not None and getattr(fresh, "origin", None) == ORIGIN_FEED_ENDORSED
+            and getattr(fresh, "id", None) == getattr(running, "id", None)
+            and digest is not None and _certified_digest(fresh) == digest)
+
+
+def _hand_back_profile(record: Mapping | None, raw, profiles):
+    """Profil z kopii zapisanej przy przejęciu — tylko do powrotu, gdy feed nie daje już tej treści z prawem
+    zapisu (wycofany, bez ważnego certyfikatu, inna treść). Kopia musi mieć ważny certyfikat kluczami TEGO
+    wydania i id z rekordu własności; inaczej None (rekord rozstrzyga wykonawca, jak dotąd)."""
+    if not record or not isinstance(raw, dict) or raw.get("id") != record.get("profile"):
         return None
-    return dict(state.owner) if state.owned and state.owner else None
+    if not endorsement.endorsed_for_write(raw):
+        return None
+    try:
+        trusted = profile_from_dict(raw, origin=ORIGIN_FEED_ENDORSED)
+    except Exception:  # noqa: BLE001 — zła kopia: bez powrotu nią
+        return None
+    current = next((p for p in profiles if getattr(p, "id", None) == trusted.id), None)
+    return None if profile_still_endorsed(trusted, current) else trusted
 
 
 def _entity_owner_matches(hass, choice, mapped, record: Mapping) -> bool:
@@ -944,9 +1039,17 @@ async def _async_compose(hass, entry, profiles, store: ControlStore) -> _Compose
     Wtedy najpierw wykonawca sposobu z rekordu (powrót przez STARY sposób); rekord zostaje, dopóki
     powrót nie dojdzie. Bez drogi powrotu — zwykłe złożenie (wykonawca porzuca rekord ze zgłoszeniem).
     """
-    record = await _async_owner_record(store)
+    record, trusted_raw = await _async_owner_record(store)
     need_salt = _direct_target(entry.options) is not None or (record or {}).get("mode") == CONTROL_MODE_DIRECT
     salt = await async_installation_salt(hass) if need_salt else None
+    trusted = _hand_back_profile(record, trusted_raw, profiles)
+    if trusted is not None:
+        back = _compose_return(hass, entry, [trusted], record, salt)
+        if back is not None:
+            _LOGGER.warning("Volcast control: the inverter profile %s is no longer endorsed for control — "
+                            "returning the settings from before control with the profile they were taken with",
+                            trusted.id)
+            return replace(back, withdrawn=True)
     composed = None
     if _direct_target(entry.options) is not None:
         composed = compose_direct(hass, entry, profiles, salt=salt)
@@ -1041,7 +1144,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped, rated_power_w=rated,
                                store=store, writer=EntityServiceWriter(hass),
                                lock=_entry_lock(hass, entry.entry_id),
-                               mode_unique_id=mode_unique_id(hass, mapped), io=io, on_released=released)
+                               mode_unique_id=mode_unique_id(hass, mapped), io=io, on_released=released,
+                               withdrawn=composed.withdrawn)
     await executor.async_start()
     telemetry = None
     rt = None
@@ -1126,6 +1230,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                             hass=hass, entry=entry, loads_executor=loads_executor)
 
         telemetry.control_runtime = rt
+        watch_profile_withdrawal(hass, entry, rt, feed)
         executor.entity_gaps_source = rt.entity_gaps
         executor.request_reload = lambda: _schedule_reload(hass, entry.entry_id)
 
@@ -1420,7 +1525,8 @@ async def async_remove_control(hass, entry) -> None:
         executor = VolcastExecutor(hass, entry, choice=choice, mapped=mapped,
                                    rated_power_w=None, store=store, writer=EntityServiceWriter(hass),
                                    lock=_entry_lock(hass, entry.entry_id),
-                                   mode_unique_id=mode_unique_id(hass, mapped), io=io)
+                                   mode_unique_id=mode_unique_id(hass, mapped), io=io,
+                                   withdrawn=composed.withdrawn)
         await executor.async_start()
         if conn is not None:
             conn.allow_conflicted_restore = True        # usuwamy wpis przy własności: tylko powrót

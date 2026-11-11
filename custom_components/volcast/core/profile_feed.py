@@ -59,6 +59,9 @@ _MIN_FRACTION = 1e-4
 _GENERATED_AT_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z")
 _HEX_KEY_RE = re.compile(r"[0-9a-fA-F]{64}")
 _FLOOR_MAX_AHEAD_S = 24 * 3600
+# Feed z `generated_at` dalej niż tyle sekund w przyszłości (wobec bieżącego czasu) — odrzucony w całości
+# i niezapisany, więc nie staje się progiem anty-rollback.
+FEED_MAX_AHEAD_S = 24 * 3600
 
 
 class CanonicalError(ValueError):
@@ -394,9 +397,13 @@ def _profiles(raw_list: Any) -> tuple[dict[str, dict], tuple[str, ...], tuple[st
 
 
 def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None,
-                floor: datetime | None = None) -> VerifiedFeed:
+                floor: datetime | None = None, now: datetime | None = None) -> VerifiedFeed:
     """Weryfikacja w kolejności kontraktu (§2); `held` = feed już trzymany (anty-rollback), `floor` =
-    najnowsze `generated_at` kiedykolwiek przyjęte (gdy trzymanego feedu nie da się już zweryfikować)."""
+    najnowsze `generated_at` kiedykolwiek przyjęte (gdy trzymanego feedu nie da się już zweryfikować),
+    `now` = bieżący czas UTC (domyślnie zegar ścienny) — feed z datą dalej niż `FEED_MAX_AHEAD_S` w
+    przyszłości jest odrzucany w całości (inaczej jako próg anty-rollback blokowałby każdy następny).
+    Tak samo feed z magazynu (zapisany przez wersję bez tej granicy) — jak próg z magazynu
+    (`_stored_floor`)."""
     # Pola koperty poza tymi trzema nie są podpisane — pomijamy je (nie trafiają też do magazynu).
     if not isinstance(doc, dict) or not {"feed", "key_id", "signature"} <= set(doc):
         raise FeedRejected("malformed")
@@ -427,6 +434,9 @@ def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None,
         raise FeedRejected("schema_version")
     # 4. anty-rollback: starszy odrzucony, równy tylko z identycznym podpisem
     generated_at = _parse_generated_at(feed.get("generated_at"))
+    current = now if now is not None else datetime.now(timezone.utc)
+    if generated_at > current + timedelta(seconds=FEED_MAX_AHEAD_S):
+        raise FeedRejected("generated_in_future")
     if floor is not None and generated_at < floor:
         raise FeedRejected("rollback")
     if held is not None:
@@ -442,8 +452,8 @@ def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None,
 
 
 def verify_feed_body(body: bytes, *, keys: Mapping[str, str], held: VerifiedFeed | None,
-                     floor: datetime | None = None) -> VerifiedFeed:
-    return verify_feed(parse_feed_body(body), keys=keys, held=held, floor=floor)
+                     floor: datetime | None = None, now: datetime | None = None) -> VerifiedFeed:
+    return verify_feed(parse_feed_body(body), keys=keys, held=held, floor=floor, now=now)
 
 
 # --- rejestr profili z feedu (czyta `profile.py`) --------------------------------------------------
@@ -494,6 +504,7 @@ class ProfileFeedUpdater:
         self._clock = clock
         self._run_job = run_job
         self._on_new = on_new_profiles
+        self._listeners: list[Callable[[], None]] = []
         self._next_check = clock() + FEED_FIRST_CHECK_DELAY_S
         self._loaded = False
         self._load_lock = asyncio.Lock()
@@ -509,6 +520,23 @@ class ProfileFeedUpdater:
     @property
     def active(self) -> bool:
         return bool(self._keys)
+
+    def add_update_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Wywołanie (synchroniczne, bez argumentów) po KAŻDEJ przyjętej aktualizacji feedu z sieci, już po
+        podmianie rejestru profili; zwraca zdjęcie nasłuchu. Błąd nasłuchującego nie cofa aktualizacji."""
+        self._listeners.append(listener)
+
+        def remove() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+        return remove
+
+    def _notify_updated(self) -> None:
+        for listener in list(self._listeners):
+            try:
+                listener()
+            except Exception as err:  # noqa: BLE001 — powiadomienie nie cofa aktualizacji
+                _LOGGER.debug("Volcast profile feed update listener failed (%s)", type(err).__name__)
 
     def due(self) -> bool:
         return self.active and not self._busy and self._clock() >= self._next_check
@@ -563,7 +591,8 @@ class ProfileFeedUpdater:
                 self._next_check = max(self._next_check, checked + FEED_CHECK_INTERVAL_S)
             self._floor = self._stored_floor(data.get("floor"), now)
             try:
-                held = await self._job(_verify_stored, data.get("document"), self._keys)
+                held = await self._job(_verify_stored, data.get("document"), self._keys,
+                                       datetime.fromtimestamp(now, timezone.utc))
             except FeedRejected as err:
                 _LOGGER.warning("Volcast stored profile feed rejected (%s) — using packaged profiles",
                                 err.reason)
@@ -622,7 +651,8 @@ class ProfileFeedUpdater:
         if status != "ok" or not isinstance(result.body, (bytes, bytearray)):
             return "error"
         try:
-            verified = await self._job(_verify_body, bytes(result.body), self._keys, held, self._floor)
+            now = datetime.fromtimestamp(self._clock(), timezone.utc)
+            verified = await self._job(_verify_body, bytes(result.body), self._keys, held, self._floor, now)
         except FeedRejected as err:
             _LOGGER.warning("Volcast profile feed rejected (%s) — keeping the previous profiles", err.reason)
             return "rejected"
@@ -634,6 +664,9 @@ class ProfileFeedUpdater:
         before = frozenset(held.profiles) if held is not None else frozenset()
         self.held = verified
         set_feed_profiles(verified.profiles)
+        # Zaraz po podmianie rejestru, bez `await` po drodze: nasłuchujący (np. wykonawca z profilem z prawem
+        # zapisu, który mógł zostać wycofany) widzą już nowy zestaw profili.
+        self._notify_updated()
         _log_skipped(verified)
         new_ids = frozenset(verified.profiles) - before
         if new_ids and self._on_new is not None:
@@ -674,12 +707,12 @@ def _iso(dt: datetime) -> str:
 
 
 def _verify_body(body: bytes, keys: Mapping[str, str], held: VerifiedFeed | None,
-                 floor: datetime | None = None) -> VerifiedFeed:
-    return verify_feed_body(body, keys=keys, held=held, floor=floor)
+                 floor: datetime | None = None, now: datetime | None = None) -> VerifiedFeed:
+    return verify_feed_body(body, keys=keys, held=held, floor=floor, now=now)
 
 
-def _verify_stored(document: Any, keys: Mapping[str, str]) -> VerifiedFeed:
-    return verify_feed(document, keys=keys, held=None)
+def _verify_stored(document: Any, keys: Mapping[str, str], now: datetime | None = None) -> VerifiedFeed:
+    return verify_feed(document, keys=keys, held=None, now=now)
 
 
 async def async_check_bounded(updater: ProfileFeedUpdater,

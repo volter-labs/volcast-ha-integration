@@ -11,6 +11,7 @@ import copy
 import dataclasses
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
 
@@ -1247,3 +1248,89 @@ def test_feed_limits_match_the_cloud_builder():
     # Budowa feedu w chmurze (`feed_too_large`) pilnuje tych samych progów — powyżej klient odrzuca cały feed.
     assert pf.FEED_MAX_PROFILES == 500
     assert pf.FEED_MAX_BYTES == 2 * 1024 * 1024
+
+
+# --- granica `generated_at`: feed z datą dalej niż doba w przyszłości --------------------------------
+
+_NOW = datetime(2026, 10, 20, tzinfo=timezone.utc)          # = `Clock()` aktualizatora
+
+
+def test_feed_dated_more_than_a_day_ahead_rejected_as_a_whole():
+    with pytest.raises(pf.FeedRejected) as err:
+        pf.verify_feed_body(_body(generated_at="2026-10-21T00:00:00.001Z"), keys=KEYS, held=None, now=_NOW)
+    assert err.value.reason == "generated_in_future"
+    edge = pf.verify_feed_body(_body(generated_at="2026-10-21T00:00:00.000Z"), keys=KEYS, held=None, now=_NOW)
+    assert edge.generated_at == _NOW + timedelta(days=1)
+
+
+def test_feed_far_in_the_future_rejected_against_the_wall_clock_by_default():
+    assert _reason(_body(generated_at="2999-01-01T00:00:00.000Z")) == "generated_in_future"
+
+
+def test_future_dated_feed_is_not_stored_and_never_blocks_the_next_feed():
+    store, clock = MemStore(), Clock()
+    upd = _updater(store, clock=clock)
+    assert _run(upd.async_check(Fetch(_ok(_body(generated_at=T0))))) == "updated"
+    stored, held = copy.deepcopy(store.data), upd.held
+    future = _body(feed=_feed([_acme(), _acme("acme-other")], generated_at="2027-06-01T00:00:00.000Z"))
+    assert _run(upd.async_check(Fetch(_ok(future)))) == "rejected"
+    assert store.data["document"] == stored["document"] and store.data["floor"] == stored["floor"]
+    assert upd.held is held and "acme-other" not in pf.feed_ids()
+    clock.t += pf.FEED_CHECK_INTERVAL_S
+    later = _body(feed=_feed([_acme(), _acme("acme-other")], generated_at="2026-10-20T12:00:00.000Z"))
+    assert _run(upd.async_check(Fetch(_ok(later)))) == "updated"
+    assert "acme-other" in pf.feed_ids()
+
+
+# --- powiadomienie o każdej aktualizacji feedu (wycofanie profilu z prawem zapisu) -------------------
+
+def test_update_listeners_run_on_every_accepted_update_after_the_registry_swap():
+    seen: list = []
+    upd = _updater(MemStore())
+    unsub = upd.add_update_listener(lambda: seen.append(sorted(pf.feed_ids())))
+    assert _run(upd.async_check(Fetch(_ok(_body(generated_at=T0))))) == "updated"
+    assert seen == [["acme-hybrid"]]
+    assert _run(upd.async_check(Fetch(pf.FeedFetch("not_modified")))) == "unchanged"
+    assert _run(upd.async_check(Fetch(_ok(_body(generated_at=T0))))) == "unchanged"
+    assert _run(upd.async_check(Fetch(_ok(_body(generated_at="2026-10-13T08:00:00.000Z"))))) == "rejected"
+    assert _run(upd.async_check(Fetch(pf.FeedFetch("error")))) == "error"
+    assert len(seen) == 1
+    # te same id (bez „nowych profili”), ale inny feed — np. wycofany certyfikat
+    assert _run(upd.async_check(Fetch(_ok(_body(feed=_feed([_acme(label="Acme 2")], generated_at=T1)))))) \
+        == "updated"
+    assert seen == [["acme-hybrid"], ["acme-hybrid"]]
+    unsub()
+    unsub()                                                       # drugie zdjęcie bez błędu
+    assert _run(upd.async_check(Fetch(_ok(_body(feed=_feed([], generated_at="2026-10-16T08:00:00.000Z")))))) \
+        == "updated"
+    assert len(seen) == 2
+
+
+def test_failing_update_listener_never_undoes_the_update_or_skips_the_others():
+    seen: list = []
+    upd = _updater(MemStore())
+
+    def boom():
+        raise RuntimeError("listener failed")
+    upd.add_update_listener(boom)
+    upd.add_update_listener(lambda: seen.append(True))
+    assert _run(upd.async_check(Fetch(_ok(_body())))) == "updated"
+    assert seen == [True] and upd.held is not None and "acme-hybrid" in pf.feed_ids()
+
+
+def test_stored_future_dated_feed_from_an_older_version_never_blocks_the_next_feed():
+    # Zapisany przez wersję bez granicy; data liczona zegarem aktualizatora (2026-10-20), nie ściennym.
+    future = "2026-10-25T00:00:00.000Z"
+    store = MemStore({"document": _doc(generated_at=future), "floor": future, "checked_at": 0})
+    upd = _updater(store)
+    _run(upd.async_load())
+    assert upd.held is None and "acme-hybrid" not in pf.feed_ids()
+    assert _run(upd.async_check(Fetch(_ok(_body(generated_at="2026-10-20T06:00:00.000Z"))))) == "updated"
+    assert "acme-hybrid" in pf.feed_ids()
+
+
+def test_stored_feed_within_a_day_ahead_of_the_clock_still_loads():
+    store = MemStore({"document": _doc(generated_at="2026-10-20T20:00:00.000Z"), "checked_at": 0})
+    upd = _updater(store)
+    _run(upd.async_load())
+    assert upd.held is not None and "acme-hybrid" in pf.feed_ids()

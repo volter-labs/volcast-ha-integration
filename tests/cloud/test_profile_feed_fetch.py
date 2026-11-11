@@ -194,7 +194,7 @@ def _fetcher(cloud, feed):
 
 
 def _due_updater(store=None, keys=KEYS):
-    clock = types.SimpleNamespace(t=1_000_000.0)
+    clock = types.SimpleNamespace(t=1_792_454_400.0)     # 2026-10-20 UTC (po dacie feedów testowych)
     upd = pf.ProfileFeedUpdater(store or _Store(), keys=keys, clock=lambda: clock.t)
     clock.t += pf.FEED_FIRST_CHECK_DELAY_S
     return upd, clock
@@ -222,7 +222,7 @@ async def test_hanging_feed_fetch_does_not_delay_refresh_and_one_in_flight():
 @pytest.mark.asyncio
 async def test_feed_check_not_started_before_due_or_without_keys():
     cloud = _Cloud()
-    clock = types.SimpleNamespace(t=1_000_000.0)
+    clock = types.SimpleNamespace(t=1_792_454_400.0)     # 2026-10-20 UTC (po dacie feedów testowych)
     early = pf.ProfileFeedUpdater(_Store(), keys=KEYS, clock=lambda: clock.t)
     f = _fetcher(cloud, early)
     await asyncio.wait_for(f.async_refresh(), 1)

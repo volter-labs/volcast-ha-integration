@@ -131,6 +131,7 @@ aplikacji zamyka tę możliwość.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, replace
@@ -161,7 +162,7 @@ from ..core.engines.time_window import baseline_programs, compress
 from ..core.guard_state import WriteBudget
 from ..core.modbus.writer import KEPT
 from ..core.params import Params
-from ..core.profile import direct_verified, writes_allowed
+from ..core.profile import ORIGIN_FEED_ENDORSED, direct_verified, writes_allowed
 from ..core.registers import RegisterWrite
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from ..core.write_sequence import ERROR as WRITE_ERROR, OK as WRITE_OK
@@ -287,7 +288,7 @@ class VolcastExecutor:
                  clock: Callable[[], float] = time.monotonic, utcnow=dt_util.utcnow,
                  stop_timeout_s: float = STOP_WRITE_TIMEOUT_S, lock: asyncio.Lock | None = None,
                  mode_unique_id: str | None = None, io: DeviceIO | None = None,
-                 on_released: Callable[[], None] | None = None) -> None:
+                 on_released: Callable[[], None] | None = None, withdrawn: bool = False) -> None:
         self._hass = hass
         self._entry = entry
         self._choice = choice
@@ -381,6 +382,9 @@ class VolcastExecutor:
         self._cloud_consent: bool | None = None        # ostatnia zgoda z chmury w tym przebiegu
         self._mirror_on_pending = False                # zgoda „on” z chmury czeka na bramki HA
         self._mirror_off_pending = False               # wyłączenie w HA niedoręczone do chmury
+        # profil z feedu stracił prawo zapisu (wycofany, bez ważnego certyfikatu, inna treść): żadnego zapisu
+        # planu ani drabiny — każdy cykl już tylko oddaje falownik mapą zaufaną przy przejęciu
+        self._withdrawn = withdrawn
 
     # ── stan dla encji i telemetrii ───────────────────────────────────────
     @property
@@ -410,6 +414,11 @@ class VolcastExecutor:
         return self._profile
 
     @property
+    def withdrawn(self) -> bool:
+        """Profil z feedu stracił prawo zapisu: wykonawca tylko oddaje falownik, potem przeładowanie wpisu."""
+        return self._withdrawn
+
+    @property
     def last_write_end(self) -> float | None:
         """Koniec naszego ostatniego zapisu w trybie bezpośrednim (zegar monotoniczny)."""
         return self._last_write_end
@@ -429,7 +438,8 @@ class VolcastExecutor:
         nie próba bez zapisu i nie tryb „tylko plan”."""
         trial = self._direct is not None and self._direct.trial
         # Profil spoza pakietu (podpisany feed) jest tylko do odczytu — drabina nigdy nie pisze.
-        return (writes_allowed(self._profile) and self._state.consent is True and self._state.local_switch
+        return (writes_allowed(self._profile) and not self._withdrawn
+                and self._state.consent is True and self._state.local_switch
                 and not self._stopped
                 and not self._frozen and not self._disabled and not trial and not self._state.plan_only
                 and self._entry.options.get(OPT_CONTROL_MODE) == self.io.kind)
@@ -505,11 +515,11 @@ class VolcastExecutor:
 
         True = odczyt zwrotny równy, False = różny albo odmowa, None = bez wyniku (brak potwierdzonej
         tożsamości, odczytu trybu albo błąd łącza). Bez własności i migawki — wartość się nie zmienia."""
-        if self._profile is None or self._stopped or self._frozen or self._disabled \
+        if self._profile is None or self._stopped or self._frozen or self._disabled or self._withdrawn \
                 or not writes_allowed(self._profile):     # profil z feedu: tylko odczyt
             return None
         async with self._lock:
-            if self._state.plan_only or self._stopped or self._frozen or self._disabled:
+            if self._state.plan_only or self._stopped or self._frozen or self._disabled or self._withdrawn:
                 # Wybór własnego sterownika albo rozładunek w trakcie czekania na blokadę — po zapisie
                 # trybu neutralnego przy zatrzymaniu żaden zapis kontrolny już nie idzie.
                 return None
@@ -628,7 +638,11 @@ class VolcastExecutor:
             # Falownik może zostać przy naszej ostatniej komendzie — właściciel musi to wiedzieć.
             self._create_issue(f"control_error_{self._entry.entry_id}", "control_error")
             return
-        if self._drop_foreign_owner():
+        changed = self._drop_foreign_owner()
+        if self._state.owned and self._state.trusted_profile is None and self._trusted_copy() is not None:
+            self._state.trusted_profile = self._trusted_copy()   # własność sprzed tego pola: kopia od teraz
+            changed = True
+        if changed:
             await self._async_save("control state")
         self._load_budget()
         if self._state.plan_raw is not None:
@@ -750,7 +764,7 @@ class VolcastExecutor:
         self._abandoned = False
 
         async def guarded(w):
-            if self._frozen or self._stopped:
+            if self._frozen or self._stopped or self._withdrawn:
                 self._abandoned = True
                 return _ABANDONED
             return await write(w)
@@ -1010,6 +1024,7 @@ class VolcastExecutor:
             st.restore_keys = None
             st.taken_over = []
             st.tou_snapshot = None
+            st.trusted_profile = None
             return True
         if not (self._state.owned or self._state.snapshot) or not self._state.owner:
             return False
@@ -1033,6 +1048,7 @@ class VolcastExecutor:
         self._state.restore_keys = None
         self._state.taken_over = []
         self._state.tou_snapshot = None
+        self._state.trusted_profile = None
         return True
 
     async def _async_timer(self, _now=None) -> None:
@@ -1325,6 +1341,37 @@ class VolcastExecutor:
         except Exception as err:  # noqa: BLE001 — usuwanie wpisu nie może się wywrócić
             _LOGGER.error("Volcast control: return to the baseline mode failed (%s)", type(err).__name__)
 
+    async def async_withdraw(self, reload: Callable[[], None]) -> None:
+        """Profil z feedu stracił prawo zapisu (wycofany, bez ważnego certyfikatu albo inna treść).
+
+        Od razu: żaden zapis planu ani drabiny (także reszta sekwencji cyklu w toku — `_unless_stopping`),
+        potem pełny powrót (`async_restore_now`: tryb, nastawy z migawki, przełącznik zdalnego sterowania)
+        profilem z pamięci — tym, który był zaufany przy przejęciu i migawce. `reload` (przeładowanie wpisu)
+        dopiero po oddaniu własności: nieudany powrót ponawia każdy cykl, a przeładowanie czeka na niego
+        (rekord nie trafia do porzucenia bez powrotu). Bez własności — przeładowanie od razu."""
+        if self._withdrawn or self._stopped:
+            return
+        self._withdrawn = True
+        called = False
+
+        def once() -> None:
+            nonlocal called
+            if not called:
+                called = True
+                reload()
+        self._on_released = once
+        await self.async_restore_now()
+        if not self._state.owned:
+            once()
+        self._notify()
+
+    def _trusted_copy(self) -> dict | None:
+        """Kopia profilu z prawem zapisu z feedu do rekordu własności (powrót po restarcie bez tego profilu);
+        profil z pakietu — None."""
+        if getattr(self._profile, "origin", None) != ORIGIN_FEED_ENDORSED:
+            return None
+        return json.loads(json.dumps(dict(self._profile.raw)))
+
     async def _async_save(self, what: str, *, force: bool = False) -> bool:
         """Zapis stanu; wyłączony wykonawca nigdy, zatrzymany tylko z `force` (powrót w toku)."""
         if self._disabled or (self._stopped and not force):
@@ -1418,7 +1465,8 @@ class VolcastExecutor:
                                              self._started_utc))
         if (needs_restore(owned=self._state.owned, consent=gates.consent, local_switch=gates.local_switch,
                           control_mode=gates.control_mode, active_mode=self.io.kind)
-                or (self._state.owned and (self._verification_hold() or released or self._handback_pending))) \
+                or (self._state.owned and (self._verification_hold() or released or self._handback_pending
+                                           or self._withdrawn))) \
                 and self._io_ready():
             # Także w pauzie i przy kolizji: powrót nie rusza kluczy, które zmienił właściciel.
             await self._restore(rd)
@@ -1426,6 +1474,10 @@ class VolcastExecutor:
                 self._verify_restore = False
                 self._handback_pending = False
             await self._persist_budget()
+            return
+        if self._withdrawn:
+            # Profil bez prawa zapisu: nic poza powrotem (powyżej, gdy jest co oddać i łącze gotowe).
+            self._finish(CycleDecision(IDLE, "profile_withdrawn"))
             return
         if released:
             self._finish(CycleDecision(IDLE, "no_plan"))
@@ -1883,7 +1935,8 @@ class VolcastExecutor:
         if snap is None or self._state.owned:
             return replace(d, status=BLOCKED, reason="baseline_unknown")
         prev = (self._state.owned, dict(self._state.snapshot), dict(self._state.owner),
-                self._state.restore_keys, list(self._state.taken_over), self._state.tou_snapshot)
+                self._state.restore_keys, list(self._state.taken_over), self._state.tou_snapshot,
+                self._state.trusted_profile)
         snapshot = take_snapshot(rd.readings)
         if snapshot_missing(snapshot, self.io.snapshot_keys()):
             return replace(d, status=BLOCKED, reason="baseline_unknown")
@@ -1893,9 +1946,10 @@ class VolcastExecutor:
         self._state.restore_keys = []
         self._state.taken_over = []
         self._state.tou_snapshot = snap
+        self._state.trusted_profile = self._trusted_copy()
         if not await self._async_save("baseline snapshot"):
             (self._state.owned, self._state.snapshot, self._state.owner, self._state.restore_keys,
-             self._state.taken_over, self._state.tou_snapshot) = prev
+             self._state.taken_over, self._state.tou_snapshot, self._state.trusted_profile) = prev
             return replace(d, status=ERROR, reason="store_failed")
         return d
 
@@ -1983,6 +2037,7 @@ class VolcastExecutor:
         self._state.owner = self._owner()
         self._state.restore_keys = []
         self._state.taken_over = []
+        self._state.trusted_profile = self._trusted_copy()
         if not await self._async_save("baseline snapshot"):
             # Bez trwałej migawki restart nie wiedziałby, co przywrócić — nie piszemy.
             self._state.owned = False
@@ -1990,6 +2045,7 @@ class VolcastExecutor:
             self._state.owner = before_owner
             self._state.restore_keys = None
             self._state.taken_over = []
+            self._state.trusted_profile = None
             return replace(decision, status=ERROR, reason="store_failed")
         # Nowa migawka z bieżących nastaw — zgłoszenie o porzuconym rekordzie jest nieaktualne.
         ir.async_delete_issue(self._hass, DOMAIN, self._record_dropped_issue_id)
@@ -2594,6 +2650,7 @@ class VolcastExecutor:
         self._state.restore_keys = None
         self._state.taken_over = []
         self._state.tou_snapshot = None
+        self._state.trusted_profile = None
         self._memory.last_written.clear()
         self._memory.live_export = self._memory.live_export.forget_written()
         await self._async_save("baseline state", force=True)

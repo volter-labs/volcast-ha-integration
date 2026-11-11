@@ -24,6 +24,11 @@ własnego sterownika): bez zapisów i bez ponownych napraw o konflikcie. `confli
 `[kind, label]` konfliktów sterowników, przy których właściciel wybrał sterowanie Volcast: nie
 zatrzymują drabiny ponownie (także po restarcie); złe wpisy pomijane.
 
+`trusted_profile` — kopia profilu z feedu z prawem zapisu (`feed_endorsed`), którym przejęto falownik,
+zapisana razem z migawką. Gdy po restarcie feed nie daje już tej treści z prawem zapisu (profil wycofany,
+bez ważnego certyfikatu, inna treść), powrót do migawki idzie tą kopią — po ponownym sprawdzeniu jej
+certyfikatu — zamiast porzucenia rekordu. Profil z pakietu: brak pola (zapis rekordu jak dotąd).
+
 `nvm_log` — ramki zapisu do pamięci nieulotnej falownika w oknie budżetu (`[klucz, czas UTC]`),
 żeby budżet przeżył restart i przeładowanie.
 
@@ -71,6 +76,7 @@ class ControlState:
     plan_only: bool = False
     conflict_ack: list = field(default_factory=list)
     control_meta: dict = field(default_factory=dict)
+    trusted_profile: dict | None = None
 
 
 def control_meta_clean(raw) -> dict:
@@ -170,10 +176,13 @@ class ControlStore:
             tou_snapshot=tou_snapshot, nvm_log=_nvm_log(raw.get("nvm_log")),
             verification=dict(verification) if verification else {}, plan_only=b("plan_only", False),
             conflict_ack=conflict_ack_pairs(raw.get("conflict_ack")),
-            control_meta=control_meta_clean(raw.get("control_meta")))
+            control_meta=control_meta_clean(raw.get("control_meta")),
+            trusted_profile=trusted if isinstance(trusted := raw.get("trusted_profile"), dict) else None)
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)
+        if data.get("trusted_profile") is None:
+            data.pop("trusted_profile", None)      # bez kopii (profil z pakietu) — rekord jak dotąd
         mode_uid = data["owner"].pop("mode_uid", None)
         if mode_uid:
             data[_OWNER_MODE_UID] = mode_uid
