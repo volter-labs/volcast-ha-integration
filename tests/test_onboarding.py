@@ -213,6 +213,53 @@ def test_rejection_after_takeover_reaches_the_control_mode_step():
                                             "detail": "inverter rejects control writes"}
 
 
+def test_rejection_that_happened_before_the_watch_was_attached_is_not_lost():
+    # Wybór sterowania encjami przeładowuje wpis; nowy wykonawca przejmuje i dostaje odmowę, zanim onboarding
+    # podepnie sygnał (pierwsze odczyty). Stan bieżący jest stosowany przy podpięciu.
+    ob, client, entry = _entities_choice()
+
+    async def go():
+        await ob.async_run()
+        ob._live_until = NOW + timedelta(days=1)
+        new_ex = SimpleNamespace(write_rejected=True, on_write_rejected_change=None,
+                                 refresh_entity_gaps=MagicMock())      # zmiana już się dokonała
+        ob.test_rt.executor = new_ex
+        await ob.async_on_readings()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        return new_ex
+    new_ex = asyncio.run(go())
+    assert callable(new_ex.on_write_rejected_change)
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "error",
+                                            "detail": "inverter rejects control writes"}
+
+
+def test_readings_path_attaches_the_watch_even_while_a_retry_is_running():
+    ob, client, _ = _entities_choice()
+
+    async def go():
+        await ob.async_run()
+        ob._live_until = NOW + timedelta(days=1)
+        ob._readings_retry_busy = True                                 # wczesny powrót w `async_on_readings`
+        new_ex = SimpleNamespace(write_rejected=False, on_write_rejected_change=None,
+                                 refresh_entity_gaps=MagicMock())
+        old_ex = ob.test_rt.executor
+        ob.test_rt.executor = new_ex
+        await ob.async_on_readings()
+        return old_ex, new_ex
+    old_ex, new_ex = asyncio.run(go())
+    assert callable(new_ex.on_write_rejected_change) and old_ex.on_write_rejected_change is None
+
+
+def test_watch_is_attached_once_per_executor():
+    ob, _, _ = _entities_choice()
+    asyncio.run(ob.async_run())
+    ex = ob.test_rt.executor
+    first = ex.on_write_rejected_change
+    ob.watch_rejection()
+    assert ex.on_write_rejected_change is first
+
+
 def test_rejection_cleared_returns_the_step_to_done():
     ob, client, _ = _entities_choice()
     _reject_after_run(ob, True, False)

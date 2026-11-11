@@ -191,6 +191,7 @@ class Onboarding:
         self._direct_report = None             # raport sondy z rozpoznanym falownikiem (bez integracji w HA)
         self._inverter_integration = False
         self._rejection_tasks: set = set()
+        self._watched = None                   # wykonawca z podpiętym sygnałem odrzucenia zapisu
         self._offer: dict | None = None        # oferta kroku `control_mode` (gdy w stanie `choice`)
         self._searched = False                 # wyszukiwanie falownika już było (start albo wybór `direct`)
         self.account_state = None              # ostatni `AccountState` z chmury (None: brak/błąd)
@@ -312,7 +313,15 @@ class Onboarding:
         ex = getattr(self._runtime(), "executor", None)
         if ex is None or not hasattr(ex, "on_write_rejected_change"):
             return
-        ex.on_write_rejected_change = lambda: self._on_rejection_change(ex)
+        old = self._watched
+        if old is not ex:
+            if old is not None and hasattr(old, "on_write_rejected_change"):
+                old.on_write_rejected_change = None       # poprzedni wykonawca (przed przeładowaniem) — bez wycieku
+            self._watched = ex
+            ex.on_write_rejected_change = lambda: self._on_rejection_change(ex)
+        # Odrzucenie, które zdarzyło się przed podpięciem (nowy wykonawca po przeładowaniu tyka od razu),
+        # nie ginie: stan bieżący stosujemy zaraz po podpięciu.
+        self._on_rejection_change(ex)
 
     def _on_rejection_change(self, executor) -> None:
         if not self._live() or self.stopped:
@@ -701,9 +710,9 @@ class Onboarding:
     async def async_on_readings(self) -> None:
         """Pierwsza przyjęta telemetria z odczytem: ponów pierwszy plan (tylko w oknie na żywo, z limitem
         prób i odstępem cooldownu chmury). Wynik inny niż „brak odczytów/błąd planera" — nic nie robi."""
+        self.watch_rejection()                    # nowy przebieg po przeładowaniu wpisu = nowy wykonawca (każda ścieżka)
         if self._readings_retry_busy or self.stopped:
             return
-        self.watch_rejection()                    # nowy przebieg po przeładowaniu wpisu = nowy wykonawca
         self._readings_retry_busy = True
         try:
             if not self._may_retry_on_readings():
