@@ -47,6 +47,8 @@ FEED_MAX_BYTES = 2 * 1024 * 1024
 FEED_SCHEMA_VERSION = 1
 FEED_FIRST_CHECK_DELAY_S = 300
 FEED_CHECK_INTERVAL_S = 24 * 3600
+# Najkrótszy odstęp między sprawdzeniami wywołanymi podpowiedzią ETag z planu.
+FEED_HINT_MIN_INTERVAL_S = 900
 # Twardy limit całego sprawdzenia (pobranie + weryfikacja + zapis) — zadanie w tle nigdy nie wisi.
 FEED_CHECK_TIMEOUT_S = 90.0
 FEED_MAX_PROFILES = 500
@@ -496,6 +498,7 @@ class ProfileFeedUpdater:
         self._loaded = False
         self._load_lock = asyncio.Lock()
         self._busy = False
+        self._last_hint_check: float | None = None
         self.held: VerifiedFeed | None = None
         # Najnowsze przyjęte `generated_at` (zapisywane obok feedu) — anty-rollback także wtedy, gdy
         # trzymanego feedu nie da się już zweryfikować (np. po rotacji klucza).
@@ -507,6 +510,22 @@ class ProfileFeedUpdater:
 
     def due(self) -> bool:
         return self.active and not self._busy and self._clock() >= self._next_check
+
+    def hint(self, etag: Any) -> bool:
+        """Podpowiedź ETag z planu: True = sprawdź teraz (ETag różny od trzymanego feedu, nie wcześniej
+        niż `FEED_HINT_MIN_INTERVAL_S` po poprzednim sprawdzeniu z podpowiedzi). Rytm dobowy bez zmian;
+        do czasu wczytania magazynu (pierwsze sprawdzenie) podpowiedzi są ignorowane."""
+        if not self.active or self._busy or not self._loaded:
+            return False
+        if not isinstance(etag, str) or not etag:
+            return False
+        if self.held is not None and etag == self.held.etag:
+            return False
+        now = self._clock()
+        if self._last_hint_check is not None and now - self._last_hint_check < FEED_HINT_MIN_INTERVAL_S:
+            return False
+        self._last_hint_check = now
+        return True
 
     def defer(self) -> None:
         """Następne sprawdzenie za dobę (np. po przekroczeniu limitu czasu — bez ponawiania co 5 min)."""

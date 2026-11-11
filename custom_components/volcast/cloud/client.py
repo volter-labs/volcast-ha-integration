@@ -251,7 +251,7 @@ def _set_controller_result(status: int, data: Any) -> SetControllerResult:
 
 
 class VolcastCloud:
-    """Plan (`get-schedule`, zawsze `?contract=3`), telemetria, import historii i lustro zgody
+    """Plan (`get-schedule`, zawsze `?contract=4`), telemetria, import historii i lustro zgody
     (`set-controller` kluczem API)."""
 
     def __init__(self, session, api_key: str, backend: Backend) -> None:
@@ -264,7 +264,7 @@ class VolcastCloud:
 
     async def async_get_schedule(self) -> dict | None:
         try:
-            async with self._s.get(f"{self._b.schedule}?contract=3", headers=self._headers(),
+            async with self._s.get(f"{self._b.schedule}?contract=4", headers=self._headers(),
                                    timeout=_TIMEOUT, allow_redirects=False) as resp:
                 if resp.status == 401:
                     raise CloudAuthError

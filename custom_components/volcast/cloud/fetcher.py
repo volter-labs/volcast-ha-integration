@@ -42,7 +42,7 @@ UPDATE_ISSUE_ID = "update_available"
 _ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 # Pola odpowiedzi poza treścią planu: ich zmiana nie wywołuje ponownej akceptacji planu.
 _NOT_IN_SIGNATURE = ("control_enabled", "signals", "control", "latest_version", "plan_meta",
-                     "discovery_request")
+                     "discovery_request", "profile_feed")
 
 
 def _is_newer(latest: str, current: str) -> bool:
@@ -121,6 +121,7 @@ class ScheduleFetcher:
             await self._on_consent(consent)
         result = await self._async_plan(raw)
         self._start_discovery(raw)
+        self._start_profile_feed(hint=self._feed_hint(raw))
         return result
 
     async def _async_plan(self, raw: dict) -> str:
@@ -139,7 +140,8 @@ class ScheduleFetcher:
             return "rejected"
         # Bloki `signals` i `control` zostają przy swoich odbiorcach — nie trafiają do planu w magazynie.
         await self._on_plan({k: v for k, v in raw.items()
-                             if k not in ("signals", "control", "discovery_request")}, schedule)
+                             if k not in ("signals", "control", "discovery_request", "profile_feed")},
+                            schedule)
         self._last_signature = signature
         self._last_rejected = None
         return "accepted"
@@ -168,16 +170,22 @@ class ScheduleFetcher:
         await asyncio.sleep(0)
         await async_send_bounded(self._discovery, block)
 
-    def _start_profile_feed(self) -> None:
-        """Sprawdzenie feedu profili jako zadanie w tle, gdy należne; trwające nie dostaje drugiego.
-        Błąd startu nie wywraca odświeżenia."""
+    @staticmethod
+    def _feed_hint(raw: dict) -> str | None:
+        block = raw.get("profile_feed")
+        etag = block.get("etag") if isinstance(block, dict) else None
+        return etag if isinstance(etag, str) and etag else None
+
+    def _start_profile_feed(self, hint: str | None = None) -> None:
+        """Sprawdzenie feedu profili jako zadanie w tle, gdy należne albo gdy plan podpowiada nowy ETag;
+        trwające nie dostaje drugiego. Błąd startu nie wywraca odświeżenia."""
         if self._stopped or self._feed is None:
             return
         if self._feed_task is not None and not self._feed_task.done():
             return
         coro = None
         try:
-            if not self._feed.due():
+            if not (self._feed.due() or (hint is not None and self._feed.hint(hint))):
                 return
             coro = self._run_profile_feed()
             if self._hass is not None:

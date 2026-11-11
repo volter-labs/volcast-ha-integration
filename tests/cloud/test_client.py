@@ -61,12 +61,12 @@ def test_backend_round_trip_ignores_extra_keys():
 
 # ----------------------------------------------------------------- VolcastCloud
 
-def test_schedule_url_has_contract_3_and_key_header():
+def test_schedule_url_has_contract_4_and_key_header():
     s = FakeSession()
     s.add("GET", BACKEND["schedule"], 200, {"slots": [], "control_enabled": False})
     out = run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_get_schedule())
     assert out == {"slots": [], "control_enabled": False}
-    assert s.calls[0]["url"] == BACKEND["schedule"] + "?contract=3"
+    assert s.calls[0]["url"] == BACKEND["schedule"] + "?contract=4"
     assert s.calls[0]["headers"] == {"X-API-Key": KEY}
 
 
@@ -363,7 +363,7 @@ def test_schedule_redirect_is_refused_and_key_stays_home(code):
     s.add("GET", BACKEND["schedule"], code, None, headers={"Location": EVIL})
     s.add("GET", EVIL, 200, {"slots": []})
     assert run(VolcastCloud(s, KEY, Backend.from_dict(BACKEND)).async_get_schedule()) is None
-    assert [c["url"] for c in s.calls] == [BACKEND["schedule"] + "?contract=3"]
+    assert [c["url"] for c in s.calls] == [BACKEND["schedule"] + "?contract=4"]
     assert _all_calls_safe(s)
 
 

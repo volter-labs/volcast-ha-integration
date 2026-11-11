@@ -194,6 +194,31 @@ def test_plan_callback_never_receives_signals_block():
     assert len(seen) == 1 and "signals" not in seen[0]
 
 
+def test_profile_feed_hint_is_outside_the_plan_signature_and_the_stored_plan():
+    """Podpowiedź ETag nie wpływa na deduplikację i nie trafia do planu w magazynie."""
+    seen = []
+
+    async def on_plan(raw, sched):
+        seen.append(raw)
+
+    async def noop(*_a):
+        return None
+
+    f = ScheduleFetcher(Cloud(doc(profile_feed={"etag": '"a"'}), doc(profile_feed={"etag": '"b"'}),
+                              doc(price_note=1, profile_feed={"etag": '"b"'})),
+                        on_plan=on_plan, on_consent=noop, on_auth_failure=noop, on_signals=noop)
+    assert asyncio.run(f.async_refresh()) == "accepted"
+    assert asyncio.run(f.async_refresh()) == "unchanged"
+    assert asyncio.run(f.async_refresh()) == "accepted"          # prawdziwa zmiana treści nadal przechodzi
+    assert len(seen) == 2 and all("profile_feed" not in r for r in seen)
+
+
+def test_tampered_plan_with_profile_feed_is_still_rejected():
+    bad = doc(slots=({"from": "x", "to": "y", "mode": "self_consume"},), profile_feed={"etag": '"a"'})
+    f, got = make(bad)
+    assert asyncio.run(f.async_refresh()) == "rejected" and got["plans"] == []
+
+
 # ------------------------------------------------------- zgłoszenie update_available
 
 def _issues(monkeypatch, current):

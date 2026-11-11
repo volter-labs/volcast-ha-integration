@@ -278,6 +278,133 @@ async def test_no_feed_check_after_stop():
     assert cloud.feed_calls == 0
 
 
+# --- podpowiedź ETag z planu --------------------------------------------------------------------
+
+class _HintCloud(_Cloud):
+    def __init__(self, etag=None, with_field=True):
+        super().__init__()
+        self.etag = etag
+        self.with_field = with_field
+        self.hang = False
+
+    async def async_get_schedule(self):
+        raw = await super().async_get_schedule()
+        if self.with_field:
+            raw["profile_feed"] = {"etag": self.etag}
+        return raw
+
+    async def async_get_profile_feed(self, etag):
+        self.feed_calls += 1
+        return pf.FeedFetch("error")
+
+
+def _loaded_updater(held_etag='"held"'):
+    """Odświeżacz z wczytanym magazynem i trzymanym feedem (po dobowym sprawdzeniu)."""
+    upd, clock = _due_updater()
+    upd._loaded = True
+    upd.held = types.SimpleNamespace(etag=held_etag, profiles={})
+    upd._next_check = clock.t + pf.FEED_CHECK_INTERVAL_S      # rytm dobowy jeszcze nie należny
+    return upd, clock
+
+
+async def _refresh(f):
+    await asyncio.wait_for(f.async_refresh(), 1)
+    if f._feed_task is not None:
+        await asyncio.wait_for(f._feed_task, 1)
+
+
+@pytest.mark.asyncio
+async def test_different_etag_triggers_exactly_one_fetch():
+    cloud = _HintCloud('"new"')
+    upd, _ = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    assert cloud.feed_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_second_different_etag_waits_for_the_minimum_interval():
+    cloud = _HintCloud('"new"')
+    upd, clock = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    cloud.etag = '"newer"'
+    clock.t += 300
+    await _refresh(f)
+    assert cloud.feed_calls == 1
+    clock.t += 600                                       # razem 15 min od poprzedniego
+    await _refresh(f)
+    assert cloud.feed_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_same_etag_does_not_fetch():
+    cloud = _HintCloud('"held"')
+    upd, _ = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    assert cloud.feed_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_no_field_leaves_only_the_daily_rhythm():
+    cloud = _HintCloud(with_field=False)
+    upd, clock = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    assert cloud.feed_calls == 0
+    clock.t += pf.FEED_CHECK_INTERVAL_S
+    await _refresh(f)
+    assert cloud.feed_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [None, "", 5, {"x": 1}])
+async def test_malformed_hint_is_ignored(bad):
+    cloud = _HintCloud(bad)
+    upd, _ = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    assert cloud.feed_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_hint_is_ignored_before_the_store_is_loaded():
+    cloud = _HintCloud('"new"')
+    upd, _ = _due_updater()
+    upd._next_check += pf.FEED_CHECK_INTERVAL_S
+    f = _fetcher(cloud, upd)
+    await _refresh(f)
+    assert cloud.feed_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_error_after_a_hint_does_not_break_the_plan():
+    class Boom(_HintCloud):
+        async def async_get_profile_feed(self, etag):
+            self.feed_calls += 1
+            raise RuntimeError("down")
+    cloud = Boom('"new"')
+    upd, _ = _loaded_updater()
+    f = _fetcher(cloud, upd)
+    assert await asyncio.wait_for(f.async_refresh(), 1) in ("accepted", "rejected")
+    await asyncio.wait_for(f._feed_task, 1)
+    assert cloud.feed_calls == 1
+    assert await asyncio.wait_for(f.async_refresh(), 1) == "unchanged"
+
+
+@pytest.mark.asyncio
+async def test_hint_error_never_breaks_refresh():
+    class Broken:
+        def due(self):
+            return False
+
+        def hint(self, _etag):
+            raise RuntimeError("x")
+    f = _fetcher(_HintCloud('"new"'), Broken())
+    assert await asyncio.wait_for(f.async_refresh(), 1) in ("accepted", "rejected")
+
+
 # --- warstwa HA: magazyn, klucze, Naprawa -------------------------------------------------------
 
 class _Entries:
