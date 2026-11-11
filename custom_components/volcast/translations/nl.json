@@ -465,6 +465,18 @@
       "title": "Sommige omvormerinstellingen zijn niet beschikbaar voor Volcast",
       "description": "Volcast kan deze omvormerinstellingen niet gebruiken omdat hun entiteiten ontbreken, uitgeschakeld of niet beschikbaar zijn: {entities}. De besturing gaat zonder deze instellingen door en het Volcast-plan vertrouwt er niet meer op. Zodra de entiteiten weer beschikbaar zijn, gebruikt Volcast ze automatisch."
     },
+    "control_entities_disabled": {
+      "title": "Besturingsentiteiten van de omvormer zijn uitgeschakeld",
+      "description": "Volcast kan de omvormer niet aansturen omdat deze entiteiten van de omvormerintegratie zijn uitgeschakeld: {entities}. Open Instellingen > Apparaten en services > Entiteiten, selecteer elk ervan en schakel het in. Volcast merkt de wijziging zelf op en deze melding verdwijnt."
+    },
+    "control_entities_missing": {
+      "title": "Besturingsentiteiten van de omvormer niet gevonden",
+      "description": "Volcast kan de omvormer niet aansturen omdat de omvormerintegratie geen entiteiten levert voor deze instellingen: {entities}. De integratie staat waarschijnlijk in de alleen-lezen modus. Open de opties van de integratie (Instellingen > Apparaten en services), sta het wijzigen van omvormerinstellingen of bediening op afstand toe en laad de integratie daarna opnieuw. Tot die tijd leest Volcast alleen gegevens en maakt het plannen."
+    },
+    "control_write_rejected": {
+      "title": "De omvormer accepteert geen besturingscommando's",
+      "description": "De omvormer heeft een besturingscommando van Volcast geweigerd of niet uitgevoerd ({settings}). Schrijven naar de omvormer staat waarschijnlijk uit. Schakel schrijven of bediening op afstand in bij de opties van de omvormerintegratie of in de omvormer zelf. Volcast probeert het dan zelf opnieuw en deze melding verdwijnt. Tot die tijd stuurt Volcast de omvormer niet aan."
+    },
     "controller_conflict": {
       "title": "Een andere regelaar bestuurt je omvormer",
       "fix_flow": {

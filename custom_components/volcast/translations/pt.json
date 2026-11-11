@@ -465,6 +465,18 @@
       "title": "Algumas definições do inversor não estão disponíveis para o Volcast",
       "description": "O Volcast não pode utilizar estas definições do inversor porque as respetivas entidades estão em falta, desativadas ou indisponíveis: {entities}. O controlo continua sem elas e o plano do Volcast deixa de depender delas. Quando as entidades voltarem a estar disponíveis, o Volcast utiliza-as automaticamente."
     },
+    "control_entities_disabled": {
+      "title": "As entidades de controlo do inversor estão desativadas",
+      "description": "O Volcast não consegue controlar o inversor porque estas entidades da integração do inversor estão desativadas: {entities}. Abre Definições > Dispositivos e serviços > Entidades, seleciona cada uma e ativa-a. O Volcast repara na alteração por si e este aviso desaparece."
+    },
+    "control_entities_missing": {
+      "title": "Entidades de controlo do inversor não encontradas",
+      "description": "O Volcast não consegue controlar o inversor porque a integração do inversor não disponibiliza entidades para estas definições: {entities}. A integração está provavelmente em modo só de leitura. Abre as opções da integração (Definições > Dispositivos e serviços), permite alterar as definições do inversor ou o controlo remoto e volta a carregar a integração. Até lá, o Volcast só lê dados e planeia."
+    },
+    "control_write_rejected": {
+      "title": "O inversor não aceita comandos de controlo",
+      "description": "O inversor recusou ou não aplicou um comando de controlo do Volcast ({settings}). A escrita no inversor está provavelmente desativada. Ativa a escrita ou o controlo remoto nas opções da integração do inversor ou no próprio inversor. O Volcast tenta de novo por si e este aviso desaparece. Até lá, o Volcast não controla o inversor."
+    },
     "controller_conflict": {
       "title": "Outro controlador está a controlar o seu inversor",
       "fix_flow": {

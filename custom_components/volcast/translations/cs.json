@@ -465,6 +465,18 @@
       "title": "Některá nastavení střídače nejsou pro Volcast dostupná",
       "description": "Volcast nemůže tato nastavení střídače používat, protože jejich entity chybí, jsou vypnuté nebo nedostupné: {entities}. Řízení pokračuje bez nich a plán Volcast se na ně už nespoléhá. Jakmile budou entity opět dostupné, Volcast je použije automaticky."
     },
+    "control_entities_disabled": {
+      "title": "Řídicí entity střídače jsou zakázané",
+      "description": "Volcast nemůže střídač ovládat, protože tyto entity integrace střídače jsou zakázané: {entities}. Otevři Nastavení > Zařízení a služby > Entity, vyber každou z nich a povol ji. Volcast změnu sám zaznamená a toto upozornění zmizí."
+    },
+    "control_entities_missing": {
+      "title": "Řídicí entity střídače nenalezeny",
+      "description": "Volcast nemůže střídač ovládat, protože integrace střídače neposkytuje entity pro tato nastavení: {entities}. Integrace je pravděpodobně v režimu pouze pro čtení. Otevři možnosti integrace (Nastavení > Zařízení a služby), povol změnu nastavení střídače nebo dálkové ovládání a integraci poté znovu načti. Do té doby Volcast jen čte data a plánuje."
+    },
+    "control_write_rejected": {
+      "title": "Střídač nepřijímá řídicí příkazy",
+      "description": "Střídač odmítl nebo neprovedl řídicí příkaz z Volcastu ({settings}). Zápis do střídače je pravděpodobně vypnutý. Zapni zápis nebo dálkové ovládání v možnostech integrace střídače či přímo ve střídači. Volcast to pak sám zkusí znovu a toto upozornění zmizí. Do té doby Volcast střídač neřídí."
+    },
     "controller_conflict": {
       "title": "Jiný regulátor řídí váš střídač",
       "fix_flow": {

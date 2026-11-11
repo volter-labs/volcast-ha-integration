@@ -1,10 +1,11 @@
 """Naprawy: konflikt sterowników, zatrzymana weryfikacja, nieudany wybór z aplikacji (prawdziwy HA)."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
 from custom_components.volcast import repairs
@@ -69,3 +70,52 @@ async def test_choice_failed_issue_cleared_by_later_choice(hass: HomeAssistant, 
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
     assert await rt.async_apply_controller_choice("volcast") == "applied"
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+MODE_ENTITY = "select.goodwe_ems_mode"
+
+
+def _issue(hass, entry, prefix):
+    return ir.async_get(hass).async_get_issue(DOMAIN, f"{prefix}_{entry.entry_id}")
+
+
+async def _setup_without_mode(hass, hass_storage, *, remove: bool):
+    await async_setup_inverter(hass)
+    reg = er.async_get(hass)
+    if remove:
+        reg.async_remove(MODE_ENTITY)
+    else:
+        reg.async_update_entity(MODE_ENTITY, disabled_by=er.RegistryEntryDisabler.USER)
+    await hass.async_block_till_done()
+    store_state(hass_storage, "paired01", dict(GATES))
+    entry = make_entry(hass, options=ENTITY_OPTIONS)
+    await setup_entry(hass, entry)
+    return entry, control_of(hass, entry), reg
+
+
+async def test_disabled_control_entity_raises_issue_and_clears_after_enabling(
+        hass: HomeAssistant, network_down, hass_storage):
+    entry, rt, reg = await _setup_without_mode(hass, hass_storage, remove=False)
+    await rt.executor.async_tick()
+    issue = _issue(hass, entry, "control_entities_disabled")
+    assert issue is not None and issue.translation_key == "control_entities_disabled"
+    assert issue.translation_placeholders == {"entities": MODE_ENTITY}
+    assert _issue(hass, entry, "control_entities_missing") is None
+    rt.executor.request_reload = MagicMock()
+    reg.async_update_entity(MODE_ENTITY, disabled_by=None)
+    await rt.executor.async_tick()
+    assert _issue(hass, entry, "control_entities_disabled") is None
+    rt.executor.request_reload.assert_called_once()                # mapowanie dopiero po przeładowaniu
+
+
+async def test_absent_control_entity_raises_issue_and_clears_when_it_appears(
+        hass: HomeAssistant, network_down, hass_storage):
+    entry, rt, reg = await _setup_without_mode(hass, hass_storage, remove=True)
+    await rt.executor.async_tick()
+    issue = _issue(hass, entry, "control_entities_missing")
+    assert issue is not None and issue.translation_placeholders == {"entities": "mode"}
+    assert _issue(hass, entry, "control_entities_disabled") is None
+    reg.async_get_or_create("select", "goodwe", "goodwe-ems_mode-" + "X", suggested_object_id="goodwe_ems_mode")
+    rt.executor.request_reload = MagicMock()
+    await rt.executor.async_tick()
+    assert _issue(hass, entry, "control_entities_missing") is None

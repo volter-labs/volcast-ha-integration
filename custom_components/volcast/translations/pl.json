@@ -465,6 +465,18 @@
       "title": "Część ustawień falownika jest niedostępna dla Volcast",
       "description": "Volcast nie może używać tych ustawień falownika, ponieważ ich encje są brakujące, wyłączone lub niedostępne: {entities}. Sterowanie działa dalej bez nich, a plan Volcast już na nich nie polega. Gdy encje znów będą dostępne, Volcast użyje ich automatycznie."
     },
+    "control_entities_disabled": {
+      "title": "Encje sterujące falownikiem są wyłączone",
+      "description": "Volcast nie może sterować falownikiem, ponieważ te encje integracji falownika są wyłączone: {entities}. Otwórz Ustawienia > Urządzenia i usługi > Encje, wybierz każdą z nich i włącz ją. Volcast sam zauważy zmianę, a to zgłoszenie zniknie."
+    },
+    "control_entities_missing": {
+      "title": "Nie znaleziono encji sterujących falownikiem",
+      "description": "Volcast nie może sterować falownikiem, ponieważ integracja falownika nie udostępnia encji dla tych ustawień: {entities}. Integracja jest prawdopodobnie w trybie tylko do odczytu. Otwórz opcje integracji (Ustawienia > Urządzenia i usługi), zezwól na zmianę ustawień falownika lub zdalne sterowanie, a potem przeładuj integrację. Do tego czasu Volcast tylko odczytuje dane i planuje."
+    },
+    "control_write_rejected": {
+      "title": "Falownik nie przyjmuje poleceń sterujących",
+      "description": "Falownik odrzucił lub nie zastosował polecenia sterującego z Volcast ({settings}). Zapis do falownika jest prawdopodobnie wyłączony. Włącz zapis lub zdalne sterowanie w opcjach integracji falownika albo w samym falowniku. Volcast sam ponowi próbę, a to zgłoszenie zniknie. Do tego czasu Volcast nie steruje falownikiem."
+    },
     "controller_conflict": {
       "title": "Falownikiem steruje inny sterownik",
       "fix_flow": {

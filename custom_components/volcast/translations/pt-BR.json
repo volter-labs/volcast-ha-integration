@@ -465,6 +465,18 @@
       "title": "Algumas configurações do inversor não estão disponíveis para o Volcast",
       "description": "O Volcast não consegue usar estas configurações do inversor porque as respectivas entidades estão ausentes, desativadas ou indisponíveis: {entities}. O controle continua sem elas e o plano do Volcast deixa de depender delas. Quando as entidades voltarem a ficar disponíveis, o Volcast as usa automaticamente."
     },
+    "control_entities_disabled": {
+      "title": "As entidades de controle do inversor estão desativadas",
+      "description": "O Volcast não consegue controlar o inversor porque estas entidades da integração do inversor estão desativadas: {entities}. Abra Configurações > Dispositivos e serviços > Entidades, selecione cada uma e ative-a. O Volcast percebe a mudança sozinho e este aviso desaparece."
+    },
+    "control_entities_missing": {
+      "title": "Entidades de controle do inversor não encontradas",
+      "description": "O Volcast não consegue controlar o inversor porque a integração do inversor não fornece entidades para estas configurações: {entities}. A integração provavelmente está em modo somente leitura. Abra as opções da integração (Configurações > Dispositivos e serviços), permita alterar as configurações do inversor ou o controle remoto e recarregue a integração. Até lá, o Volcast apenas lê dados e planeja."
+    },
+    "control_write_rejected": {
+      "title": "O inversor não aceita comandos de controle",
+      "description": "O inversor recusou ou não aplicou um comando de controle do Volcast ({settings}). A gravação no inversor provavelmente está desativada. Ative a gravação ou o controle remoto nas opções da integração do inversor ou no próprio inversor. O Volcast tenta de novo sozinho e este aviso desaparece. Até lá, o Volcast não controla o inversor."
+    },
     "controller_conflict": {
       "title": "Outro controlador está controlando seu inversor",
       "fix_flow": {

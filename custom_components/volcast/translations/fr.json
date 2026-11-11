@@ -465,6 +465,18 @@
       "title": "Certains réglages de l'onduleur ne sont pas disponibles pour Volcast",
       "description": "Volcast ne peut pas utiliser ces réglages de l'onduleur, car leurs entités sont manquantes, désactivées ou indisponibles : {entities}. Le pilotage continue sans eux et le plan Volcast ne s'appuie plus dessus. Lorsque les entités redeviennent disponibles, Volcast les utilise automatiquement."
     },
+    "control_entities_disabled": {
+      "title": "Les entités de contrôle de l'onduleur sont désactivées",
+      "description": "Volcast ne peut pas piloter l'onduleur, car ces entités de l'intégration de l'onduleur sont désactivées : {entities}. Ouvre Paramètres > Appareils et services > Entités, sélectionne chacune d'elles et active-la. Volcast remarque le changement tout seul et cet avis disparaît."
+    },
+    "control_entities_missing": {
+      "title": "Entités de contrôle de l'onduleur introuvables",
+      "description": "Volcast ne peut pas piloter l'onduleur, car l'intégration de l'onduleur ne fournit aucune entité pour ces réglages : {entities}. L'intégration est probablement en mode lecture seule. Ouvre les options de l'intégration (Paramètres > Appareils et services), autorise la modification des réglages de l'onduleur ou la commande à distance, puis recharge l'intégration. D'ici là, Volcast se contente de lire les données et de planifier."
+    },
+    "control_write_rejected": {
+      "title": "L'onduleur n'accepte pas les commandes de contrôle",
+      "description": "L'onduleur a refusé ou n'a pas appliqué une commande de contrôle de Volcast ({settings}). L'écriture vers l'onduleur est probablement désactivée. Active l'écriture ou la commande à distance dans les options de l'intégration de l'onduleur ou sur l'onduleur lui-même. Volcast réessaie ensuite tout seul et cet avis disparaît. D'ici là, Volcast ne pilote pas l'onduleur."
+    },
     "controller_conflict": {
       "title": "Un autre contrôleur pilote votre onduleur",
       "fix_flow": {

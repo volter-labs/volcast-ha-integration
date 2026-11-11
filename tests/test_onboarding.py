@@ -68,7 +68,7 @@ class Client:
 
 
 def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, prices=None, options=None,
-         imported=None, choice=None, entry=None, rated=8000.0, inverter_entities=()):
+         imported=None, choice=None, entry=None, rated=8000.0, inverter_entities=(), gaps=None, rejected=False):
     t = [NOW]
 
     def utcnow():
@@ -91,11 +91,16 @@ def make(polls, *, plan=None, report=REPORT, mapped=WRITE_KEYS, clock_step=60, p
     rt = SimpleNamespace(choice=choice or ProfileChoice(load_builtin("goodwe-et"), "goodwe", "GW8KN-ET"),
                          mapped={k: f"x.{k}" for k in mapped}, rated_power_w=rated, fetcher=fetch,
                          inverter_entities=frozenset(inverter_entities))
+    if gaps is not None:
+        rt.entity_gaps = lambda: gaps
+    rt.executor = SimpleNamespace(write_rejected=rejected, refresh_entity_gaps=MagicMock())
+    rt.executor_calls = rt.executor.refresh_entity_gaps
     client = Client(polls, plan)
     ob = Onboarding(hass, "e1", client=client, session=S, live_until=NOW + timedelta(minutes=30),
                     runtime=lambda: rt, report=lambda: report,
                     import_history=lambda: _ret({"accepted": 1392} if imported is None else imported),
                     utcnow=utcnow, sleep=sleep, discovery_wait_s=0.0, choice_poll_s=5.0)
+    ob.test_rt = rt
     return ob, client, entry
 
 
@@ -161,6 +166,52 @@ def test_remote_entities_choice_not_ready_is_error(mapped, choice):
     assert "control_mode" not in entry.options
     assert st["control_mode"] == {"key": "control_mode", "state": "error",
                                   "detail": "inverter control entities not found"}
+
+
+def _entities_choice(**kw):
+    return make([PollResult("consumed", choices={"control_mode": "entities"})], plan=OK_PLAN, **kw)
+
+
+def test_disabled_control_entities_give_the_disabled_phrase():
+    from custom_components.volcast.control.executor import ControlGaps
+    ob, client, entry = _entities_choice(mapped=WRITE_KEYS[1:], gaps=ControlGaps(disabled=("select.gw_mode",)))
+    asyncio.run(ob.async_run())
+    assert "control_mode" not in entry.options
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "error",
+                                            "detail": "inverter control entities disabled"}
+    ob.test_rt.executor_calls.assert_called_with(force=True)      # zgłoszenie w Naprawach od razu
+
+
+def test_missing_control_entities_keep_the_not_found_phrase():
+    from custom_components.volcast.control.executor import ControlGaps
+    ob, client, entry = _entities_choice(mapped=WRITE_KEYS[1:], gaps=ControlGaps(missing=("mode",)))
+    asyncio.run(ob.async_run())
+    assert last(client)["control_mode"]["detail"] == "inverter control entities not found"
+    ob.test_rt.executor_calls.assert_called_with(force=True)
+
+
+def test_rejected_control_writes_give_the_rejects_phrase_and_no_option():
+    ob, client, entry = _entities_choice(rejected=True)
+    asyncio.run(ob.async_run())
+    assert "control_mode" not in entry.options
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "error",
+                                            "detail": "inverter rejects control writes"}
+
+
+def test_rejected_writes_with_entity_control_already_chosen_show_the_phrase():
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, rejected=True,
+                         options={"control_mode": "entities", "profile_id": "goodwe-et",
+                                  "inverter_domain": "goodwe"})
+    asyncio.run(ob.async_run())
+    assert last(client)["control_mode"] == {"key": "control_mode", "state": "error",
+                                            "detail": "inverter rejects control writes"}
+
+
+def test_capabilities_list_the_remote_switch_and_directional_set_points():
+    keys = (*WRITE_KEYS, "enable", "charge_power_w", "discharge_power_w")
+    ob, client, _ = make([PollResult("consumed", choices={})], plan=OK_PLAN, mapped=keys)
+    asyncio.run(ob.async_run())
+    assert last(client)["capabilities"]["detail"] == ", ".join(sorted(keys))
 
 
 def test_capabilities_read_only_when_mode_entity_missing():

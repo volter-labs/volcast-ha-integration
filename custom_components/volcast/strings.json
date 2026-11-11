@@ -413,6 +413,18 @@
       "title": "Some inverter settings are not available to Volcast",
       "description": "Volcast cannot use these inverter settings because their entities are missing, disabled or unavailable: {entities}. Control continues without them and the Volcast plan no longer relies on them. When the entities become available again, Volcast uses them automatically."
     },
+    "control_entities_disabled": {
+      "title": "Inverter control entities are disabled",
+      "description": "Volcast cannot control the inverter because these entities of the inverter integration are disabled: {entities}. Open Settings > Devices & services > Entities, select each of them and enable it. Volcast notices the change on its own and this notice disappears."
+    },
+    "control_entities_missing": {
+      "title": "Inverter control entities not found",
+      "description": "Volcast cannot control the inverter because the inverter integration provides no entities for these settings: {entities}. The integration is probably in read-only mode. Open the integration options (Settings > Devices & services), allow changing inverter settings or remote control, then reload the integration. Until then Volcast only reads data and plans."
+    },
+    "control_write_rejected": {
+      "title": "The inverter does not accept control commands",
+      "description": "The inverter refused or did not apply a control command from Volcast ({settings}). Writing to the inverter is probably turned off. Enable writing or remote control in the inverter integration options or in the inverter itself. Volcast then tries again on its own and this notice disappears. Until then Volcast does not control the inverter."
+    },
     "direct_identity_changed": {
       "title": "Volcast found a different inverter at the saved address",
       "description": "The device answering at the saved inverter address is not the inverter Volcast was set up with. Control is stopped. Search for your inverter again in the Volcast options."

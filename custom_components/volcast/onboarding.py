@@ -81,7 +81,8 @@ STEP_KEYS = ("account", "inverter", "installation", "capabilities", "control_mod
              "consumption", "first_plan")
 _STATES = frozenset({"pending", "active", "done", "choice", "error"})
 _MAX_DETAIL = 200
-_WRITE_KEYS = frozenset({"mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled"})
+_WRITE_KEYS = frozenset({"mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled",
+                         "enable", "charge_power_w", "discharge_power_w"})
 # Kod błędu planera z chmury (jak `KOD_BLEDU` po stronie serwera).
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 # Cooldown `request_plan` po stronie chmury to 2 min — ponawiamy tuż po nim.
@@ -103,6 +104,9 @@ PLAN_UNAVAILABLE = "planner unavailable"
 QUEUED = "queued"
 NONE_FOUND = "none found"
 NOT_READY = "inverter control entities not found"
+# Dokładnie te napisy rozpoznaje aplikacja (słownik fraz kroków) — nie zmieniać bez zmiany po jej stronie.
+CONTROL_DISABLED = "inverter control entities disabled"      # encje są, ale wyłączone
+CONTROL_REJECTED = "inverter rejects control writes"          # urządzenie odrzuca zapisy sterujące
 READ_ONLY_NO_READINGS = "read only, no readings"
 NO_READINGS = "no readings"
 NO_READINGS_CODE = "no_readings"
@@ -299,6 +303,31 @@ class Onboarding:
             update["options"] = {k: v for k, v in options.items() if v is not None}
         self._hass.config_entries.async_update_entry(entry, **update)
 
+    @staticmethod
+    def _write_rejected(rt) -> bool:
+        return getattr(getattr(rt, "executor", None), "write_rejected", False) is True
+
+    @staticmethod
+    def _open_gap_issues(rt) -> None:
+        """Zgłoszenia w Naprawach od razu, bez czekania na cykl wykonawcy (nigdy nie rzuca)."""
+        refresh = getattr(getattr(rt, "executor", None), "refresh_entity_gaps", None)
+        if callable(refresh):
+            try:
+                refresh(force=True)
+            except Exception as err:  # noqa: BLE001 — onboarding nie zależy od zgłoszeń
+                _LOGGER.debug("Volcast onboarding: repair issue skipped (%s)", type(err).__name__)
+
+    def _not_ready_reason(self, rt) -> str:
+        """Dlaczego sterowanie encjami nie jest gotowe: encje są, ale wyłączone, albo ich nie ma."""
+        self._open_gap_issues(rt)
+        gaps_of = getattr(rt, "entity_gaps", None)
+        try:
+            gaps = gaps_of() if callable(gaps_of) else None
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Volcast onboarding: entity gap check skipped (%s)", type(err).__name__)
+            return NOT_READY
+        return CONTROL_DISABLED if gaps is not None and gaps.disabled else NOT_READY
+
     def _control_ready(self, rt) -> bool:
         """Ta sama reguła co w opcjach (`entity_mode_ready`)."""
         return entity_mode_ready(getattr(rt, "choice", None), getattr(rt, "mapped", None) or {})
@@ -392,7 +421,9 @@ class Onboarding:
         else:
             await self._set("capabilities", "done", "read only")
         mode = self._options().get(OPT_CONTROL_MODE)
-        if mode in (CONTROL_MODE_ENTITIES, CONTROL_MODE_DIRECT):
+        if mode == CONTROL_MODE_ENTITIES and self._write_rejected(rt):
+            await self._set("control_mode", "error", CONTROL_REJECTED)
+        elif mode in (CONTROL_MODE_ENTITIES, CONTROL_MODE_DIRECT):
             await self._set("control_mode", "done", mode)
         elif "control_mode" in self._applied():
             await self._set("control_mode", "done")      # zastosowany wcześniej; opcje wygrywają
@@ -714,7 +745,10 @@ class Onboarding:
             return "done", mode, False            # drugi kanał tej samej decyzji — bez wywołań
         if mode == CONTROL_MODE_ENTITIES:
             if not self._control_ready(rt):
-                return "error", NOT_READY, False
+                return "error", self._not_ready_reason(rt), False
+            if self._write_rejected(rt):
+                self._open_gap_issues(rt)
+                return "error", CONTROL_REJECTED, False
             patch.update(entity_mode_options(rt.choice))
             await self._leave_plan_only(rt)
             return "done", CONTROL_MODE_ENTITIES, True

@@ -64,20 +64,21 @@ from ..const import (DEFAULT_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_EN
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
                      SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED)
-from ..core.control.caps import direct_capabilities, entity_mode_options, entity_mode_ready
+from ..core.control.caps import direct_capabilities, entity_mode_options, entity_mode_ready, required_write_keys
 from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
 from ..core.control.recommend import recommend
-from ..core.control.select import InverterHint, ProfileChoice, select_profile
+from ..core.control.select import InverterHint, ProfileChoice, control_verified, select_profile
 from ..core.discovery.known import INVERTER_DOMAINS
-from ..core.entity_map import EntityCandidate, resolve_entities, resolve_work_mode_entity
+from ..core.entity_map import EntityCandidate, _integration, resolve_entities, resolve_work_mode_entity
+from ..core.regex_safety import safe_search
 from ..core.modbus.views import UNCORRELATED_KINDS
 from ..registry_compat import all_devices, device_config_entry_ids
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
 from .direct import DirectConnection
 from .conflicts import ConflictMonitor
-from .executor import VolcastExecutor
+from .executor import ControlGaps, VolcastExecutor
 from .ha_writer import EntityServiceWriter
 from .history_import import async_import_history_once
 from .live import LiveSender
@@ -226,6 +227,10 @@ class ControlRuntime:
     # wykonawca slotów ładowarki EV (`LoadsExecutor`), obok wykonawcy falownika
     loads_executor: object | None = None
     _meta_dirty: bool = False
+
+    def entity_gaps(self) -> ControlGaps:
+        """Encje sterujące profilu wyłączone albo nieobecne (z rejestru encji), z bieżącą mapą."""
+        return control_entity_gaps(self.hass, self.choice, self.mapped)
 
     @property
     def telemetry_reports_production(self) -> bool:
@@ -617,6 +622,44 @@ def _entity_candidates(hass, integration_domain: str) -> list[EntityCandidate]:
         unit = (st.attributes.get("unit_of_measurement") if st else None) or getattr(e, "unit_of_measurement", None)
         cands.append(EntityCandidate(e.entity_id, e.platform, e.unique_id or "", unit))
     return cands
+
+
+def control_entity_gaps(hass, choice: ProfileChoice | None, mapped: Mapping[str, str]) -> ControlGaps:
+    """Klucze zapisu wymagane do sterowania, które nie mają zmapowanej encji, i dlaczego.
+
+    Tylko profil zweryfikowany dla tej integracji (inaczej sterowania i tak nie ma). Encja, którą rejestr
+    zna, ale ma `disabled_by`, trafia do `disabled`; klucz bez żadnej pasującej encji — do `missing`
+    (integracja w trybie tylko do odczytu); włączona pasująca encja, której mapa jeszcze nie ma — do
+    `recovered`. Pasuje tylko platforma integracji falownika, wzorzec i domena encji z profilu.
+    """
+    domain = choice.integration_domain if choice is not None else None
+    if choice is None or not domain or not control_verified(choice.profile, domain):
+        return ControlGaps()
+    absent = [k for k in required_write_keys(choice.profile) if k not in mapped]
+    if not absent:
+        return ControlGaps()
+    try:
+        specs = _integration(choice.profile, domain)["entities"]
+    except KeyError:
+        return ControlGaps()
+    registry = list(er.async_get(hass).entities.values())
+    disabled: list[str] = []
+    missing: list[str] = []
+    recovered: list[str] = []
+    for key in absent:
+        spec = specs.get(key)
+        hits = [] if spec is None else [
+            e for e in registry
+            if e.platform == domain and e.entity_id.split(".", 1)[0] == spec["domain"]
+            and safe_search(spec["unique_id_regex"], e.unique_id or "")]
+        enabled = [e for e in hits if not getattr(e, "disabled_by", None)]
+        if enabled:
+            recovered.append(key)
+        elif hits:
+            disabled.extend(sorted(e.entity_id for e in hits))
+        else:
+            missing.append(key)
+    return ControlGaps(tuple(dict.fromkeys(disabled)), tuple(missing), tuple(recovered))
 
 
 def map_entities(hass, choice: ProfileChoice | None) -> dict[str, str]:
@@ -1082,6 +1125,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                             hass=hass, entry=entry, loads_executor=loads_executor)
 
         telemetry.control_runtime = rt
+        executor.entity_gaps_source = rt.entity_gaps
+        executor.request_reload = lambda: _schedule_reload(hass, entry.entry_id)
 
         def _first_readings() -> None:
             """Pierwsza przyjęta telemetria z odczytem: onboarding ponawia pierwszy plan (jeśli żyje)."""

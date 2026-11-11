@@ -133,7 +133,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
@@ -249,6 +249,26 @@ _WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 
 _Reading = Reading                 # dawna nazwa (odczyt jednego cyklu)
 
+# Powody blokady cyklu, które znaczą „urządzenie nie przyjmie przełącznika zdalnego sterowania".
+_REJECTED_REASONS = frozenset({"enable_unsupported", "enable_refused"})
+_SWITCH_KEY = "enable"
+
+
+@dataclass(frozen=True)
+class ControlGaps:
+    """Encje sterujące profilu, których wykonawca nie może użyć (liczone z rejestru encji).
+
+    `disabled` — entity_id encji z rejestru wyłączonych; `missing` — klucze zapisu bez żadnej encji
+    (integracja w trybie tylko do odczytu); `recovered` — klucze, których encja już jest i jest włączona,
+    ale mapowanie wykonawcy jej jeszcze nie zna (pomaga dopiero przeładowanie wpisu).
+    """
+    disabled: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
+    recovered: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.disabled or self.missing or self.recovered)
+
 # Odmowa `set-controller` przy włączaniu przełącznikiem (wynik klienta) → klucz zgłoszenia w Naprawach.
 _CONSENT_REFUSAL_KEYS = {
     "no_readings": "consent_no_readings",
@@ -304,6 +324,14 @@ class VolcastExecutor:
         self._absent_since: dict[str, float] = {}     # klucz zapisu → od kiedy bez używalnej encji
         self.unsupported_settings: tuple[str, ...] = ()       # nieobsługiwane (w kolejności profilu)
         self._unsupported_issue: tuple[str, ...] = ()
+        # luki w encjach sterujących (wyłączone / nieobecne): źródło ustawia runtime, bez niego brak zgłoszeń
+        self.entity_gaps_source: Callable[[], ControlGaps] | None = None
+        self.request_reload: Callable[[], None] | None = None     # przeładowanie wpisu po włączeniu encji
+        self._gaps_requested = False                  # onboarding poprosił o zgłoszenie przed wyborem sterowania
+        self._gaps_shown: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
+        self._gaps_seen = False                       # w tym przebiegu była luka (tylko wtedy przeładowanie)
+        self._reload_asked = False
+        self._rejected_issue: tuple[str, ...] = ()    # klucze zapisu odrzucone przez urządzenie
         # ostatnie odczyty kluczy zapisu przy włączonym sterowaniu (odniesienie przejęcia)
         self._consistent: dict[str, float | str] = {}
         self._brake_warned = False                    # ostrzeżenie hamulca raz na epizod
@@ -650,6 +678,9 @@ class VolcastExecutor:
             ir.async_delete_issue(self._hass, DOMAIN, self._budget_issue_id)
         ir.async_delete_issue(self._hass, DOMAIN, self._unsupported_issue_id)
         self._unsupported_issue = ()
+        self._clear_gap_issues()
+        self._rejected_issue = ()
+        ir.async_delete_issue(self._hass, DOMAIN, self._rejected_issue_id)
         self.clear_consent_issues()
         if not self._lock.locked():
             return
@@ -853,6 +884,84 @@ class VolcastExecutor:
     @property
     def _unsupported_issue_id(self) -> str:
         return f"unsupported_setting_{self._entry.entry_id}"
+
+    @property
+    def _gaps_disabled_issue_id(self) -> str:
+        return f"control_entities_disabled_{self._entry.entry_id}"
+
+    @property
+    def _gaps_missing_issue_id(self) -> str:
+        return f"control_entities_missing_{self._entry.entry_id}"
+
+    @property
+    def _rejected_issue_id(self) -> str:
+        return f"control_write_rejected_{self._entry.entry_id}"
+
+    @property
+    def write_rejected(self) -> bool:
+        """Urządzenie odrzuciło zapis sterujący (przy przejęciu albo przełącznik zdalnego sterowania)."""
+        return bool(self._rejected_issue)
+
+    def refresh_entity_gaps(self, *, force: bool = False) -> None:
+        """Zgłoszenia „encje sterujące wyłączone / nieobecne” z rejestru encji; znikają po naprawie.
+
+        Bez `force` tylko przy wybranym sterowaniu encjami; `force` (onboarding, wybór sterowania
+        odrzucony) pokazuje je od razu i do końca przebiegu. Encje, które pojawiły się po zgłoszeniu
+        (włączone albo dodane przez integrację), wymagają przeładowania wpisu — wykonawca nie zna ich
+        mapowania; prosimy o nie raz na przebieg i tylko po wcześniej zgłoszonej luce.
+        """
+        if force:
+            self._gaps_requested = True
+        source = self.entity_gaps_source
+        if source is None:
+            return
+        try:
+            gaps = source()
+        except Exception as err:  # noqa: BLE001 — zgłoszenie nigdy nie psuje cyklu
+            _LOGGER.debug("Volcast control: entity gap check skipped (%s)", type(err).__name__)
+            return
+        wanted = self._gaps_requested or self._entry.options.get(OPT_CONTROL_MODE) == self.io.kind
+        shown = (gaps.disabled, gaps.missing) if wanted else ((), ())
+        if shown != self._gaps_shown:
+            old_disabled, old_missing = self._gaps_shown
+            self._gaps_shown = shown
+            if shown[0] != old_disabled:
+                if shown[0]:
+                    self._create_issue(self._gaps_disabled_issue_id, "control_entities_disabled",
+                                       {"entities": ", ".join(shown[0])})
+                else:
+                    ir.async_delete_issue(self._hass, DOMAIN, self._gaps_disabled_issue_id)
+            if shown[1] != old_missing:
+                if shown[1]:
+                    self._create_issue(self._gaps_missing_issue_id, "control_entities_missing",
+                                       {"entities": ", ".join(shown[1])})
+                else:
+                    ir.async_delete_issue(self._hass, DOMAIN, self._gaps_missing_issue_id)
+        if shown[0] or shown[1]:
+            self._gaps_seen = True
+        if not gaps.recovered:
+            self._reload_asked = False
+        elif self._gaps_seen and not self._reload_asked and self.request_reload is not None:
+            self._reload_asked = True
+            _LOGGER.info("Volcast control: inverter control entities are available again — reloading")
+            self.request_reload()
+
+    def _clear_gap_issues(self) -> None:
+        self._gaps_shown = ((), ())
+        ir.async_delete_issue(self._hass, DOMAIN, self._gaps_disabled_issue_id)
+        ir.async_delete_issue(self._hass, DOMAIN, self._gaps_missing_issue_id)
+
+    def _set_write_rejected(self, keys: tuple[str, ...] | None) -> None:
+        """Zgłoszenie „urządzenie odrzuca zapisy sterujące”; `None` = zapisy przechodzą / sterowanie stoi."""
+        keys = keys or ()
+        if keys == self._rejected_issue:
+            return
+        self._rejected_issue = keys
+        if keys:
+            _LOGGER.warning("Volcast control: the inverter did not accept the control write of %s", list(keys))
+            self._create_issue(self._rejected_issue_id, "control_write_rejected", {"settings": ", ".join(keys)})
+        else:
+            ir.async_delete_issue(self._hass, DOMAIN, self._rejected_issue_id)
 
     def _write_keys(self) -> tuple[str, ...]:
         if self._profile is None:
@@ -1278,7 +1387,9 @@ class VolcastExecutor:
         live = entities and self._control_on(gates)
         if entities:
             self._track_unsupported(absent, now_mono, live)
+            self.refresh_entity_gaps()
             if not live:
+                self._set_write_rejected(None)
                 self._consistent = {}        # wyłączone sterowanie: żadnego odniesienia przejęcia
         if trial and self._state.owned:
             # Próba przy własności z wcześniejszej sesji: pisarz bez zapisu nie odda falownika.
@@ -1394,6 +1505,7 @@ class VolcastExecutor:
             decision = self._gate_write(decision)
         if decision.status == WRITE and snapshot_unsaved:
             decision = replace(decision, status=ERROR, reason="store_failed")
+        taking = decision.status == WRITE and not self._state.owned
         if decision.status == WRITE and not self._state.owned:
             decision = await self._async_take_ownership(
                 decision, rd.readings, tuple(live_map) if entities else self.io.snapshot_keys())
@@ -1409,6 +1521,8 @@ class VolcastExecutor:
             commit(decision, report, self._memory, now_mono,
                    now_wall=now_utc.timestamp() if self._direct is None else None)
             self._log_report(decision, report)
+            if self._direct is None:
+                self._note_rejection(report, taking)
             if self._note_written([*report.written, *report.ambiguous, *report.restored, *extra]):
                 await self._async_save("control state")
             if self._direct is None:
@@ -1464,6 +1578,8 @@ class VolcastExecutor:
 
     def _finish(self, decision) -> None:
         self.last_decision = decision
+        if decision.reason in _REJECTED_REASONS:
+            self._set_write_rejected((_SWITCH_KEY,))
         self._count(decision)
 
     def _gate_write(self, decision):
@@ -2549,6 +2665,15 @@ class VolcastExecutor:
         if (failed or report.unsupported) and not report.error:
             _LOGGER.info("Volcast control: failed=%s unsupported=%s group_held=%s",
                          failed, report.unsupported, report.group_skipped)
+
+    def _note_rejection(self, report: GroupReport, taking: bool) -> None:
+        """Zapis odrzucony przez urządzenie: przy przejęciu każda nastawa, później przełącznik zdalnego
+        sterowania (pozostałe porażki to zwykłe ponowienia). Czysty zapis zdejmuje zgłoszenie."""
+        bad = tuple(dict.fromkeys([*report.failed, *report.unsupported]))
+        if bad and (taking or _SWITCH_KEY in bad):
+            self._set_write_rejected(bad)
+        elif not bad and report.written:
+            self._set_write_rejected(None)
 
     def _update_tou_preview(self, now_utc) -> None:
         if not (self._profile and self._profile.control_model == "time_window" and self.schedule

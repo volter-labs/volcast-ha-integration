@@ -78,3 +78,20 @@ def test_german_sell_price_texts_use_the_informal_address_of_the_file():
               de["options"]["abort"]["price_sell_tomorrow"]]
     formal = re.compile(r"\b(Sie|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres)\b")
     assert [t for t in texts if formal.search(t)] == []
+
+
+def test_gap_and_rejection_issues_exist_with_their_placeholders():
+    assert _issue_keys_in_code() >= {"control_entities_disabled", "control_entities_missing",
+                                    "control_write_rejected"}
+    issues = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))["issues"]
+    assert "{entities}" in _description(issues["control_entities_disabled"])
+    assert "{entities}" in _description(issues["control_entities_missing"])
+    assert "{settings}" in _description(issues["control_write_rejected"])
+
+
+def test_german_control_issue_texts_use_the_informal_address():
+    de = json.loads((COMPONENT / "translations" / "de.json").read_text(encoding="utf-8"))
+    formal = re.compile(r"\b(Sie|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres)\b")
+    for key in ("control_entities_disabled", "control_entities_missing", "control_write_rejected"):
+        text = de["issues"][key]["title"] + " " + de["issues"][key]["description"]
+        assert not formal.search(text), key

@@ -465,6 +465,18 @@
       "title": "Einige Wechselrichter-Einstellungen sind für Volcast nicht verfügbar",
       "description": "Volcast kann diese Wechselrichter-Einstellungen nicht verwenden, weil ihre Entitäten fehlen, deaktiviert oder nicht verfügbar sind: {entities}. Die Steuerung läuft ohne sie weiter, und der Volcast-Plan verlässt sich nicht mehr auf sie. Sobald die Entitäten wieder verfügbar sind, nutzt Volcast sie automatisch."
     },
+    "control_entities_disabled": {
+      "title": "Die Steuerungs-Entitäten des Wechselrichters sind deaktiviert",
+      "description": "Volcast kann den Wechselrichter nicht steuern, weil diese Entitäten der Wechselrichter-Integration deaktiviert sind: {entities}. Öffne Einstellungen > Geräte & Dienste > Entitäten, wähle jede davon aus und aktiviere sie. Volcast erkennt die Änderung von selbst und dieser Hinweis verschwindet."
+    },
+    "control_entities_missing": {
+      "title": "Steuerungs-Entitäten des Wechselrichters nicht gefunden",
+      "description": "Volcast kann den Wechselrichter nicht steuern, weil die Wechselrichter-Integration für diese Einstellungen keine Entitäten bereitstellt: {entities}. Die Integration läuft wahrscheinlich im Nur-Lese-Modus. Öffne die Optionen der Integration (Einstellungen > Geräte & Dienste), erlaube das Ändern von Wechselrichter-Einstellungen oder die Fernsteuerung und lade die Integration danach neu. Bis dahin liest Volcast nur Daten und plant."
+    },
+    "control_write_rejected": {
+      "title": "Der Wechselrichter nimmt keine Steuerbefehle an",
+      "description": "Der Wechselrichter hat einen Steuerbefehl von Volcast abgelehnt oder nicht umgesetzt ({settings}). Das Schreiben auf den Wechselrichter ist wahrscheinlich ausgeschaltet. Aktiviere das Schreiben oder die Fernsteuerung in den Optionen der Wechselrichter-Integration oder am Wechselrichter selbst. Volcast versucht es dann von selbst erneut und dieser Hinweis verschwindet. Bis dahin steuert Volcast den Wechselrichter nicht."
+    },
     "controller_conflict": {
       "title": "Ein anderer Regler steuert deinen Wechselrichter",
       "fix_flow": {
