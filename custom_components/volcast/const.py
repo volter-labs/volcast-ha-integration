@@ -62,6 +62,11 @@ OPT_LOAD_ENERGY = "load_energy_entity"
 OPT_PRICE_BUY = "entity_price_buy"
 OPT_PRICE_SELL = "entity_price_sell"
 OPT_PRICE_CURRENCY = "price_currency"
+# Źródło ceny z akcji HA (`return_response`) zamiast encji — słownik `core/price_actions.py`:
+# {"action": "domena.akcja", "data": {...}, "currency"?: "NOK", "home"?: "..."}. Ustawiona akcja
+# wygrywa z encją tej samej strony (kupno / sprzedaż); błędna akcja = brak cen, bez powrotu do encji.
+OPT_PRICE_BUY_ACTION = "price_buy_action"
+OPT_PRICE_SELL_ACTION = "price_sell_action"
 SIGNAL_CONTROL_UPDATED = "volcast_control_updated_{entry_id}"
 # Zmiana stanu onboardingu sterowania (rekomendacja ścieżki, weryfikacja, konflikty) — blok `driver.control`.
 SIGNAL_CONTROL_STATE_UPDATED = "volcast_control_state_updated_{entry_id}"

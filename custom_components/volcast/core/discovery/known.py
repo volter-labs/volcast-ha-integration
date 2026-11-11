@@ -1,6 +1,8 @@
 """Znane integracje HA falowników i cen. Rozszerzane danymi (profile marek)."""
 from __future__ import annotations
 
+from ..price_integrations import REPORTED_PLATFORMS
+
 # domena integracji HA -> marka (tylko podpowiedź w raporcie)
 INVERTER_DOMAINS: dict[str, str] = {
     "goodwe": "GoodWe",          # core i mletenay (ta sama domena)
@@ -24,10 +26,8 @@ INVERTER_MANUFACTURERS: tuple[str, ...] = (
     "solax", "sofar", "foxess", "growatt", "victron", "fronius", "solaredge", "sma",
     "sigenergy",
 )
-PRICE_PLATFORMS: frozenset[str] = frozenset({
-    "nordpool", "entsoe", "tibber", "octopus_energy", "pstryk", "pstryk_aio", "energyzero",
-    "easyenergy", "amber_electric", "epex_spot", "frank_energie",
-})
+# platformy encji cenowych w raporcie — z rejestru integracji cenowych (ta sama tabela co konfiguracja)
+PRICE_PLATFORMS: frozenset[str] = REPORTED_PLATFORMS
 # klucze wpisu konfiguracji, które mogą nieść adres dongla (wszystko inne ignorujemy)
 HOST_KEYS: tuple[str, ...] = ("host", "ip_address", "inverter_host", "address")
 # słowa w nazwie/unique_id sugerujące zużycie domu (priorytet w kandydatach energii)

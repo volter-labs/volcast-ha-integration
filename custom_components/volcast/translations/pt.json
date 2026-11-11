@@ -104,7 +104,8 @@
           "control": "Controlo do inversor",
           "details": "Detalhes da instalação",
           "prices": "Preços da energia",
-          "ev_charger": "Carregador de VE"
+          "ev_charger": "Carregador de VE",
+          "price_source": "Fonte de preços de uma integração"
         }
       },
       "forecast": {
@@ -314,6 +315,32 @@
       "control_telemetry_info": {
         "title": "A calibração da previsão agora usa a telemetria do inversor",
         "description": "Com o controlo do inversor ligado, a Volcast calibra a previsão com a produção que lê do inversor. Os sensores FV associados nas opções de previsão ({mapped}) já não são usados na calibração. Pode mantê-los ou limpá-los."
+      },
+      "price_source": {
+        "title": "Fonte de preços",
+        "description": "Escolha uma fonte de preços detetada no Home Assistant. Para planear só servem fontes com previsão de preços.",
+        "data": {
+          "source": "Fonte"
+        }
+      },
+      "price_source_details": {
+        "title": "Definições da fonte",
+        "description": "Definições de que esta integração precisa para fornecer preços.",
+        "data": {
+          "area": "Zona de licitação (exatamente uma)",
+          "currency": "Moeda (código ISO, p. ex. EUR)",
+          "unit": "Unidade de preço",
+          "incl_vat": "Preços com IVA incluído",
+          "home": "Casa (opcional)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Usar esta fonte de preços?",
+        "description": "Esta fonte fornece uma previsão de preços para as próximas {hours} h. Confirme para a usar no planeamento. Os preços são lidos em {currency}."
+      },
+      "price_source_confirm_sell": {
+        "title": "Usar esta fonte de preços?",
+        "description": "Esta fonte fornece uma previsão de preços para as próximas {hours} h. Os preços são lidos em {currency}. A fonte do preço de venda {source} ainda não fornece preços para amanhã, embora os preços de compra de amanhã já estejam disponíveis. Até que os forneça, o plano de amanhã será baseado nos preços do dia anterior. Confirme para usar esta fonte de preços no planeamento mesmo assim."
       }
     },
     "abort": {
@@ -323,7 +350,10 @@
       "direct_not_found": "Ainda não foi encontrado nenhum inversor. Procure-o primeiro em Detalhes da instalação.",
       "direct_in_use": "Outra entrada Volcast já se liga a este inversor.",
       "restore_failed": "O Volcast não conseguiu repor o inversor nas definições anteriores ao controlo, por isso nada foi alterado. Tente novamente quando o inversor estiver acessível ou desligue o interruptor de controlo do Volcast (o Volcast continua a tentar repor o inversor).",
-      "no_ev_chargers": "Ainda não foi encontrado nenhum carregador de VE. Execute primeiro a deteção e confirme que a integração do carregador está configurada."
+      "no_ev_chargers": "Ainda não foi encontrado nenhum carregador de VE. Execute primeiro a deteção e confirme que a integração do carregador está configurada.",
+      "no_price_sources": "Não foi encontrada nenhuma integração de preços conhecida no Home Assistant. Escolha um sensor em Preços de energia.",
+      "price_source_invalid": "As definições da fonte de preços já não são válidas. Comece de novo.",
+      "price_sell_tomorrow": "As definições de preços de energia foram guardadas. A fonte do preço de venda {source} ainda não fornece preços para amanhã, embora os preços de compra de amanhã já estejam disponíveis. Até que os forneça, o plano de amanhã será baseado nos preços do dia anterior."
     },
     "error": {
       "prices_not_usable": "Este sensor não fornece neste momento uma série de preços completa.",
@@ -339,7 +369,14 @@
       "role_required": "A entidade de estado é obrigatória.",
       "entity_not_found": "A entidade não foi encontrada. Escolha uma entidade existente.",
       "status_without_options": "Escolha um sensor ou select com uma lista de estados possíveis. Um sensor ligado/desligado não mostra o carregamento.",
-      "unit_mismatch": "Uma das entidades indica uma unidade que a Volcast não consegue usar para este valor. Volte atrás e escolha outra entidade."
+      "unit_mismatch": "Uma das entidades indica uma unidade que a Volcast não consegue usar para este valor. Volte atrás e escolha outra entidade.",
+      "prices_current_only": "Este sensor só tem o preço atual. Para planear, use a sua própria tabela de preços na app ou uma integração com previsão.",
+      "price_horizon_short": "A previsão só chega a {hours} h; para planear são precisas pelo menos 6 h de antecedência.",
+      "price_source_unusable": "O Home Assistant não devolveu uma série de preços utilizável desta fonte.",
+      "price_sell_unusable": "O lado da venda desta fonte não tem uma série de preços utilizável.",
+      "price_source_invalid": "Estas definições não descrevem uma fonte utilizável (verifique a zona, a unidade e a moeda).",
+      "currency_conflict": "A moeda da fonte ({source_currency}) difere da definida em Preços de energia ({option_currency}). Altere essa moeda para coincidir ou limpe-a.",
+      "currency_missing": "Indique a moeda: esta fonte não a indica."
     },
     "progress": {
       "direct_search": "A procurar o inversor na rede local. Pode demorar até um minuto."
@@ -383,6 +420,14 @@
     "no_readings": {
       "title": "A Volcast não consegue ler o seu inversor",
       "description": "A Volcast não recebe leituras de carga da bateria, potência FV ou potência da rede, por isso não consegue planear nem controlar. Verifique se a integração do inversor está carregada e se as entidades estão disponíveis, ou escolha as leituras manualmente nas opções da Volcast e depois consulte os registos do Home Assistant."
+    },
+    "prices_sell_no_data": {
+      "title": "A fonte do preço de venda não fornece preços",
+      "description": "A Volcast não está a enviar preços de energia para a cloud da Volcast porque a fonte do preço de venda {source} não fornece preços: a entidade não existe ou está indisponível, ou a ação de preços não devolve um resultado atual. Os preços de compra e de venda são enviados em conjunto, por isso, sem preços de venda, o plano não pode usar preços atuais. Verifique se esta fonte funciona, ou altere ou limpe a fonte do preço de venda nas opções da Volcast."
+    },
+    "prices_sell_no_pair": {
+      "title": "Os preços de venda não correspondem aos preços de compra",
+      "description": "A Volcast não está a enviar preços de energia para a cloud da Volcast porque os preços da fonte do preço de venda {source} não podem ser associados aos preços de compra: estão noutra moeda, ou os seus intervalos de tempo não coincidem com os intervalos dos preços de compra. Sem preços de venda correspondentes, o plano não pode usar preços atuais. Verifique esta fonte ou escolha outra fonte do preço de venda nas opções da Volcast."
     },
     "control_choice_failed": {
       "title": "O Volcast não conseguiu aplicar a sua escolha de controlo",

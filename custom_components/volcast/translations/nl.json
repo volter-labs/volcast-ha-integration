@@ -104,7 +104,8 @@
           "control": "Omvormerbesturing",
           "details": "Installatiegegevens",
           "prices": "Energieprijzen",
-          "ev_charger": "EV-lader"
+          "ev_charger": "EV-lader",
+          "price_source": "Prijsbron uit een integratie"
         }
       },
       "forecast": {
@@ -314,6 +315,32 @@
       "control_telemetry_info": {
         "title": "Kalibratie van de voorspelling gebruikt nu inverter-telemetrie",
         "description": "Zolang inverterregeling aan staat, kalibreert Volcast de voorspelling op basis van de productie die het van de omvormer leest. De PV-sensoren die in de voorspellingsopties zijn gekoppeld ({mapped}) worden niet meer voor de kalibratie gebruikt. Je kunt ze laten staan of leegmaken."
+      },
+      "price_source": {
+        "title": "Prijsbron",
+        "description": "Kies een prijsbron die in Home Assistant is gevonden. Voor planning zijn alleen bronnen met een prijsprognose bruikbaar.",
+        "data": {
+          "source": "Bron"
+        }
+      },
+      "price_source_details": {
+        "title": "Broninstellingen",
+        "description": "Instellingen die deze integratie nodig heeft om prijzen te leveren.",
+        "data": {
+          "area": "Biedzone (precies één)",
+          "currency": "Valuta (ISO-code, bv. EUR)",
+          "unit": "Prijseenheid",
+          "incl_vat": "Prijzen inclusief btw",
+          "home": "Woning (optioneel)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Deze prijsbron gebruiken?",
+        "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. Bevestig om hem voor planning te gebruiken. De prijzen worden gelezen in {currency}."
+      },
+      "price_source_confirm_sell": {
+        "title": "Deze prijsbron gebruiken?",
+        "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. De prijzen worden gelezen in {currency}. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag. Bevestig om deze prijsbron toch voor planning te gebruiken."
       }
     },
     "abort": {
@@ -323,7 +350,10 @@
       "direct_not_found": "Nog geen omvormer gevonden. Zoek hem eerst onder Installatiegegevens.",
       "direct_in_use": "Een ander Volcast-item is al met deze omvormer verbonden.",
       "restore_failed": "Volcast kon de omvormer niet terugzetten naar de instellingen van vóór de besturing, dus er is niets gewijzigd. Probeer het opnieuw wanneer de omvormer bereikbaar is, of zet de Volcast-besturingsschakelaar uit (Volcast blijft proberen de omvormer terug te zetten).",
-      "no_ev_chargers": "Er is nog geen EV-lader gevonden. Voer eerst detectie uit en controleer of de integratie van de lader is ingesteld."
+      "no_ev_chargers": "Er is nog geen EV-lader gevonden. Voer eerst detectie uit en controleer of de integratie van de lader is ingesteld.",
+      "no_price_sources": "Er is in Home Assistant geen bekende prijsintegratie gevonden. Kies een sensor bij Energieprijzen.",
+      "price_source_invalid": "De instellingen van de prijsbron zijn niet meer geldig. Begin opnieuw.",
+      "price_sell_tomorrow": "De instellingen voor energieprijzen zijn opgeslagen. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag."
     },
     "error": {
       "prices_not_usable": "Deze sensor levert op dit moment geen volledige prijsreeks.",
@@ -339,7 +369,14 @@
       "role_required": "De statusentiteit is verplicht.",
       "entity_not_found": "De entiteit is niet gevonden. Kies een bestaande entiteit.",
       "status_without_options": "Kies een sensor of select met een lijst van mogelijke toestanden. Een aan/uit-sensor laat het laden niet zien.",
-      "unit_mismatch": "Een van de entiteiten meldt een eenheid die Volcast voor deze waarde niet kan gebruiken. Ga terug en kies een andere entiteit."
+      "unit_mismatch": "Een van de entiteiten meldt een eenheid die Volcast voor deze waarde niet kan gebruiken. Ga terug en kies een andere entiteit.",
+      "prices_current_only": "Deze sensor heeft alleen de actuele prijs. Gebruik voor planning je eigen prijslijst in de app of een integratie met prognose.",
+      "price_horizon_short": "De prognose reikt maar {hours} uur; voor planning is minstens 6 uur vooruit nodig.",
+      "price_source_unusable": "Home Assistant gaf geen bruikbare prijsreeks van deze bron.",
+      "price_sell_unusable": "De verkoopzijde van deze bron heeft geen bruikbare prijsreeks.",
+      "price_source_invalid": "Deze instellingen beschrijven geen bruikbare bron (controleer zone, eenheid en valuta).",
+      "currency_conflict": "De valuta van de bron ({source_currency}) wijkt af van de valuta bij Energieprijzen ({option_currency}). Pas die valuta aan of wis haar.",
+      "currency_missing": "Geef de valuta op: deze bron vermeldt hem niet."
     },
     "progress": {
       "direct_search": "Het lokale netwerk wordt doorzocht op de omvormer. Dit kan tot een minuut duren."
@@ -383,6 +420,14 @@
     "no_readings": {
       "title": "Volcast kan uw omvormer niet uitlezen",
       "description": "Volcast ontvangt geen metingen van batterijlading, PV-vermogen of netvermogen en kan daardoor niet plannen of regelen. Controleer of de omvormerintegratie is geladen en de entiteiten beschikbaar zijn, of kies de metingen handmatig in de Volcast-opties en controleer daarna de Home Assistant-logs."
+    },
+    "prices_sell_no_data": {
+      "title": "De bron voor de verkoopprijs levert geen prijzen",
+      "description": "Volcast stuurt geen energieprijzen naar de Volcast-cloud, omdat de bron voor de verkoopprijs {source} geen prijzen levert: de entiteit ontbreekt of is niet beschikbaar, of de prijsactie geeft geen actueel resultaat. Inkoop- en verkoopprijzen worden samen verstuurd, dus zonder verkoopprijzen kan het plan geen actuele prijzen gebruiken. Controleer of deze bron werkt, of wijzig of wis de bron voor de verkoopprijs in de Volcast-opties."
+    },
+    "prices_sell_no_pair": {
+      "title": "Verkoopprijzen passen niet bij de inkoopprijzen",
+      "description": "Volcast stuurt geen energieprijzen naar de Volcast-cloud, omdat de prijzen van de bron voor de verkoopprijs {source} niet aan de inkoopprijzen te koppelen zijn: ze hebben een andere valuta, of hun tijdsintervallen sluiten niet aan op de intervallen van de inkoopprijzen. Zonder passende verkoopprijzen kan het plan geen actuele prijzen gebruiken. Controleer deze bron of kies een andere bron voor de verkoopprijs in de Volcast-opties."
     },
     "control_choice_failed": {
       "title": "Volcast kon je besturingskeuze niet toepassen",

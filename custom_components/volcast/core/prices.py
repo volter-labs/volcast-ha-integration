@@ -13,11 +13,18 @@ Kontrakt (odpowiednik TS-owego `PriceInterval` po stronie chmury):
      "sell": float | None,
      "currency": "PLN"}
 
-Dwa źródła atrybutów (pierwszeństwo w tej kolejności):
+Źródła atrybutów (pierwszeństwo w tej kolejności):
 
 1. `raw_today` / `raw_tomorrow` — listy wpisów `{start, end, value}` (konwencja
-   Nord Pool i pochodnych). Długość przedziału bierzemy z `end - start`.
-2. `today` / `tomorrow` — listy samych liczb plus `interval_min` (domyślnie 60);
+   wielu integracji giełdowych). Długość przedziału bierzemy z `end - start`.
+2. Listy wpisów innych integracji cenowych (`prices`, `prices_today` +
+   `prices_tomorrow`, `forecast`, `forecasts`, `rates`, „All prices”): start
+   z `start|start_time|time|from|timestamp|start_date`, koniec z
+   `end|end_time|till|end_date` albo z jednolitego odstępu startów, cena z
+   `value|price|per_kwh|value_inc_vat` albo ze ścieżki zagnieżdżonej w skali
+   ułamkowej (rejestr integracji: `scaled_values`). Znacznik MUSI mieć offset
+   (`str(datetime)` ze spacją wolno).
+3. `today` / `tomorrow` — listy samych liczb plus `interval_min` (domyślnie 60);
    chwile odtwarzamy od północy dnia lokalnego.
 
 REGUŁA NADRZĘDNA: dane niespójne (inna długość przedziału, wartość nieliczbowa,
@@ -35,8 +42,10 @@ import re
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Mapping, Sequence
 
+from .price_integrations import SCALED_VALUES
+
 #: Rozdzielczości, które chmura przyjmuje w `PriceInterval.minutes`.
-DOZWOLONE_MINUTY: frozenset[int] = frozenset({15, 30, 60})
+DOZWOLONE_MINUTY: frozenset[int] = frozenset({5, 15, 30, 60})
 
 #: Domyślna długość przedziału w wariancie fallback (`today` / `tomorrow`).
 DOMYSLNY_INTERVAL_MIN = 60
@@ -46,6 +55,28 @@ DOMYSLNY_INTERVAL_MIN = 60
 #: nie budujemy z niej wielotysięcznej listy. Limit jest na listę, nie na sumę,
 #: bo dzisiaj+jutro w dobie zmiany czasu daje legalne 49 godzin.
 MAX_MINUT_SERII = 60 * 24 * 2
+
+#: Limit dla list wpisów innych integracji: atrybut zbiorczy (np. `prices`)
+#: bywa wczoraj + dziś + jutro, a doba zmiany czasu dodaje godzinę.
+MAX_MINUT_SERII_WPISOW = 60 * 24 * 3 + 60
+
+#: Limit liczby wpisów serii 5-minutowej (100 h). Dla 15/30/60 min obowiązuje
+#: limit w minutach powyżej; wtyczka nie agreguje, więc 5-min zostaje 5-min.
+#: Ten sam limit chmura stosuje do CAŁEGO bloku 5-minutowego.
+MAX_WPISOW_5_MIN = 1200
+
+#: Limit chmury dla całego bloku 15/30/60 min. Limity list wyżej sprawdzają każdą
+#: listę osobno (dziś, jutro), a chmura odrzuca blok ponad limit w całości — więc
+#: wynik sprawdzamy jeszcze raz w sumie (`intervals_from_attributes`).
+MAX_PRZEDZIALOW_BLOKU = 400
+
+#: Tolerancja sekundowego przesunięcia startu przedziału (np. `…T00:00:01`).
+TOLERANCJA_SEKUND = 5
+
+#: Miejsca po przecinku średniej sprzedaży drobniejszej niż kupno. Żadne źródło
+#: nie podaje ceny za kWh dokładniej, a zaokrąglenie usuwa szum zmiennoprzecinkowy
+#: (średnia trzech 0.1 to 0.1, nie 0.10000000000000002).
+MIEJSCA_SREDNIEJ = 10
 
 #: Litery skandynawskie i polskie w symbolach jednostek (`Øre` DKK/NOK, `Öre`
 #: SEK, `zł` PLN) — sprowadzamy je do zwykłych liter ASCII, żeby porównanie
@@ -249,7 +280,11 @@ def _chwila(wartosc: Any) -> datetime | None:
     # Ułamek sekundy obcinamy od razu: `startAt` znakuje przedział, nie pomiar,
     # a mikrosekundy psułyby i długość przedziału, i parowanie ze sprzedażą.
     if isinstance(wartosc, datetime):
-        return wartosc.replace(microsecond=0) if wartosc.tzinfo is not None else None
+        # UTC, bo różnica dwóch `datetime` z TYM SAMYM `ZoneInfo` to różnica
+        # czasu ściennego (doba zmiany czasu dałaby zły czas trwania).
+        if wartosc.tzinfo is None:
+            return None
+        return wartosc.astimezone(timezone.utc).replace(microsecond=0)
     if not isinstance(wartosc, str):
         return None
     tekst = wartosc.strip()
@@ -260,6 +295,31 @@ def _chwila(wartosc: Any) -> datetime | None:
     except ValueError:
         return None
     return chwila.replace(microsecond=0) if chwila.tzinfo is not None else None
+
+
+def _do_minuty(chwila: datetime | None) -> datetime | None:
+    """Zaokrągl do pełnej minuty, o ile odchyłka mieści się w tolerancji.
+
+    Rynki liczą przedziały w pełnych minutach, a część źródeł dokłada sekundowy
+    jitter (`…T00:00:01`). Większa odchyłka to nie jitter, tylko inne dane.
+    """
+    if chwila is None:
+        return None
+    sekundy = chwila.second
+    if sekundy == 0:
+        return chwila
+    if sekundy <= TOLERANCJA_SEKUND:
+        return chwila.replace(second=0)
+    if sekundy >= 60 - TOLERANCJA_SEKUND:
+        return chwila.replace(second=0) + timedelta(minutes=1)
+    return None
+
+
+def _za_dluga(liczba: int, minuty: int, max_minut: int) -> bool:
+    """Czy seria przekracza limit (5 min: wpisy, pozostałe: minuty)."""
+    if minuty == 5:
+        return liczba > MAX_WPISOW_5_MIN
+    return liczba * minuty > max_minut
 
 
 def _minuty(dlugosc: timedelta) -> int | None:
@@ -298,9 +358,131 @@ def _z_raw(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
         if len(dlugosci) > 1:
             return None
         wynik.append((start, cena, minuty))
-        if len(wynik) * minuty > MAX_MINUT_SERII:
+        if _za_dluga(len(wynik), minuty, MAX_MINUT_SERII):
             return None
     return wynik
+
+
+#: Klucze atrybutów z listą wpisów w kształtach innych integracji cenowych —
+#: sprawdzane w tej kolejności, PO `raw_today` (który zostaje bez zmian).
+#: Para „dziś + jutro” jest składana w jedną serię.
+_KLUCZE_LIST_WPISOW: tuple[tuple[str, ...], ...] = (
+    ("prices",),
+    ("prices_today", "prices_tomorrow"),
+    ("forecast",),
+    ("forecasts",),
+    ("rates",),
+    ("All prices",),
+)
+_KLUCZE_STARTU = ("start", "start_time", "time", "from", "timestamp", "start_date")
+_KLUCZE_KONCA = ("end", "end_time", "till", "end_date")
+_KLUCZE_WARTOSCI = ("value", "price", "per_kwh", "value_inc_vat")
+
+
+def _pierwszy_klucz(wpis: Mapping[str, Any], klucze: Sequence[str]) -> Any:
+    for klucz in klucze:
+        if klucz in wpis:
+            return wpis[klucz]
+    return None
+
+
+def _po_sciezce(wpis: Mapping[str, Any], sciezka: Sequence[str]) -> Any:
+    """Wartość pod ścieżką kluczy zagnieżdżonych słowników; None, gdy ścieżki nie ma."""
+    wartosc: Any = wpis
+    for klucz in sciezka:
+        if not isinstance(wartosc, Mapping):
+            return None
+        wartosc = wartosc.get(klucz)
+    return wartosc
+
+
+def _wartosc_wpisu(wpis: Mapping[str, Any]) -> float | None:
+    """Cena z wpisu: zwykły klucz albo pierwsza obecna ścieżka zagnieżdżona z rejestru (`SCALED_VALUES`)."""
+    surowa = _pierwszy_klucz(wpis, _KLUCZE_WARTOSCI)
+    if surowa is not None:
+        return _liczba(surowa)
+    for skalowana in SCALED_VALUES:
+        kwota = _po_sciezce(wpis, skalowana.path)
+        if kwota is None:
+            continue
+        # Liczba CAŁKOWITA w skali ułamkowej waluty; ułamek oznacza inną skalę.
+        if not isinstance(kwota, int) or isinstance(kwota, bool):
+            return None
+        return kwota / skalowana.divisor
+    return None
+
+
+def _z_wpisow(wpisy: Sequence[Any]) -> list[_Przedzial] | None:
+    """Lista wpisów w dowolnym ze znanych kształtów. None = dane niespójne.
+
+    Koniec przedziału bierzemy z klucza końca; gdy go nie ma (wpisy z samym startem),
+    z JEDNOLITEGO odstępu między kolejnymi startami — bez końca i bez co
+    najmniej dwóch wpisów długości nie da się ustalić, więc seria odpada.
+    """
+    wpisy_ok: list[tuple[datetime, float, datetime | None]] = []
+    ma_koniec: set[bool] = set()
+    for wpis in wpisy:
+        if not isinstance(wpis, Mapping):
+            return None
+        start = _do_minuty(_chwila(_pierwszy_klucz(wpis, _KLUCZE_STARTU)))
+        cena = _wartosc_wpisu(wpis)
+        if start is None or cena is None:
+            return None
+        surowy_koniec = _pierwszy_klucz(wpis, _KLUCZE_KONCA)
+        koniec = None if surowy_koniec is None else _do_minuty(_chwila(surowy_koniec))
+        if surowy_koniec is not None and koniec is None:
+            return None
+        ma_koniec.add(koniec is not None)
+        wpisy_ok.append((start, cena, koniec))
+    if len(ma_koniec) > 1:
+        return None  # część wpisów z końcem, część bez — niespójne
+
+    if True in ma_koniec:
+        wynik: list[_Przedzial] = []
+        dlugosci: set[int] = set()
+        for start, cena, koniec in wpisy_ok:
+            minuty = _minuty(koniec - start)  # type: ignore[operator]
+            if minuty is None:
+                return None
+            dlugosci.add(minuty)
+            if len(dlugosci) > 1:
+                return None
+            wynik.append((start, cena, minuty))
+            if _za_dluga(len(wynik), minuty, MAX_MINUT_SERII_WPISOW):
+                return None
+        return wynik
+
+    # Bez końców: odstęp z posortowanych, zdeduplikowanych startów.
+    po_chwili: dict[datetime, tuple[datetime, float]] = {}
+    for start, cena, _koniec in wpisy_ok:
+        po_chwili.setdefault(start.astimezone(timezone.utc), (start, cena))
+    chwile = sorted(po_chwili)
+    if len(chwile) < 2:
+        return None
+    minuty = _minuty(chwile[1] - chwile[0])
+    if minuty is None:
+        return None
+    if any(b - a != timedelta(minutes=minuty) for a, b in zip(chwile, chwile[1:])):
+        return None
+    if _za_dluga(len(chwile), minuty, MAX_MINUT_SERII_WPISOW):
+        return None
+    return [(po_chwili[c][0], po_chwili[c][1], minuty) for c in chwile]
+
+
+def _z_innych_integracji(attrs: Mapping[str, Any]) -> list[_Przedzial] | None | bool:
+    """Pierwszy znany klucz z listą wpisów. False = żaden nie występuje."""
+    for klucze in _KLUCZE_LIST_WPISOW:
+        listy = [attrs.get(k) for k in klucze]
+        listy = [l for l in listy if isinstance(l, (list, tuple))]
+        if not listy or not any(listy):
+            continue
+        # Lista liczb (albo śmieci) pod tym kluczem to nie ten kształt —
+        # encja może nadal działać przez `today`/`tomorrow`.
+        if not all(isinstance(w, Mapping) for l in listy for w in l):
+            continue
+        seria = _z_wpisow([w for l in listy for w in l])
+        return None if seria is None else _ciagla(seria)
+    return False
 
 
 def _ciagla(przedzialy: list[_Przedzial]) -> list[_Przedzial] | None:
@@ -357,7 +539,7 @@ def _z_list_liczb(
         wartosci = attrs.get(klucz)
         if not isinstance(wartosci, (list, tuple)):
             continue
-        if len(wartosci) * minuty > MAX_MINUT_SERII:
+        if _za_dluga(len(wartosci), minuty, MAX_MINUT_SERII):
             return None
         poczatek_doby = (polnoc + timedelta(days=przesuniecie)).astimezone(timezone.utc)
         for i, surowa in enumerate(wartosci):
@@ -408,6 +590,9 @@ def _przedzialy(
                 return None
             seria += jutro
         return _przeskaluj(_ciagla(seria), dzielnik)
+    inne = _z_innych_integracji(attrs)
+    if inne is not False:
+        return _przeskaluj(inne, dzielnik)  # type: ignore[arg-type]
     return _przeskaluj(_z_list_liczb(attrs, tz, now), dzielnik)
 
 
@@ -522,7 +707,8 @@ def intervals_from_attributes(
     obsługuje; zepsute atrybuty ZAKUPU kasują cały wynik.
 
     Zwraca listę posortowaną chronologicznie, bez duplikatów `startAt` (zostaje
-    pierwszy napotkany wpis), albo pustą listę, gdy danych nie da się zaufać.
+    pierwszy napotkany wpis), albo pustą listę, gdy danych nie da się zaufać
+    albo gdy blok przekracza limit chmury (blok przycięty byłby częściowy).
     """
     waluta = _kod_waluty(currency)
     if waluta is None:
@@ -534,29 +720,71 @@ def intervals_from_attributes(
         return []
 
     sprzedaz: dict[datetime, float] = {}
+    krok_sprzedazy = 0
+    faza_sprzedazy = 0
     # Waluta sprzedaży musi zgadzać się z walutą bloku (kupna) — encja sprzedaży
     # bez ŻADNEJ deklaracji waluty jest przyjmowana bez zastrzeżeń, ale każda
     # deklaracja (atrybut, symbol jednoznaczny albo wieloznaczny rozstrzygnięty),
     # która nie zgadza się z `waluta`, ALBO jest sama w sobie niespójna, degraduje
     # całą sprzedaż do None — nigdy tylko „brak informacji" (patrz `_sprzedaz_dopuszczalna`).
     if attrs_sell is not None and _sprzedaz_dopuszczalna(attrs_sell, waluta):
-        for start, cena, _minuty in _przedzialy(attrs_sell, tz, now) or []:
-            # Klucz JAWNIE w UTC — kupno i sprzedaż bywają zapisane innym
-            # offsetem tej samej chwili (+02:00 kontra Z).
-            sprzedaz.setdefault(start.astimezone(timezone.utc), cena)
+        serie_sprzedazy = _przedzialy(attrs_sell, tz, now) or []
+        if serie_sprzedazy:
+            # Seria jest ciągła i jednej długości (`_ciagla`), więc siatkę
+            # opisuje pierwszy przedział: długość i faza w UTC.
+            krok_kupna = zakup[0][2] * 60
+            krok_sprzedazy = serie_sprzedazy[0][2] * 60
+            faza_sprzedazy = int(serie_sprzedazy[0][0].timestamp()) % krok_sprzedazy
+            drobniejszy = min(krok_kupna, krok_sprzedazy)
+            # Siatki muszą się ZAGNIEŻDŻAĆ: dłuższy krok jest wielokrotnością
+            # krótszego i obie mają tę samą fazę względem krótszego. Wtedy każdy
+            # przedział kupna albo składa się z całych przedziałów sprzedaży
+            # (sprzedaż drobniejsza — średnia ich wszystkich), albo w całości
+            # leży w jednym przedziale sprzedaży (sprzedaż grubsza — cena
+            # dokładna). Siatki przesunięte albo niewspółmierne dałyby sprzedaż
+            # CZĘŚCIOWĄ (np. co któryś przedział) — woli się brak sprzedaży.
+            siatka_zgodna = (
+                max(krok_kupna, krok_sprzedazy) % drobniejszy == 0
+                and int(zakup[0][0].timestamp()) % drobniejszy == faza_sprzedazy % drobniejszy
+            )
+            for start, cena, _minuty in serie_sprzedazy if siatka_zgodna else []:
+                # Klucz JAWNIE w UTC — kupno i sprzedaż bywają zapisane innym
+                # offsetem tej samej chwili (+02:00 kontra Z).
+                sprzedaz.setdefault(start.astimezone(timezone.utc), cena)
 
     wynik: dict[datetime, dict[str, Any]] = {}
     for start, cena, minuty in zakup:
         chwila = start.astimezone(timezone.utc).replace(microsecond=0)
         if chwila in wynik:
             continue  # duplikat — zostaje pierwszy napotkany
+        if krok_sprzedazy and krok_sprzedazy < minuty * 60:
+            # Sprzedaż drobniejsza: średnia WSZYSTKICH jej przedziałów w przedziale
+            # kupna; brak choć jednego (seria zaczyna się albo kończy w środku
+            # przedziału kupna) — brak sprzedaży, nie średnia z części.
+            drobne = [
+                sprzedaz.get(chwila + timedelta(seconds=krok_sprzedazy * i))
+                for i in range(minuty * 60 // krok_sprzedazy)
+            ]
+            cena_sprzedazy = (
+                None if None in drobne else round(math.fsum(drobne) / len(drobne), MIEJSCA_SREDNIEJ)
+            )
+        else:
+            # Start przedziału sprzedaży, w którym leży `chwila` (przy sprzedaży
+            # równej to sama `chwila`). Chwile sprzedaży poza zakresem kupna po
+            # prostu się nie parują.
+            start_sprzedazy = chwila - timedelta(
+                seconds=(int(chwila.timestamp()) - faza_sprzedazy) % krok_sprzedazy if krok_sprzedazy else 0
+            )
+            cena_sprzedazy = sprzedaz.get(start_sprzedazy)
         wynik[chwila] = {
             "startAt": chwila.isoformat().replace("+00:00", "Z"),
             "minutes": minuty,
             "buy": cena,
-            "sell": sprzedaz.get(chwila),
+            "sell": cena_sprzedazy,
             "currency": waluta,
         }
+    if len(wynik) > (MAX_WPISOW_5_MIN if zakup[0][2] == 5 else MAX_PRZEDZIALOW_BLOKU):
+        return []
     return [wynik[chwila] for chwila in sorted(wynik)]
 
 
@@ -574,9 +802,11 @@ def has_usable_prices_now(
     jednostkę. Krok „prices" onboardingu nie wolno oznaczać jako zrobiony na
     podstawie samego wyboru encji, tylko na podstawie tego wyniku.
 
-    „Pełna seria JUŻ TERAZ" oznacza konkretnie: seria pokrywa bieżącą godzinę
-    (`now`) i sięga co najmniej 6 h w przód — samo „jakieś dwie godziny
-    `today`" albo seria sprzed miesiąca (encja martwa) to nie jest gotowość.
+    „Pełna seria JUŻ TERAZ" oznacza konkretnie: seria obejmuje `now` albo
+    zaczyna się najpóźniej jeden przedział później (`starts_by_next_interval` —
+    tam też, dlaczego to przyjmuje samo „jutro" w ostatnim przedziale doby),
+    trwa jeszcze w `now` i sięga co najmniej 6 h w przód — samo „jakieś dwie
+    godziny `today`" albo seria sprzed miesiąca (encja martwa) to nie jest gotowość.
     """
     waluta = currency_from_attributes(attrs_buy, fallback_currency)
     if waluta is None:
@@ -585,10 +815,33 @@ def has_usable_prices_now(
     if not przedzialy:
         return False
     chwila = (now or datetime.now(tz)).astimezone(timezone.utc)
-    pierwszy = datetime.fromisoformat(przedzialy[0]["startAt"].replace("Z", "+00:00"))
-    ostatni = datetime.fromisoformat(przedzialy[-1]["startAt"].replace("Z", "+00:00"))
-    koniec_serii = ostatni + timedelta(minutes=przedzialy[-1]["minutes"])
-    return pierwszy <= chwila < koniec_serii and koniec_serii >= chwila + timedelta(hours=6)
+    koniec_serii = series_end(przedzialy)
+    return (starts_by_next_interval(przedzialy, chwila) and chwila < koniec_serii
+            and koniec_serii >= chwila + timedelta(hours=6))
+
+
+def series_end(intervals: Sequence[Mapping[str, Any]]) -> datetime:
+    """Koniec niepustej, posortowanej serii przedziałów (koniec ostatniego), w UTC."""
+    ostatni = datetime.fromisoformat(intervals[-1]["startAt"].replace("Z", "+00:00"))
+    return ostatni + timedelta(minutes=intervals[-1]["minutes"])
+
+
+def starts_by_next_interval(intervals: Sequence[Mapping[str, Any]], now: datetime) -> bool:
+    """Czy seria obejmuje `now` albo zaczyna się najpóźniej jeden przedział po nim.
+
+    Przyjmujemy serię, której pierwszy przedział zaczyna się nie później niż
+    `now` + długość przedziału — czyli także serię zaczynającą się dokładnie
+    jeden przedział przed nami. Powód: prognoza krocząca nie zawiera BIEŻĄCEGO
+    przedziału (ten jest osobną ceną bieżącą), więc zaczyna się od następnej
+    granicy siatki.
+
+    To celowo przyjmuje też serię z samym „jutro", sprawdzaną w ostatnim
+    przedziale doby lokalnej: zaczyna się od następnego przedziału, więc nie da
+    się jej odróżnić od prognozy kroczącej. Seria zaczynająca się dalej niż
+    jeden przedział po `now` nie jest gotowością na teraz.
+    """
+    pierwszy = datetime.fromisoformat(intervals[0]["startAt"].replace("Z", "+00:00"))
+    return pierwszy <= now.astimezone(timezone.utc) + timedelta(minutes=intervals[0]["minutes"])
 
 
 def fingerprint(intervals: Sequence[Mapping[str, Any]]) -> str:

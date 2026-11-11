@@ -1,0 +1,46 @@
+{
+  "attributes": {
+    "unit_of_measurement": "€/kWh",
+    "forecast": [
+      {
+        "start_date": "2026-09-15T00:00:00.000000Z",
+        "end_date": "2026-09-15T01:00:00.000000Z",
+        "price_tax_included": {
+          "amount": 2000000,
+          "currency": "EUR"
+        }
+      },
+      {
+        "start_date": "2026-09-15T01:00:00.000000Z",
+        "end_date": "2026-09-15T02:00:00.000000Z",
+        "price_tax_included": {
+          "amount": 2010000,
+          "currency": "EUR"
+        }
+      },
+      {
+        "start_date": "2026-09-15T02:00:00.000000Z",
+        "end_date": "2026-09-15T03:00:00.000000Z",
+        "price_tax_included": {
+          "amount": 2020000,
+          "currency": "EUR"
+        }
+      },
+      {
+        "start_date": "2026-09-15T03:00:00.000000Z",
+        "end_date": "2026-09-15T04:00:00.000000Z",
+        "price_tax_included": {
+          "amount": 2030000,
+          "currency": "EUR"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "minutes": 60,
+    "count": 4,
+    "first_start": "2026-09-15T00:00:00Z",
+    "buy0": 0.2,
+    "currency": "EUR"
+  }
+}

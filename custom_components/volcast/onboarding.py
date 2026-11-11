@@ -16,8 +16,9 @@ Pierwszy plan zawsze ma jawny wynik (`plan_outcome`), nigdy ogólne „gotowe":
 - odmowa planera (`success` nie True, także brak poziomu konta), 0 albo brak slotów,
   planer nieosiągalny → `error "planner unavailable"` (nieosiągalny: z ponowieniem).
 
-Encję ceny proponujemy tylko wtedy, gdy JUŻ TERAZ daje pełną serię
-(`has_usable_prices_now`); inaczej „none found" — właściciel wybiera inne źródło.
+Encję ceny proponujemy (a źródło z akcji uznajemy) tylko wtedy, gdy JUŻ TERAZ daje pełną
+serię (`has_usable_prices_now`); inaczej „none found" — właściciel wybiera inne źródło. Poprawna
+akcja bez cen w tej chwili to `error "none found"` bez oferty encji (wybór „ha" skasowałby akcję).
 
 Wybory zdalne:
 - stosujemy je najwyżej RAZ na sesję: zastosowany wybór (sesja, wartość, czas) trafia do
@@ -62,12 +63,17 @@ import homeassistant.util.dt as dt_util
 from .cloud.client import SessionNotLive
 from .cloud.control_choice import APPLIED_CHOICES, WIZARD_MARK, wizard_mark
 from .const import (CONF_PAIRING, PAIRING_ONLY_UPDATE_KEY, CONTROL_MODE_DIRECT, CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_DIRECT_TARGET,
-                    OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_CURRENCY)
+                    OPT_DIRECT_TRIAL, OPT_LOAD_ENERGY, OPT_PRICE_BUY, OPT_PRICE_BUY_ACTION, OPT_PRICE_CURRENCY, OPT_PRICE_SELL,
+                    OPT_PRICE_SELL_ACTION)
 from .control import direct_search as ds
 from .control.runtime import readings_missing
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.history import house_load_candidate
 from .core.control.recommend import recommend
+from .core.price_actions import InvalidPriceSource, PriceActionPoller, PriceActionSource, parse_source
+from .core.price_integrations import ACTION_DOMAINS
+from .core.price_setup import (currency_conflict, effective_currency, enrich_attributes, is_excluded_entity,
+                               is_sell_entity, pair_entities, platform_currency)
 from .core.prices import has_usable_prices_now
 
 _LOGGER = logging.getLogger(__name__)
@@ -89,6 +95,9 @@ _AUTO_LOAD = "load_energy"
 _REPOST_MIN_S = 5.0
 _REPOST_MAX_S = 60.0
 _PRICE_SOURCE = re.compile(r"[A-Za-z0-9_:.-]{1,64}")
+# Łączny limit sondy źródła cen z akcji w onboardingu (dziś + jutro); runtime ma własny, dłuższy
+# (`CALL_TIMEOUT_S` na wywołanie). Rząd sondy z opcji (`PROBE_TIMEOUT_S`), ale na całą sondę.
+PRICE_PROBE_TOTAL_S = 8.0
 
 PLAN_UNAVAILABLE = "planner unavailable"
 QUEUED = "queued"
@@ -161,6 +170,8 @@ class Onboarding:
         self._discovery_wait_s, self._choice_poll_s = discovery_wait_s, choice_poll_s
         self._steps: dict[str, tuple[str, str | None]] = {k: ("pending", None) for k in STEP_KEYS}
         self._price_candidate: str | None = None
+        self._price_sell_candidate: str | None = None      # sprzedaż sparowana z kupnem tej samej integracji
+        self._price_platforms: dict[str, str] = {}
         self._plan_attempts = 0
         self._plan_retry_at: datetime | None = None
         self._dirty = False
@@ -292,18 +303,69 @@ class Onboarding:
         """Ta sama reguła co w opcjach (`entity_mode_ready`)."""
         return entity_mode_ready(getattr(rt, "choice", None), getattr(rt, "mapped", None) or {})
 
-    def _usable_price(self, entity_id: str | None) -> bool:
+    def _usable_price(self, entity_id: str | None, platform: str | None = None) -> bool:
         if not entity_id:
             return False
         st = self._hass.states.get(entity_id)
-        if st is None:
+        if st is None or is_excluded_entity(platform, entity_id):
             return False
-        currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
+        currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or platform_currency(platform)
         try:
-            return has_usable_prices_now(st.attributes, currency, self._tz(), self._utcnow())
+            return has_usable_prices_now(enrich_attributes(platform, st.attributes), currency, self._tz(), self._utcnow())
         except Exception as err:  # noqa: BLE001 — zła encja = nieużywalna
             _LOGGER.debug("Volcast onboarding: price entity check failed (%s)", type(err).__name__)
             return False
+
+    def _platform_of(self, entity_id: str | None) -> str | None:
+        return self._price_platforms.get(entity_id)
+
+    def _price_action(self) -> PriceActionSource | None:
+        """Poprawne skonfigurowane źródło kupna z akcji (opcje); nieparsowalne = brak źródła."""
+        raw = self._options().get(OPT_PRICE_BUY_ACTION)
+        try:
+            return parse_source(raw) if raw else None
+        except InvalidPriceSource:
+            return None
+
+    async def _price_action_usable(self, source: PriceActionSource) -> bool:
+        """Czy źródło z akcji JUŻ TERAZ daje pełną serię — ta sama reguła co dla encji (`has_usable_prices_now`).
+
+        Sama poprawna konfiguracja to jeszcze nie ceny (zła strefa, inny dom): jedno odświeżenie tak jak
+        w runtime (dziś + jutro), ale z krótkim, wspólnym budżetem `PRICE_PROBE_TOTAL_S`, więc zawieszona akcja
+        nie wstrzymuje kolejnych kroków. Dziś może zużyć cały budżet (wolna, lecz działająca akcja nie jest
+        błędem), jutro dostaje tylko resztę — zawieszone lub pominięte jutro nie kasuje dzisiejszej serii."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + PRICE_PROBE_TOTAL_S
+
+        async def call(domain: str, service: str, data: dict):
+            left = deadline - loop.time()
+            if left <= 0:
+                raise TimeoutError                   # budżet wyczerpany — jutra nie pytamy
+            async with asyncio.timeout(left):
+                return await self._hass.services.async_call(domain, service, data, blocking=True, return_response=True)
+
+        tz, now = self._tz(), self._utcnow()
+        poller = PriceActionPoller(source, call, timeout_s=PRICE_PROBE_TOTAL_S)
+        await poller.async_refresh(now, tz)          # nie rzuca — błąd akcji to brak cen
+        currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
+        try:
+            return has_usable_prices_now(poller.fresh_attributes(now, tz), currency, tz, now)
+        except Exception as err:  # noqa: BLE001 — zła odpowiedź = źródło nieużywalne
+            _LOGGER.debug("Volcast onboarding: price action check failed (%s)", type(err).__name__)
+            return False
+
+    def _action_integrations(self) -> list[str]:
+        """Integracje cenowe z akcją (rejestr integracji) skonfigurowane w HA — źródło ustawia się w opcjach."""
+        found = []
+        for domain in ACTION_DOMAINS:
+            try:
+                if any(getattr(getattr(e, "state", None), "value", getattr(e, "state", None)) == "loaded"
+                       for e in self._hass.config_entries.async_entries(domain)):
+                    found.append(domain)
+            except Exception:  # noqa: BLE001
+                continue
+        return found
 
     async def _wait_report(self) -> dict | None:
         waited = 0.0
@@ -441,6 +503,15 @@ class Onboarding:
         return state
 
     async def _prices_step(self, report: dict) -> None:
+        source = self._price_action()
+        if source is not None:
+            # Akcja wygrywa z encją. Gdy chwilowo nie daje cen (integracja jeszcze się ładuje, przerwa API),
+            # to błąd, nie wybór: oferta encji HA skasowałaby źródło ustawione świadomie przez właściciela.
+            if await self._price_action_usable(source):
+                await self._set("prices", "done", source.action)
+            else:
+                await self._set("prices", "error", NONE_FOUND)
+            return
         current = self._options().get(OPT_PRICE_BUY)
         if self._usable_price(current):
             await self._set("prices", "done", current)
@@ -453,14 +524,31 @@ class Onboarding:
                 and _PRICE_SOURCE.fullmatch(account.price_kind):
             await self._set("prices", "done", f"from your account ({account.price_kind})")
             return
-        for cand in report.get("price_entities") or []:
-            eid = cand.get("entity_id") if isinstance(cand, dict) else None
-            if self._usable_price(eid):
-                self._price_candidate = eid
-                platform = cand.get("platform")
-                await self._set("prices", "choice", f"{platform} ({eid})" if platform else eid)
-                return
-        # Brak encji albo żadna nie daje dziś pełnej serii — właściciel wybiera inne źródło.
+        # Rola (kupno/sprzedaż) wynika z rozpoznania encji, nie z kolejności w rejestrze: sprzedaż nigdy nie
+        # jest ceną kupna, a para powstaje tylko z encji, które już teraz mają pełną serię.
+        entities = [c for c in report.get("price_entities") or [] if isinstance(c, dict)]
+        self._price_platforms = {c.get("entity_id"): c.get("platform") for c in entities}
+        usable = [c for c in entities if self._usable_price(c.get("entity_id"), c.get("platform"))]
+        pairs = {p.buy: p for p in pair_entities(usable)}
+        for cand in usable:
+            eid = cand.get("entity_id")
+            if is_sell_entity(eid):
+                continue
+            pair = pairs.get(eid)
+            self._price_candidate = eid
+            self._price_sell_candidate = pair.sell if pair is not None and not pair.ambiguous else None
+            platform = cand.get("platform")
+            state = self._hass.states.get(eid)
+            currency = effective_currency(platform, getattr(state, "attributes", None)) or platform_currency(platform)
+            shown = f"{platform} ({eid})" if platform else eid
+            await self._set("prices", "choice", f"{shown} · {currency}" if currency else shown)
+            return
+        # Brak użytecznych encji — właściciel wybiera inne źródło; integracje z samą akcją wskazujemy z nazwy.
+        integrations = self._action_integrations()
+        if integrations:
+            await self._set("prices", "choice", f"{NONE_FOUND}; set up in options (price_source): "
+                                                f"{', '.join(integrations)}")
+            return
         await self._set("prices", "choice", NONE_FOUND)
 
     async def _consumption_step(self, report: dict) -> None:
@@ -691,8 +779,24 @@ class Onboarding:
         source = choices.get("price_source")
         if isinstance(source, str) and self._state("prices") == "choice":
             if source == "ha":
-                if self._price_candidate and self._usable_price(self._price_candidate):
+                platform = self._platform_of(self._price_candidate)
+                state = self._hass.states.get(self._price_candidate) if self._price_candidate else None
+                declared = effective_currency(platform, getattr(state, "attributes", None))
+                assumed = declared or platform_currency(platform)
+                option_currency = (self._options().get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
+                if self._price_candidate and self._usable_price(self._price_candidate, platform) \
+                        and currency_conflict(assumed, option_currency):
+                    # Waluta integracji i opcja `price_currency` się różnią — pokazujemy, nie wybieramy za właściciela.
+                    steps.append(("prices", "error", f"currency conflict ({assumed} / {option_currency})"))
+                elif self._price_candidate and self._usable_price(self._price_candidate, platform):
                     patch[OPT_PRICE_BUY] = self._price_candidate
+                    patch[OPT_PRICE_BUY_ACTION] = None        # akcja tej samej strony wygrałaby w runtime
+                    sell = self._price_sell_candidate
+                    if sell and self._usable_price(sell, platform):
+                        patch[OPT_PRICE_SELL] = sell
+                        patch[OPT_PRICE_SELL_ACTION] = None
+                    if option_currency is None and declared is None and assumed:
+                        patch[OPT_PRICE_CURRENCY] = assumed           # seria nie podaje waluty
                     applied["price_source"] = source
                     steps.append(("prices", "done", self._price_candidate))
                 else:

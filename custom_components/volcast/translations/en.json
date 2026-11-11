@@ -104,7 +104,8 @@
           "control": "Inverter control",
           "details": "Installation details",
           "prices": "Energy prices",
-          "ev_charger": "EV charger"
+          "ev_charger": "EV charger",
+          "price_source": "Price source from an integration"
         }
       },
       "forecast": {
@@ -314,6 +315,32 @@
       "control_telemetry_info": {
         "title": "Forecast calibration now uses inverter telemetry",
         "description": "While inverter control is on, Volcast calibrates the forecast from the production it reads from the inverter. The PV sensors mapped in the Forecast options ({mapped}) are no longer used for calibration. You can leave them or clear them."
+      },
+      "price_source": {
+        "title": "Price source",
+        "description": "Pick a price source detected in Home Assistant. Only sources that provide a price forecast can be used for planning.",
+        "data": {
+          "source": "Source"
+        }
+      },
+      "price_source_details": {
+        "title": "Source settings",
+        "description": "Settings this integration needs to provide prices.",
+        "data": {
+          "area": "Bidding zone (exactly one)",
+          "currency": "Currency (ISO code, e.g. EUR)",
+          "unit": "Price unit",
+          "incl_vat": "Prices include VAT",
+          "home": "Home (optional)"
+        }
+      },
+      "price_source_confirm": {
+        "title": "Use this price source?",
+        "description": "This source provides a price forecast for {hours} h ahead. Submit to use it for planning. Prices are read in {currency}."
+      },
+      "price_source_confirm_sell": {
+        "title": "Use this price source?",
+        "description": "This source provides a price forecast for {hours} h ahead. Prices are read in {currency}. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices. Submit to use this price source for planning anyway."
       }
     },
     "abort": {
@@ -323,7 +350,10 @@
       "direct_not_found": "No inverter found yet. Search for it under Installation details first.",
       "direct_in_use": "Another Volcast entry already connects to this inverter.",
       "restore_failed": "Volcast could not return the inverter to its settings from before control, so nothing was changed. Try again when the inverter is reachable, or turn off the Volcast control switch (Volcast keeps trying to return the inverter).",
-      "no_ev_chargers": "No EV charger was found yet. Run discovery first and make sure the charger integration is set up."
+      "no_ev_chargers": "No EV charger was found yet. Run discovery first and make sure the charger integration is set up.",
+      "no_price_sources": "No known price integration was found in Home Assistant. Use Energy prices to pick a sensor.",
+      "price_source_invalid": "The price source settings are no longer valid. Start again.",
+      "price_sell_tomorrow": "The energy price settings are saved. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices."
     },
     "error": {
       "prices_not_usable": "This sensor does not provide a complete price series right now.",
@@ -339,7 +369,14 @@
       "role_required": "The status entity is required.",
       "entity_not_found": "The entity was not found. Choose an existing entity.",
       "status_without_options": "Choose a sensor or select that lists its possible states. An on/off sensor cannot show charging.",
-      "unit_mismatch": "One of the entities reports a unit Volcast cannot use for that value. Go back and choose another entity."
+      "unit_mismatch": "One of the entities reports a unit Volcast cannot use for that value. Go back and choose another entity.",
+      "prices_current_only": "This sensor only has the current price. For planning, use your own price list in the app or an integration that provides a forecast.",
+      "price_horizon_short": "The forecast covers only {hours} h; at least 6 h ahead are needed for planning.",
+      "price_source_unusable": "Home Assistant returned no usable price series from this source.",
+      "price_sell_unusable": "The sale side of this source has no usable price series.",
+      "price_source_invalid": "These settings do not describe a usable source (check the zone, unit and currency).",
+      "currency_conflict": "The source currency ({source_currency}) differs from the currency set under Energy prices ({option_currency}). Change that currency to match, or clear it.",
+      "currency_missing": "Enter the currency: this source does not state it."
     },
     "progress": {
       "direct_search": "Searching the local network for the inverter. This can take up to a minute."
@@ -387,6 +424,14 @@
     "no_readings": {
       "title": "Volcast cannot read your inverter",
       "description": "Volcast receives no battery charge, PV power or grid power readings, so it cannot plan or control. Check that the inverter integration is loaded and its entities are available, or choose the readings manually in the Volcast options, then check the Home Assistant logs."
+    },
+    "prices_sell_no_data": {
+      "title": "The sale price source gives no prices",
+      "description": "Volcast is not sending energy prices to the Volcast cloud because the sale price source {source} gives no prices: the entity is missing or unavailable, or the price action returns no current result. Purchase and sale prices are sent together, so without sale prices the plan cannot use current prices. Check that this source works, or change or clear the sale price source in the Volcast options."
+    },
+    "prices_sell_no_pair": {
+      "title": "Sale prices do not match the purchase prices",
+      "description": "Volcast is not sending energy prices to the Volcast cloud because the prices from the sale price source {source} cannot be matched with the purchase prices: they use a different currency, or their time intervals do not line up with the purchase price intervals. Without matching sale prices the plan cannot use current prices. Check this source, or choose a different sale price source in the Volcast options."
     },
     "control_choice_failed": {
       "title": "Volcast could not apply your control choice",

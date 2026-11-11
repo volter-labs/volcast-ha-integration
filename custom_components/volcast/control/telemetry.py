@@ -10,6 +10,14 @@ Ceny (`prices`) idą tylko przy zmianie treści albo co 6 h i są uznane za wys�
 dopiero po przyjęciu odczytu przez chmurę. Błąd bloku cen nie zabiera odczytu.
 Jedna wysyłka naraz: tik zegara w trakcie trwającej wysyłki jest pomijany.
 
+Źródło ceny (kupno, sprzedaż osobno) to encja ALBO akcja HA z odpowiedzią
+(`OPT_PRICE_*_ACTION`, `core/price_actions.py`). Akcję woła zadanie w tle, które zleca tik zegara
+wg harmonogramu źródła (co 6 h, po 13:00 czasu rynku co godzinę do pojawienia się jutra, po błędzie
+z odstępem rosnącym), z limitem czasu i bez drugiego wywołania w trakcie pierwszego; wysyłka czyta
+tylko gotowy, świeży wynik. Błąd akcji = brak sekcji `prices`; zatrzymanie nadawcy anuluje trwające
+wywołanie. Akcja sprzedaży bez świeżego wyniku (także przed pierwszym, przy starcie) wstrzymuje CAŁĄ
+sekcję — samo kupno z `sell: null` idzie tylko wtedy, gdy sprzedaży nie skonfigurowano wcale.
+
 Tryb bezpośredni: wartości z odczytu rejestrów (`DirectReading.values` + tryb jako nazwa), tylko
 świeże (młodsze niż 3× okres odpytywania); ręczne mapowanie z opcji dalej wygrywa. Blok `driver`
 ma `access: "direct"`, możliwości z sondy (poza próbą) i limity (`registers` albo `user`);
@@ -44,6 +52,7 @@ dopóki trwa wstrzymanie po ręcznej ingerencji (bez potwierdzania — to stan, 
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -53,15 +62,19 @@ from typing import Awaitable, Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 import homeassistant.util.dt as dt_util
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 
-from ..const import (CONTROL_MODE_ENTITIES, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_CURRENCY,
-                     OPT_PRICE_SELL)
+from ..const import (CONTROL_MODE_ENTITIES, DOMAIN, OPT_CONTROL_MODE, OPT_PRICE_BUY, OPT_PRICE_BUY_ACTION,
+                     OPT_PRICE_CURRENCY, OPT_PRICE_SELL, OPT_PRICE_SELL_ACTION)
 from ..core.control.caps import capabilities_for
 from ..core.control.limits import BMS_POWER_FIELDS, PeakLimit, register_limits
 from ..core.control.readings import RawState, manual_reading, normalize_readings_report, readings_sources
 from ..core.control.select import ProfileChoice, control_verified
-from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes
+from ..core.price_actions import InvalidPriceSource, PriceActionPoller, parse_source
+from ..core.price_setup import enrich_attributes
+from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes, series_end
 from .loads_reader import LoadsReader
 from .direct_sensors import STALE_FACTOR as _STALE_FACTOR   # jedna reguła świeżości z sensorami
 
@@ -71,6 +84,14 @@ PRICES_RESEND_S = 6 * 3600
 _UNAVAILABLE = ("unavailable", "unknown")
 # Rynek, gdy konfiguracja HA nie podaje kraju (instalacje sprzed tego pola).
 _DEFAULT_MARKET = "PL"
+# Powody wstrzymania bloku cen przez ustawioną stronę sprzedaży (dokończenie zdania w logu).
+_SELL_NO_DATA = ("is set but gives no current prices (entity missing, unavailable or no longer updated, or "
+                 "no fresh result from the price action), so the buy prices are withheld too")
+_SELL_NO_PAIR = ("gives prices that do not match the buy prices (different currency, or intervals "
+                 "that do not line up with the buy intervals), so the buy prices are withheld too")
+# Klucz zgłoszenia naprawy (i jego tekstu) dla każdego powodu; id zgłoszenia to klucz + `_<entry_id>`.
+_SELL_ISSUES = {_SELL_NO_DATA: "prices_sell_no_data", _SELL_NO_PAIR: "prices_sell_no_pair"}
+_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 TELEMETRY_FIELDS = {
     "soc": "battery_soc", "pv_power_w": "pv_power_w", "battery_power_w": "battery_power_w",
     "grid_power_w": "grid_power_w", "load_power_w": "load_power_w",
@@ -279,6 +300,14 @@ class TelemetrySender:
         self._on_signals = on_signals
         self._prices_fp: str | None = None
         self._prices_at: datetime | None = None
+        # Powód wstrzymania cen przez sprzedaż: widziany w poprzednim cyklu i już zgłoszony w logu.
+        self._sell_seen: str | None = None
+        self._sell_warned: str | None = None
+        # Klucz zgłoszenia naprawy dla wstrzymanych cen, które ten nadawca utworzył (None = żadne).
+        self._sell_issue: str | None = None
+        # Źródła cen z akcji: klucz opcji → (konfiguracja, z której powstał, poller albo None = zła).
+        self._price_actions: dict[str, tuple[object, PriceActionPoller | None]] = {}
+        self._price_tasks: dict[str, object] = {}
         self._unsub = None
         self._busy = False
         self._loads = LoadsReader(hass, entry, executor_report=self._loads_report)
@@ -304,9 +333,88 @@ class TelemetrySender:
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
+        for task in self._price_tasks.values():
+            task.cancel()
+        self._price_tasks.clear()
+        self._sync_sell_issue(None, "")
 
     async def _timer(self, _now=None) -> None:
+        try:
+            self._kick_price_actions(self._utcnow())
+        except Exception as err:  # noqa: BLE001 — ceny nigdy nie zabierają telemetrii
+            _LOGGER.debug("Volcast price action refresh skipped (%s)", type(err).__name__)
         await self.async_flush()
+
+    def _tz(self) -> ZoneInfo:
+        return ZoneInfo(self._hass.config.time_zone)
+
+    async def _async_call_price_action(self, domain: str, service: str, data: dict):
+        return await self._hass.services.async_call(domain, service, data, blocking=True, return_response=True)
+
+    def _price_action(self, key: str) -> tuple[bool, PriceActionPoller | None]:
+        """(czy strona ma źródło z akcji, poller — None przy złej konfiguracji) dla klucza opcji."""
+        raw = self._entry.options.get(key)
+        if not raw:
+            self._price_actions.pop(key, None)
+            return False, None
+        cached = self._price_actions.get(key)
+        if cached is not None and cached[0] == raw:
+            return True, cached[1]
+        try:
+            poller = PriceActionPoller(parse_source(raw), self._async_call_price_action)
+        except InvalidPriceSource as err:
+            _LOGGER.warning("Volcast price action source is not usable (%s: %s); prices are skipped",
+                            type(err).__name__, err)
+            poller = None
+        self._price_actions[key] = (copy.deepcopy(raw), poller)
+        return True, poller
+
+    def _spawn(self, coro, name: str):
+        create = getattr(self._entry, "async_create_background_task", None)
+        try:
+            if callable(create):
+                return create(self._hass, coro, name)
+            return self._hass.async_create_background_task(coro, name)
+        except Exception:
+            coro.close()
+            raise
+
+    def _kick_price_actions(self, now: datetime) -> None:
+        """Zleć w tle odświeżenie źródeł cen z akcji, którym wypada termin (zadania w `_price_tasks`)."""
+        tz = self._tz()
+        for key in (OPT_PRICE_BUY_ACTION, OPT_PRICE_SELL_ACTION):
+            _configured, poller = self._price_action(key)
+            # Zadanie strony jeszcze trwa (albo nie zdążyło ruszyć) — bez drugiego wywołania.
+            running = self._price_tasks.get(key)
+            if poller is None or (running is not None and not running.done()) or not poller.due(now, tz):
+                continue
+            self._price_tasks[key] = self._spawn(poller.async_refresh(now, tz), "volcast_price_action")
+
+    def _price_attributes(self, action_key: str, entity_key: str, now: datetime, *,
+                          require_available: bool) -> tuple[bool, Mapping | None]:
+        """(czy strona ma ustawione źródło — akcję albo encję, atrybuty cen — None = brak danych)
+        dla kupna albo sprzedaży.
+
+        Z akcji bierzemy tylko wynik świeży (`fresh_attributes`): ostatnie odświeżenie udane,
+        niedawne i obejmujące bieżącą dobę."""
+        configured, poller = self._price_action(action_key)
+        if configured:
+            return True, poller.fresh_attributes(now, self._tz()) if poller is not None else None
+        eid = (self._entry.options.get(entity_key) or "").strip()
+        st = self._hass.states.get(eid) if eid else None
+        if st is None or (require_available and st.state in _UNAVAILABLE):
+            # Ustawiona encja, której (jeszcze) nie ma — także chwilowo po starcie HA — liczy się jako
+            # źródło bez danych: strona sprzedaży wstrzymuje wtedy blok. To celowe, nie „brak źródła”.
+            return bool(eid), None
+        return True, enrich_attributes(self._entity_platform(eid), st.attributes)
+
+    def _entity_platform(self, entity_id: str) -> str | None:
+        """Platforma encji z rejestru encji HA (klucz do wiedzy o integracji, np. jej waluty); bez rejestru None."""
+        try:
+            entry = er.async_get(self._hass).async_get(entity_id)
+        except Exception:  # noqa: BLE001
+            return None
+        return getattr(entry, "platform", None)
 
     def _raw(self, eid: str) -> RawState | None:
         st = self._hass.states.get(eid)
@@ -334,25 +442,86 @@ class TelemetrySender:
     def _prices(self, now: datetime) -> tuple[dict, str] | None:
         """Blok cen (albo None: brak encji, danych, zmiany) i jego odcisk."""
         opts = self._entry.options
-        buy = self._hass.states.get((opts.get(OPT_PRICE_BUY) or "").strip())
-        if buy is None or buy.state in _UNAVAILABLE:
+        _, buy = self._price_attributes(OPT_PRICE_BUY_ACTION, OPT_PRICE_BUY, now, require_available=True)
+        if buy is None:
+            return self._without_buy()
+        sell_set, sell = self._price_attributes(OPT_PRICE_SELL_ACTION, OPT_PRICE_SELL, now,
+                                                require_available=False)
+        # Ustawiona sprzedaż bez danych (trwa pierwsze wywołanie akcji, błąd, encja zniknęła) to nie
+        # „rynek bez sprzedaży” — samo kupno z `sell: null` nadpisałoby w chmurze dobre ceny sprzedaży
+        # (a `null` planner czyta jako eksport wart 0).
+        if sell_set and sell is None:
+            self._sell_withheld(_SELL_NO_DATA)
             return None
-        sell_id = (opts.get(OPT_PRICE_SELL) or "").strip()
-        sell = self._hass.states.get(sell_id) if sell_id else None
-        currency = currency_from_attributes(buy.attributes,
-                                            (opts.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
+        currency = currency_from_attributes(buy, (opts.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None)
         if currency is None:
-            return None
-        intervals = intervals_from_attributes(buy.attributes, sell.attributes if sell else None, currency,
-                                              ZoneInfo(self._hass.config.time_zone), now)
+            return self._without_buy()
+        intervals = intervals_from_attributes(buy, sell, currency, self._tz(), now)
+        if sell_set:
+            # Z ustawioną sprzedażą idzie tylko zakres pokryty przez OBIE strony (np. kupno ma już
+            # jutro, sprzedaż jeszcze nie). Seria sprzedaży jest ciągła, więc to nadal jeden ciągły
+            # zakres; pusty (nic się nie sparowało) — blok nie idzie wcale.
+            paired = [iv for iv in intervals if iv["sell"] is not None]
+            if intervals and not paired:
+                # Sprzedaż bez własnej serii (np. encja niedostępna — HA zdejmuje wtedy atrybuty) albo z serią
+                # kończącą się przed `now` (źródło przestało odświeżać) to brak danych; seria trwa, a nic się
+                # nie paruje (waluta, siatka, zakres) — niedopasowanie.
+                own = intervals_from_attributes(sell, None, currency, self._tz(), now)
+                self._sell_withheld(_SELL_NO_PAIR if own and series_end(own) > now else _SELL_NO_DATA)
+                return None
+            intervals = paired
         if not intervals:
-            return None
+            return self._without_buy()
+        self._sell_withheld(None)
         market = self._market()
         fp = fingerprint([{"market": market}, *intervals])
         stale = self._prices_at is None or (now - self._prices_at).total_seconds() >= PRICES_RESEND_S
         if fp == self._prices_fp and not stale:
             return None
         return {"market": market, "currency": currency, "intervals": intervals}, fp
+
+    def _without_buy(self) -> None:
+        """Kupno nie daje cen (brak danych, waluty albo przedziałów): strona sprzedaży nie była w tym cyklu
+        oceniona, więc seria jej powodu się przerywa — po powrocie kupna znowu jeden cykl karencji.
+        Zostaje znacznik ostrzeżenia: ten sam, nadal trwający powód nie ostrzega drugi raz."""
+        self._sell_seen = None
+        return None
+
+    def _sell_withheld(self, reason: str | None) -> None:
+        """Ostrzeżenie, że blok cen nie idzie przez stronę sprzedaży — raz na zmianę powodu;
+        None = ceny znów się składają (kolejny problem ostrzeże od nowa).
+
+        Ostrzegamy dopiero, gdy ten sam powód trwa drugi cykl z rzędu: pierwszy cykl po starcie
+        (akcja jeszcze trwa, encja sprzedaży jeszcze się nie załadowała) to nie usterka."""
+        seen, self._sell_seen = self._sell_seen, reason
+        if reason is None:
+            self._sell_warned = None
+            self._sync_sell_issue(None, "")
+            return
+        if reason != seen or reason == self._sell_warned:
+            return
+        self._sell_warned = reason
+        configured, poller = self._price_action(OPT_PRICE_SELL_ACTION)
+        if configured:
+            source = poller.source.action if poller is not None else "(invalid action)"
+        else:
+            source = (self._entry.options.get(OPT_PRICE_SELL) or "").strip()
+        _LOGGER.warning("Volcast prices are not sent: the sell price source %s %s", source, reason)
+        self._sync_sell_issue(_SELL_ISSUES[reason], source)
+
+    def _sync_sell_issue(self, key: str | None, source: str) -> None:
+        """Zgłoszenie naprawy „ceny nie idą przez stronę sprzedaży”: najwyżej jedno na wpis, z powodem
+        `key`; inny powód zastępuje poprzednie, None je kasuje. Błąd rejestru nigdy nie zabiera cen."""
+        old, self._sell_issue = self._sell_issue, key
+        try:
+            if old is not None and old != key:
+                ir.async_delete_issue(self._hass, DOMAIN, f"{old}_{self._entry.entry_id}")
+            if key is not None and key != old:
+                ir.async_create_issue(self._hass, DOMAIN, f"{key}_{self._entry.entry_id}", is_fixable=False,
+                                      severity=_WARNING, translation_key=key,
+                                      translation_placeholders={"source": source})
+        except Exception as err:  # noqa: BLE001 — zgłoszenie to informacja, nie warunek wysyłki
+            _LOGGER.debug("Volcast price issue update skipped (%s)", type(err).__name__)
 
     def _unsupported(self) -> tuple[str, ...]:
         """Nastawy, które wykonawca uznał za nieobsługiwane (brak encji, długo niedostępna)."""

@@ -96,7 +96,7 @@ def test_discovery_only_entry_has_no_options():
 
 def test_paired_entry_shows_menu_without_default():
     r = asyncio.run(flow().async_step_init())
-    assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices", "ev_charger"]}
+    assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices", "price_source", "ev_charger"]}
     c = asyncio.run(flow().async_step_control())
     # trzy pozycje, żadnej domyślnej („Bezpośrednio” sprawdza dostępność dopiero po wyborze)
     assert c == {"type": "menu", "step_id": "control",
@@ -225,7 +225,8 @@ def test_prices_saved_and_cleared():
 def test_prices_unusable_buy_entity_is_rejected():
     f = flow(prices={"sensor.nordpool": _price_attrs(), "sensor.bad": {"unit_of_measurement": "PLN/kWh"}})
     r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.bad"}))
-    assert r == {"type": "form", "step_id": "prices", "errors": {"entity_price_buy": "prices_not_usable"}}
+    # Encja z walutą i liczbą w stanie, ale bez serii: sama bieżąca cena, nie źródło planu.
+    assert r == {"type": "form", "step_id": "prices", "errors": {"entity_price_buy": "prices_current_only"}}
 
 
 def test_prices_buy_can_be_cleared():
@@ -239,6 +240,69 @@ def test_prices_form_offers_only_usable_entities():
     assert f._usable_price_entities() == ["sensor.nordpool"]
     r = asyncio.run(f.async_step_prices())
     assert (r["type"], r["step_id"]) == ("form", "prices")
+
+
+# ── informacja: sprzedaż nie ma jeszcze jutra, kupno już ma ───────────────
+
+
+def _from_local_midnight(hours):
+    """Seria godzinowa od dzisiejszej północy w Warszawie (strefa atrapy HA): 48 h = dziś + całe jutro."""
+    start = NOW.astimezone(__import__("zoneinfo").ZoneInfo("Europe/Warsaw")).replace(
+        hour=0, minute=0, second=0, microsecond=0).astimezone(NOW.tzinfo)
+    return {"currency": "PLN", "raw_today": [
+        {"start": (start + timedelta(hours=i)).isoformat(), "end": (start + timedelta(hours=i + 1)).isoformat(),
+         "value": 0.5} for i in range(hours)]}
+
+
+_BOTH = {"entity_price_buy": "sensor.buy", "entity_price_sell": "sensor.sell"}
+
+
+def test_prices_form_saves_first_then_notes_sell_without_tomorrow():
+    """Bez kroku potwierdzenia: zapis od razu, informacja po nim — zamknięcie okna niczego nie cofa."""
+    f = flow(prices={"sensor.buy": _from_local_midnight(48), "sensor.sell": _from_local_midnight(36)})
+    saved = []
+    f.hass.config_entries = SimpleNamespace(
+        async_update_entry=lambda entry, *, options: saved.append(options) or setattr(entry, "options", options))
+    r = asyncio.run(f.async_step_prices(dict(_BOTH)))
+    assert r == {"type": "abort", "reason": "price_sell_tomorrow"}
+    assert saved == [_BOTH] and f.config_entry.options == _BOTH
+    assert not hasattr(f, "async_step_price_sell_tomorrow")             # bez osobnego kroku do zatwierdzenia
+
+
+@pytest.mark.parametrize("buy_h, sell_h", [(48, 48), (36, 24), (36, 36)],
+                         ids=["both-have-tomorrow", "before-publication", "neither-has-full-tomorrow"])
+def test_prices_form_without_the_sell_gap_saves_at_once(buy_h, sell_h):
+    f = flow(prices={"sensor.buy": _from_local_midnight(buy_h), "sensor.sell": _from_local_midnight(sell_h)})
+    r = asyncio.run(f.async_step_prices(dict(_BOTH)))
+    assert r["data"] == _BOTH
+
+
+def test_prices_form_without_sell_never_notes_tomorrow():
+    f = flow(prices={"sensor.buy": _from_local_midnight(48)})
+    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.buy"}))
+    assert r["data"] == {"entity_price_buy": "sensor.buy"}
+
+
+def test_prices_form_skips_the_note_when_a_sell_action_stays_in_force():
+    # Akcja sprzedaży wygrywa z encją w czasie działania — encji z formularza nie oceniamy.
+    action = {"action": "nordpool.get_prices_for_date", "data": {"config_entry": "np1", "areas": "PL"}}
+    f = flow(options={**_BOTH, "price_sell_action": action},
+             prices={"sensor.buy": _from_local_midnight(48), "sensor.sell": _from_local_midnight(36)})
+    r = asyncio.run(f.async_step_prices(dict(_BOTH)))
+    assert r["data"] == {**_BOTH, "price_sell_action": action}
+
+
+def test_sell_tomorrow_texts_live_on_the_confirm_step_and_the_saved_notice():
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "custom_components" / "volcast"
+    for path in [root / "strings.json", *sorted((root / "translations").glob("*.json"))]:
+        opts = json.loads(path.read_text(encoding="utf-8"))["options"]
+        assert "price_sell_tomorrow" not in opts["step"], path.name
+        confirm = opts["step"]["price_source_confirm_sell"]
+        assert all(p in confirm["description"] for p in ("{hours}", "{currency}", "{source}")), path.name
+        assert confirm["title"] == opts["step"]["price_source_confirm"]["title"], path.name
+        assert "{source}" in opts["abort"]["price_sell_tomorrow"], path.name
 
 
 # ── powrót do trybu bazowego przed przeładowaniem ──────────────────────────
@@ -323,7 +387,7 @@ def test_strings_have_new_steps_and_errors():
     for name in ("strings.json", "translations/en.json"):
         opts = json.loads((root / name).read_text(encoding="utf-8"))["options"]
         assert {"init", "forecast", "control", "details", "prices"} <= set(opts["step"])
-        assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices", "ev_charger"}
+        assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices", "price_source", "ev_charger"}
         assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_direct", "control_off", "entity_map"}
         assert "entity_mode_unavailable" in opts["abort"] and "prices_not_usable" in opts["error"]
         assert "currency_invalid" in opts["error"]
@@ -375,8 +439,8 @@ def test_prices_fields_submitted_without_key_are_cleared():
 def test_saved_but_now_unusable_buy_entity_does_not_block_saving():
     f = flow(options={"entity_price_buy": "sensor.bad"},
              prices={"sensor.nordpool": _price_attrs(), "sensor.bad": {"unit_of_measurement": "PLN/kWh"}})
-    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.bad", "price_currency": "eur"}))
-    assert r["data"] == {"entity_price_buy": "sensor.bad", "price_currency": "EUR"}
+    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.bad", "price_currency": "pln"}))
+    assert r["data"] == {"entity_price_buy": "sensor.bad", "price_currency": "PLN"}
     key, sel = _field(f._prices_schema(), "entity_price_buy")
     assert sel.config["include_entities"] == ["sensor.bad", "sensor.nordpool"]
 

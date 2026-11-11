@@ -103,3 +103,25 @@ def test_energy_candidates_exclude_disabled():
                     disabled=True)
     c = classify([], [e], [], {})
     assert c.energy_candidates == []
+
+
+def test_amber_general_and_feed_in_reach_the_price_candidates():
+    ents = [_ent("sensor.home_general_forecast", "amberelectric", entry="a1"),
+            _ent("sensor.home_feed_in_forecast", "amberelectric", entry="a1"),
+            _ent("sensor.home_general_price", "amber_electric", entry="a1")]       # nieistniejąca domena
+    c = classify([], ents, [], {})
+    assert [e.entity_id for e in c.price_entities] == ["sensor.home_general_forecast", "sensor.home_feed_in_forecast"]
+
+
+# Domeny sprawdzone u źródła: integracje rdzenia HA (katalog `homeassistant/components`, test w tests_ha)
+# oraz HACS (`domain` w manifest.json repozytorium integracji).
+VERIFIED_CORE = {"nordpool", "tibber", "energyzero", "easyenergy", "amberelectric"}
+VERIFIED_HACS = {"entsoe", "octopus_energy", "pstryk", "epex_spot", "frank_energie", "pstryk_aio"}
+# Domeny, których nie udało się potwierdzić w żadnym źródle (dziś brak) — każda musi być tu wpisana jawnie.
+UNVERIFIED: set[str] = set()
+
+
+def test_every_price_platform_is_verified_or_explicitly_unverified():
+    from custom_components.volcast.core.discovery.known import PRICE_PLATFORMS
+    assert not (VERIFIED_CORE & VERIFIED_HACS) and not ((VERIFIED_CORE | VERIFIED_HACS) & UNVERIFIED)
+    assert PRICE_PLATFORMS == VERIFIED_CORE | VERIFIED_HACS | UNVERIFIED

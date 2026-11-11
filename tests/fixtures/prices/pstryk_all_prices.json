@@ -1,0 +1,30 @@
+{
+  "attributes": {
+    "unit_of_measurement": "PLN/kWh",
+    "All prices": [
+      {
+        "start": "2026-09-15T00:00:00+02:00",
+        "price": 0.6
+      },
+      {
+        "start": "2026-09-15T01:00:00+02:00",
+        "price": 0.61
+      },
+      {
+        "start": "2026-09-15T02:00:00+02:00",
+        "price": 0.62
+      },
+      {
+        "start": "2026-09-15T03:00:00+02:00",
+        "price": 0.63
+      }
+    ]
+  },
+  "expect": {
+    "minutes": 60,
+    "count": 4,
+    "first_start": "2026-09-14T22:00:00Z",
+    "buy0": 0.6,
+    "currency": "PLN"
+  }
+}

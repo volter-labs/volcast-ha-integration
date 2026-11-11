@@ -13,11 +13,14 @@ nigdy listy częściowej. Dziura w dobie cen jest dla plannera gorsza niż brak 
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from custom_components.volcast.core import prices as prices_mod
 from custom_components.volcast.core.prices import (
     currency_from_attributes,
     fingerprint,
@@ -406,14 +409,141 @@ def test_zepsute_atrybuty_sprzedazy_nie_kasuja_zakupu():
     assert [w["sell"] for w in out] == [None, None, None]
 
 
-def test_sell_o_innej_rozdzielczosci_paruje_tylko_wspolne_chwile():
+def test_sell_drobniejszy_zagniezdzony_to_srednia_kwadransow_godziny_kupna():
+    """Sprzedaż drobniejsza i zagnieżdżona: przedział kupna dostaje średnią WSZYSTKICH kwadransów w nim."""
     buy = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=1.0)}
-    sell = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=0.3)}
+    sell = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=lambda i: 0.1 * (i + 1))}
 
     out = intervals_from_attributes(buy, sell, "PLN", _WAW)
 
     assert [w["minutes"] for w in out] == [60, 60]
-    assert [w["sell"] for w in out] == [pytest.approx(0.3), pytest.approx(0.3)]
+    assert [w["sell"] for w in out] == [pytest.approx(0.25), pytest.approx(0.65)]
+
+
+def _raw_utc(start_utc: datetime, ile: int, minuty: int, tz, wartosc):
+    """Wpisy `raw_*` liczone w UTC (ciągłe także w dniu zmiany czasu), zapisane z lokalnym offsetem `tz`."""
+    krok = timedelta(minutes=minuty)
+    return [
+        {"start": (start_utc + i * krok).astimezone(tz).isoformat(),
+         "end": (start_utc + (i + 1) * krok).astimezone(tz).isoformat(),
+         "value": wartosc(i)}
+        for i in range(ile)
+    ]
+
+
+def _srednie(wartosc, ile_kupna: int, na_kupno: int, od: int = 0) -> list:
+    """Oczekiwane średnie sprzedaży kolejnych przedziałów kupna (po `na_kupno` drobnych, od wpisu `od`)."""
+    return [
+        pytest.approx(sum(wartosc(od + k * na_kupno + j) for j in range(na_kupno)) / na_kupno)
+        for k in range(ile_kupna)
+    ]
+
+
+def _zmienna(i: int) -> float:
+    # Inna wartość w każdym drobnym przedziale (także ujemna) — średnia ≠ wartość ze startu.
+    return round(0.05 * ((i * 7) % 11) - 0.12, 4)
+
+
+@pytest.mark.parametrize("krok_kupna, krok_sprzedazy", [
+    (15, 5), (30, 5), (60, 5), (30, 15), (60, 15), (60, 30),
+])
+def test_sell_drobniejszy_kazde_zagniezdzenie_to_srednia(krok_kupna, krok_sprzedazy):
+    na_kupno = krok_kupna // krok_sprzedazy
+    buy = {"raw_today": _raw(_polnoc(), 3, krok_kupna, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 3 * na_kupno, krok_sprzedazy, wartosc=_zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == _srednie(_zmienna, 3, na_kupno)
+    assert [w["sell"] for w in out] != [_zmienna(k * na_kupno) for k in range(3)]
+
+
+def test_sell_drobniejszy_zaczynajacy_sie_w_srodku_godziny_kupna_nie_paruje_jej():
+    """Sprzedaż od 00:30: godzina 00:00 ma tylko 2 z 4 kwadransów — bez sprzedaży, nie średnia z połowy."""
+    buy = {"raw_today": _raw(_polnoc(), 3, 60, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc() + timedelta(minutes=30), 10, 15, wartosc=_zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [None, *_srednie(_zmienna, 2, 4, od=2)]
+
+
+def test_sell_drobniejszy_konczacy_sie_w_srodku_godziny_kupna_nie_paruje_jej():
+    """Sprzedaż do 01:30: godzina 01:00 ma tylko 2 z 4 kwadransów — bez sprzedaży."""
+    buy = {"raw_today": _raw(_polnoc(), 3, 60, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 6, 15, wartosc=_zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [*_srednie(_zmienna, 1, 4), None, None]
+
+
+@pytest.mark.parametrize("dzien, godziny", [(date(2026, 3, 29), 23), (date(2026, 10, 25), 25)])
+def test_sell_drobniejszy_w_dniu_zmiany_czasu_to_srednia_kazdej_godziny(dzien, godziny):
+    polnoc_utc = datetime(dzien.year, dzien.month, dzien.day, tzinfo=_WAW).astimezone(_UTC)
+    buy = {"raw_today": _raw_utc(polnoc_utc, godziny, 60, _WAW, lambda _i: 1.0)}
+    sell = {"raw_today": _raw_utc(polnoc_utc, 4 * godziny, 15, _WAW, _zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert len(out) == godziny
+    assert [w["sell"] for w in out] == _srednie(_zmienna, godziny, 4)
+
+
+def test_sell_drobniejszy_w_strefie_z_polgodzinnym_offsetem_to_srednia():
+    kolkata = ZoneInfo("Asia/Kolkata")  # +05:30 — lokalna pełna godzina to :30 w UTC
+    polnoc_utc = datetime(2026, 9, 15, tzinfo=kolkata).astimezone(_UTC)
+    buy = {"raw_today": _raw_utc(polnoc_utc, 24, 60, kolkata, lambda _i: 1.0)}
+    sell = {"raw_today": _raw_utc(polnoc_utc, 96, 15, kolkata, _zmienna)}
+
+    out = intervals_from_attributes(buy, sell, "INR", kolkata)
+
+    assert out[0]["startAt"] == "2026-09-14T18:30:00Z"
+    assert [w["sell"] for w in out] == _srednie(_zmienna, 24, 4)
+
+
+@pytest.mark.parametrize("krok_kupna, krok_sprzedazy, wartosc", [
+    (15, 5, 0.1), (60, 5, 0.1), (30, 5, 0.07), (60, 15, 0.3),
+])
+def test_srednia_stalej_sprzedazy_to_dokladnie_ta_stala(krok_kupna, krok_sprzedazy, wartosc):
+    # Bez szumu zmiennoprzecinkowego (np. 0.10000000000000002 ze średniej trzech 0.1).
+    buy = {"raw_today": _raw(_polnoc(), 2, krok_kupna, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 2 * krok_kupna // krok_sprzedazy, krok_sprzedazy, wartosc=wartosc)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["sell"] for w in out] == [wartosc, wartosc]
+
+
+def test_srednia_dwoch_wartosci_bez_szumu_zmiennoprzecinkowego():
+    buy = {"raw_today": _raw(_polnoc(), 1, 30, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 2, 15, wartosc=lambda i: (0.1, 0.2)[i])}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert out[0]["sell"] == 0.15
+
+
+def test_sell_grubszy_zagniezdzony_kopiowany_na_kazdy_przedzial_kupna():
+    """Sprzedaż godzinowa przy kupnie 15-min: każdy kwadrans leży w jednej godzinie — cena dokładna."""
+    buy = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc(), 2, 60, wartosc=lambda i: 0.2 + i)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert [w["minutes"] for w in out] == [15] * 8
+    assert [w["sell"] for w in out] == [pytest.approx(0.2)] * 4 + [pytest.approx(1.2)] * 4
+
+
+def test_sell_grubszy_przesuniety_wzgledem_siatki_kupna_to_none():
+    """Godzina sprzedaży od :05 nie zawiera całych kwadransów kupna — brak sprzedaży."""
+    buy = {"raw_today": _raw(_polnoc(), 8, 15, wartosc=1.0)}
+    sell = {"raw_today": _raw(_polnoc() + timedelta(minutes=5), 2, 60, wartosc=0.2)}
+
+    out = intervals_from_attributes(buy, sell, "PLN", _WAW)
+
+    assert len(out) == 8
+    assert all(w["sell"] is None for w in out)
 
 
 def test_sell_parowany_po_chwili_a_nie_po_zapisie_offsetu():
@@ -964,6 +1094,24 @@ def test_has_usable_prices_now_falsz_dla_nieaktualnej_serii():
     assert has_usable_prices_now(attrs, "PLN", _WAW, poza_seria) is False
 
 
+@pytest.mark.parametrize("minuty, teraz_po", [(5, 2), (5, 0), (30, 10), (30, 0)])
+def test_has_usable_prices_now_prawda_dla_prognozy_od_nastepnego_przedzialu(minuty, teraz_po):
+    """Prognoza krocząca (Amber) nie zawiera BIEŻĄCEGO przedziału — zaczyna się od
+    następnej granicy siatki. To nadal gotowość: luka to najwyżej jeden przedział."""
+    granica = _polnoc() + timedelta(hours=10)
+    now = granica + timedelta(minutes=teraz_po)
+    attrs = {"raw_today": _raw(granica + timedelta(minutes=minuty), 24 * 60 // minuty, minuty)}
+
+    assert has_usable_prices_now(attrs, "PLN", _WAW, now) is True
+
+
+def test_has_usable_prices_now_falsz_gdy_luka_dluzsza_niz_jeden_przedzial():
+    granica = _polnoc() + timedelta(hours=10)
+    attrs = {"raw_today": _raw(granica + timedelta(minutes=10), 288, 5)}
+
+    assert has_usable_prices_now(attrs, "PLN", _WAW, granica + timedelta(minutes=4)) is False
+
+
 def test_has_usable_prices_now_falsz_gdy_seria_zaczyna_sie_po_now():
     """Seria jest kompletna i sięga daleko w przód, ale zaczyna się PO `now`
     (np. encja opublikowała już jutro, a jeszcze nie dzisiaj) — nie pokrywa
@@ -972,3 +1120,335 @@ def test_has_usable_prices_now_falsz_gdy_seria_zaczyna_sie_po_now():
     attrs = {"raw_today": _raw(jutro_10, 24, 60)}
 
     assert has_usable_prices_now(attrs, "PLN", _WAW, _polnoc()) is False
+
+
+# ── Adapter atrybutów: kształty popularnych integracji cenowych ─────────────
+
+_FIXTURY_CEN = Path(__file__).resolve().parent.parent / "fixtures" / "prices"
+
+
+@pytest.mark.parametrize("plik", sorted(_FIXTURY_CEN.glob("*.json")), ids=lambda p: p.stem)
+def test_adapter_ksztalt_integracji(plik):
+    dane = json.loads(plik.read_text(encoding="utf-8"))
+    oczekiwane = dane["expect"]
+
+    out = intervals_from_attributes(dane["attributes"], None, oczekiwane["currency"], _WAW)
+
+    assert len(out) == oczekiwane["count"]
+    assert out[0]["startAt"] == oczekiwane["first_start"]
+    assert out[0]["minutes"] == oczekiwane["minutes"]
+    assert out[0]["buy"] == pytest.approx(oczekiwane["buy0"])
+    assert all(p["minutes"] == oczekiwane["minutes"] for p in out)
+
+
+def test_adapter_koniec_z_odstepu_startow_bez_end():
+    attrs = {
+        "All prices": [
+            {"start": f"2026-09-15T{i:02d}:00:00+02:00", "price": 0.5} for i in range(3)
+        ]
+    }
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+    assert [p["minutes"] for p in out] == [60, 60, 60]
+
+
+def test_adapter_jeden_wpis_bez_end_to_pusta_lista():
+    attrs = {"All prices": [{"start": "2026-09-15T00:00:00+02:00", "price": 0.5}]}
+    assert intervals_from_attributes(attrs, None, "PLN", _WAW) == []
+
+
+def test_adapter_nierowny_odstep_startow_bez_end_to_pusta_lista():
+    attrs = {
+        "All prices": [
+            {"start": "2026-09-15T00:00:00+02:00", "price": 0.5},
+            {"start": "2026-09-15T01:00:00+02:00", "price": 0.5},
+            {"start": "2026-09-15T03:00:00+02:00", "price": 0.5},
+        ]
+    }
+    assert intervals_from_attributes(attrs, None, "PLN", _WAW) == []
+
+
+def test_adapter_znacznik_bez_offsetu_to_pusta_lista():
+    attrs = {
+        "prices": [{"time": f"2026-09-15 {i:02d}:00:00", "price": 0.5} for i in range(3)]
+    }
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+
+
+def test_adapter_dziura_w_serii_to_pusta_lista():
+    attrs = {
+        "prices": [
+            {"time": f"2026-09-15 {i:02d}:00:00+02:00", "price": 0.5} for i in (0, 1, 3)
+        ],
+        "unit_of_measurement": "EUR/kWh",
+    }
+    # Z końcem wyprowadzonym z odstępu dziura jest niespójnym odstępem.
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+
+
+def test_adapter_wpis_bez_wartosci_to_pusta_lista():
+    attrs = {
+        "rates": [
+            {"start": "2026-09-15T00:00:00+01:00", "end": "2026-09-15T00:30:00+01:00"},
+        ]
+    }
+    assert intervals_from_attributes(attrs, None, "GBP", _WAW) == []
+
+
+def test_adapter_mwh_skalowane_jak_dla_raw():
+    attrs = {
+        "unit_of_measurement": "EUR/MWh",
+        "prices": [
+            {"time": f"2026-09-15 {i:02d}:00:00+02:00", "price": 100.0} for i in range(3)
+        ],
+    }
+    out = intervals_from_attributes(attrs, None, "EUR", _WAW)
+    assert out[0]["buy"] == pytest.approx(0.1)
+
+
+def test_adapter_raw_today_ma_pierwszenstwo_przed_prices():
+    attrs = {
+        "raw_today": _raw(_polnoc(), 3, 60, wartosc=0.4),
+        "prices": [
+            {"time": f"2026-09-15 {i:02d}:00:00+02:00", "price": 9.0} for i in range(3)
+        ],
+    }
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+    assert out[0]["buy"] == pytest.approx(0.4)
+
+
+def test_adapter_sprzedaz_z_innego_ksztaltu_paruje_po_chwili():
+    kupno = {"prices": [{"time": f"2026-09-15 {i:02d}:00:00+02:00", "price": 0.5} for i in range(3)]}
+    sprzedaz = {
+        "All prices": [{"start": f"2026-09-15T{i:02d}:00:00+02:00", "price": 0.1 + i} for i in range(3)]
+    }
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert [p["sell"] for p in out] == pytest.approx([0.1, 1.1, 2.1])
+
+
+def _wpisy_godzinowe(start_local: datetime, ile: int, cena=0.5):
+    """Wpisy `{time, price}` co godzinę w czasie ściennym (jak `str(datetime)`)."""
+    start_utc = start_local.astimezone(_UTC)
+    return [
+        {"time": str((start_utc + timedelta(hours=i)).astimezone(_WAW)), "price": cena}
+        for i in range(ile)
+    ]
+
+
+def test_adapter_jitter_sekundowy_startu_do_5_s_jest_tolerowany():
+    attrs = {
+        "forecasts": [
+            {
+                "start_time": f"2026-09-15T{i // 2:02d}:{(i % 2) * 30:02d}:01+10:00",
+                "end_time": f"2026-09-15T{(i + 1) // 2:02d}:{((i + 1) % 2) * 30:02d}:00+10:00",
+                "per_kwh": 0.2,
+            }
+            for i in range(4)
+        ]
+    }
+    out = intervals_from_attributes(attrs, None, "AUD", _WAW)
+    assert [p["minutes"] for p in out] == [30] * 4
+    assert out[0]["startAt"] == "2026-09-14T14:00:00Z"
+
+
+def test_adapter_jitter_powyzej_5_s_to_pusta_lista():
+    attrs = {
+        "forecasts": [
+            {
+                "start_time": f"2026-09-15T{i // 2:02d}:{(i % 2) * 30:02d}:07+10:00",
+                "end_time": f"2026-09-15T{(i + 1) // 2:02d}:{((i + 1) % 2) * 30:02d}:00+10:00",
+                "per_kwh": 0.2,
+            }
+            for i in range(4)
+        ]
+    }
+    assert intervals_from_attributes(attrs, None, "AUD", _WAW) == []
+
+
+@pytest.mark.parametrize(
+    "dzien,godziny", [(date(2026, 3, 29), 23), (date(2026, 10, 25), 25)]
+)
+def test_adapter_doba_zmiany_czasu_w_parze_dzis_jutro(dzien, godziny):
+    dzis = datetime(dzien.year, dzien.month, dzien.day, tzinfo=_WAW)
+    jutro = dzis + timedelta(days=1)
+    jutro = datetime(jutro.year, jutro.month, jutro.day, tzinfo=_WAW)
+    attrs = {
+        "prices_today": _wpisy_godzinowe(dzis, godziny),
+        "prices_tomorrow": _wpisy_godzinowe(jutro, 24),
+    }
+    out = intervals_from_attributes(attrs, None, "EUR", _WAW)
+    assert len(out) == godziny + 24
+
+
+def test_adapter_seria_72_godzin_w_kluczu_prices():
+    attrs = {"prices": _wpisy_godzinowe(_polnoc(2026, 9, 14), 72)}
+    assert len(intervals_from_attributes(attrs, None, "EUR", _WAW)) == 72
+
+
+def test_adapter_prices_jako_lista_liczb_nie_blokuje_today():
+    attrs = {"prices": [0.1, 0.2], "today": [0.5] * 24}
+    assert len(intervals_from_attributes(attrs, None, "PLN", _WAW, _polnoc())) == 24
+
+
+def test_adapter_dst_ten_sam_zoneinfo_liczy_dlugosc_w_czasie_absolutnym():
+    p = datetime(2026, 10, 25, 2, 0, tzinfo=_WAW, fold=0)
+    k = datetime(2026, 10, 25, 2, 0, tzinfo=_WAW, fold=1)
+    attrs = {"raw_today": [{"start": p, "end": k, "value": 0.5}]}
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+    assert [x["minutes"] for x in out] == [60]
+
+
+def test_adapter_zonneplan_kwota_niecalkowita_to_pusta_lista():
+    attrs = {
+        "forecast": [
+            {
+                "start_date": f"2026-09-15T{i:02d}:00:00+00:00",
+                "end_date": f"2026-09-15T{i + 1:02d}:00:00+00:00",
+                "price_tax_included": {"amount": 0.25},
+            }
+            for i in range(3)
+        ]
+    }
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+
+
+_AMS = ZoneInfo("Europe/Amsterdam")
+
+
+@pytest.mark.parametrize("minuty", [60, 15])
+def test_adapter_zonneplan_prognoza_w_pamieci_ha_z_datetime(minuty):
+    # Atrybut `forecast` sensorów „Current (quarter) hourly electricity tariff” zonneplan_one: wpisy z API
+    # z `start_date` / `end_date` przeliczonymi na `datetime` w Europe/Amsterdam i kwotą w 1e-7 EUR.
+    start = datetime(2026, 9, 15, tzinfo=_AMS)
+    attrs = {"unit_of_measurement": "€/kWh", "forecast": [
+        {"start_date": start + timedelta(minutes=minuty * i), "end_date": start + timedelta(minutes=minuty * (i + 1)),
+         "price_tax_included": {"amount": 2_000_000}, "price_tax_excluded": {"amount": 1_652_893}}
+        for i in range(4)]}
+    out = intervals_from_attributes(attrs, None, "EUR", _WAW)
+    assert [p["startAt"] for p in out[:2]] == [
+        "2026-09-14T22:00:00Z", (start + timedelta(minutes=minuty)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")]
+    assert len(out) == 4 and all(p["minutes"] == minuty and p["buy"] == pytest.approx(0.2) for p in out)
+
+
+def test_adapter_zonneplan_prognoza_starego_sensora_to_pusta_lista():
+    # Starszy sensor „Current electricity tariff” zonneplan_one: `electricity_price` w 1e-7 EUR bez ścieżki
+    # zagnieżdżonej. Skali tego klucza rejestr nie zna — seria jest wstrzymana, nie zgadywana.
+    start = datetime(2026, 9, 15, tzinfo=_AMS)
+    attrs = {"unit_of_measurement": "€/kWh", "forecast": [
+        {"start_date": start + timedelta(hours=i), "datetime": (start + timedelta(hours=i)).astimezone(timezone.utc)
+         .isoformat(), "electricity_price": 2_000_000, "electricity_price_excl_tax": 1_652_893,
+         "sustainability_score": 0, "tariff_group": "normal"} for i in range(4)]}
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+
+
+@pytest.mark.parametrize("wpis", [
+    # octopus_energy 8.4–8.5 (encja `event`): klucze z API, `value_inc_vat` w pensach.
+    lambda s: {"valid_from": s, "valid_to": s + timedelta(minutes=30), "value_inc_vat": 25.2, "is_capped": False},
+    # octopus_energy 6.x–7.x (sensor): `rates` z `from` / `to` / `rate` w pensach.
+    lambda s: {"from": s, "to": s + timedelta(minutes=30), "rate": 25.2, "is_capped": False},
+], ids=["event_8x", "sensor_7x"])
+def test_adapter_octopus_stawki_w_pensach_to_pusta_lista(wpis):
+    # Od 9.0.0 stawki są w funtach z kluczami `start` / `end`; starsze wersje podawały pensy innymi kluczami.
+    # Bez jednostki skali nie sprawdzimy, więc te kształty muszą zostać nieczytelne (inaczej ×100 za drogo).
+    start = datetime(2026, 9, 15, tzinfo=timezone.utc)
+    attrs = {"rates": [wpis(start + timedelta(minutes=30 * i)) for i in range(4)]}
+    assert intervals_from_attributes(attrs, None, "GBP", _WAW) == []
+
+
+def test_adapter_sprzedaz_72h_od_wczoraj_paruje_sie_dla_dzis_i_jutro():
+    kupno = {"prices_today": _wpisy_godzinowe(_polnoc(2026, 9, 15), 24, 0.5),
+             "prices_tomorrow": _wpisy_godzinowe(_polnoc(2026, 9, 16), 24, 0.5)}
+    sprzedaz = {"prices": _wpisy_godzinowe(_polnoc(2026, 9, 14), 72, 0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "EUR", _WAW)
+    assert len(out) == 48
+    assert all(p["sell"] == pytest.approx(0.1) for p in out)
+
+
+def test_adapter_sprzedaz_z_jutrem_przy_kupnie_tylko_na_dzis_zachowana():
+    kupno = {"prices": _wpisy_godzinowe(_polnoc(2026, 9, 15), 24, 0.5)}
+    sprzedaz = {"prices": _wpisy_godzinowe(_polnoc(2026, 9, 15), 48, 0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "EUR", _WAW)
+    assert len(out) == 24
+    assert all(p["sell"] == pytest.approx(0.1) for p in out)
+
+
+def test_adapter_sprzedaz_przesunieta_faza_to_none():
+    kupno = {"raw_today": _raw(_polnoc(), 4, 30, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc() + timedelta(minutes=15), 4, 30, wartosc=0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 4
+    assert all(p["sell"] is None for p in out)
+
+
+# ── Serie 5-minutowe ────────────────────────────────────────────────────────
+
+
+def test_seria_5_min_daje_przedzialy_5_min():
+    attrs = {"raw_today": _raw(_polnoc(), 288, 5, wartosc=lambda i: 0.3 + i / 1000)}
+    out = intervals_from_attributes(attrs, None, "PLN", _WAW)
+    assert len(out) == 288
+    assert all(p["minutes"] == 5 for p in out)
+    assert out[1]["buy"] == pytest.approx(0.301)
+
+
+def test_seria_5_min_z_luka_to_pusta_lista():
+    wpisy = _raw(_polnoc(), 12, 5)
+    del wpisy[5]
+    attrs = {"All prices": [{"start": w["start"], "price": w["value"]} for w in wpisy]}
+    assert intervals_from_attributes(attrs, None, "PLN", _WAW) == []
+
+
+def test_seria_5_min_nierowny_odstep_to_pusta_lista():
+    wpisy = _raw(_polnoc(), 6, 5)
+    wpisy[3]["end"] = (_polnoc() + timedelta(minutes=17)).isoformat()
+    assert intervals_from_attributes({"raw_today": wpisy}, None, "PLN", _WAW) == []
+
+
+def test_seria_5_min_powyzej_limitu_to_pusta_lista():
+    start = _polnoc(2026, 9, 14)
+    ok = {"prices": _raw(start, 1200, 5)}
+    assert len(intervals_from_attributes(ok, None, "EUR", _WAW)) == 1200
+    za_duzo = {"prices": _raw(start, 1201, 5)}
+    assert intervals_from_attributes(za_duzo, None, "EUR", _WAW) == []
+
+
+def test_limit_5_min_dotyczy_calego_bloku_nie_kazdej_listy():
+    # Dziś i jutro mieszczą się w limicie osobno, razem przekraczają limit chmury — blok pusty,
+    # nie przycięty (chmura odrzuciłaby cały blok ponad 1200 pięciominutówek).
+    start = _polnoc(2026, 9, 14)
+    attrs = {"raw_today": _raw(start, 700, 5), "raw_tomorrow": _raw(start + timedelta(minutes=5 * 700), 501, 5)}
+    assert intervals_from_attributes(attrs, None, "EUR", _WAW) == []
+    attrs["raw_tomorrow"] = attrs["raw_tomorrow"][:500]
+    assert len(intervals_from_attributes(attrs, None, "EUR", _WAW)) == 1200
+
+
+def test_limit_bloku_dla_dluzszych_krokow_to_400_przedzialow(monkeypatch):
+    # Limity pojedynczej listy trzymają dziś blok 15/30/60 min poniżej 400; limit bloku chmury
+    # obowiązuje i tak, gdyby limit listy kiedyś urósł.
+    monkeypatch.setattr(prices_mod, "MAX_MINUT_SERII", 60 * 24 * 30)
+    start = _polnoc(2026, 9, 14)
+    assert len(intervals_from_attributes({"raw_today": _raw(start, 400, 60)}, None, "EUR", _WAW)) == 400
+    assert intervals_from_attributes({"raw_today": _raw(start, 401, 60)}, None, "EUR", _WAW) == []
+
+
+def test_sprzedaz_5_min_paruje_sie_z_kupnem_5_min():
+    kupno = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 12
+    assert all(p["sell"] == pytest.approx(0.1) for p in out)
+
+
+def test_sprzedaz_5_min_przy_kupnie_15_min_to_srednia_trzech():
+    kupno = {"raw_today": _raw(_polnoc(), 4, 15, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc(), 12, 5, wartosc=lambda i: 0.1 * i)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 4
+    assert [p["sell"] for p in out] == pytest.approx([0.1, 0.4, 0.7, 1.0])
+
+
+def test_sprzedaz_5_min_przesunieta_faza_przy_kupnie_15_min_to_none():
+    kupno = {"raw_today": _raw(_polnoc(), 4, 15, wartosc=0.5)}
+    sprzedaz = {"raw_today": _raw(_polnoc() + timedelta(minutes=2), 12, 5, wartosc=0.1)}
+    out = intervals_from_attributes(kupno, sprzedaz, "PLN", _WAW)
+    assert len(out) == 4
+    assert all(p["sell"] is None for p in out)

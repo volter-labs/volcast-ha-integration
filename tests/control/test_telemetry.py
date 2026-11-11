@@ -231,6 +231,397 @@ def test_sell_price_entity_used():
     assert iv[0]["buy"] == 0.5 and iv[0]["sell"] == 0.2
 
 
+_DAY_START = datetime(2026, 9, 23, tzinfo=timezone(timedelta(hours=2)))
+
+
+def _kwadranse(h, eid, value, *, first=0, count=96):
+    """Encja z kwadransami (seria 15-min) na 2026-09-23 w czasie lokalnym +02:00: od kwadransu `first`
+    doby, `count` kolejnych; `value` stała albo funkcja numeru kwadransu doby."""
+    h.states.set(eid, "0", {"currency": "PLN", "raw_today": [
+        {"start": (_DAY_START + timedelta(minutes=15 * i)).isoformat(),
+         "end": (_DAY_START + timedelta(minutes=15 * (i + 1))).isoformat(),
+         "value": value(i) if callable(value) else value} for i in range(first, first + count)]})
+
+
+def _quarter_price(i):
+    # Inna cena w każdym kwadransie doby — średnia godziny ≠ jej pierwszy kwadrans.
+    return round(0.1 + 0.01 * i + (0.08 if i % 4 == 3 else 0.0), 4)
+
+
+def _hour_mean(hour):
+    return pytest.approx(sum(_quarter_price(4 * hour + j) for j in range(4)) / 4)
+
+
+def _start_at(iv):
+    return datetime.fromisoformat(iv["startAt"].replace("Z", "+00:00"))
+
+
+def test_hourly_buy_with_quarter_hour_sell_entity_sends_the_mean_of_each_hour():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _kwadranse(h, "sensor.sell", _quarter_price)
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 24 and all(p["minutes"] == 60 for p in iv)
+    assert [p["sell"] for p in iv] == [_hour_mean(hour) for hour in range(24)]
+
+
+@pytest.mark.parametrize("first, count, hours", [
+    (4 * 13 + 1, 96 - (4 * 13 + 1), range(14, 24)),   # od 13:15 — godzina 13 pokryta tylko częściowo
+    (0, 4 * 20 + 2, range(0, 20)),                    # do 20:30 — godzina 20 pokryta tylko częściowo
+], ids=["head", "tail"])
+def test_quarter_hour_sell_partly_covering_an_hour_trims_it_and_keeps_block_contiguous(first, count, hours):
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _kwadranse(h, "sensor.sell", _quarter_price, first=first, count=count)
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert [p["sell"] for p in iv] == [_hour_mean(hour) for hour in hours]
+    assert _start_at(iv[0]) == _DAY_START + timedelta(hours=hours[0])
+    assert all(_start_at(b) - _start_at(a) == timedelta(minutes=a["minutes"]) for a, b in zip(iv, iv[1:]))
+
+
+def test_quarter_hour_buy_with_hourly_sell_entity_pairs_every_interval():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.buy", "entity_price_sell": "sensor.nordpool"})
+    _kwadranse(h, "sensor.buy", 0.5)
+    _nordpool(h, value=0.2)
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 96 and all(p["minutes"] == 15 and p["sell"] == 0.2 for p in iv)
+
+
+def test_sell_entity_shorter_than_buy_trims_block_to_common_range():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.buy", "entity_price_sell": "sensor.nordpool"})
+    start = datetime(2026, 9, 23, tzinfo=timezone(timedelta(hours=2)))
+    doba = [{"start": (start + timedelta(hours=i)).isoformat(),
+             "end": (start + timedelta(hours=i + 1)).isoformat(), "value": 0.5} for i in range(48)]
+    h.states.set("sensor.buy", "0.5", {"currency": "PLN", "raw_today": doba[:24], "raw_tomorrow": doba[24:]})
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 24 and all(p["sell"] == 0.5 for p in iv)
+    assert iv[-1]["startAt"] == "2026-09-23T21:00:00Z"
+
+
+def test_sell_entity_starting_after_buy_trims_the_head_of_the_block():
+    # Sprzedaż od 13:00 lokalnie (np. prognoza krocząca) — początek doby kupna, w tym bieżący
+    # przedział (12:00 lokalnie), odpada; reszta to jeden ciągły zakres z ceną sprzedaży w każdym przedziale.
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    start = datetime(2026, 9, 23, 13, tzinfo=timezone(timedelta(hours=2)))
+    h.states.set("sensor.sell", "0.2", {"currency": "PLN", "raw_today": [
+        {"start": (start + timedelta(hours=i)).isoformat(), "end": (start + timedelta(hours=i + 1)).isoformat(),
+         "value": 0.2} for i in range(11)]})
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 11 and all(p["sell"] == 0.2 for p in iv)
+    assert iv[0]["startAt"] == "2026-09-23T11:00:00Z" and iv[-1]["startAt"] == "2026-09-23T21:00:00Z"
+
+
+def test_configured_sell_entity_without_data_withholds_prices():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.missing"})
+    asyncio.run(s.async_flush())
+    assert "prices" not in cloud.sent[0]
+
+
+def test_buy_entity_without_sell_source_keeps_null_sell():
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud)
+    asyncio.run(s.async_flush())
+    iv = cloud.sent[0]["prices"]["intervals"]
+    assert len(iv) == 24 and all(p["sell"] is None for p in iv)
+
+
+# ── ceny wstrzymane przez stronę sprzedaży: ostrzeżenie raz na zmianę powodu ─
+
+_SELL_PRICE = 0.4321      # wartość, której nie wolno zobaczyć w logu
+_NP_ACTION = {"action": "nordpool.get_prices_for_date",
+              "data": {"config_entry": "np1", "areas": "PL", "currency": "PLN"}}
+
+
+def _sell_entity(h, eid="sensor.sell", *, currency="PLN", shift_min=0):
+    """Godzinowa doba sprzedaży (+02:00), opcjonalnie w innej walucie albo przesunięta o `shift_min`."""
+    start = datetime(2026, 9, 23, tzinfo=timezone(timedelta(hours=2))) + timedelta(minutes=shift_min)
+    h.states.set(eid, str(_SELL_PRICE), {"currency": currency, "raw_today": [
+        {"start": (start + timedelta(hours=i)).isoformat(), "end": (start + timedelta(hours=i + 1)).isoformat(),
+         "value": _SELL_PRICE} for i in range(24)]})
+
+
+def _sell_missing(h):
+    pass
+
+
+def _sell_unavailable(h):
+    h.states.set("sensor.sell", "unavailable", {})
+
+
+def _sell_other_currency(h):
+    _sell_entity(h, currency="EUR")
+
+
+def _sell_shifted_grid(h):
+    _sell_entity(h, shift_min=30)
+
+
+def _sell_stale(h):
+    _sell_entity(h, shift_min=-2 * 24 * 60)      # integracja przestała odświeżać — seria sprzed dwóch dni
+
+
+def _warnings(caplog):
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def _flush(s, times):
+    for _ in range(times):
+        asyncio.run(s.async_flush())
+
+
+@pytest.mark.parametrize("setup, option, source", [
+    (_sell_missing, {"entity_price_sell": "sensor.sell"}, "sensor.sell"),
+    (_sell_unavailable, {"entity_price_sell": "sensor.sell"}, "sensor.sell"),
+    (_sell_other_currency, {"entity_price_sell": "sensor.sell"}, "sensor.sell"),
+    (_sell_shifted_grid, {"entity_price_sell": "sensor.sell"}, "sensor.sell"),
+    (_sell_missing, {"price_sell_action": _NP_ACTION}, "nordpool.get_prices_for_date"),
+], ids=["missing", "unavailable", "other-currency", "shifted-grid", "action-without-result"])
+def test_withheld_by_sell_side_warns_once_across_cycles(setup, option, source, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", **option})
+    setup(h)
+    _flush(s, 4)
+    assert len(cloud.sent) == 4 and all("prices" not in r for r in cloud.sent)
+    (msg,) = _warnings(caplog)
+    assert "sell" in msg and source in msg
+    assert str(_SELL_PRICE) not in caplog.text and "0.5" not in caplog.text
+
+
+def test_withheld_warning_skips_first_cycle_after_start(caplog):
+    # Pierwszy cykl po starcie (akcja jeszcze trwa, encja jeszcze się nie załadowała) to nie usterka.
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _flush(s, 1)
+    assert _warnings(caplog) == []
+    _sell_entity(h)
+    _flush(s, 3)
+    assert _warnings(caplog) == [] and cloud.sent[1]["prices"]["intervals"][0]["sell"] == _SELL_PRICE
+
+
+def test_withheld_warning_repeats_on_change_of_reason(caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _flush(s, 3)                                    # brak encji sprzedaży
+    _sell_other_currency(h)
+    _flush(s, 3)                                    # encja jest, ale nic się nie paruje
+    assert all("prices" not in r for r in cloud.sent)
+    first, second = _warnings(caplog)
+    assert first != second
+
+
+def test_withheld_warning_rearms_after_prices_flow_again(caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _sell_unavailable(h)
+    _flush(s, 3)
+    _sell_entity(h)
+    _flush(s, 1)
+    assert "prices" in cloud.sent[-1]
+    _sell_unavailable(h)
+    _flush(s, 3)
+    assert len(_warnings(caplog)) == 2
+
+
+def _buy_unavailable(h):
+    h.states.set("sensor.nordpool", "unavailable", {})
+
+
+def _buy_without_currency(h):
+    attrs = dict(h.states.get("sensor.nordpool").attributes)
+    del attrs["currency"]
+    h.states.set("sensor.nordpool", "0.5", attrs)
+
+
+def _buy_without_series(h):
+    h.states.set("sensor.nordpool", "0.5", {"currency": "PLN", "raw_today": []})
+
+
+@pytest.mark.parametrize("drop_buy", [_buy_unavailable, _buy_without_currency, _buy_without_series],
+                         ids=["unavailable", "no-currency", "no-series"])
+def test_buy_dropout_restarts_the_sell_warning_grace(drop_buy, caplog):
+    # Cykl bez kupna nie ocenia strony sprzedaży — po powrocie kupna znowu jeden cykl karencji.
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _sell_other_currency(h)
+    _flush(s, 1)                                    # sprzedaż się nie paruje — karencja
+    drop_buy(h)
+    _flush(s, 1)                                    # kupno wypada
+    _nordpool(h)
+    _flush(s, 1)                                    # kupno wraca — znowu pierwszy cykl
+    assert _warnings(caplog) == []
+    _flush(s, 1)
+    assert len(_warnings(caplog)) == 1 and all("prices" not in r for r in cloud.sent)
+
+
+def test_buy_dropout_does_not_repeat_a_warning_already_given(caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _sell_other_currency(h)
+    _flush(s, 2)                                    # ostrzeżenie
+    _buy_unavailable(h)
+    _flush(s, 1)
+    _nordpool(h)
+    _flush(s, 3)                                    # ten sam, nadal trwający powód
+    assert len(_warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize("options", [{"entity_price_buy": "sensor.nordpool"},
+                                     {"entity_price_buy": "sensor.nordpool", "entity_price_sell": None,
+                                      "price_sell_action": None}])
+def test_buy_only_never_warns_about_sell(options, caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options=options)
+    _flush(s, 3)
+    assert "prices" in cloud.sent[0] and cloud.sent[0]["prices"]["intervals"][0]["sell"] is None
+    assert _warnings(caplog) == []
+
+
+# ── ceny wstrzymane przez stronę sprzedaży: zgłoszenie naprawy (ta sama karencja co log) ─
+
+_NO_DATA, _NO_PAIR = "prices_sell_no_data", "prices_sell_no_pair"
+
+
+class _Issues:
+    """Atrapa rejestru zgłoszeń HA: aktywne zgłoszenia (id → argumenty) i kolejne utworzenia."""
+
+    def __init__(self, monkeypatch):
+        self.active, self.created = {}, []
+        monkeypatch.setattr(tm.ir, "async_create_issue", self._create)
+        monkeypatch.setattr(tm.ir, "async_delete_issue", self._delete)
+
+    def _create(self, hass, domain, issue_id, **kw):
+        assert domain == "volcast"
+        self.created.append(issue_id)
+        self.active[issue_id] = kw
+
+    def _delete(self, hass, domain, issue_id):
+        assert domain == "volcast"
+        self.active.pop(issue_id, None)
+
+
+@pytest.mark.parametrize("setup, option, source, key", [
+    (_sell_missing, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_DATA),
+    (_sell_unavailable, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_DATA),
+    (_sell_other_currency, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_PAIR),
+    (_sell_shifted_grid, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_PAIR),
+    (_sell_stale, {"entity_price_sell": "sensor.sell"}, "sensor.sell", _NO_DATA),
+    (_sell_missing, {"price_sell_action": _NP_ACTION}, "nordpool.get_prices_for_date", _NO_DATA),
+], ids=["missing", "unavailable", "other-currency", "shifted-grid", "stale", "action-without-result"])
+def test_withheld_by_sell_side_raises_one_repair_issue_after_grace(setup, option, source, key, monkeypatch):
+    issues = _Issues(monkeypatch)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", **option})
+    setup(h)
+    _flush(s, 1)
+    assert issues.active == {}                      # pierwszy cykl po starcie to nie usterka
+    _flush(s, 3)
+    assert issues.created == [f"{key}_e1"]
+    kw = issues.active[f"{key}_e1"]
+    assert kw["translation_key"] == key and kw["translation_placeholders"] == {"source": source}
+    assert kw["is_fixable"] is False and kw["severity"] == tm._WARNING
+    assert str(_SELL_PRICE) not in str(kw)
+
+
+@pytest.mark.parametrize("options", [{"entity_price_buy": "sensor.nordpool"},
+                                     {"entity_price_buy": "sensor.nordpool", "entity_price_sell": None,
+                                      "price_sell_action": None}])
+def test_buy_only_never_raises_the_sell_issue(options, monkeypatch):
+    issues = _Issues(monkeypatch)
+    s = sender(goodwe_hass(), Cloud(), options=options)
+    _flush(s, 3)
+    assert issues.created == [] and issues.active == {}
+
+
+def test_sell_issue_is_replaced_when_the_reason_changes(monkeypatch):
+    issues = _Issues(monkeypatch)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _flush(s, 3)                                    # brak encji sprzedaży
+    assert list(issues.active) == [f"{_NO_DATA}_e1"]
+    _sell_other_currency(h)
+    _flush(s, 1)                                    # nowy powód — jeden cykl karencji
+    assert list(issues.active) == [f"{_NO_DATA}_e1"]
+    _flush(s, 1)
+    assert list(issues.active) == [f"{_NO_PAIR}_e1"]
+
+
+def test_sell_issue_is_deleted_when_prices_flow_again(monkeypatch):
+    issues = _Issues(monkeypatch)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _sell_unavailable(h)
+    _flush(s, 3)
+    assert issues.active
+    _sell_entity(h)
+    _flush(s, 1)
+    assert "prices" in cloud.sent[-1] and issues.active == {}
+
+
+def test_sell_issue_is_deleted_when_the_sell_source_is_removed(monkeypatch):
+    issues = _Issues(monkeypatch)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _flush(s, 3)
+    assert issues.active
+    s._entry.options = {"entity_price_buy": "sensor.nordpool"}
+    _flush(s, 1)
+    assert "prices" in cloud.sent[-1] and issues.active == {}
+
+
+def test_sell_issue_is_deleted_when_the_sender_stops(monkeypatch):
+    issues = _Issues(monkeypatch)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _flush(s, 3)
+    assert issues.active
+    asyncio.run(s.async_stop())
+    assert issues.active == {}
+
+
+def test_sell_issue_is_raised_once_across_many_cycles_and_a_buy_dropout(monkeypatch):
+    issues = _Issues(monkeypatch)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _sell_other_currency(h)
+    _flush(s, 20)
+    _buy_unavailable(h)
+    _flush(s, 2)                                    # kupno wypada — strona sprzedaży nieoceniana
+    assert list(issues.active) == [f"{_NO_PAIR}_e1"]
+    _nordpool(h)
+    _flush(s, 20)
+    assert issues.created == [f"{_NO_PAIR}_e1"]
+
+
+def test_issue_registry_errors_never_block_telemetry_or_prices(monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("registry down")
+    monkeypatch.setattr(tm.ir, "async_create_issue", boom)
+    monkeypatch.setattr(tm.ir, "async_delete_issue", boom)
+    h, cloud = goodwe_hass(), Cloud()
+    s = sender(h, cloud, options={"entity_price_buy": "sensor.nordpool", "entity_price_sell": "sensor.sell"})
+    _flush(s, 3)
+    _sell_entity(h)
+    _flush(s, 1)
+    asyncio.run(s.async_stop())
+    assert len(cloud.sent) == 4 and cloud.sent[-1]["prices"]["intervals"][0]["sell"] == _SELL_PRICE
+
+
 # ── odczyty, znak sieci, prywatność, cykl życia ────────────────────────────
 
 
