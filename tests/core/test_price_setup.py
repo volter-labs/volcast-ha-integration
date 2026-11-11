@@ -211,6 +211,14 @@ def test_event_entity_before_its_first_event_is_unusable_in_setup_too():
     assert check.status == "unusable"
 
 
+def test_amber_controlled_load_is_excluded_only_for_amber():
+    """Wykluczenie należy do integracji (platforma), nie do tekstu id."""
+    eid = "sensor.home_controlled_load_forecast"
+    assert is_excluded_entity("amberelectric", eid)
+    assert not is_excluded_entity("pstryk", eid) and not is_excluded_entity(None, eid)
+    assert not is_excluded_entity("amberelectric", "sensor.home_general_forecast")
+
+
 def test_octopus_gas_is_not_an_electricity_candidate():
     gas = "event.octopus_energy_gas_aaa_111_current_day_rates"
     assert is_excluded_entity("octopus_energy", gas) and not is_excluded_entity("pstryk", gas)

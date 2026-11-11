@@ -141,6 +141,10 @@ class PriceIntegration:
     #: Domeny encji HA, w których integracja trzyma serie cen.
     entity_domains: tuple[str, ...] = ("sensor",)
     #: Człony id encji (dzielone po `.` i `_`; „a_b” = kolejne człony), które znaczą „to nie cena prądu”.
+    #: Wykluczenie dotyczy tylko encji TEJ integracji (platforma z rejestru encji HA), nie samego tekstu id,
+    #: i działa wszędzie, gdzie oceniamy encję ceny z platformą (`is_excluded_entity`): kandydaci i pary
+    #: (opcje i onboarding), lista encji w formularzu cen w opcjach — encji spoza niej nie da się wybrać
+    #: ręcznie — i ocena nowo wybranej encji. Wybór zapisany wcześniej działa dalej: wysyłka cen nie wyklucza.
     excluded_tokens: tuple[str, ...] = ()
     #: Podciągi id encji, które znaczą stronę sprzedaży (dokładane do ogólnego słownika ról).
     sell_words: tuple[str, ...] = ()

@@ -481,6 +481,26 @@ async def test_prices_form_refuses_current_only_and_short(hass: HomeAssistant, n
     assert "price_buy_action" in entry.options
 
 
+async def test_hand_picked_excluded_entity_is_refused_only_for_its_integration(hass: HomeAssistant, network_down):
+    """Wykluczenie z rejestru (`excluded_tokens`) należy do integracji, nie do samego tekstu id: encji
+    controlled_load Ambera nie ma na liście, więc wpisanej ręcznie nie da się zapisać; ta sama nazwa innej
+    integracji przechodzi."""
+    amber = _entity(hass, "sensor", "amberelectric", "home_controlled_load_forecast",
+                    _fixture("amber_forecasts", "forecasts", 36, 30, start=_next_boundary(30)))
+    other = _entity(hass, "sensor", "pstryk", "pstryk_controlled_load_price",
+                    _fixture("pstryk_all_prices", "All prices", 36, 60))
+    entry = make_entry(hass)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(menu["flow_id"], {"next_step_id": "prices"})
+    field = next(sel for key, sel in form["data_schema"].schema.items() if str(key) == "entity_price_buy")
+    assert amber not in field.config["include_entities"] and other in field.config["include_entities"]
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": amber})
+    assert "entity_price_buy" not in entry.options
+    done = await hass.config_entries.options.async_configure(form["flow_id"], {"entity_price_buy": other})
+    assert done["type"] is FlowResultType.CREATE_ENTRY and entry.options["entity_price_buy"] == other
+
+
 async def test_missing_currency_is_asked_for(hass: HomeAssistant, network_down):
     _loaded(hass, "tibber", "Tibber", "t1")
     _register(hass, "tibber", "get_prices", lambda call: {"prices": {"Dom": [
