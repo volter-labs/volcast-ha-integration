@@ -6,13 +6,15 @@ adresy, każdy ze swoim bankiem rejestrów. Kolejność ramek: przejęcie (nasta
 nastawa docelowa), oddanie (tryb neutralny → nastawy z migawki → przełącznik), obce wyłączenie przełącznika."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 import pytest_asyncio
 
 from custom_components.volcast.core.modbus.identity import device_fingerprint
 from custom_components.volcast.core.registers import RegisterImage
 from tests.control.test_executor import plan
-from tests.control.test_executor_direct import SALT, Harness, issues  # noqa: F401 — fixture
+from tests.control.test_executor_direct import GW_NOW, SALT, Harness, issues  # noqa: F401 — fixture
 from tests.core.modbus.engine_profile import PLANT, directional_profile
 from tests.sim.device import Faults, RegisterBank
 from tests.sim.fixtures import goodwe_words
@@ -66,12 +68,12 @@ def target(sim, prof):
 async def rig(make_hass):
     made = []
 
-    async def build(bank=None, prof=None):
+    async def build(bank=None, prof=None, utc=None):
         prof = prof or profile()
         plant = bank or plant_bank()
         link = {**goodwe_words(), 47509: 1}         # przełącznik ogranicznika eksportu: czytelne 0/1
         sim = await TwoUnitServer({LINK: RegisterBank(link), PLANT: plant}, Faults()).start()
-        h = Harness(make_hass, prof, target(sim, prof))
+        h = Harness(make_hass, prof, target(sim, prof), utc=utc)
         made.append((h, sim))
         return h, plant
     yield build
@@ -132,6 +134,79 @@ async def test_neutral_plan_keeps_no_limit_owner_set_points_exact(rig, issues):
     await h.cycle()
     assert u32(plant, CHARGE) == [0xFFFF, 0xFFFF] and u32(plant, DISCHARGE) == [0xFFFF, 0xFFFF]
     assert plant.read(MODE, 1) == [AUTO] and plant.read(ENABLE, 1) == [1]
+
+
+class Utc:
+    def __init__(self):
+        self.t = GW_NOW + timedelta(seconds=30)
+
+    def __call__(self):
+        return self.t
+
+
+SELL_THEN_NEUTRAL = [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T10:30:00Z", "mode": "discharge",
+                      "discharge_purpose": "sell", "power_w": 2000, "price_pln_kwh": 0.8},
+                     {"from": "2026-09-23T10:30:00Z", "to": "2026-09-23T11:00:00Z", "mode": "self_consume",
+                      "price_pln_kwh": 0.5}]
+
+
+async def _sell_then_neutral(rig):
+    utc = Utc()
+    h, plant = await rig(plant_bank(mode=AUTO), utc=utc)
+    await h.start(raw=plan(slots=SELL_THEN_NEUTRAL))
+    await h.cycle()
+    assert plant.read(MODE, 1) == [SELL] and u32(plant, DISCHARGE) == [200, 0]
+    utc.t = GW_NOW + timedelta(minutes=31)
+    return h, plant
+
+
+def _set_point_writes(writes):
+    return [(a, v) for a, v in writes if a in (CHARGE, CHARGE + 1, DISCHARGE, DISCHARGE + 1)]
+
+
+@pytest.mark.asyncio
+async def test_neutral_slot_writes_the_mode_then_owner_set_points_next_cycle(rig, issues):
+    h, plant = await _sell_then_neutral(rig)
+    n = len(plant.writes)
+    await h.cycle()
+    assert plant.read(MODE, 1) == [AUTO] and _set_point_writes(plant.writes[n:]) == []
+    await h.cycle()
+    assert u32(plant, DISCHARGE) == [600, 0] and u32(plant, CHARGE) == [0, 5000]
+    assert plant.read(MODE, 1) == [AUTO]
+
+
+@pytest.mark.asyncio
+async def test_refused_owner_set_point_never_keeps_the_forced_mode(rig, issues):
+    h, plant = await _sell_then_neutral(rig)
+    plant.readonly.add(DISCHARGE)               # urządzenie odmawia zapisu nastawy właściciela
+    n = len(plant.writes)
+    for _ in range(3):
+        await h.cycle()
+        assert plant.read(MODE, 1) == [AUTO], h.ex.last_decision.notes
+    assert not any(a == MODE and v == SELL for a, v in plant.writes[n:])
+    assert u32(plant, CHARGE) == [0, 5000]      # nastawa ładowania właściciela nietknięta
+
+
+@pytest.mark.asyncio
+async def test_refused_neutral_mode_leaves_owner_set_points_unwritten(rig, issues):
+    h, plant = await _sell_then_neutral(rig)
+    plant.readonly.add(MODE)                    # tryb neutralny nie przechodzi
+    n = len(plant.writes)
+    for _ in range(3):
+        await h.cycle()
+    assert _set_point_writes(plant.writes[n:]) == []
+    assert u32(plant, DISCHARGE) == [200, 0] and u32(plant, CHARGE) == [0, 5000]
+
+
+@pytest.mark.asyncio
+async def test_zero_first_takeover_with_a_refused_mode_keeps_the_zeros(rig, issues):
+    bank = plant_bank()
+    bank.readonly.add(MODE)
+    h, plant = await rig(bank)
+    await h.start(raw=plan(slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z",
+                                   "mode": "self_consume", "price_pln_kwh": 0.5}]))
+    await h.cycle()
+    assert u32(plant, CHARGE) == [0, 0] and u32(plant, DISCHARGE) == [0, 0]
 
 
 @pytest.mark.asyncio

@@ -1893,10 +1893,13 @@ class VolcastExecutor:
         rep.ambiguous += first.ambiguous
         rep.errors.update(first.errors)
         pre = [w for w in decision.writes if w.key != "mode" and w.key not in _POWER_KEYS]
-        steps = (pre, [w for w in decision.writes if w.key == "mode"], self._planned_power_writes(decision, rd))
+        steps = (pre, [w for w in decision.writes if w.key == "mode"], None)
         need = ("enable", "mode")              # krok, bez którego następny nie idzie
         ok = not (first.failed or first.unsupported)
         for i, step in enumerate(steps):
+            if step is None:
+                # Nastawy właściciela (`after_mode`) tylko po udanym zapisie trybu w tej sekwencji.
+                step = self._planned_power_writes(decision, rd, after_mode="mode" in rep.written)
             if not step:
                 continue
             if not ok:
@@ -1910,16 +1913,18 @@ class VolcastExecutor:
                 ok = False
         return rep, extra
 
-    def _planned_power_writes(self, decision: CycleDecision, rd: Reading) -> list:
+    def _planned_power_writes(self, decision: CycleDecision, rd: Reading, *, after_mode: bool) -> list:
         """Nastawy mocy z planu po zerowaniu — także te, które przed zerowaniem były już zgodne (cykl ich nie
-        zapisywał, a zero je zmieniło): moc trybu kierunkowego albo wartości właściciela w trybie neutralnym."""
+        zapisywał, a zero je zmieniło): moc trybu kierunkowego albo wartości właściciela w trybie neutralnym
+        (`decision.after_mode` — tylko gdy `after_mode`, czyli tryb tej sekwencji przeszedł)."""
         flat = decision.flat
-        keys = [k for k in _POWER_KEYS if k in flat]
-        if not keys:
+        values = {k: float(flat[k]) for k in _POWER_KEYS if k in flat}
+        if after_mode:
+            values.update({k: float(v) for k, v in decision.after_mode.items() if k in _POWER_KEYS})
+        if not values:
             return []
-        params = Params(mode=flat.get("mode") if isinstance(flat.get("mode"), str) else None,
-                        **{k: float(flat[k]) for k in keys})
-        return self.io.restore_writes(params, keys, rd)
+        params = Params(mode=flat.get("mode") if isinstance(flat.get("mode"), str) else None, **values)
+        return self.io.restore_writes(params, list(values), rd)
 
     def _takeover_zeros(self, decision: CycleDecision, rd: Reading) -> list:
         """Zerowe nastawy mocy przed włączeniem przełącznika, gdy odczytany tryb nie jest neutralny; [] = zwykły

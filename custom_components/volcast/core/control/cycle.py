@@ -239,6 +239,10 @@ class CycleDecision:
     # klucz zapisu → klucz planu (`flat`): nastawa mocy wg kierunku trybu to `power_w` planu
     # (`write_policy.power_by_direction`); puste dla pozostałych profili
     aliases: dict[str, str] = field(default_factory=dict)
+    # nastawy właściciela (tryb neutralny / postój, moc wg kierunku), które czekają, aż urządzenie
+    # odczyta planowany tryb — nie ma ich w `flat` ani w `writes`; sekwencja przejęcia może je zapisać
+    # wyłącznie po udanym zapisie trybu
+    after_mode: dict[str, float] = field(default_factory=dict)
 
     def summary(self) -> dict:
         """Mały, JSON-owalny obraz decyzji (telemetria, atrybuty encji) — bez nastaw i notatek strażnika."""
@@ -405,8 +409,22 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         # Przełącznik zdalnego sterowania: włączony, dopóki sterujemy (kolejność profilu: nastawy →
         # przełącznik → tryb; włączenie po nieudanej nastawie wstrzymuje `write_sequence`).
         planned = replace(planned, enable=True)
-    planned = _owner_set_points(planned, _owner_values(target), profile)
-    params, adjusted, unfit = target.fit(planned, profile)
+    # Nastawy właściciela w trybie neutralnym / postoju to wartości PO trybie, nie jego warunki: idą
+    # dopiero, gdy urządzenie czyta planowany tryb, i niczego nie wstrzymują. Nieudana nastawa nie może
+    # zatrzymać trybu wymuszonego po końcu slotu, a wartość właściciela (także „bez limitu”) nie może
+    # działać w trybie wymuszonym, gdy zapis trybu nie przejdzie.
+    owner_sp = _owner_set_points(planned, _owner_values(target), profile)
+    if owner_sp:
+        planned = replace(planned, power_w=None)
+    params, adjusted, unfit = target.fit(replace(planned, **owner_sp), profile)
+    owner_unfit = [k for k in unfit if k in owner_sp]    # niedopasowalnej wartości nie piszemy wcale
+    unfit = tuple(k for k in unfit if k not in owner_sp)
+    after_mode = {k: float(getattr(params, k)) for k in owner_sp if k not in owner_unfit}
+    params = replace(params, **dict.fromkeys(owner_sp))
+    owner_keys: set[str] = set()
+    if after_mode and target.device_view({"mode": params.mode}, profile).get("mode") == params.mode:
+        params, owner_keys, after_mode = replace(params, **after_mode), set(after_mode), {}
+    adjusted = tuple(k for k in adjusted if k not in owner_sp or k in owner_keys)
     if unfit:
         # Klucz, którego encja nie przyjmie, to warunek trybu — tryb nie idzie, nic nie idzie.
         # Notatki sprzedaży zostają: bez nich blokada nie mówi, że sprzedaż stoi i dlaczego.
@@ -448,12 +466,17 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     due = memory.throttle.filter(flat, now_mono) - settled
     # Do zmiany na falowniku: to, co pójdzie teraz, i to, co czeka w interwale I-6.
     need = due | (memory.throttle.pending(flat, now_mono) - settled)
-    notes: list[str] = (["degraded"] if degraded else []) + list(live_notes) + list(pv_notes)
+    notes: list[str] = (["degraded"] if degraded else []) + list(live_notes) + list(pv_notes) \
+        + (["owner_unfit"] if owner_unfit else [])
     unsupported = _with_pair(memory.unsupported)
     refused = set() if _safe_mode(flat.get("mode"), profile) else {
         k for k in due
         if not _toward_safety(k, flat[k], device.get(k))
         and _denied_again(memory, k, flat[k], device.get(k), now_mono)}
+    if "enable" in refused and "mode" not in need:
+        # Przełącznik odrzucony, a urządzenie ma już tryb planu: nie ma czego wstrzymać, a nastawa planu
+        # przy wyłączonym przełączniku udawałaby sterowanie — cały cykl stoi.
+        return CycleDecision(BLOCKED, "enable_refused", flat=flat, notes=(*notes, "denied_hold"), **common)
     if refused:
         due -= refused                      # zostaje w `need`: dalej wstrzymuje tryb
         notes.append("denied_hold")
@@ -471,7 +494,9 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     if blocked:
         due -= blocked
         notes.append("nvm_budget")
-        restore, note = _budget_restore(device, profile, target, memory, gates, now_mono, common)
+        # Nastawa właściciela (urządzenie już w trybie planu) poczeka — tryb nie jest wymuszony.
+        restore, note = (_budget_restore(device, profile, target, memory, gates, now_mono, common)
+                         if blocked - owner_keys else (None, None))
         if restore is not None:
             return restore
         if note is not None:
@@ -483,9 +508,10 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
     if EXPORT_PAIR & (need - allowed) and EXPORT_PAIR & allowed:
         allowed -= EXPORT_PAIR
         notes.append("export_held")
-    held_by = [k for k in runtime_unmapped if k != "mode"]
+    # Nastawy właściciela nie są warunkiem niczego: nie wstrzymują trybu ani przełącznika.
+    held_by = [k for k in runtime_unmapped if k != "mode" and k not in owner_keys]
     # Zmieniony warunek, który w tym cyklu nie dojdzie („nieobsługiwany" nie dojdzie nigdy).
-    unsettled = (need - allowed - unsupported) - {"mode"}
+    unsettled = (need - allowed - unsupported) - {"mode"} - owner_keys
     if "enable" in allowed and (held_by or unsettled):
         # Włączenie przełącznika zdalnego sterowania jest warunkiem jak tryb: urządzenie od razu
         # wykonuje zapamiętany tryb na nastawach, które ma — nastawa, która nie dojdzie w tym cyklu
@@ -543,7 +569,8 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         restore=restore, restore_flat=restore_flat, restore_ambiguous_safe=ambiguous_safe,
         restore_direction=(profile.mode_direction(restore_flat["mode"])
                            if "mode" in restore_flat else None), target_kind=target.kind,
-        device=dict(device) if target.kind == "direct" else {}, live_export=live, aliases=aliases, **common)
+        device=dict(device) if target.kind == "direct" else {}, live_export=live, aliases=aliases,
+        after_mode=after_mode, **common)
 
 
 def _denied_again(memory: ControlMemory, key: str, planned, current, now_mono: float) -> bool:
@@ -950,17 +977,16 @@ def _export_no_limit(limit: float, profile) -> bool:
     return rng is not None and limit >= rng[1]
 
 
-def _owner_set_points(params: Params, owner: Mapping[str, float | str], profile) -> Params:
+def _owner_set_points(params: Params, owner: Mapping[str, float | str], profile) -> dict[str, float]:
     """Moc wg kierunku, tryb neutralny albo postój: obie nastawy mocy wracają do wartości właściciela
     (migawka) — bateria poza slotami z mocą działa jak przed przejęciem. Brak wartości w migawce = tej
-    nastawy nie piszemy (żadnej wymyślonej wartości)."""
+    nastawy nie piszemy (żadnej wymyślonej wartości). {} — profil/tryb bez tej konstrukcji."""
     if not getattr(profile, "power_by_direction", False) or params.mode not in profile.modes \
             or power_key(params.mode, profile) is not None:
-        return params
-    values = {k: float(owner[k]) for k in _DIRECTION_KEYS.values()
-              if isinstance(owner.get(k), (int, float)) and not isinstance(owner.get(k), bool)
-              and math.isfinite(owner[k])}
-    return replace(params, power_w=None, **values)
+        return {}
+    return {k: float(owner[k]) for k in _DIRECTION_KEYS.values()
+            if isinstance(owner.get(k), (int, float)) and not isinstance(owner.get(k), bool)
+            and math.isfinite(owner[k])}
 
 
 def _previous(device: Mapping[str, float | str], profile, memory: ControlMemory

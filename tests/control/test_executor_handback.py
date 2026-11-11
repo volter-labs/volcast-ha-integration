@@ -153,9 +153,64 @@ def test_neutral_slot_after_a_sell_slot_restores_owner_set_points(monkeypatch):
     h.states.set(ENT["soc"], "60", reported=utc.t)          # świeży SoC (I-9)
     n = len(h.services.calls)
     asyncio.run(ex.async_tick())
+    # najpierw sam tryb neutralny — nastawa właściciela dopiero, gdy urządzenie go ma
+    assert calls(h, n) == [("select_option", ENT["mode"], "auto")]
+    n = len(h.services.calls)
+    ex._clock.t += 60
+    asyncio.run(ex.async_tick())
     d = ex.last_decision
     assert ("set_value", ENT["discharge_power_w"], 6.0) in calls(h, n), (d.notes, d.flat, d.reason)
     assert h.states.get(ENT["mode"]).state == "auto"
+
+
+def _sell_then_neutral(monkeypatch):
+    utc = Utc()
+    slots = [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T10:30:00Z", "mode": "discharge",
+              "discharge_purpose": "sell", "power_w": 2500, "price_pln_kwh": 0.8},
+             {"from": "2026-09-23T10:30:00Z", "to": "2026-09-23T11:00:00Z", "mode": "self_consume",
+              "price_pln_kwh": 0.5}]
+    h, ex = make(utc=utc, monkeypatch=monkeypatch)
+    take_over(h, ex, raw=plan(slots=slots))
+    assert h.states.get(ENT["mode"]).state == "sell_power"
+    utc.t = NOW + timedelta(minutes=31)
+    ex._clock.t += 1860
+    return h, ex, utc
+
+
+def test_failing_owner_set_point_never_keeps_the_forced_mode_after_the_slot(monkeypatch):
+    h, ex, utc = _sell_then_neutral(monkeypatch)
+    h.services.fail[ENT["discharge_power_w"]] = RuntimeError("write refused")
+    for _ in range(4):
+        h.states.set(ENT["soc"], "60", reported=utc.t)
+        n = len(h.services.calls)
+        asyncio.run(ex.async_tick())
+        assert ("select_option", ENT["mode"], "sell_power") not in calls(h, n)
+        assert h.states.get(ENT["mode"]).state == "auto", ex.last_decision.notes
+        utc.t += timedelta(seconds=120)
+        ex._clock.t += 120
+
+
+def test_failing_neutral_mode_write_leaves_owner_set_points_unwritten(monkeypatch):
+    h, ex, utc = _sell_then_neutral(monkeypatch)
+    h.services.fail[ENT["mode"]] = RuntimeError("write refused")
+    for _ in range(3):
+        h.states.set(ENT["soc"], "60", reported=utc.t)
+        n = len(h.services.calls)
+        asyncio.run(ex.async_tick())
+        assert not [c for c in calls(h, n) if c[1] in (ENT["charge_power_w"], ENT["discharge_power_w"])]
+        utc.t += timedelta(seconds=120)
+        ex._clock.t += 120
+    assert h.states.get(ENT["discharge_power_w"]).state == "2.5"
+
+
+def test_zero_first_takeover_with_a_failing_mode_write_keeps_the_zeros(monkeypatch):
+    h, ex = make(dhass(mode="charge_battery"), monkeypatch=monkeypatch)
+    h.services.fail[ENT["mode"]] = RuntimeError("write refused")
+    take_over(h, ex, raw=plan(slots=NEUTRAL_PLAN))
+    seq = calls(h)
+    assert ("set_value", ENT["charge_power_w"], 5.0) not in seq
+    assert ("set_value", ENT["discharge_power_w"], 6.0) not in seq
+    assert h.states.get(ENT["charge_power_w"]).state == "0.0"
 
 
 def test_takeover_holds_switch_and_mode_when_zeroing_fails(monkeypatch):

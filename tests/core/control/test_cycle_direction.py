@@ -183,7 +183,7 @@ def test_profile_without_switch_gets_no_enable():
     d = decide_cycle(profile=gw, schedule=one_slot(**SELL), now_utc=T0, now_mono=1000.0, tele=_tele(),
                      limits=Limits(rated_power_w=8000.0), gates=_gates(), memory=ControlMemory.for_profile(gw),
                      target=RegisterTarget(reading))
-    assert "enable" not in d.flat and d.aliases == {}
+    assert "enable" not in d.flat and d.aliases == {} and d.after_mode == {}
 
 
 # ── tryb encji ──────────────────────────────────────────────────────────────
@@ -267,27 +267,83 @@ OWNER_SP = {"charge_power_w": 5000.0, "discharge_power_w": 6000.0}
 NEUTRAL = dict(mode="self_consume")
 
 
-def test_neutral_slot_returns_both_set_points_to_the_owner_values():
+def test_neutral_slot_writes_the_mode_before_any_owner_set_point():
+    # Urządzenie jeszcze w trybie wymuszonym: najpierw sam tryb neutralny, nastawy właściciela czekają.
     p = directional_profile()
     d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("sell_power"), enable=1), owner=OWNER_SP)
+    assert (d.status, [w.key for w in d.writes], d.notes) == (WRITE, ["mode"], ())
+    assert not OWNER_SP.keys() & d.flat.keys() and d.after_mode == OWNER_SP
+
+
+def test_owner_set_points_follow_once_the_device_reads_the_neutral_mode():
+    p = directional_profile()
+    d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("auto"), enable=1), owner=OWNER_SP)
     by_key = {w.key: w for w in d.writes}
+    assert set(by_key) == set(OWNER_SP)
     assert by_key["charge_power_w"].value == 5000 and by_key["discharge_power_w"].value == 600
-    keys = [w.key for w in d.writes]
-    assert max(keys.index("charge_power_w"), keys.index("discharge_power_w")) < keys.index("mode")
     assert d.flat["charge_power_w"] == 5000.0 and "power_w" not in d.flat and d.aliases == {}
+    assert d.after_mode == {}
+
+
+def test_throttled_neutral_mode_writes_no_owner_set_point_in_a_forced_mode():
+    # Zapis trybu w interwale I-6 (np. po niejednoznacznym zapisie): nastawy właściciela nie idą same.
+    p = directional_profile()
+    memory = ControlMemory.for_profile(p)
+    memory.throttle.mark_unknown(["mode"], 990.0)
+    no_limit = {"charge_power_w": float(0xFFFFFFFF), "discharge_power_w": float(0xFFFFFFFF) * 10}
+    d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("charge_battery"), enable=1), memory=memory,
+                owner=no_limit)
+    assert not no_limit.keys() & {w.key for w in d.writes}, [w.key for w in d.writes]
+
+
+def test_pending_owner_set_point_does_not_hold_the_neutral_mode():
+    p = directional_profile()
+    memory = ControlMemory.for_profile(p)
+    memory.throttle.mark_unknown(["discharge_power_w"], 990.0)
+    d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("sell_power"), enable=1, discharge=2500),
+                memory=memory, owner=OWNER_SP)
+    assert d.status == WRITE and "mode" in [w.key for w in d.writes] and "mode_held" not in d.notes
+
+
+def test_pending_owner_set_point_on_a_neutral_device_holds_nothing():
+    p = directional_profile()
+    memory = ControlMemory.for_profile(p)
+    memory.throttle.mark_unknown(["discharge_power_w"], 990.0)
+    d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("auto"), enable=0, discharge=2500),
+                memory=memory, owner=OWNER_SP)
+    keys = [w.key for w in d.writes]
+    assert "enable" in keys and "discharge_power_w" not in keys and "enable_held" not in d.notes
 
 
 def test_idle_slot_returns_owner_set_points_and_settles():
     p = directional_profile()
     standby = dict(mode="idle")
-    d, _ = _run(p, standby, _blocks(enable=1, charge=5000, discharge=6000), owner=OWNER_SP)
+    d, _ = _run(p, standby, _blocks(mode=p.mode_value("battery_standby"), enable=1, charge=5000,
+                                    discharge=6000), owner=OWNER_SP)
     assert not {"charge_power_w", "discharge_power_w"} & {w.key for w in d.writes}
     assert d.flat["discharge_power_w"] == 6000.0
 
 
+def test_idle_slot_from_a_forced_mode_writes_the_mode_first():
+    p = directional_profile()
+    d, _ = _run(p, dict(mode="idle"), _blocks(mode=p.mode_value("sell_power"), enable=1, discharge=2500),
+                owner=OWNER_SP)
+    assert [w.key for w in d.writes] == ["mode"] and d.after_mode == OWNER_SP
+
+
+def test_entity_owner_value_out_of_range_does_not_block_the_neutral_mode():
+    # Encja nastawy bez zakresu: wartości właściciela nie dopasujemy (nie piszemy jej), tryb i tak idzie.
+    p = _entity_profile()
+    ents = _ents({"mode": "sell_power", "enable": "on", "discharge_power_w": 2500.0, "soc_min": 80.0})
+    attrs = {k: v for k, v in ents.attrs.items() if k != "number.discharge"}
+    ents = replace(ents, attrs=attrs, owner_values=OWNER_SP)
+    d = _entity_run(p, NEUTRAL, ents)
+    assert d.status == WRITE and [w.key for w in d.writes] == ["mode"], (d.reason, d.unmapped)
+
+
 def test_missing_owner_value_is_never_invented():
     p = directional_profile()
-    d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("sell_power"), enable=1),
+    d, _ = _run(p, NEUTRAL, _blocks(mode=p.mode_value("auto"), enable=1),
                 owner={"charge_power_w": 5000.0})
     keys = [w.key for w in d.writes]
     assert "charge_power_w" in keys and "discharge_power_w" not in keys and "discharge_power_w" not in d.flat
@@ -346,3 +402,13 @@ def test_plan_export_limit_above_the_sanity_bound_is_still_rejected():
     p = _u32_export()
     d, _ = _run(p, dict(NEUTRAL, export_limit_w=40000), _export_blocks([0, 0]))
     assert (d.status, d.reason) == (BLOCKED, "guard:I-10")
+
+
+def test_refused_switch_with_the_mode_already_set_blocks_instead_of_writing_set_points():
+    # Urządzenie ma już tryb planu, ale odmawia włączenia przełącznika: nastawa bez przełącznika
+    # udawałaby sterowanie — cykl stoi bez zapisów.
+    p = directional_profile()
+    memory = ControlMemory.for_profile(p)
+    memory.denied["enable"] = (1.0, 0.0, 995.0, 600.0)
+    d, _ = _run(p, SELL, _blocks(mode=p.mode_value("sell_power"), enable=0), memory=memory)
+    assert (d.status, d.reason, d.writes) == (BLOCKED, "enable_refused", [])
