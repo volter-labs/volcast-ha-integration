@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# Wersja silnika profili (`min_engine` profilu z feedu powyżej tej wartości = profil pominięty).
+# Definicja w rdzeniu (`core/profile_schema.py`), bo rdzeń importuje się bez reszty integracji.
+from .core.profile_schema import PROFILE_ENGINE  # noqa: F401
+
 DOMAIN = "volcast"
 
 DEFAULT_API_URL = "https://volcast.app/api/forecast"

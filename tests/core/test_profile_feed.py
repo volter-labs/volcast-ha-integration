@@ -212,10 +212,106 @@ def test_malformed_body_rejected(body):
     assert _reason(body) == "malformed"
 
 
-def test_one_invalid_profile_rejects_the_whole_feed():
+def _verify(*profiles):
+    return pf.verify_feed_body(_body(feed=_feed(list(profiles))), keys=KEYS, held=None)
+
+
+def test_profile_with_a_schema_error_is_skipped_and_the_rest_accepted():
     bad = _acme("broken-profile")
     del bad["write_policy"]
-    assert _reason(_body(feed=_feed([_acme(), bad]))) == "profile_invalid"
+    v = _verify(_acme(), bad)
+    assert list(v.profiles) == ["acme-hybrid"]
+    assert v.skipped == (("broken-profile", "schema"),)
+
+
+@pytest.mark.parametrize("edit", [
+    lambda p: p.update(future_field={"x": 1}),                       # nieznane pole na szczycie
+    lambda p: p["write_policy"].update(power_by_direction=True),     # nieznane pole w sekcji
+    lambda p: p["read"].update(future_reading={"addr": 1, "type": "u16"}),
+], ids=["top-level", "nested", "unknown-read-key"])
+def test_profile_with_an_unknown_field_is_skipped_and_the_rest_accepted(edit):
+    future = _acme("future-hybrid")
+    edit(future)
+    v = _verify(_acme(), future)
+    assert list(v.profiles) == ["acme-hybrid"]
+    assert v.skipped == (("future-hybrid", "schema"),)
+
+
+def test_profile_requiring_a_newer_engine_is_skipped_and_the_rest_accepted():
+    v = _verify(_acme(), _acme("next-hybrid", min_engine=pf.PROFILE_ENGINE + 1))
+    assert list(v.profiles) == ["acme-hybrid"]
+    assert v.skipped == (("next-hybrid", "engine"),)
+
+
+def test_newer_engine_wins_over_a_schema_error_in_the_skip_code():
+    nxt = _acme("next-hybrid", min_engine=3, future_field=True)
+    assert _verify(_acme(), nxt).skipped == (("next-hybrid", "engine"),)
+
+
+@pytest.mark.parametrize("engine", [1, 2])
+def test_profile_within_the_engine_version_is_accepted(engine):
+    v = _verify(_acme(min_engine=engine))
+    assert list(v.profiles) == ["acme-hybrid"] and v.skipped == ()
+    assert v.profiles["acme-hybrid"]["min_engine"] == engine
+
+
+@pytest.mark.parametrize("engine", [0, -1, True, "3", 2.5, None])
+def test_malformed_min_engine_is_a_schema_skip(engine):
+    v = _verify(_acme(), _acme("odd-hybrid", min_engine=engine))
+    assert list(v.profiles) == ["acme-hybrid"]
+    assert v.skipped == (("odd-hybrid", "schema"),)
+
+
+def test_engine_version_constant():
+    from custom_components.volcast import const
+    assert pf.PROFILE_ENGINE == const.PROFILE_ENGINE == 2
+
+
+def test_every_profile_skipped_still_accepts_an_empty_feed():
+    bad = _acme()
+    del bad["limits"]
+    v = _verify(bad)
+    assert dict(v.profiles) == {} and v.skipped == (("acme-hybrid", "schema"),)
+
+
+def test_skipped_profiles_never_reach_the_registry():
+    bad = _acme("broken-profile", future_field=1)
+    pf.set_feed_profiles(_verify(_acme(), bad).profiles)
+    assert pf.feed_ids() == frozenset({"acme-hybrid"})
+
+
+@pytest.mark.parametrize("edit", [
+    lambda p: p.update(future_field=1),
+    lambda p: p.update(min_engine=9),
+    lambda p: p.pop("limits"),
+], ids=["unknown-field", "newer-engine", "schema-error"])
+def test_unsafe_regex_rejects_the_whole_feed_even_in_a_skippable_profile(edit):
+    raw = _acme("future-hybrid")
+    edit(raw)
+    raw["ha"]["integrations"][0]["model_regex"] = ["^(a+)+$"]
+    assert _reason(_body(feed=_feed([_acme(), raw]))) == "profile_invalid"
+
+
+def test_unsafe_regex_in_an_unknown_field_rejects_the_whole_feed():
+    raw = _acme("future-hybrid", future={"label_regex": "^(.*)*x"})
+    assert _reason(_body(feed=_feed([_acme(), raw]))) == "profile_invalid"
+
+
+def test_overbroad_identify_rejects_the_whole_feed_next_to_a_good_profile():
+    raw = _acme("broad-hybrid", future_field=1)
+    raw["identify"]["model_regex"] = [".*"]
+    assert _reason(_body(feed=_feed([_acme(), raw]))) == "profile_invalid"
+
+
+def test_duplicate_id_rejects_the_feed_even_when_one_copy_is_skippable():
+    assert _reason(_body(feed=_feed([_acme(), _acme(future_field=1)]))) == "profile_invalid"
+
+
+@pytest.mark.parametrize("entry", [5, "acme-hybrid", None, ["x"]])
+def test_non_object_entry_still_rejects_the_whole_feed(entry):
+    feed = _feed()
+    feed["profiles"] = [_acme(), entry]
+    assert _reason(_body(feed=feed)) == "profile_invalid"
 
 
 @pytest.mark.parametrize("pid", ["Acme-Hybrid", "acme_hybrid", "../etc", "", "acme--x"])
@@ -658,10 +754,32 @@ def test_unsafe_regex_rejects_the_feed(regex):
 
 
 @pytest.mark.parametrize("bad", [["x"], "x", 5, {"integrations": "x"}, {"integrations": [5]}])
-def test_malformed_sections_are_a_rejection_not_a_crash(bad):
-    raw = _acme()
+def test_malformed_sections_are_a_skip_not_a_crash(bad):
+    raw = _acme("broken-hybrid")
     raw["ha"] = bad
-    assert _reason(_body(feed=_feed([raw]))) == "profile_invalid"
+    v = _verify(_acme(), raw)
+    assert list(v.profiles) == ["acme-hybrid"] and v.skipped == (("broken-hybrid", "schema"),)
+
+
+def test_skipped_profiles_logged_with_id_and_code_only(caplog):
+    raw = _acme("broken-hybrid", label="SECRET-LABEL", future_field="SECRET-VALUE")
+    with caplog.at_level(logging.WARNING):
+        assert _run(_updater(MemStore()).async_check(Fetch(_ok(_body(feed=_feed([_acme(), raw])))))) == "updated"
+    assert "broken-hybrid" in caplog.text and "schema" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+def test_skipped_profiles_logged_again_when_the_stored_feed_is_loaded(caplog):
+    store = MemStore()
+    body = _body(feed=_feed([_acme(), _acme("next-hybrid", min_engine=7)]))
+    _run(_updater(store).async_check(Fetch(_ok(body))))
+    pf.set_feed_profiles({})
+    upd = _updater(store)
+    with caplog.at_level(logging.WARNING):
+        _run(upd.async_load())
+    assert upd.held.skipped == (("next-hybrid", "engine"),)
+    assert pf.feed_ids() == frozenset({"acme-hybrid"})
+    assert "next-hybrid" in caplog.text and "engine" in caplog.text
 
 
 def test_rollback_floor_survives_an_unverifiable_store(caplog):

@@ -2,11 +2,13 @@
 
 Kontrakt: `docs/box/profile-feed-contract.md` w repo Volcast. Feed jest publiczny — zaufanie daje
 WYŁĄCZNIE podpis Ed25519 nad kanonicznym JSON-em obiektu `feed`, weryfikowany kluczem publicznym
-wpisanym w integrację. Każdy błąd (podpis, nieznany klucz, wersja, starszy albo podmieniony feed,
-zły JSON, rozmiar, choćby jeden zły profil) = odrzucenie CAŁEGO feedu; trzymany zostaje, w logu tylko
-kod przyczyny (bez treści feedu). Profil z feedu jest zawsze `draft` (także `modbus` i wpisy
-`ha.integrations`) — feed nigdy nie podnosi zaufania; pakietowy `verified` z nim wygrywa
-(`profile.load_builtin`).
+wpisanym w integrację. Błąd koperty (podpis, nieznany klucz, wersja, starszy albo podmieniony feed,
+zły JSON, rozmiar) albo wpisu, którego nie da się bezpiecznie pominąć (nie obiekt, złe lub powtórzone
+id, niebezpieczny wzorzec) = odrzucenie CAŁEGO feedu; trzymany zostaje, w logu tylko kod przyczyny
+(bez treści feedu). Profil z błędem schematu (np. polem nowszym niż ta wersja) albo z `min_engine`
+powyżej `PROFILE_ENGINE` jest pomijany pojedynczo (w logu id i kod). Profil z feedu jest zawsze
+`draft` (także `modbus` i wpisy `ha.integrations`) — feed nigdy nie podnosi zaufania; pakietowy
+`verified` z nim wygrywa (`profile.load_builtin`).
 
 Bez kluczy publicznych moduł jest bezczynny: nic nie czyta z magazynu, nic nie pobiera.
 Rdzeń bez Home Assistanta: magazyn (`async_load`/`async_save`), pobieranie i wykonawca zadań
@@ -31,7 +33,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping
 
-from .profile_schema import validate_profile
+from . import profile_schema
+from .profile_schema import PROFILE_ENGINE, validate_profile
 from .regex_safety import fits, identify_issues, safe_search, text_problem
 
 _LOGGER = logging.getLogger(__name__)
@@ -132,6 +135,7 @@ class VerifiedFeed:
     profiles: Mapping[str, dict]          # id → profil po wymuszeniu `draft`
     ignored: tuple[str, ...] = ()         # wpisy o id profilu z pakietu (pominięte)
     overlapping: tuple[str, ...] = ()     # wpisy rozpoznające urządzenie profilu z pakietu (pominięte)
+    skipped: tuple[tuple[str, str], ...] = ()   # (id, kod) wpisów, których ta wersja nie użyje
 
     @property
     def etag(self) -> str:
@@ -268,40 +272,80 @@ def overlaps_packaged(raw: dict, *, only: str | None = None) -> bool:
     return False
 
 
+# Kody pojedynczego pominięcia wpisu (log i `VerifiedFeed.skipped`).
+SKIP_SCHEMA = "schema"      # błąd schematu tej wersji, np. pole dodane w nowszym silniku
+SKIP_ENGINE = "engine"      # `min_engine` wyższe niż `PROFILE_ENGINE`
+
+
+class ProfileSkipped(Exception):
+    """Wpis feedu pominięty pojedynczo; reszta feedu obowiązuje. Celowo NIE `FeedRejected`."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _unsafe(raw: dict) -> bool:
+    """Wzorzec `*_regex` spoza reguły (na każdej głębokości, także w polach spoza schematu; z drzewem
+    parsera, fail closed) albo zbyt szeroka identyfikacja. Sprawdzane PRZED schematem: niebezpieczny
+    wpis odrzuca cały feed, nawet taki, który i tak zostałby pominięty."""
+    return bool(profile_schema.regex_issues(raw, parse_tree=True)) or not _identify_narrow(raw)
+
+
 def _one_profile(raw: Any) -> dict:
-    if not isinstance(raw, dict):
+    """Profil po wymuszeniu `draft`. `FeedRejected` = odrzucenie całego feedu (wpis nie jest obiektem,
+    złe id, niebezpieczny wzorzec); `ProfileSkipped` = pominięcie tylko tego wpisu."""
+    if not isinstance(raw, dict) or not profile_schema.valid_profile_id(raw.get("id")):
+        raise FeedRejected("profile_invalid")      # bez poprawnego id nie da się wpisu nazwać ani pominąć
+    try:
+        unsafe = _unsafe(raw)
+    except (TypeError, AttributeError, ValueError, KeyError, RecursionError, re.error) as err:
+        raise FeedRejected("profile_invalid") from err
+    if unsafe:
         raise FeedRejected("profile_invalid")
+    engine = raw.get("min_engine")
+    if isinstance(engine, int) and not isinstance(engine, bool) and engine > PROFILE_ENGINE:
+        raise ProfileSkipped(SKIP_ENGINE)
     try:
         if validate_profile(raw):
-            raise FeedRejected("profile_invalid")
+            raise ProfileSkipped(SKIP_SCHEMA)
         draft = _as_draft(raw)
-        # Te same reguły co dla profilu z pakietu (id kebab-case, schemat, bezpieczeństwo wzorców
-        # `*_regex` — `regex_problem` z drzewem parsera, fail closed), na kopii już zdegradowanej.
-        if validate_profile(draft, parse_tree=True) or not _identify_narrow(draft):
-            raise FeedRejected("profile_invalid")
+        # Te same reguły co dla profilu z pakietu (schemat, wzorce z drzewem parsera), na kopii już
+        # zdegradowanej; wzorce przeszły już `_unsafe`, więc błąd tutaj to błąd schematu.
+        if validate_profile(draft, parse_tree=True):
+            raise ProfileSkipped(SKIP_SCHEMA)
     except (TypeError, AttributeError, ValueError, KeyError, re.error) as err:
-        raise FeedRejected("profile_invalid") from err
+        raise ProfileSkipped(SKIP_SCHEMA) from err
     return draft
 
 
-def _profiles(raw_list: Any) -> tuple[dict[str, dict], tuple[str, ...], tuple[str, ...]]:
-    """(nowe profile, pominięte id pakietu, pominięte nakładające się). Etap 1: feed tylko DODAJE marki —
-    wpis o id profilu z pakietu albo rozpoznający urządzenie profilu z pakietu jest pomijany (zależy od
-    zestawu pakietu TEJ wersji integracji, więc nie może odrzucać całego feedu); wpis zepsuty albo
-    niebezpieczny odrzuca cały feed."""
+def _profiles(raw_list: Any) -> tuple[dict[str, dict], tuple[str, ...], tuple[str, ...],
+                                      tuple[tuple[str, str], ...]]:
+    """(nowe profile, pominięte id pakietu, pominięte nakładające się, pominięte (id, kod)). Etap 1: feed
+    tylko DODAJE marki — wpis o id profilu z pakietu albo rozpoznający urządzenie profilu z pakietu jest
+    pomijany (zależy od zestawu pakietu TEJ wersji integracji, więc nie może odrzucać całego feedu); tak
+    samo wpis z błędem schematu albo za nowym `min_engine` (feed bywa nowszy niż integracja). Wpis
+    niebędący obiektem, bez poprawnego id, o powtórzonym id albo niebezpieczny odrzuca cały feed."""
     if not isinstance(raw_list, list) or len(raw_list) > FEED_MAX_PROFILES:
         raise FeedRejected("profile_invalid")
     packaged = packaged_refs()
     out: dict[str, dict] = {}
     ignored: list[str] = []
     overlapping: list[str] = []
+    skipped: list[tuple[str, str]] = []
     seen: set[str] = set()
     for raw in raw_list:
-        draft = _one_profile(raw)
-        pid = draft["id"]
+        try:
+            draft: dict | None = _one_profile(raw)
+        except ProfileSkipped as skip:
+            draft, code = None, skip.code
+        pid = raw["id"]                              # poprawność id sprawdza `_one_profile`
         if pid in seen:
             raise FeedRejected("profile_invalid")
         seen.add(pid)
+        if draft is None:
+            skipped.append((pid, code))
+            continue
         if pid in packaged:
             ignored.append(pid)
             continue
@@ -313,7 +357,7 @@ def _profiles(raw_list: Any) -> tuple[dict[str, dict], tuple[str, ...], tuple[st
             overlapping.append(pid)
             continue
         out[pid] = draft
-    return out, tuple(sorted(ignored)), tuple(sorted(overlapping))
+    return out, tuple(sorted(ignored)), tuple(sorted(overlapping)), tuple(sorted(skipped))
 
 
 def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None,
@@ -357,10 +401,11 @@ def verify_feed(doc: Any, *, keys: Mapping[str, str], held: VerifiedFeed | None,
             raise FeedRejected("rollback")
         if generated_at == held.generated_at and doc["signature"] != held.signature:
             raise FeedRejected("replay")
-    profiles, ignored, overlapping = _profiles(feed.get("profiles"))
+    profiles, ignored, overlapping, skipped = _profiles(feed.get("profiles"))
     document = {"feed": copy.deepcopy(feed), "key_id": key_id, "signature": doc["signature"]}
     return VerifiedFeed(document=document, key_id=key_id, signature=doc["signature"],
-                        generated_at=generated_at, profiles=profiles, ignored=ignored, overlapping=overlapping)
+                        generated_at=generated_at, profiles=profiles, ignored=ignored, overlapping=overlapping,
+                        skipped=skipped)
 
 
 def verify_feed_body(body: bytes, *, keys: Mapping[str, str], held: VerifiedFeed | None,
@@ -557,6 +602,9 @@ def _log_skipped(feed: VerifiedFeed) -> None:
     if feed.overlapping:
         _LOGGER.warning("Volcast profile feed: ignored entries that match an inverter of a shipped profile (%s)",
                         ", ".join(feed.overlapping))
+    if feed.skipped:
+        _LOGGER.warning("Volcast profile feed: skipped entries this version of the integration cannot use (%s)",
+                        ", ".join(f"{pid}: {code}" for pid, code in feed.skipped))
 
 
 def _iso(dt: datetime) -> str:

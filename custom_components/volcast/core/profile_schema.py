@@ -58,7 +58,12 @@ MAX_READ_REGISTERS = 125
 _TOP_REQ = ("schema_version", "id", "label", "status", "control_model", "sources", "unit_id",
             "transports", "identify", "read", "write", "intents", "baseline", "write_policy",
             "limits", "ha", "capabilities", "modbus")
-_TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification", "work_mode")
+_TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification", "work_mode", "min_engine")
+# Wersja silnika profili tej wersji integracji. Profil z `min_engine` wyższym niż ta wartość
+# wymaga konstrukcji, których ten silnik nie zna — feed go pomija (`profile_feed`).
+# Tu, nie w `const.py`: rdzeń importuje się bez reszty integracji (`const` ją reeksportuje).
+PROFILE_ENGINE = 2
+_MAX_MIN_ENGINE = 2 ** 53 - 1
 # Nadpisania parametrów drabiny weryfikacji urządzenia (próbne godziny, okno próbne): pole → zakres.
 VERIFICATION_RANGES = {"trial_hours": (1, 72), "window_minutes": (5, 60), "window_power_w": (100, 3000)}
 
@@ -572,6 +577,19 @@ def profile_warnings(raw: object) -> list[str]:
             if isinstance(spec, dict) and spec.get("verify") is True]
 
 
+def valid_profile_id(value: object) -> bool:
+    """Id profilu w kebab-case (ta sama reguła co `$.id` w `validate_profile`)."""
+    return isinstance(value, str) and bool(_ID_RE.match(value))
+
+
+def regex_issues(raw: object, *, parse_tree: bool = True) -> list[tuple[str, str]]:
+    """(ścieżka, kod) każdego niebezpiecznego wzorca `*_regex` na dowolnej głębokości — także w polach
+    spoza schematu. Ta sama reguła co na końcu `validate_profile`; feed sprawdza nią wpis ZANIM
+    rozstrzygnie, czy błąd schematu tylko pomija profil (niebezpieczny wzorzec odrzuca cały feed)."""
+    return [(path, problem) for path, rx in iter_regex_fields(raw)
+            if (problem := regex_problem(rx, parse_tree=parse_tree))]
+
+
 def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
     v = _V()
     top = v.obj(raw, "$", _TOP_REQ, _TOP_OPT)
@@ -580,9 +598,11 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
     sv = top.get("schema_version")
     if isinstance(sv, bool) or sv != 1:
         v.err("$.schema_version", "obsługiwana wyłącznie wersja 1")
-    if not isinstance(top.get("id"), str) or not _ID_RE.match(top["id"]):
+    if not valid_profile_id(top.get("id")):
         v.err("$.id", "oczekiwano kebab-case, np. goodwe-et")
     v.str_(top.get("label"), "$.label")
+    if "min_engine" in top:
+        v.int_(top["min_engine"], "$.min_engine", 1, _MAX_MIN_ENGINE)
     v.enum(top.get("status"), "$.status", ("draft", "verified"))
     model = top.get("control_model")
     v.enum(model, "$.control_model", ("mode_setpoint", "time_window"))
@@ -763,8 +783,6 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
         expected = tou.get("programs") if (model == "time_window" and tou) else 0
         if tw != expected:
             v.err("$.capabilities.time_windows", f"oczekiwano {expected}")
-    for path, rx in iter_regex_fields(top):
-        problem = regex_problem(rx, parse_tree=parse_tree)
-        if problem:
-            v.err(path, f"niebezpieczny regex ({problem}): {REGEX_HINTS.get(problem, problem)}")
+    for path, problem in regex_issues(top, parse_tree=parse_tree):
+        v.err(path, f"niebezpieczny regex ({problem}): {REGEX_HINTS.get(problem, problem)}")
     return v.errors

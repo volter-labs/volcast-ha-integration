@@ -677,3 +677,38 @@ def _wm_mut(f):
 ])
 def test_work_mode_block_rejected(mutate, needle):
     assert needle in _errs(_wm_mut(mutate))
+
+
+# --- wymagana wersja silnika (`min_engine`) ----------------------------------------------------------
+
+@pytest.mark.parametrize("engine", [1, 2, 3, 99])
+def test_min_engine_optional_positive_int(engine):
+    for p in (ms_profile(), tw_profile()):
+        p["min_engine"] = engine
+        assert validate_profile(p) == []
+
+
+@pytest.mark.parametrize("engine", [0, -1, True, False, "2", 2.0, 1.5, None, [2]])
+def test_min_engine_must_be_an_int_of_at_least_one(engine):
+    p = ms_profile()
+    p["min_engine"] = engine
+    assert "$.min_engine" in _errs(p)
+
+
+def test_unknown_top_level_field_still_an_error_next_to_min_engine():
+    p = ms_profile()
+    p.update(min_engine=1, min_engines=1)
+    assert "$.min_engines: nieznane pole" in _errs(p)
+
+
+def test_engine_version_of_this_release():
+    from custom_components.volcast.core import profile_schema
+    assert profile_schema.PROFILE_ENGINE == 2
+
+
+def test_regex_issues_report_every_unsafe_pattern_with_its_path():
+    from custom_components.volcast.core.profile_schema import regex_issues
+    p = ms_profile()
+    assert regex_issues(p) == []
+    p["future"] = {"label_regex": "^(a+)+$"}
+    assert [path for path, _ in regex_issues(p)] == ["$.future.label_regex"]
