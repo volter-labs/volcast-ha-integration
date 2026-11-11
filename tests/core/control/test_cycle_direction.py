@@ -149,6 +149,23 @@ def test_missing_set_point_degrades_its_direction_to_neutral():
     assert d.flat["mode"] == "auto" and "power_w" not in d.flat
 
 
+def test_unsupported_switch_blocks_the_whole_cycle():
+    p = directional_profile()
+    memory = ControlMemory.for_profile(p)
+    memory.unsupported = {"enable"}
+    d, _ = _run(p, SELL, _blocks(), memory=memory)
+    assert (d.status, d.reason, d.writes) == (BLOCKED, "enable_unsupported", [])
+    assert "enable" in d.dropped_unsupported
+
+
+def test_unsupported_switch_already_on_does_not_block():
+    p = directional_profile()
+    memory = ControlMemory.for_profile(p)
+    memory.unsupported = {"enable"}
+    d, _ = _run(p, SELL, _blocks(enable=1), memory=memory)
+    assert d.status == WRITE and "mode" in [w.key for w in d.writes]
+
+
 def test_neutral_slot_writes_no_set_point_and_keeps_switch_on():
     p = directional_profile()
     d, _ = _run(p, dict(mode="self_consume"), _blocks(mode=p.mode_value("sell_power"), enable=1,

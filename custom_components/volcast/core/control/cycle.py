@@ -421,6 +421,11 @@ def _decide(profile, schedule, now_utc, now_mono, tele, limits, target: WriteTar
         return CycleDecision(BLOCKED, reason, flat=flat,
                              dropped_unsupported=group_unsupported, **common)
     device = _device(target, flat, profile)
+    if "enable" in flat and "enable" in memory.unsupported and device.get("enable") != 1.0:
+        # Przełącznik zdalnego sterowania, którego urządzenie nie przyjmuje: tryb bez niego nic nie zmienia,
+        # a „zapisany” tryb udawałby sterowanie — cały cykl stoi (chyba że przełącznik już jest włączony).
+        return CycleDecision(BLOCKED, "enable_unsupported", flat=flat, dropped_unsupported=("enable",),
+                             **common)
     # Uzgodnienie z tym, co falownik naprawdę ma (tylko klucze planu, tylko czytelne).
     # Zły typ odczytu rzuca TypeError po drodze (pamięć wcześniejszych kluczy mogła już
     # zniknąć) — cykl kończy się bez zapisów, następny też, więc to bezpieczne.

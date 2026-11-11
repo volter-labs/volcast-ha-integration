@@ -141,6 +141,20 @@ def test_switch_hold_persists_while_the_set_point_waits(monkeypatch):
     assert h.states.get(ENT["enable"]).state == "off"
 
 
+def test_unsupported_switch_blocks_the_mode_in_later_cycles(monkeypatch):
+    from homeassistant.exceptions import ServiceNotFound
+    h, ex = make(monkeypatch=monkeypatch)
+    h.services.fail[ENT["enable"]] = ServiceNotFound("switch", "turn_on")
+    take_over(h, ex)
+    assert not any(s == "select_option" for s, _, _ in calls(h))
+    n = len(h.services.calls)
+    ex._clock.t += 120
+    asyncio.run(ex.async_tick())
+    assert not any(s == "select_option" for s, _, _ in calls(h, n))
+    assert h.states.get(ENT["mode"]).state == "auto"
+    assert ex.last_decision.status == "blocked" and ex.last_decision.reason == "enable_unsupported"
+
+
 def test_snapshot_with_set_points_and_switch_survives_restart(monkeypatch):
     h = dhass()
     store = ControlStore(h, "e1")
