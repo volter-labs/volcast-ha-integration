@@ -271,6 +271,9 @@
           "soc_max": "État de charge maximal",
           "export_limit_enabled": "Interrupteur de limite d'injection",
           "export_limit_w": "Limite d'injection",
+          "enable": "Interrupteur de contrôle à distance",
+          "charge_power_w": "Consigne de puissance de charge",
+          "discharge_power_w": "Consigne de puissance de décharge",
           "active_power_w": "Puissance active de l'onduleur",
           "battery_current_a": "Courant de batterie",
           "battery_power_w": "Puissance de batterie",
@@ -302,7 +305,10 @@
           "soc_min": "Nécessaire pour le pilotage. Unité : %. Signe : 0-100, sans signe. Noms typiques : number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Nécessaire pour le pilotage. Unité : %. Signe : 0-100, sans signe. Noms typiques : number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Nécessaire pour le pilotage. Unité : marche/arrêt. Signe : sans signe. Noms typiques : switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Nécessaire pour le pilotage. Unité : W. Signe : valeur absolue de la limite d’injection, sans signe. Noms typiques : number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Nécessaire pour le pilotage. Unité : W. Signe : valeur absolue de la limite d’injection, sans signe. Noms typiques : number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Nécessaire pour le pilotage. Unité : marche/arrêt. Signe : sans signe. Noms typiques : switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Nécessaire pour le pilotage. Unité : W. Signe : valeur absolue de la consigne de puissance de charge, sans signe. Noms typiques : number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Nécessaire pour le pilotage. Unité : W. Signe : valeur absolue de la consigne de puissance de décharge, sans signe. Noms typiques : number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

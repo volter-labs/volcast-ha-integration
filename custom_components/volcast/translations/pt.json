@@ -271,6 +271,9 @@
           "soc_max": "Estado de carga máximo",
           "export_limit_enabled": "Interruptor do limite de exportação",
           "export_limit_w": "Limite de exportação",
+          "enable": "Interruptor do controlo remoto",
+          "charge_power_w": "Valor de referência da potência de carga",
+          "discharge_power_w": "Valor de referência da potência de descarga",
           "active_power_w": "Potência ativa do inversor",
           "battery_current_a": "Corrente da bateria",
           "battery_power_w": "Potência da bateria",
@@ -302,7 +305,10 @@
           "soc_min": "Necessário para o controlo. Unidade: %. Sinal: 0-100, sem sinal. Nomes típicos: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Necessário para o controlo. Unidade: %. Sinal: 0-100, sem sinal. Nomes típicos: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Necessário para o controlo. Unidade: ligado/desligado. Sinal: sem sinal. Nomes típicos: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Necessário para o controlo. Unidade: W. Sinal: valor do limite de exportação, sem sinal. Nomes típicos: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Necessário para o controlo. Unidade: W. Sinal: valor do limite de exportação, sem sinal. Nomes típicos: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Necessário para o controlo. Unidade: ligado/desligado. Sinal: sem sinal. Nomes típicos: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Necessário para o controlo. Unidade: W. Sinal: valor da referência de potência de carga, sem sinal. Nomes típicos: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Necessário para o controlo. Unidade: W. Sinal: valor da referência de potência de descarga, sem sinal. Nomes típicos: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

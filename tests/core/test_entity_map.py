@@ -460,3 +460,15 @@ def test_existing_profile_writes_have_no_read_back():
     assert writes and all(w.readback_s is None for w in writes)
     assert writes[1] == EntityWrite("power_w", "number.goodwe_ems_power_limit", "number", "set_value",
                                     {"value": 400.0})
+
+
+def test_direction_setpoint_and_enable_keys_have_descriptors():
+    from custom_components.volcast.core.entity_map import KEY_DESCRIPTORS, describe_key, field_group
+    for key, domain in (("enable", "switch"), ("charge_power_w", "number"), ("discharge_power_w", "number")):
+        d = KEY_DESCRIPTORS[key]
+        assert d["purpose"] == "control"
+        assert all(e.startswith(f"{domain}.") for e in d["examples"])
+        assert field_group(key) == "control"
+        assert describe_key(key).startswith("Needed for control.")
+    assert KEY_DESCRIPTORS["enable"]["unit"] == "on/off"
+    assert KEY_DESCRIPTORS["charge_power_w"]["unit"] == KEY_DESCRIPTORS["discharge_power_w"]["unit"] == "W"

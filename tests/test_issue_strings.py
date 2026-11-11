@@ -95,3 +95,23 @@ def test_german_control_issue_texts_use_the_informal_address():
     for key in ("control_entities_disabled", "control_entities_missing", "control_write_rejected"):
         text = de["issues"][key]["title"] + " " + de["issues"][key]["description"]
         assert not formal.search(text), key
+
+
+_NEW_MAP_KEYS = ("enable", "charge_power_w", "discharge_power_w")
+
+
+def _entity_map_step(path):
+    return json.loads(path.read_text(encoding="utf-8"))["options"]["step"]["entity_map"]
+
+
+@pytest.mark.parametrize("path", [COMPONENT / "strings.json", *sorted((COMPONENT / "translations").glob("*.json"))],
+                         ids=lambda p: p.name)
+def test_entity_map_form_labels_the_enable_and_direction_keys(path):
+    step = _entity_map_step(path)
+    en = _entity_map_step(COMPONENT / "strings.json")
+    for key in _NEW_MAP_KEYS:
+        assert step["data"][key].strip(), key
+        assert step["data_description"][key].strip(), key
+        # parytet przykładowych nazw encji z wersją źródłową
+        assert re.findall(r"\b(?:switch|number)\.\w+", step["data_description"][key]) == \
+            re.findall(r"\b(?:switch|number)\.\w+", en["data_description"][key])

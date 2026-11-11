@@ -271,6 +271,9 @@
           "soc_max": "Estado de carga máximo",
           "export_limit_enabled": "Interruptor del límite de exportación",
           "export_limit_w": "Límite de exportación",
+          "enable": "Interruptor de control remoto",
+          "charge_power_w": "Consigna de potencia de carga",
+          "discharge_power_w": "Consigna de potencia de descarga",
           "active_power_w": "Potencia activa del inversor",
           "battery_current_a": "Corriente de la batería",
           "battery_power_w": "Potencia de la batería",
@@ -302,7 +305,10 @@
           "soc_min": "Necesario para el control. Unidad: %. Signo: 0-100, sin signo. Nombres habituales: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Necesario para el control. Unidad: %. Signo: 0-100, sin signo. Nombres habituales: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Necesario para el control. Unidad: activado/desactivado. Signo: sin signo. Nombres habituales: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Necesario para el control. Unidad: W. Signo: magnitud del límite de inyección, sin signo. Nombres habituales: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Necesario para el control. Unidad: W. Signo: magnitud del límite de inyección, sin signo. Nombres habituales: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Necesario para el control. Unidad: activado/desactivado. Signo: sin signo. Nombres habituales: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Necesario para el control. Unidad: W. Signo: magnitud de la consigna de potencia de carga, sin signo. Nombres habituales: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Necesario para el control. Unidad: W. Signo: magnitud de la consigna de potencia de descarga, sin signo. Nombres habituales: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

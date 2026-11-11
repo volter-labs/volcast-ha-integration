@@ -271,6 +271,9 @@
           "soc_max": "Maximum state of charge",
           "export_limit_enabled": "Export limit switch",
           "export_limit_w": "Export limit",
+          "enable": "Remote control switch",
+          "charge_power_w": "Charge power set-point",
+          "discharge_power_w": "Discharge power set-point",
           "active_power_w": "Inverter active power",
           "battery_current_a": "Battery current",
           "battery_power_w": "Battery power",
@@ -302,7 +305,10 @@
           "soc_min": "Needed for control. Unit: %. Sign: 0-100, no sign. Typical names: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Needed for control. Unit: %. Sign: 0-100, no sign. Typical names: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Needed for control. Unit: on/off. Sign: no sign. Typical names: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Needed for control. Unit: W. Sign: magnitude of the grid export limit, no sign. Typical names: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Needed for control. Unit: W. Sign: magnitude of the grid export limit, no sign. Typical names: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Needed for control. Unit: on/off. Sign: no sign. Typical names: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Needed for control. Unit: W. Sign: magnitude of the charge power set-point, no sign. Typical names: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Needed for control. Unit: W. Sign: magnitude of the discharge power set-point, no sign. Typical names: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

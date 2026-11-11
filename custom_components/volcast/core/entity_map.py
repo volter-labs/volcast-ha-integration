@@ -386,10 +386,20 @@ KEY_DESCRIPTORS: dict[str, dict] = {
                                ["switch.YOUR_INVERTER_export_limit", "switch.YOUR_INVERTER_grid_export_limit"]),
     "export_limit_w": _d("control", "W", "magnitude of the grid export limit, no sign", False,
                          ["number.YOUR_INVERTER_export_limit", "number.YOUR_INVERTER_grid_export_limit"]),
+    # Zdalne sterowanie i nastawy kierunkowe (profile z przełącznikiem zdalnego sterowania). `required` zostaje
+    # fałszem: wymagalność zależy od profilu, a grupa „control" mówi właścicielowi, że to pole sterowania.
+    "enable": _d("control", "on/off", _NONE, False,
+                 ["switch.YOUR_INVERTER_remote_control", "switch.YOUR_INVERTER_remote_control_enable"]),
+    "charge_power_w": _d("control", "W", "magnitude of the charge power set-point, no sign", False,
+                         ["number.YOUR_INVERTER_charge_power", "number.YOUR_INVERTER_battery_charge_power_limit"]),
+    "discharge_power_w": _d("control", "W", "magnitude of the discharge power set-point, no sign", False,
+                            ["number.YOUR_INVERTER_discharge_power",
+                             "number.YOUR_INVERTER_battery_discharge_power_limit"]),
 }
 
 
-_WRITE_KEYS = ("mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled")
+_WRITE_KEYS = ("mode", "power_w", "soc_min", "soc_max", "export_limit_w", "export_limit_enabled",
+               "enable", "charge_power_w", "discharge_power_w")
 
 
 def field_group(key: str) -> str:

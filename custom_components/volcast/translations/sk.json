@@ -271,6 +271,9 @@
           "soc_max": "Maximálny stav nabitia",
           "export_limit_enabled": "Prepínač limitu pretoku",
           "export_limit_w": "Limit pretoku",
+          "enable": "Prepínač diaľkového riadenia",
+          "charge_power_w": "Nastavenie výkonu nabíjania",
+          "discharge_power_w": "Nastavenie výkonu vybíjania",
           "active_power_w": "Činný výkon striedača",
           "battery_current_a": "Prúd batérie",
           "battery_power_w": "Výkon batérie",
@@ -302,7 +305,10 @@
           "soc_min": "Potrebné pre riadenie. Jednotka: %. Znamienko: 0–100, bez znamienka. Typické názvy: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Potrebné pre riadenie. Jednotka: %. Znamienko: 0–100, bez znamienka. Typické názvy: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Potrebné pre riadenie. Jednotka: zap/vyp. Znamienko: bez znamienka. Typické názvy: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Potrebné pre riadenie. Jednotka: W. Znamienko: veľkosť limitu pretoku, bez znamienka. Typické názvy: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Potrebné pre riadenie. Jednotka: W. Znamienko: veľkosť limitu pretoku, bez znamienka. Typické názvy: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Potrebné pre riadenie. Jednotka: zap/vyp. Znamienko: bez znamienka. Typické názvy: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Potrebné pre riadenie. Jednotka: W. Znamienko: veľkosť nastavenia výkonu nabíjania, bez znamienka. Typické názvy: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Potrebné pre riadenie. Jednotka: W. Znamienko: veľkosť nastavenia výkonu vybíjania, bez znamienka. Typické názvy: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

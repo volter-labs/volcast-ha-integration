@@ -271,6 +271,9 @@
           "soc_max": "Максимальний рівень заряду",
           "export_limit_enabled": "Перемикач ліміту експорту",
           "export_limit_w": "Ліміт експорту",
+          "enable": "Перемикач дистанційного керування",
+          "charge_power_w": "Уставка потужності заряду",
+          "discharge_power_w": "Уставка потужності розряду",
           "active_power_w": "Активна потужність інвертора",
           "battery_current_a": "Струм батареї",
           "battery_power_w": "Потужність батареї",
@@ -302,7 +305,10 @@
           "soc_min": "Потрібно для керування. Одиниця: %. Знак: 0–100, без знака. Типові назви: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Потрібно для керування. Одиниця: %. Знак: 0–100, без знака. Типові назви: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Потрібно для керування. Одиниця: увімк./вимк. Знак: без знака. Типові назви: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Потрібно для керування. Одиниця: Вт. Знак: модуль ліміту експорту, без знака. Типові назви: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Потрібно для керування. Одиниця: Вт. Знак: модуль ліміту експорту, без знака. Типові назви: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Потрібно для керування. Одиниця: увімк./вимк.. Знак: без знака. Типові назви: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Потрібно для керування. Одиниця: Вт. Знак: модуль уставки потужності заряду, без знака. Типові назви: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Потрібно для керування. Одиниця: Вт. Знак: модуль уставки потужності розряду, без знака. Типові назви: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

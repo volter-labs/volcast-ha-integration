@@ -271,6 +271,9 @@
           "soc_max": "Maximale laadstatus",
           "export_limit_enabled": "Schakelaar exportlimiet",
           "export_limit_w": "Exportlimiet",
+          "enable": "Schakelaar voor afstandsbediening",
+          "charge_power_w": "Instelwaarde laadvermogen",
+          "discharge_power_w": "Instelwaarde ontlaadvermogen",
           "active_power_w": "Actief vermogen omvormer",
           "battery_current_a": "Batterijstroom",
           "battery_power_w": "Batterijvermogen",
@@ -302,7 +305,10 @@
           "soc_min": "Nodig voor de regeling. Eenheid: %. Teken: 0–100, zonder teken. Gangbare namen: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Nodig voor de regeling. Eenheid: %. Teken: 0–100, zonder teken. Gangbare namen: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Nodig voor de regeling. Eenheid: aan/uit. Teken: zonder teken. Gangbare namen: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Nodig voor de regeling. Eenheid: W. Teken: grootte van de terugleverlimiet, zonder teken. Gangbare namen: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Nodig voor de regeling. Eenheid: W. Teken: grootte van de terugleverlimiet, zonder teken. Gangbare namen: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Nodig voor de regeling. Eenheid: aan/uit. Teken: zonder teken. Gangbare namen: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Nodig voor de regeling. Eenheid: W. Teken: grootte van de instelwaarde voor het laadvermogen, zonder teken. Gangbare namen: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Nodig voor de regeling. Eenheid: W. Teken: grootte van de instelwaarde voor het ontlaadvermogen, zonder teken. Gangbare namen: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

@@ -271,6 +271,9 @@
           "soc_max": "Maksymalny stan naładowania",
           "export_limit_enabled": "Przełącznik limitu eksportu",
           "export_limit_w": "Limit eksportu",
+          "enable": "Przełącznik zdalnego sterowania",
+          "charge_power_w": "Nastawa mocy ładowania",
+          "discharge_power_w": "Nastawa mocy rozładowania",
           "active_power_w": "Moc czynna falownika",
           "battery_current_a": "Prąd baterii",
           "battery_power_w": "Moc baterii",
@@ -302,7 +305,10 @@
           "soc_min": "Potrzebne do sterowania. Jednostka: %. Znak: 0–100, bez znaku. Typowe nazwy: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Potrzebne do sterowania. Jednostka: %. Znak: 0–100, bez znaku. Typowe nazwy: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Potrzebne do sterowania. Jednostka: włącz/wyłącz. Znak: bez znaku. Typowe nazwy: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Potrzebne do sterowania. Jednostka: W. Znak: wielkość limitu eksportu, bez znaku. Typowe nazwy: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Potrzebne do sterowania. Jednostka: W. Znak: wielkość limitu eksportu, bez znaku. Typowe nazwy: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Potrzebne do sterowania. Jednostka: włącz/wyłącz. Znak: bez znaku. Typowe nazwy: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Potrzebne do sterowania. Jednostka: W. Znak: wielkość nastawy mocy ładowania, bez znaku. Typowe nazwy: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Potrzebne do sterowania. Jednostka: W. Znak: wielkość nastawy mocy rozładowania, bez znaku. Typowe nazwy: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

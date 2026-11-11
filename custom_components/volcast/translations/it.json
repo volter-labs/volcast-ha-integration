@@ -271,6 +271,9 @@
           "soc_max": "Stato di carica massimo",
           "export_limit_enabled": "Interruttore del limite di immissione",
           "export_limit_w": "Limite di immissione",
+          "enable": "Interruttore del controllo remoto",
+          "charge_power_w": "Setpoint di potenza di carica",
+          "discharge_power_w": "Setpoint di potenza di scarica",
           "active_power_w": "Potenza attiva dell'inverter",
           "battery_current_a": "Corrente della batteria",
           "battery_power_w": "Potenza della batteria",
@@ -302,7 +305,10 @@
           "soc_min": "Necessario per il controllo. Unità: %. Segno: 0-100, senza segno. Nomi tipici: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Necessario per il controllo. Unità: %. Segno: 0-100, senza segno. Nomi tipici: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Necessario per il controllo. Unità: on/off. Segno: senza segno. Nomi tipici: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Necessario per il controllo. Unità: W. Segno: valore assoluto del limite di immissione, senza segno. Nomi tipici: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Necessario per il controllo. Unità: W. Segno: valore assoluto del limite di immissione, senza segno. Nomi tipici: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Necessario per il controllo. Unità: on/off. Segno: senza segno. Nomi tipici: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Necessario per il controllo. Unità: W. Segno: valore assoluto del setpoint di potenza di carica, senza segno. Nomi tipici: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Necessario per il controllo. Unità: W. Segno: valore assoluto del setpoint di potenza di scarica, senza segno. Nomi tipici: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

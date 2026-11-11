@@ -271,6 +271,9 @@
           "soc_max": "Maximální stav nabití",
           "export_limit_enabled": "Přepínač limitu přetoku",
           "export_limit_w": "Limit přetoku",
+          "enable": "Přepínač dálkového řízení",
+          "charge_power_w": "Nastavení výkonu nabíjení",
+          "discharge_power_w": "Nastavení výkonu vybíjení",
           "active_power_w": "Činný výkon střídače",
           "battery_current_a": "Proud baterie",
           "battery_power_w": "Výkon baterie",
@@ -302,7 +305,10 @@
           "soc_min": "Potřebné pro řízení. Jednotka: %. Znaménko: 0–100, bez znaménka. Typické názvy: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Potřebné pro řízení. Jednotka: %. Znaménko: 0–100, bez znaménka. Typické názvy: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Potřebné pro řízení. Jednotka: zap/vyp. Znaménko: bez znaménka. Typické názvy: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Potřebné pro řízení. Jednotka: W. Znaménko: velikost limitu přetoku, bez znaménka. Typické názvy: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Potřebné pro řízení. Jednotka: W. Znaménko: velikost limitu přetoku, bez znaménka. Typické názvy: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Potřebné pro řízení. Jednotka: zap/vyp. Znaménko: bez znaménka. Typické názvy: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Potřebné pro řízení. Jednotka: W. Znaménko: velikost nastavení výkonu nabíjení, bez znaménka. Typické názvy: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Potřebné pro řízení. Jednotka: W. Znaménko: velikost nastavení výkonu vybíjení, bez znaménka. Typické názvy: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {

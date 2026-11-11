@@ -271,6 +271,9 @@
           "soc_max": "Starea maximă de încărcare",
           "export_limit_enabled": "Comutatorul limitei de export",
           "export_limit_w": "Limita de export",
+          "enable": "Comutatorul controlului de la distanță",
+          "charge_power_w": "Valoarea țintă a puterii de încărcare",
+          "discharge_power_w": "Valoarea țintă a puterii de descărcare",
           "active_power_w": "Puterea activă a invertorului",
           "battery_current_a": "Curentul bateriei",
           "battery_power_w": "Puterea bateriei",
@@ -302,7 +305,10 @@
           "soc_min": "Necesar pentru control. Unitate: %. Semn: 0-100, fără semn. Nume tipice: number.YOUR_INVERTER_battery_min_soc, number.YOUR_INVERTER_depth_of_discharge.",
           "soc_max": "Necesar pentru control. Unitate: %. Semn: 0-100, fără semn. Nume tipice: number.YOUR_INVERTER_battery_max_soc, number.YOUR_INVERTER_charge_cutoff_soc.",
           "export_limit_enabled": "Necesar pentru control. Unitate: pornit/oprit. Semn: fără semn. Nume tipice: switch.YOUR_INVERTER_export_limit, switch.YOUR_INVERTER_grid_export_limit.",
-          "export_limit_w": "Necesar pentru control. Unitate: W. Semn: valoarea limitei de export, fără semn. Nume tipice: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit."
+          "export_limit_w": "Necesar pentru control. Unitate: W. Semn: valoarea limitei de export, fără semn. Nume tipice: number.YOUR_INVERTER_export_limit, number.YOUR_INVERTER_grid_export_limit.",
+          "enable": "Necesar pentru control. Unitate: pornit/oprit. Semn: fără semn. Nume tipice: switch.YOUR_INVERTER_remote_control, switch.YOUR_INVERTER_remote_control_enable.",
+          "charge_power_w": "Necesar pentru control. Unitate: W. Semn: valoarea țintă a puterii de încărcare, fără semn. Nume tipice: number.YOUR_INVERTER_charge_power, number.YOUR_INVERTER_battery_charge_power_limit.",
+          "discharge_power_w": "Necesar pentru control. Unitate: W. Semn: valoarea țintă a puterii de descărcare, fără semn. Nume tipice: number.YOUR_INVERTER_discharge_power, number.YOUR_INVERTER_battery_discharge_power_limit."
         }
       },
       "entity_map_preview": {
