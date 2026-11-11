@@ -18,6 +18,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from custom_components.volcast.const import PROFILE_FEED_PUBLIC_KEYS
 from custom_components.volcast.control import direct_search as ds
 from custom_components.volcast.control.verification import start_rung_for
 from custom_components.volcast.core import endorsement as en
@@ -154,6 +155,37 @@ def test_signature_from_another_key_rejected():
 
 def test_unknown_key_id_rejected():
     assert _reason(_body(key_id="other-key", feed=_feed(key_id="other-key"))) == "unknown_key"
+
+
+# --- zestaw kluczy wbudowanych: poprzedni, produkcyjny, stagingowy --------------------------------
+# Prywatnych kluczy wbudowanych nie ma w repo: każdy identyfikator dostaje parę testową (stand-in).
+
+SHIPPED_IDS = ("feed-2026-10", "feed-prod-2026-11", "feed-staging-2026-11")
+_STANDIN_PAIRS = {kid: Ed25519PrivateKey.generate() for kid in SHIPPED_IDS}
+_STANDIN_KEYS = {kid: k.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+                 for kid, k in _STANDIN_PAIRS.items()}
+
+
+@pytest.mark.parametrize("key_id", SHIPPED_IDS)
+def test_feed_signed_by_each_shipped_key_id_verifies(key_id):
+    body = pf.canonical_bytes(_doc(_feed(key_id=key_id), key=_STANDIN_PAIRS[key_id], key_id=key_id))
+    v = pf.verify_feed_body(body, keys=_STANDIN_KEYS, held=None)
+    assert v.key_id == key_id
+
+
+@pytest.mark.parametrize("key_id", SHIPPED_IDS)
+def test_shipped_key_id_with_a_foreign_signature_rejected(key_id):
+    body = pf.canonical_bytes(_doc(_feed(key_id=key_id), key=_OTHER, key_id=key_id))
+    assert _reason(body, keys=_STANDIN_KEYS) == "signature"
+
+
+def test_feed_signed_by_a_key_outside_the_shipped_set_rejected():
+    body = pf.canonical_bytes(_doc(_feed(key_id="feed-prod-2026-11"), key=_OTHER,
+                                   key_id="feed-prod-2026-11"))
+    assert _reason(body, keys=PROFILE_FEED_PUBLIC_KEYS) == "signature"
+    unknown = pf.canonical_bytes(_doc(_feed(key_id="feed-dev-2026-11"), key=_STANDIN_PAIRS["feed-2026-10"],
+                                      key_id="feed-dev-2026-11"))
+    assert _reason(unknown, keys=PROFILE_FEED_PUBLIC_KEYS) == "unknown_key"
 
 
 def test_outer_key_id_must_equal_feed_key_id():

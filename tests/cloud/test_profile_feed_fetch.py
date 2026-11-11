@@ -311,12 +311,38 @@ def issues(monkeypatch):
     return made
 
 
+def _on_curve(hexkey: str) -> bool:
+    """Ed25519 point decompression (RFC 8032 §5.1.3): czy 32 bajty to punkt krzywej."""
+    p = 2**255 - 19
+    d = -121665 * pow(121666, p - 2, p) % p
+    raw = bytearray(bytes.fromhex(hexkey))
+    raw[31] &= 0x7F
+    y = int.from_bytes(raw, "little")
+    if y >= p:
+        return False
+    u, v = (y * y - 1) % p, (d * y * y + 1) % p
+    x2 = u * pow(v, p - 2, p) % p
+    if x2 == 0:
+        return True
+    x = pow(x2, (p + 3) // 8, p)
+    if (x * x - x2) % p:
+        x = x * pow(2, (p - 1) // 4, p) % p
+    return (x * x - x2) % p == 0
+
+
 def test_public_key_is_shipped_and_storage_names():
-    assert list(PROFILE_FEED_PUBLIC_KEYS) == ["feed-2026-10"]
+    assert PROFILE_FEED_PUBLIC_KEYS == {
+        "feed-2026-10": "ae9987520ee23510928c2e1730cad43b4ab3da02a22ff1b62543b33fe3ffd28d",
+        "feed-prod-2026-11": "9779f1f00587fb36e3bebc742a71dc8d9c23617d5020a6ecef6c8f6a7ca8e64d",
+        "feed-staging-2026-11": "e65a2709ea87b6a0c487aaa628dbfc675f6a066351e885ae35a6f1f02308aa1c",
+    }
     for key_id, hexkey in PROFILE_FEED_PUBLIC_KEYS.items():
-        assert re.fullmatch(r"feed-\d{4}-\d{2}", key_id)
+        assert re.fullmatch(r"feed-(prod-|staging-)?\d{4}-\d{2}", key_id)
         assert re.fullmatch(r"[0-9a-f]{64}", hexkey)          # raw Ed25519, 32 bajty
         assert len(bytes.fromhex(hexkey)) == 32
+        assert _on_curve(hexkey)                               # punkt krzywej Ed25519
+    generated = Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    assert _on_curve(generated.hex())                          # kontrola: poprawny klucz przechodzi
     assert (PROFILE_FEED_STORAGE_KEY, PROFILE_FEED_STORAGE_VERSION) == ("volcast_profiles", 1)
 
 

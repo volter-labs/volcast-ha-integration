@@ -115,6 +115,8 @@ DISCOVERY_SENT_STORAGE_VERSION = 1
 # Rotacja: oba klucze naraz na czas przejścia, stary usuwany w kolejnym wydaniu.
 PROFILE_FEED_PUBLIC_KEYS: dict[str, str] = {
     "feed-2026-10": "ae9987520ee23510928c2e1730cad43b4ab3da02a22ff1b62543b33fe3ffd28d",
+    "feed-prod-2026-11": "9779f1f00587fb36e3bebc742a71dc8d9c23617d5020a6ecef6c8f6a7ca8e64d",
+    "feed-staging-2026-11": "e65a2709ea87b6a0c487aaa628dbfc675f6a066351e885ae35a6f1f02308aa1c",
 }
 PROFILE_FEED_STORAGE_KEY = "volcast_profiles"
 PROFILE_FEED_STORAGE_VERSION = 1
