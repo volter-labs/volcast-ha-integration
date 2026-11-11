@@ -897,6 +897,52 @@ def test_u32_write_covers_two_registers_for_verify_blocks():
     assert validate_profile(p) == []
 
 
+def _overlap_errors(p) -> list[str]:
+    return [e for e in validate_profile(p) if "nachodzi na rejestr zapisu" in e]
+
+
+# Błąd przy kluczu późniejszym w `$.write`, z nazwą klucza wcześniejszego (kolejność _engine_v2: mode,
+# soc_min, export_limit_w, export_limit_enabled, charge_power_w, discharge_power_w, enable).
+@pytest.mark.parametrize("mutate,path,other", [
+    # drugie słowo nastawy u32 na adresie innego klucza
+    (lambda p: p["write"]["export_limit_w"].update(addr=40033), "$.write.charge_power_w.addr", "export_limit_w"),
+    # dwie nastawy u32 zachodzące jednym słowem
+    (lambda p: p["write"]["discharge_power_w"].update(addr=40033, unit_id=247),
+     "$.write.discharge_power_w.addr", "charge_power_w"),
+    # przełącznik na słowie nastawy mocy
+    (lambda p: p["write"]["enable"].update(addr=40035), "$.write.enable.addr", "discharge_power_w"),
+    # ten sam adres i ten sam adres urządzenia (jawny = domyślny profilu)
+    (lambda p: p["write"]["soc_min"].update(addr=40029, unit_id=247), "$.write.enable.addr", "soc_min"),
+    (lambda p: p["write"]["soc_min"].update(addr=40029, unit_id=1) or p["write"]["enable"].update(unit_id=1),
+     "$.write.enable.addr", "soc_min"),
+])
+def test_write_registers_must_not_overlap(mutate, path, other):
+    p = _engine_v2()
+    mutate(p)
+    errs = _overlap_errors(p)
+    assert len(errs) == 1, errs
+    assert errs[0].startswith(f"{path}: nachodzi na rejestr zapisu {other} ")
+    assert [e for e in validate_profile(p) if e not in errs] == []
+
+
+def test_same_write_address_on_another_unit_is_allowed():
+    p = _engine_v2()
+    p["write"]["soc_min"].update(addr=40029, unit_id=1)      # enable: 40029 na adresie domyślnym (247)
+    assert validate_profile(p) == []
+    p["write"]["soc_min"].update(addr=40033, unit_id=1)      # słowo u32 charge_power_w, ale unit 247
+    assert validate_profile(p) == []
+
+
+def test_write_overlap_covers_time_window_programs():
+    p = tw_profile()
+    p["write"]["tou_enable"] = {"addr": 157, "enable_bit": 0, "day_mask": 254}   # w programach mocy 154..159
+    errs = _overlap_errors(p)
+    assert len(errs) == 1 and errs[0].startswith("$.write.tou_enable.addr: nachodzi na rejestr zapisu "
+                                                 "tou_program ")
+    p["write"]["tou_enable"]["addr"] = 146
+    assert validate_profile(p) == []
+
+
 def test_builtin_profiles_use_no_new_engine_construct():
     """Profile z pakietu walidują się bez zmian i nie sięgają po nowe konstrukcje (wszystkie opt-in)."""
     import pathlib

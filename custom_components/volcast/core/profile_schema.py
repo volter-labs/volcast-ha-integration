@@ -356,6 +356,41 @@ def _tou_enable(v: _V, w: dict) -> None:
         v.err(f"{path}.day_mask", "maska dni nie może zawierać bitu włącznika")
 
 
+def _write_overlaps(v: _V, wr: Any, default_unit: Any) -> None:
+    """Słowa rejestrów zajmowane przez różne klucze zapisu nie mogą się nakładać — zapis jednego klucza
+    nadpisałby drugi (np. drugie słowo nastawy u32 na przełączniku). Słowo = (adres urządzenia, adres);
+    brak `unit_id` = adres urządzenia profilu. Programy harmonogramu to jeden klucz (`count` słów na
+    pole; układ pól między sobą nie jest tu sprawdzany). Pola złego typu pomija (zgłasza je `_write`)."""
+    if not isinstance(wr, dict):
+        return
+    unit0 = default_unit if isinstance(default_unit, int) and not isinstance(default_unit, bool) else None
+    owners: dict[tuple[Any, int], str] = {}
+    reported: set[tuple[str, str]] = set()
+
+    def claim(name: str, path: str, unit: Any, addr: Any, n: int) -> None:
+        if isinstance(addr, bool) or not isinstance(addr, int):
+            return
+        for a in range(addr, addr + n):
+            other = owners.setdefault((unit, a), name)
+            if other != name and (name, other) not in reported:
+                reported.add((name, other))
+                v.err(f"{path}.addr", f"nachodzi na rejestr zapisu {other} (adres {a})")
+
+    for key, spec in wr.items():
+        if not isinstance(spec, dict):
+            continue
+        if key == "tou_program":
+            count = spec.get("count")
+            if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 12:
+                continue
+            for field, fs in spec.items():
+                if isinstance(fs, dict):
+                    claim("tou_program", f"$.write.tou_program.{field}", unit0, fs.get("addr"), count)
+            continue
+        claim(key, f"$.write.{key}", spec.get("unit_id", unit0), spec.get("addr"),
+              2 if spec.get("type") == "u32" else 1)
+
+
 def _write_addresses(wr: Any) -> set[int]:
     """Adresy rejestrów zapisu (z programami harmonogramu); pola złego typu pomijane (zgłasza je `_write`)."""
     out: set[int] = set()
@@ -793,6 +828,7 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
             v.err("$.modes", "tylko dla mode_setpoint")
 
     written = _write(v, top.get("write"), model, tou)
+    _write_overlaps(v, top.get("write"), top.get("unit_id"))
     rd, wr = top.get("read"), top.get("write")
     if isinstance(rd, dict) and TOU_ENABLED_READ in rd:
         enable = wr.get("tou_enable") if isinstance(wr, dict) else None
