@@ -4,11 +4,11 @@ Vendor control features that the profile schema and the control engines cannot e
 Profiles do not work around them: the intent is marked unsupported and the capability stays
 `false` (see `authoring.md`, section 7). Each row names what the core would need.
 
-Engine 2 (`PROFILE_ENGINE = 2`, profile field `min_engine`) covers part of the list below: write
-encodings `type: u32` with `scale` and `word_order`, a per-register `unit_id`, the `enable` switch
-with `on`/`off` values and `enable_state` read-back, `charge_power_w` and `discharge_power_w` with
-`write_policy.power_by_direction`, `baseline.enable`, `write_policy.release_without_plan_s`, and a
-check that write registers do not overlap. Rows that are only partly covered say so; the rest stay open.
+Engine 2 (`PROFILE_ENGINE = 2`, profile field `min_engine`) adds write constructs that cover part of the
+rows below: `u32` writes with `scale` and `word_order`, a per-register `unit_id`, the `enable` switch with
+`on`/`off` values, and `charge_power_w` / `discharge_power_w` with `write_policy.power_by_direction`. Each
+row says whether it is covered, partly covered or not covered. Read-back through `enable_state` works on the
+direct path only.
 
 ## Core
 
@@ -38,7 +38,7 @@ check that write registers do not overlap. Rows that are only partly covered say
 | Two power registers, chosen by direction | 47247 forcible charge power, 47249 forcible discharge power | Covered in engine 2: `charge_power_w` and `discharge_power_w` with `write_policy.power_by_direction`. |
 | 32-bit writes | 47247 / 47249 (u32 W) | Partly covered in engine 2: unsigned `type: u32` with `word_order`; signed `i32` writes are not supported. |
 | Scaled SoC writes | 47081 charge cut-off, 47082 discharge cut-off, 47101 target SoC (gain 10, 0.1 %) | Covered in engine 2: `scale` on numeric write keys. |
-| Export limit needs 32-bit writes | 47415 active power control mode plus 47416 maximum feed-in power (i32 W) | Partly covered in engine 2: an unsigned `type: u32` write covers the limit value; the companion mode register 47415 has no key. |
+| Export limit needs 32-bit writes | 47415 active power control mode plus 47416 maximum feed-in power (i32 W) | Not covered: 47416 is a signed i32 and signed writes are not supported; the companion mode register 47415 has no key. |
 | Installer login before writes over TCP | vendor login (challenge/response) on most TCP connections; re-login after reconnect | An authenticated session step in the transport, with stored installer credentials. |
 
 ## Sungrow (`sungrow-sh`)
@@ -51,7 +51,7 @@ Addresses are wire addresses (vendor register number minus 1).
 | Power set-point valid only in the forced mode, unit varies by model | 13051 charge/discharge power (W, up to the battery converter rating at 5627; per the community map an older vendor sheet gave % for some models) | The prerequisite-register support above, plus a per-model unit check before a power write. |
 | Scaled SoC writes | 13057 max SoC (50.0-100.0 %), 13058 min SoC (0.0-50.0 %), both 0.1 % | Covered in engine 2: `scale` on numeric write keys. |
 | Export limit needs an enable register with vendor codes | 13086 feed-in limitation (0xAA enable / 0x55 disable) before 13073 feed-in limitation value (W) applies | Partly covered in engine 2: the `enable` key takes `on`/`off` values, but the export limit enable (`export_limit_enabled`) still writes 1/0 (`bool`). |
-| Charge/discharge power caps in 0.01 kW | 33046 max charge power, 33047 max discharge power (used by community integrations to hold the battery) | Covered in engine 2: `scale` on numeric write keys. |
+| Charge/discharge power caps in 0.01 kW | 33046 max charge power, 33047 max discharge power (used by community integrations to hold the battery) | Not covered: no write key expresses a power cap. |
 | External EMS mode needs a heartbeat | 13049 = 3 (external EMS) or 4 (VPP) falls back to self-consumption unless 13079 heartbeat is re-written within its timeout | A periodic keep-alive write declared by the profile. |
 | Forced-charging periods are split hour/minute registers | community-reported, unverified: an enable register plus per-period start hour, start minute, end hour, end minute and target SoC | A time-window table with start/end slots in separate hour and minute registers (the `time_window` model has one `hhmm` start per program). |
 | Battery power sign from a state register on older firmware | 13021 battery power is unsigned; the direction is bit 1 (charging) / bit 2 (discharging) of the power flow status 13000. The profile reads the signed 5213-5214 instead, which older firmware may lack | A read spec whose sign comes from a bit of another register. |
