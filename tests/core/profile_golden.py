@@ -195,7 +195,9 @@ def assert_capabilities_match_writes(profile) -> None:
         has_power, has_soc = "power_w" in prog, "soc" in prog
         floor = ceiling = has_soc
     else:
-        has_power = "power_w" in write
+        # Moc wg kierunku: obie nastawy kierunku zastępują `power_w` (jak w silniku sterowania).
+        by_direction = (raw.get("write_policy") or {}).get("power_by_direction") is True
+        has_power = ("charge_power_w" in write and "discharge_power_w" in write) if by_direction else "power_w" in write
         floor, ceiling = "soc_min" in write, "soc_max" in write
     expected = {
         "set_power_w": has_power,
