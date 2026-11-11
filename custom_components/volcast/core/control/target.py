@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping, Protocol
 
 from ..entity_map import entity_value
 from ..params import Params
-from ..registers import RegisterWrite, encode_writes
+from ..registers import _DIRECTION_KEYS, RegisterWrite, encode_writes
 from .caps import missing_write_keys
 from .entity_fit import SAFE_DIRECTION, control_writes, fit_params
 
@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 _NO_READING = ("unavailable", "unknown", "")
 # Zakres słowa rejestru według kodowania z profilu.
 _REGISTER_RANGE = {"percent": (0.0, 100.0), "watts": (0.0, 65535.0)}
+# klucze dopasowania rejestrów: wspólne z encjami plus nastawy mocy wg kierunku (w dół, jak moc)
+_REGISTER_SAFE_DIRECTION = {**SAFE_DIRECTION, **{k: -1 for k in _DIRECTION_KEYS.values()}}
 
 
 class WriteTarget(Protocol):
@@ -130,6 +132,38 @@ def _fit_register(value: float, lo: float, hi: float, direction: int) -> float:
     return float(math.ceil(v) if direction > 0 else math.floor(v))
 
 
+def _spec_range(spec: Mapping[str, Any]) -> tuple[float, float, float] | None:
+    """(min, max, krok) wartości rejestru zapisu z profilu: typ (u16/u32) i skala; procent najwyżej 100.
+
+    Bez typu i skali — dawny zakres słowa (watts 0..65535, procent 0..100, krok 1)."""
+    enc = spec.get("encode")
+    if enc not in _REGISTER_RANGE:
+        return None
+    scale = float(spec.get("scale", 1))
+    raw_max = 0xFFFFFFFF if spec.get("type") == "u32" else 0xFFFF
+    lo, hi = _REGISTER_RANGE[enc]
+    hi = raw_max * scale if enc == "watts" else min(hi, raw_max * scale)
+    return lo, hi, scale
+
+
+def _fit_scaled(value: float, lo: float, hi: float, scale: float, direction: int) -> float:
+    """Dopasowanie do kroku skali w stronę bezpieczną (krok 1 = `_fit_register`). Wynik leży dokładnie na
+    wartości, którą falownik pokaże po zapisie — inaczej uzgadnianie nie widzi zgodności i nastawa
+    wraca do NVM co interwał."""
+    if scale == 1:
+        return _fit_register(value, lo, hi, direction)
+    steps = _fit_register(min(max(value, lo), hi) / scale, lo / scale, hi / scale, direction)
+    out = steps * scale
+    return float(round(out)) if math.isclose(out, round(out), abs_tol=1e-9) else round(out, 9)
+
+
+def _direction_key(params: Params, profile) -> str | None:
+    """Nastawa mocy wg kierunku trybu (`power_by_direction`); None bez trybu kierunkowego."""
+    if not getattr(profile, "power_by_direction", False) or params.mode not in profile.modes:
+        return None
+    return _DIRECTION_KEYS.get(profile.mode_direction(params.mode))
+
+
 class RegisterTarget:
     """Cel rejestrowy: odczyt z rejestrów jest widokiem urządzenia, zapisy to `RegisterWrite`.
 
@@ -163,15 +197,22 @@ class RegisterTarget:
         return tuple(k for k in profile.write_order if k in write and k in gone)
 
     def fit(self, params: Params, profile) -> tuple[Params, tuple[str, ...], tuple[str, ...]]:
+        """Zakres i krok z rejestru profilu (typ, skala), zaokrąglenie w stronę bezpieczną klucza.
+
+        Moc planu (`power_w`) w profilu z mocą wg kierunku dopasowujemy do rejestru nastawy kierunku
+        trybu; bez trybu kierunkowego zostaje (koder ją pominie albo odrzuci)."""
         spec = profile.raw["write"]
         changes: dict[str, float] = {}
         adjusted: list[str] = []
-        for key, direction in SAFE_DIRECTION.items():
+        power_spec = _direction_key(params, profile)
+        for key, direction in _REGISTER_SAFE_DIRECTION.items():
             value = getattr(params, key)
-            enc = (spec.get(key) or {}).get("encode")
-            if value is None or enc not in _REGISTER_RANGE:
+            spec_key = power_spec if key == "power_w" and power_spec is not None else key
+            rng = _spec_range(spec.get(spec_key) or {})
+            if value is None or rng is None:
                 continue
-            fitted = _fit_register(float(value), *_REGISTER_RANGE[enc], direction)
+            lo, hi, scale = rng
+            fitted = _fit_scaled(float(value), lo, hi, scale, direction)
             if not math.isclose(fitted, float(value), abs_tol=1e-9):
                 changes[key] = fitted
                 adjusted.append(key)

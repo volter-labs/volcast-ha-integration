@@ -113,7 +113,7 @@ def apply_guards(params: Params, ctx: GuardContext, profile: Profile) -> GuardRe
     for name in ("soc_min", "soc_max"):
         if not _pct_ok(getattr(params, name)):
             return _reject("I-10", f"{name} poza 0..100 — odrzucam całą komendę")
-    for name in ("power_w", "export_limit_w"):
+    for name in ("power_w", "export_limit_w", "charge_power_w", "discharge_power_w"):
         if not _pow_ok(getattr(params, name)):
             return _reject("I-10", f"{name} poza zakresem — odrzucam całą komendę")
     if params.tou is not None:

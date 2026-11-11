@@ -100,3 +100,55 @@ def test_register_target_unreadable_tou_prefix():
     progs = tuple(TouProgram(start_min=i * 240, power_w=1000.0, soc=50.0, grid_charge=True) for i in range(6))
     assert t.writes(Params(tou=progs), deye, None) == ([], ())
     assert t.writes(Params(tou=progs), deye, {"tou.1.soc"}) == ([], ())
+
+
+# ── zakres z profilu: u32, skala, moc wg kierunku ─────────────────────────────
+
+
+def _dir_profile():
+    from tests.core.modbus.engine_profile import PLANT, directional_profile
+
+    def mutate(raw):
+        raw["write"]["export_limit_w"] = {"addr": 40038, "type": "u32", "encode": "watts", "unit_id": PLANT}
+    return directional_profile(mutate)
+
+
+def test_u32_no_limit_value_is_kept_exactly():
+    profile = _dir_profile()
+    p, adjusted, unfit = RegisterTarget(None).fit(
+        Params(export_limit_w=4294967295.0, discharge_power_w=42949672950.0), profile)
+    assert (p.export_limit_w, p.discharge_power_w) == (4294967295.0, 42949672950.0)
+    assert adjusted == () and unfit == ()
+    writes = encode_writes(p, profile, {"export_limit_w", "discharge_power_w"})
+    assert {w.key: w.value for w in writes} == {"export_limit_w": 0xFFFFFFFF, "discharge_power_w": 0xFFFFFFFF}
+
+
+def test_scaled_plan_power_snaps_down_to_the_register_step():
+    t = RegisterTarget(None)
+    p, adjusted, _ = t.fit(Params(mode="sell_power", power_w=2505.0), _dir_profile())
+    assert p.power_w == 2500.0 and adjusted == ("power_w",)
+    same, adjusted, _ = t.fit(Params(mode="sell_power", power_w=2500.0), _dir_profile())
+    assert same.power_w == 2500.0 and adjusted == ()
+
+
+def test_unscaled_u32_plan_power_rounds_down_and_explicit_set_points_are_fitted():
+    t = RegisterTarget(None)
+    p, adjusted, _ = t.fit(Params(mode="charge_battery", power_w=2500.6), _dir_profile())
+    assert p.power_w == 2500.0 and adjusted == ("power_w",)
+    p, adjusted, _ = t.fit(Params(charge_power_w=-3.0, discharge_power_w=1234.0), _dir_profile())
+    assert (p.charge_power_w, p.discharge_power_w) == (0.0, 1230.0)
+    assert set(adjusted) == {"charge_power_w", "discharge_power_w"}
+
+
+def test_scaled_percent_rounds_toward_safety_on_the_step():
+    t = RegisterTarget(None)
+    p, adjusted, _ = t.fit(Params(soc_min=35.04), _dir_profile())
+    assert p.soc_min == pytest.approx(35.1) and adjusted == ("soc_min",)
+    p, _, _ = t.fit(Params(soc_min=120.0), _dir_profile())
+    assert p.soc_min == 100.0
+
+
+@pytest.mark.parametrize("mode", [None, "auto", "battery_standby"])
+def test_plan_power_without_a_direction_is_left_to_the_encoder(mode):
+    p, adjusted, unfit = RegisterTarget(None).fit(Params(mode=mode, power_w=2505.0), _dir_profile())
+    assert p.power_w == 2505.0 and adjusted == () and unfit == ()

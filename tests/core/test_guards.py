@@ -137,3 +137,18 @@ def test_nan_reserve_does_not_allow_discharge_at_low_soc():
                      _ok(soc=5.0, soc_reserve=_NAN, action=Action.DISCHARGE), GW)
     assert r.status != STATUS_OK
     assert r.write_allowed is False
+
+
+@pytest.mark.parametrize("key", ["charge_power_w", "discharge_power_w"])
+@pytest.mark.parametrize("value", [-1.0, _NAN, float("inf"), 30001.0])
+def test_i10_rejects_insane_directional_set_points(key, value):
+    from tests.core.modbus.engine_profile import directional_profile
+    r = apply_guards(Params(mode="auto", **{key: value}), _ok(), directional_profile())
+    assert (r.write_allowed, r.invariant) == (False, "I-10")
+
+
+def test_i10_accepts_sane_directional_set_points():
+    from tests.core.modbus.engine_profile import directional_profile
+    r = apply_guards(Params(mode="auto", charge_power_w=0.0, discharge_power_w=5000.0), _ok(),
+                     directional_profile())
+    assert r.write_allowed is True
