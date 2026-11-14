@@ -17,6 +17,7 @@ _PRIVATE = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12"
 _UDP_TRANSPORTS = frozenset({"goodwe_udp", "solarman_v5"})
 _TCP_TRANSPORTS = frozenset({"modbus_tcp", "rtu_tcp"})
 _MAX_PREFIX_CUT = 24
+_PROBE_GRACE_S = 0.5            # zapas ponad `per_try_s` na utworzenie gniazda i zebranie odpowiedzi
 
 
 def _is_private(ip: ipaddress.IPv4Address) -> bool:
@@ -99,16 +100,18 @@ async def sweep(
         if transport in _UDP_TRANSPORTS:
             res = await udp_probe(target=host, timeout=per_try_s)  # type: ignore[misc]
             replies = getattr(res, "replies", None) if res is not None else None
-            if replies:
-                serial = next((r.logger_serial for r in replies if getattr(r, "logger_serial", None) is not None), None)
-                hits[host] = serial
+            # odpowiedź liczy się tylko od sondowanego hosta (`ip` z treści odpowiedzi loggera)
+            own = [r for r in (replies or ()) if getattr(r, "ip", None) == host]
+            if own:
+                hits[host] = next((r.logger_serial for r in own if getattr(r, "logger_serial", None) is not None), None)
         elif await connect(host, port, per_try_s):  # type: ignore[misc]
             hits[host] = None
 
     async def one(host: str) -> None:
         async with sem:
             try:
-                await asyncio.wait_for(probe(host), per_try_s)
+                # sonda UDP nasłuchuje dokładnie `per_try_s`, więc zewnętrzny limit musi mieć zapas
+                await asyncio.wait_for(probe(host), per_try_s + _PROBE_GRACE_S)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 — pojedyncza próba (też timeout) nie psuje skanu; bez adresu w logu

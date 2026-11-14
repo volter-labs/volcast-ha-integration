@@ -68,8 +68,8 @@ def test_old_host_public_not_added():
     assert _nets(local_subnets([_adapter(("192.168.1.10", 24))], "8.8.8.8")) == ["192.168.1.0/24"]
 
 
-def _udp_reply(has_logger: bool) -> NetworkProbeResult:
-    replies = [LoggerReply(raw="r", ip="x", mac="m", name=None)] if has_logger else []
+def _udp_reply(has_logger: bool, ip: str = "10.9.9.20") -> NetworkProbeResult:
+    replies = [LoggerReply(raw="r", ip=ip, mac="m", name=None)] if has_logger else []
     return NetworkProbeResult(sent=True, replies=replies)
 
 
@@ -94,7 +94,7 @@ async def test_udp_sweep_uses_unicast_probe_and_replies():
 
     async def udp_probe(target, port=48899, timeout=2.0):
         seen.append((target, port))
-        return _udp_reply(target == "10.9.9.20")
+        return _udp_reply(target == "10.9.9.20", target)
 
     out = await sweep([_net("10.9.9.16/28")], transport="goodwe_udp", port=48899,
                       connect=None, udp_probe=udp_probe)
@@ -106,12 +106,12 @@ async def test_udp_sweep_uses_unicast_probe_and_replies():
 @pytest.mark.asyncio
 async def test_solarman_v5_uses_udp_and_rtu_tcp_uses_connect():
     async def udp_probe(target, port=48899, timeout=2.0):
-        return _udp_reply(True)
+        return _udp_reply(True, target)
 
     async def connect(host, port, timeout):
         return True
 
-    u = await sweep([_net("10.9.9.0/30")], transport="solarman_v5", port=8899, connect=None, udp_probe=udp_probe)
+    u =await sweep([_net("10.9.9.0/30")], transport="solarman_v5", port=8899, connect=None, udp_probe=udp_probe)
     assert len(u) == 2 and u[0].transports == ("solarman_v5",)
     t = await sweep([_net("10.9.9.0/30")], transport="rtu_tcp", port=8899, connect=connect, udp_probe=None)
     assert len(t) == 2
@@ -275,3 +275,25 @@ async def test_hung_probe_frees_slot_after_per_try():
                       connect=connect, udp_probe=None, concurrency=2, per_try_s=0.05, budget_s=30)
     assert out == []
     assert loop.time() - t0 < 2
+
+
+@pytest.mark.asyncio
+async def test_probe_that_listens_full_timeout_still_yields_candidate():
+    # prawdziwa sonda czeka dokładnie `timeout` na odpowiedzi, a dopiero potem zwraca wynik
+    async def udp_probe(target, port=48899, timeout=2.0):
+        await asyncio.sleep(timeout)
+        return _udp_reply(True, target)
+
+    out = await sweep([_net("10.9.9.0/30")], transport="goodwe_udp", port=48899,
+                      connect=None, udp_probe=udp_probe, per_try_s=0.05)
+    assert [c.host for c in out] == ["10.9.9.1", "10.9.9.2"]
+
+
+@pytest.mark.asyncio
+async def test_reply_from_other_host_is_not_a_hit():
+    async def udp_probe(target, port=48899, timeout=2.0):
+        return _udp_reply(True, "10.9.9.99")
+
+    out = await sweep([_net("10.9.9.0/30")], transport="goodwe_udp", port=48899,
+                      connect=None, udp_probe=udp_probe)
+    assert out == []
