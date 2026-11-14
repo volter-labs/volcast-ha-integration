@@ -12,7 +12,9 @@ wszystkie klucze migawki (jak dotąd).
 `owner["mode_uid"]` (identyfikator rejestru encji trybu — przeżywa zmianę entity_id)
 jest w magazynie trzymany OBOK rekordu (`owner_mode_uid`), nie w nim: poprzednia wersja
 porównuje cały rekord `{profile, domain, mode_entity}` i po powrocie do niej musi go
-dalej uznać za swój (inaczej zgubiłaby migawkę i własność).
+dalej uznać za swój (inaczej zgubiłaby migawkę i własność). Z tego samego powodu
+`owner["device_target"]` (tryb bezpośredni: odcisk celu bez adresu, odcisk urządzenia z seriala —
+własność przeżywa zmianę IP falownika) leży obok jako `owner_device_target`.
 
 `tou_snapshot` — programy harmonogramu właściciela (surowe słowa) sprzed naszego pierwszego
 zapisu okien czasowych; wczytywana przez osobny, walidujący loader (zły kształt → brak
@@ -53,6 +55,7 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 _OWNER_MODE_UID = "owner_mode_uid"
+_OWNER_DEVICE_TARGET = "owner_device_target"
 _INSTALLATION_KEY = "volcast.installation"
 _SALT_CACHE = "volcast_installation_salt"
 _SALT_LOCK = "volcast_installation_salt_lock"
@@ -163,6 +166,9 @@ class ControlStore:
         mode_uid = raw.get(_OWNER_MODE_UID)
         if owner and isinstance(mode_uid, str) and mode_uid:
             owner["mode_uid"] = mode_uid
+        device_target = raw.get(_OWNER_DEVICE_TARGET)
+        if owner and isinstance(device_target, str) and device_target:
+            owner["device_target"] = device_target
         return ControlState(
             plan_raw=plan if isinstance(plan, dict) else None,
             consent=consent if isinstance(consent, bool) else None,
@@ -186,6 +192,9 @@ class ControlStore:
         mode_uid = data["owner"].pop("mode_uid", None)
         if mode_uid:
             data[_OWNER_MODE_UID] = mode_uid
+        device_target = data["owner"].pop("device_target", None)
+        if device_target:
+            data[_OWNER_DEVICE_TARGET] = device_target
         await self._store.async_save(data)
 
     async def async_remove(self) -> None:

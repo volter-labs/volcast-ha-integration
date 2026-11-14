@@ -1,10 +1,13 @@
-"""Własność w trybie bezpośrednim nie zależy od adresu falownika (ten sam egzemplarz pod nowym IP).
+"""Własność w trybie bezpośrednim przeżywa zmianę adresu falownika (ten sam egzemplarz pod nowym IP).
 
-Rekord `owner.target` dla odcisku z serialem liczony jest z `transport|port|unit_id|device_fp` (bez hosta);
-rekord sprzed tej zmiany (odcisk z hostem) jest rozpoznawany dla tego samego celu i przepisywany. Bez
-odcisku, z odciskiem słabym (`model|moc`) albo niepoprawnym — dawne zachowanie (odcisk z hostem).
-Zmiana samego hosta (i `logger_serial`) w opcjach nie jest zmianą sterowania: brak powrotu przez starego
-wykonawcę po martwym łączu, rekord zostaje, a hamulec zdejmuje tryb wymuszony w pierwszym cyklu.
+`owner.target` zostaje odciskiem celu z adresem (`target_fingerprint`) dla BIEŻĄCEGO adresu — poprzednia
+wersja wtyczki porównuje rekord ściśle i po powrocie do niej (rollback) dalej go uznaje. Dla odcisku z serialem
+obok leży odcisk bez adresu (`device_target`: `transport|port|unit_id|device_fp`, w magazynie poza rekordem jako
+`owner_device_target`); po zmianie adresu rekord pasuje przez niego, a wykonawca przy starcie przepisuje
+`target` na nowy adres. Rekord bez tego pola (starsza wersja) — dopasowanie z adresem jak dotąd, pole dopisywane
+przy starcie pod tym samym adresem. Bez odcisku, z odciskiem słabym (`model|moc`) albo niepoprawnym — dawne
+zachowanie. Zmiana samego hosta (i `logger_serial`) w opcjach nie jest zmianą sterowania: brak powrotu przez
+starego wykonawcę po martwym łączu, rekord zostaje, a hamulec zdejmuje tryb wymuszony w pierwszym cyklu.
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import pytest
 
 from custom_components.volcast.control import runtime as rt_mod
 from custom_components.volcast.control.device_io import DirectIO
-from custom_components.volcast.control.direct import target_fingerprint
+from custom_components.volcast.control.direct import device_target_fingerprint, target_fingerprint
 from custom_components.volcast.control.store import ControlState, ControlStore
 from custom_components.volcast.core.modbus.identity import device_fingerprint
 from custom_components.volcast.core.registers import RegisterImage
@@ -38,60 +41,84 @@ def _io(target, profile=GW_V) -> DirectIO:
 
 
 def _legacy(target, profile=GW_V) -> dict:
-    """Rekord zapisany przed zmianą: odcisk celu z hostem."""
+    """Rekord w kształcie poprzedniej wersji (i jej `owner()`): odcisk celu z adresem, bez pola obok."""
     fp = target.get("device_fp")
     return {"profile": profile.id, "mode": "direct", "target": target_fingerprint(target, SALT),
             "device": fp if isinstance(fp, str) else ""}
 
 
+async def _stored_raw(make_hass, owner: dict) -> tuple[dict, ControlStore]:
+    """Zapis przez magazyn nowej wersji → surowe dane (tak czyta je poprzednia wersja)."""
+    store = ControlStore(make_hass(), "e1")
+    await store.async_save(ControlState(owned=True, snapshot={"mode": "auto"}, owner=owner))
+    return await store._store.async_load(), store
+
+
 # ── odcisk własności ──────────────────────────────────────────────────────
 
 
-def test_owner_survives_host_change_for_the_same_device():
+@pytest.mark.asyncio
+async def test_new_record_is_still_recognised_by_the_previous_version(make_hass):
+    t = _gw()
+    owner = _io(t).owner()
+    assert owner == {**_legacy(t), "device_target": device_target_fingerprint(t, GW_FP, SALT)}
+    raw, store = await _stored_raw(make_hass, owner)
+    # Poprzednia wersja: `dict(raw["owner"]) == owner()` — rekord w magazynie jest dokładnie jej kształtem.
+    assert raw["owner"] == _legacy(t) and raw["owner_device_target"] == owner["device_target"]
+    assert (await store.async_load()).owner == owner                     # nowa wersja odczytuje pole obok
+    assert OLD_HOST not in str(raw)
+
+
+@pytest.mark.asyncio
+async def test_record_without_owner_keeps_no_side_field(make_hass):
+    raw, store = await _stored_raw(make_hass, {})
+    assert "owner_device_target" not in raw and (await store.async_load()).owner == {}
+
+
+def test_host_change_matches_through_the_host_less_print():
     old, new = _gw(), _gw(host=NEW_HOST)
-    assert _io(old).owner() == _io(new).owner()
-    assert _io(new).owner_matches(_io(old).owner())
-    assert _io(_gw(transport="solarman_v5", logger_serial=1)).owner() \
-        == _io(_gw(transport="solarman_v5", host=NEW_HOST, logger_serial=2)).owner()
-    owner = _io(old).owner()
-    assert owner["target"] != target_fingerprint(old, SALT) and OLD_HOST not in str(owner)
-    assert owner["profile"] == "goodwe-et" and owner["mode"] == "direct" and owner["device"] == GW_FP
+    record = _io(old).owner()
+    assert _io(new).owner_matches(record)
+    assert _io(new).owner()["target"] != record["target"]               # przepisanie na nowy adres przy starcie
+    assert _io(new).owner()["device_target"] == record["device_target"]
+    v5 = _io(_gw(transport="solarman_v5", logger_serial=1)).owner()
+    assert _io(_gw(transport="solarman_v5", host=NEW_HOST, logger_serial=2)).owner_matches(v5)
 
 
 @pytest.mark.parametrize("over", [{"device_fp": "f" * 16}, {"port": 502}, {"unit_id": 1},
                                   {"transport": "modbus_tcp"}])
-def test_owner_differs_for_another_device_or_link(over):
+def test_owner_never_matches_another_device_or_link(over):
     record = _io(_gw()).owner()
-    other = _io(_gw(host=NEW_HOST, **over))
-    assert other.owner() != record and not other.owner_matches(record)
-    assert not _io(_gw(**over)).owner_matches(record)
+    for io in (_io(_gw(host=NEW_HOST, **over)), _io(_gw(**over))):
+        assert not io.owner_matches(record) and not io.owner_matches(_legacy(_gw()))
 
 
-def test_owner_differs_for_another_profile():
+def test_host_less_print_needs_the_same_profile_and_device():
     record = _io(_gw()).owner()
-    deye = _io(_gw(profile_id="deye-sg"), verified("deye-sg"))
+    new = _io(_gw(host=NEW_HOST))
+    for key, value in (("device", "f" * 16), ("profile", "deye-sg"), ("mode", "entities")):
+        assert not new.owner_matches({**record, key: value})
+    assert not new.owner_matches({**record, "device_target": "0" * 16})
+    deye = _io(_gw(profile_id="deye-sg", host=NEW_HOST), verified("deye-sg"))
     assert not deye.owner_matches(record)
 
 
-def test_legacy_record_matches_the_same_target_only():
-    old = _gw()
-    legacy = _legacy(old)
-    assert _io(old).owner() != legacy                         # nowa postać rekordu
-    assert _io(old).owner_matches(legacy)                     # ...a zapisany wcześniej rekord nadal pasuje
-    # Rekordu z hostem nie da się sprawdzić pod innym adresem — jak dotąd, nie pasuje (fail-closed).
+def test_record_without_the_field_matches_the_same_address_only():
+    legacy = _legacy(_gw())
+    assert _io(_gw()).owner_matches(legacy)                             # pole dopisywane przy starcie
+    # Bez pola obok rekordu z adresem nie da się sprawdzić pod innym adresem — jak dotąd (fail-closed).
     assert not _io(_gw(host=NEW_HOST)).owner_matches(legacy)
-    # Rekord innego egzemplarza (inny odcisk) pod tym samym adresem — nie pasuje.
     assert not _io(_gw(device_fp="f" * 16)).owner_matches(legacy)
-    for over in ({"port": 502}, {"unit_id": 1}, {"transport": "modbus_tcp"}):
-        assert not _io(_gw(**over)).owner_matches(legacy)
 
 
 @pytest.mark.parametrize("fp", [None, "", "ABCDEF0123456789", "abc", 12])
 def test_owner_without_valid_fingerprint_is_host_bound_as_before(fp):
     t = _gw(device_fp=fp)
-    assert _io(t).owner() == {"profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(t, SALT),
-                              "device": fp if isinstance(fp, str) else ""}
-    assert not _io(_gw(device_fp=fp, host=NEW_HOST)).owner_matches(_io(t).owner())
+    assert _io(t).owner() == _legacy(t)
+    moved = _io(_gw(device_fp=fp, host=NEW_HOST))
+    assert not moved.owner_matches(_io(t).owner())
+    # pole obok nie otwiera dopasowania bez adresu, gdy cel nie ma odcisku z seriala
+    assert not moved.owner_matches({**_io(t).owner(), "device_target": "0" * 16})
 
 
 def test_weak_fingerprint_is_host_bound_as_before():
@@ -99,10 +126,14 @@ def test_weak_fingerprint_is_host_bound_as_before():
     fox = {"profile_id": "foxess-h", "transport": "modbus_tcp", "host": OLD_HOST, "port": 502, "unit_id": 247,
            "device_fp": "0123456789abcdef"}
     assert _io(fox, FOX_V).owner() == _legacy(fox, FOX_V)
-    assert not _io({**fox, "host": NEW_HOST}, FOX_V).owner_matches(_io(fox, FOX_V).owner())
+    moved = _io({**fox, "host": NEW_HOST}, FOX_V)
+    assert not moved.owner_matches(_io(fox, FOX_V).owner())
+    assert not moved.owner_matches({**_io(fox, FOX_V).owner(),
+                                    "device_target": device_target_fingerprint(fox, fox["device_fp"], SALT)})
     # Jawne oznaczenie słabego odcisku w celu wygrywa z profilem.
     weak = _gw(fp_kind="model")
     assert _io(weak).owner() == _legacy(weak)
+    assert not _io(_gw(fp_kind="model", host=NEW_HOST)).owner_matches(_io(_gw()).owner())
     assert _io(_gw(fp_kind="serial")).owner() == _io(_gw()).owner()
 
 
@@ -118,15 +149,16 @@ async def _seed(make_hass, owner: dict) -> ControlStore:
 
 
 @pytest.mark.asyncio
-async def test_legacy_record_is_migrated_at_start(make_hass, goodwe_udp_sim, goodwe_bank, issues):
+async def test_record_without_the_field_gains_it_at_start(make_hass, goodwe_udp_sim, goodwe_bank, issues):
     target = gw_target(goodwe_udp_sim)
     legacy = _legacy(target)
     store = await _seed(make_hass, legacy)
     h = await Harness(make_hass, GW_V, target, store=store).start()
     try:
         assert h.ex.owned and h.ex._state.snapshot == {"mode": "auto", "soc_min": 5.0}
-        assert h.ex._state.owner == h.io.owner() != legacy
-        assert (await store.async_load()).owner == h.io.owner()
+        assert h.ex._state.owner == {**legacy, "device_target": device_target_fingerprint(target, GW_FP, SALT)}
+        assert (await store.async_load()).owner == h.ex._state.owner
+        assert (await store._store.async_load())["owner"] == legacy          # poprzednia wersja nadal go uznaje
         assert "control_record_dropped" not in issues.keys()
     finally:
         await h.close()
@@ -141,6 +173,10 @@ async def test_host_change_keeps_ownership_and_brake_neutralises(make_hass, good
     try:
         assert h.ex.owned and h.ex._state.snapshot == {"mode": "auto", "soc_min": 5.0}
         assert "control_record_dropped" not in issues.keys()
+        # rekord przepisany na NOWY adres (poprzednia wersja uzna go po rollbacku), pole obok bez zmian
+        assert h.ex._state.owner == h.io.owner()
+        assert h.ex._state.owner["target"] == target_fingerprint(target, SALT)
+        assert (await store._store.async_load())["owner"] == _legacy(target)
         _stale(h)
         await h.ex.async_tick()
         assert gw_raw_word(goodwe_bank, MODE) == 1 and "neutral_brake" in h.ex.last_decision.notes
@@ -150,7 +186,7 @@ async def test_host_change_keeps_ownership_and_brake_neutralises(make_hass, good
 
 @pytest.mark.parametrize("record", [
     lambda t: _io({**t, "host": OLD_HOST, "device_fp": "f" * 16}).owner(),   # inny egzemplarz
-    lambda t: _legacy({**t, "host": OLD_HOST}),                              # stary rekord, inny adres
+    lambda t: _legacy({**t, "host": OLD_HOST}),                              # rekord bez pola, inny adres
 ])
 @pytest.mark.asyncio
 async def test_foreign_or_unverifiable_record_is_still_dropped(make_hass, goodwe_udp_sim, goodwe_bank, issues,
