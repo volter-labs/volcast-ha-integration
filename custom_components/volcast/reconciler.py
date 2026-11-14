@@ -195,13 +195,27 @@ class DailyReconciler:
                 "data_method": "energy_delta",
             })
 
-        if not missing:
+        # Suma doby zamkniętej z tych samych statystyk (suma delt godzinnych;
+        # godzina powrotu po przerwie księguje cały zaległy zapas, więc suma
+        # jest prawdą dnia). Dla dzisiejszej doby nie wysyłamy — jest niepełna.
+        # Idempotentne: backend zapisuje wartość, ponowna wysyłka tego samego
+        # dnia (startup / sync_now / przebieg 00:30) jest nieszkodliwa.
+        day_totals: list[dict] | None = None
+        if target_date < today:
+            day_totals = [{
+                "date": target_date.isoformat(),
+                "total_kwh": round(sum(max(k, 0.0) for k in hourly_stats.values()), 3),
+            }]
+
+        if not missing and day_totals is None:
             _LOGGER.debug("Reconcile %s — no gaps", target_date)
             return ReconcileResult(success=True, submitted=0)
 
-        return await self._post_reconciliation(missing)
+        return await self._post_reconciliation(missing, day_totals)
 
-    async def _post_reconciliation(self, readings: list[dict]) -> ReconcileResult:
+    async def _post_reconciliation(
+        self, readings: list[dict], day_totals: list[dict] | None = None,
+    ) -> ReconcileResult:
         """POST brakujących godzin z flagą is_reconciliation=true.
 
         Backend rozpoznaje tę flagę i pomija Kalman+nowcast (Phase 1 commits).
@@ -209,11 +223,15 @@ class DailyReconciler:
         zostają NIE oznaczone, żeby kolejny przebieg reconciler je powtórzył.
         """
         session = async_get_clientsession(self._hass)
+        payload: dict = {"readings": readings, "is_reconciliation": True}
+        if day_totals:
+            # Nieznane pole — starszy serwer je ignoruje.
+            payload["day_totals"] = day_totals
         result = await http_with_retry(
             session,
             method="POST",
             url=self._submit_url,
-            payload={"readings": readings, "is_reconciliation": True},
+            payload=payload,
             headers={
                 "X-API-Key": self._api_key,
                 "Content-Type": "application/json",
@@ -240,7 +258,9 @@ class DailyReconciler:
             rejected_count = data.get("rejected", len(rejected_keys))
             _LOGGER.info(
                 "Reconciliation: submitted %d hours for %s, accepted=%d rejected=%d",
-                len(readings), readings[0]["date"], accepted_count, rejected_count,
+                len(readings),
+                readings[0]["date"] if readings else day_totals[0]["date"],
+                accepted_count, rejected_count,
             )
             return ReconcileResult(
                 success=True,

@@ -233,11 +233,16 @@ async def test_reconcile_day_skips_no_stats():
 
 
 @pytest.mark.asyncio
-async def test_reconcile_day_no_gaps_no_submit():
-    """When _accepted has every hour the stats reports, no POST is made."""
+async def test_reconcile_day_no_gaps_no_submit(monkeypatch):
+    """When _accepted has every hour the stats reports, no POST is made
+    (open day — a closed day additionally carries day_totals)."""
+    from custom_components.volcast import reconciler as reconciler_mod
+
     tracker = _make_real_tracker()
     reconciler = _make_reconciler(tracker=tracker)
-    target = _today_local(reconciler) - timedelta(days=1)
+    fixed_now = datetime(2026, 7, 24, 20, 40, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(reconciler_mod, "_now_local", lambda tz: fixed_now)
+    target = fixed_now.date()
     tracker._accepted = {target.isoformat(): list(range(6, 19))}
 
     full_day = {h: 1.0 for h in range(6, 19)}  # 13 daylight hours
@@ -741,3 +746,111 @@ async def test_reconcile_recent_runs_yesterday_then_today(monkeypatch):
     assert calls == [date(2026, 7, 23), date(2026, 7, 24)]
     assert len(results) == 2
     assert all(r.success for r in results)
+
+
+# ---------------------------------------------------------------------------
+# day_totals — suma doby z statystyk HA dla doby zamkniętej
+# ---------------------------------------------------------------------------
+
+
+def _ok_result(accepted: int = 0):
+    from custom_components.volcast.http_retry import RetryResult
+
+    return RetryResult(
+        success=True, status=200, attempts=1,
+        data={"accepted": accepted, "rejected": 0, "rejections": []},
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_closed_day_no_gaps_sends_day_totals_only():
+    """Doba zamknięta, brak luk → POST z readings=[] i day_totals."""
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+    tracker._accepted = {target.isoformat(): list(range(6, 19))}
+    stats = {h: 1.0 for h in range(6, 19)}
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = _ok_result()
+        result = await reconciler.reconcile_day(target)
+
+    assert mock_http.call_count == 1
+    payload = mock_http.call_args.kwargs["payload"]
+    assert payload["readings"] == []
+    assert payload["is_reconciliation"] is True
+    assert payload["day_totals"] == [{"date": target.isoformat(), "total_kwh": 13.0}]
+    assert result.success is True
+    assert result.submitted == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_closed_day_with_gaps_sends_readings_and_day_totals():
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+    tracker._accepted = {target.isoformat(): list(range(6, 18))}
+    # Godzina powrotu księguje cały zaległy zapas (skok); suma doby = suma delt.
+    stats = {h: 1.0 for h in range(6, 18)}
+    stats[18] = 4.12345
+    stats[19] = 0.0
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = _ok_result(accepted=1)
+        result = await reconciler.reconcile_day(target)
+
+    payload = mock_http.call_args.kwargs["payload"]
+    assert [r["hour"] for r in payload["readings"]] == [18]
+    assert payload["day_totals"] == [{"date": target.isoformat(), "total_kwh": 16.123}]
+    assert result.submitted == 1
+    assert 18 in tracker._accepted[target.isoformat()]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_no_stats_sends_no_day_totals_and_no_request():
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value={}), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http:
+        result = await reconciler.reconcile_day(target)
+
+    assert result.reason == "no_stats"
+    assert mock_http.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_open_day_payload_unchanged_without_day_totals(monkeypatch):
+    """Dzisiejsza (niezamknięta) doba: brak day_totals, payload jak dotąd;
+    brak luk → brak requestu."""
+    from custom_components.volcast import reconciler as reconciler_mod
+
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    fixed_now = datetime(2026, 7, 24, 13, 40, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(reconciler_mod, "_now_local", lambda tz: fixed_now)
+    target = fixed_now.date()
+    stats = {h: 1.0 for h in range(6, 13)}
+
+    tracker._accepted = {target.isoformat(): list(range(6, 13))}
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http:
+        await reconciler.reconcile_day(target)
+    assert mock_http.call_count == 0
+
+    tracker._accepted = {target.isoformat(): list(range(6, 12))}
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = _ok_result(accepted=1)
+        await reconciler.reconcile_day(target)
+    payload = mock_http.call_args.kwargs["payload"]
+    assert set(payload) == {"readings", "is_reconciliation"}
