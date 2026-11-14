@@ -84,6 +84,7 @@ from .executor import ControlGaps, VolcastExecutor
 from .ha_writer import EntityServiceWriter
 from .history_import import async_import_history_once
 from .live import LiveSender
+from .relocator import Relocator, forget as forget_relocation, search_factory, search_lock
 from .loads_executor import LoadsExecutor, charger_roles
 from .loads_store import LoadsStore
 from .signals_hub import SignalsHub
@@ -232,6 +233,8 @@ class ControlRuntime:
     # ponowne sprawdzenie profilu z prawem zapisu po aktualizacji feedu (`watch_profile_withdrawal`)
     feed_recheck: bool = False
     withdrawal_task: object | None = None
+    # samoczynne odnajdywanie falownika pod nowym adresem (`start_relocator`); tylko tryb bezpośredni
+    relocator: object | None = None
 
     def entity_gaps(self) -> ControlGaps:
         """Encje sterujące profilu wyłączone albo nieobecne (z rejestru encji), z bieżącą mapą."""
@@ -456,15 +459,15 @@ def control_identity_changed(runtime, old: Mapping, new: Mapping) -> bool:
 
 async def async_direct_search(hass, entry, *, manual=None, port: int | None = None, unit_id: int | None = None,
                               **kw) -> list:
-    """Wyszukanie falownika (albo tylko celu wpisanego ręcznie); raporty zapamiętane w runtime wpisu."""
+    """Wyszukanie falownika (albo tylko celu wpisanego ręcznie); raporty zapamiętane w runtime wpisu.
+
+    Pod blokadą wyszukiwania wpisu (`search_lock`) — wspólną z samoczynnym odnajdywaniem: nigdy dwa naraz."""
     profiles = await hass.async_add_executor_job(ds.load_profiles)
-    if port is not None or unit_id is not None:
-        def factory(cfg):
-            return ds.make_transport(replace(cfg, port=port if port is not None else cfg.port,
-                                             unit=unit_id if unit_id is not None else cfg.unit),
-                                     allow_loopback=ds.ALLOW_LOOPBACK)
+    factory = search_factory(port, unit_id)
+    if factory is not None:
         kw.setdefault("transport_factory", factory)
-    reports = await ds.async_search(hass, entry, profiles, manual=manual, **kw)
+    async with search_lock(hass, entry.entry_id):
+        reports = await ds.async_search(hass, entry, profiles, manual=manual, **kw)
     rt = (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
     if rt is not None:
         rt.last_probe = list(reports)
@@ -1285,6 +1288,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         wire_work_mode(hass, rt, conn)
         start_work_mode_watch(hass, choice, rt)
         track_ha_stop(hass, rt)
+        start_relocator(hass, entry, rt)
         # Runtime w hass.data PRZED onboardingiem — ten czyta go od razu (start „na gorąco").
         hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})["control"] = rt
         _maybe_start_onboarding(hass, entry, report, profiles)
@@ -1414,6 +1418,27 @@ def _maybe_start_onboarding(hass, entry, report, profiles=()) -> None:
                     profiles=list(profiles))
     running[entry.entry_id] = (hass.async_create_background_task(ob.async_run(), "volcast_onboarding"), session_id)
     hass.data.setdefault(ONBOARDING_OBJ_KEY, {})[entry.entry_id] = ob
+
+
+def onboarding_running(hass, entry_id: str) -> bool:
+    """Onboarding wpisu trwa (zadanie reportera nie skończone) — sam wyszukuje falownik."""
+    task, _session = ((getattr(hass, "data", None) or {}).get(ONBOARDING_KEY) or {}).get(entry_id) or (None, None)
+    return task is not None and not task.done()
+
+
+def start_relocator(hass, entry, rt) -> Relocator | None:
+    """Samoczynne odnajdywanie falownika: tylko połączenie bezpośrednie w trybie bezpośrednim (nie próba).
+    Zdjęcie z wpisem (`rt.unsubs`: rozładunek, zamrożenie przed zmianą sterowania)."""
+    conn = getattr(rt, "direct", None)
+    if conn is None or getattr(conn, "trial", True) is not False \
+            or (entry.options or {}).get(OPT_CONTROL_MODE) != CONTROL_MODE_DIRECT:
+        return None
+    rel = Relocator(hass, entry, conn,
+                    control_change=lambda old, new: control_identity_changed(rt, old, new),
+                    onboarding_active=lambda: onboarding_running(hass, entry.entry_id))
+    rt.unsubs.append(rel.start())
+    rt.relocator = rel
+    return rel
 
 
 def _cancel_onboarding(hass, entry_id) -> None:
@@ -1578,6 +1603,7 @@ async def async_remove_control(hass, entry) -> None:
     except Exception as err:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić
         _LOGGER.debug("Volcast EV charger state removal failed (%s)", type(err).__name__)
     hass.data.get(_LOCKS_KEY, {}).pop(entry.entry_id, None)
+    forget_relocation(hass, entry.entry_id)
     try:
         ir.async_delete_issue(hass, DOMAIN, f"control_record_dropped_{entry.entry_id}")
     except Exception:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić

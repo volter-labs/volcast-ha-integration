@@ -10,8 +10,9 @@ e-maili co raport wykrywania (`core/discovery/report.py`).
 Tryb bezpośredni (`control.direct`): profil, transport, stan łącza, odmowa, tożsamość (tylko stan),
 liczniki transportu, monitor kolizji, ostatnia sonda (`ProbeReport.to_dict()` — bez adresu i
 odcisku), klucze bez odczytu zwrotnego, budżet NVM (ramki na klucz w oknie, trafienia, wyłączenia
-harmonogramu w stronę bezpieczną) i ostatnia decyzja. Nigdy adres, port, numer loggera, numer
-seryjny, odcisk urządzenia ani celu, ani sól. Ramki (`frames`) tylko w połączeniu próbnym —
+harmonogramu w stronę bezpieczną), ostatnia decyzja i liczniki samoczynnego odnajdywania pod nowym
+adresem (`relocation`: liczba przepięć, ostatni wynik i czas, liczba kandydatów). Nigdy adres, port,
+numer loggera, numer seryjny, odcisk urządzenia ani celu, ani sól. Ramki (`frames`) tylko w połączeniu próbnym —
 rejestry seryjne wyzerowane z przeliczonymi sumami, numer loggera wyzerowany.
 
 Źródła odczytów (`control.readings_source`, `control.readings_dropped`): klucz → `entity|register|
@@ -29,6 +30,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
 from .const import CONF_BACKEND, CONF_MODE, DOMAIN
+from .control.relocator import relocation_summary
 from .core.discovery.report import _known_mac_pattern, _mac_hex, _mask_value, _serial_pattern, _valid_serial
 from .core.control.tou_cycle import SAFETY_OFF_CAP
 from .core.modbus.frame_redact import redact_frames
@@ -149,6 +151,10 @@ async def async_get_config_entry_diagnostics(
         control = _control(hass, entry_data.get("control"))
     except Exception as err:  # noqa: BLE001 — one broken section must not fail the whole download
         control = {"error": type(err).__name__}
+    if isinstance(control, dict) and isinstance(control.get("direct"), dict):
+        # liczniki samoczynnego odnajdywania (przeżywają przeładowanie) — wynik, liczba kandydatów i czas,
+        # nigdy adres
+        control["direct"]["relocation"] = relocation_summary(hass, entry.entry_id)
     return {
         "entry": {
             "mode": mode if isinstance(mode, str) else _MODE_FORECAST,

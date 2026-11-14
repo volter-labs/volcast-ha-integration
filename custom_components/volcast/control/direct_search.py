@@ -2,7 +2,7 @@
 
 Wspólne dla opcji integracji i onboardingu:
 
-* `async_search` — kandydaci z odpowiedzi UDP 48899 albo jeden cel wpisany ręcznie; kolizje
+* `async_search` — kandydaci z odpowiedzi UDP 48899, jeden cel wpisany ręcznie albo gotowa lista; kolizje
   statyczne liczone Z GÓRY (nazwy hostów innych wpisów rozwiązywane, limit 2 s na nazwę), także
   żywe połączenie bezpośrednie innego wpisu na tym adresie; całość z limitem czasu
   (`DISCOVER_TIMEOUT_S`) — sonda jest sekwencyjna. Wyłącznie odczyt; nic nie rzuca.
@@ -201,14 +201,20 @@ def clash_label(clash: Sequence[str]) -> str:
 
 
 async def async_search(hass, entry, profiles: Sequence, *, manual: Candidate | None = None,
+                       candidates: Sequence[Candidate] | None = None,
                        timeout_s: float = DISCOVER_TIMEOUT_S, transport_factory: Callable | None = None,
                        udp_probe: Callable[[], Awaitable] | None = None, allow_loopback: bool | None = None,
                        resolve=None) -> list[ProbeReport]:
-    """Raporty sondy (kolejność kandydatów); pusta lista przy braku kandydatów albo przekroczonym czasie."""
+    """Raporty sondy (kolejność kandydatów); pusta lista przy braku kandydatów albo przekroczonym czasie.
+
+    `candidates` — gotowa lista (samoczynne odnajdywanie po zmianie adresu): bez rozgłoszenia, w tej
+    kolejności; `discover` bierze najwyżej `MAX_CANDIDATES` (wołający pilnuje, czy lista się mieści)."""
     try:
         salt = await async_installation_salt(hass)
         if manual is not None:
             candidates = [manual]
+        elif candidates is not None:
+            candidates = list(candidates)
         else:
             network = await (udp_probe or probe_udp_48899)()
             candidates = candidates_from(getattr(network, "replies", None) or [], (), None,
