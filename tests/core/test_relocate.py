@@ -72,38 +72,23 @@ def test_same_host_reported_twice_counts_once():
     assert r == Relocation("relocated", NEW, None)
 
 
-def test_model_fingerprint_relocates_when_alone_in_the_result():
+def test_model_fingerprint_twin_at_new_host_is_never_adopted():
+    # Oryginał wyłączony (nie ma go w wyniku), bliźniak tego samego modelu i mocy żyje pod innym adresem:
+    # odcisk model|moc jest identyczny, więc nie da się udowodnić, że to ten sam egzemplarz.
     t = _target(profile_id="foxess-h", fp_kind=FP_MODEL)
     r = _decide(t, [_report(NEW, profile_id="foxess-h")])
-    assert r == Relocation("relocated", NEW, None)
+    assert r == Relocation("not_found", None, None)
 
 
-def test_model_fingerprint_with_another_device_of_that_profile_is_ambiguous():
-    t = _target(profile_id="foxess-h", fp_kind=FP_MODEL)
-    r = _decide(t, [_report(NEW, profile_id="foxess-h"), _report(OTHER, profile_id="foxess-h", fp=FP_FOREIGN)])
-    assert r == Relocation("ambiguous", None, None)
-
-
-def test_model_fingerprint_ignores_devices_of_other_profiles():
+def test_model_fingerprint_with_single_perfect_candidate_is_not_found():
     t = _target(profile_id="foxess-h", fp_kind=FP_MODEL)
     r = _decide(t, [_report(NEW, profile_id="foxess-h"), _report(OTHER, fp=FP_FOREIGN)])
-    assert r == Relocation("relocated", NEW, None)
+    assert r == Relocation("not_found", None, None)
 
 
-@pytest.mark.parametrize("target_rated, report_rated", [(10000.0, 8000.0), (None, 10000.0), (10000.0, None)])
-def test_model_fingerprint_requires_matching_rated_power(target_rated, report_rated):
-    t = _target(profile_id="foxess-h", fp_kind=FP_MODEL, rated_power_w=target_rated)
-    if target_rated is None:
-        del t["rated_power_w"]
-    r = _decide(t, [_report(NEW, profile_id="foxess-h", rated=report_rated)])
-    assert r == Relocation("ambiguous", None, None)
-
-
-def test_model_fingerprint_with_unidentified_device_in_result_is_ambiguous():
-    # Nierozpoznany kandydat może być bliźniakiem — przy słabym odcisku to wątpliwość.
+def test_model_fingerprint_on_the_current_host_is_not_found():
     t = _target(profile_id="foxess-h", fp_kind=FP_MODEL)
-    r = _decide(t, [_report(NEW, profile_id="foxess-h"), _report(OTHER, identified=False, errors=("timeout",))])
-    assert r == Relocation("ambiguous", None, None)
+    assert _decide(t, [_report(OLD, profile_id="foxess-h")]) == Relocation("not_found", None, None)
 
 
 def test_serial_fingerprint_tolerates_unidentified_and_same_profile_devices():
@@ -112,14 +97,16 @@ def test_serial_fingerprint_tolerates_unidentified_and_same_profile_devices():
     assert r == Relocation("relocated", NEW, None)
 
 
-@pytest.mark.parametrize("fp_kind", [None, "", "unknown"])
-def test_unknown_fingerprint_kind_gets_the_strict_rules(fp_kind):
+@pytest.mark.parametrize("fp_kind", [None, "", "unknown", FP_MODEL])
+def test_non_serial_fingerprint_kind_never_relocates(fp_kind):
     t = _target(fp_kind=fp_kind)
     if fp_kind is None:
         del t["fp_kind"]
-    r = _decide(t, [_report(NEW), _report(OTHER, fp=FP_FOREIGN)])
-    assert r == Relocation("ambiguous", None, None)
-    assert _decide(t, [_report(NEW)]) == Relocation("relocated", NEW, None)
+    assert _decide(t, [_report(NEW)]) == Relocation("not_found", None, None)
+
+
+def test_ipv4_mapped_target_host_is_the_same_host():
+    assert _decide(_target(host="::ffff:" + NEW), [_report(NEW)]) == Relocation("same_host", None, None)
 
 
 @pytest.mark.parametrize("over", [{"profile_id": "goodwe-dt"}, {"transport": "modbus_tcp"}, {"port": 502},

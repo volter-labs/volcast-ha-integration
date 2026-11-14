@@ -6,11 +6,13 @@ tylko dla TEGO SAMEGO egzemplarza:
 
 * kandydat ma identyczne `device_fp`, `profile_id`, `transport`, `port` i `unit_id` co cel;
 * dokładnie jeden adres z tym odciskiem (więcej = `ambiguous`; obecny adres też się liczy);
-* odcisk słaby (`model|moc`, profil bez rejestru seriala) wymaga dodatkowo zgodnej mocy
-  znamionowej i braku w całym wyniku innego urządzenia tego profilu ani urządzenia nierozpoznanego;
-  nieznany rodzaj odcisku (`fp_kind` brak / inny) dostaje te same, ostrzejsze reguły;
 * adres zajęty (albo niesprawdzony — brak klucza w `clashes`) = `clash`;
-* cel bez odcisku (albo bez profilu / transportu) nigdy nie jest przepinany (`not_found`).
+* cel bez odcisku (albo bez profilu / transportu) nigdy nie jest przepinany (`not_found`);
+* tylko odcisk z serialem (`fp_kind == "serial"`) może dać przepięcie. Odcisk słaby (`model|moc`,
+  profil bez rejestru seriala) oraz brak / nieznany `fp_kind` dają zawsze `not_found`: dwa
+  identyczne modele o tej samej mocy mają ten sam odcisk, a wynik wyszukiwania nie widzi
+  wyłączonego oryginału ani nie jest pełny, więc bliźniak pod nowym adresem jest nie do odróżnienia.
+  Ręczne wyszukiwanie w opcjach (decyzja użytkownika) zostaje dostępne.
 
 Adres i numer loggera nie trafiają do `repr` wyniku (logi, diagnostyka).
 """
@@ -53,18 +55,15 @@ def fingerprint_kind(profile: Any) -> str:
 
 
 def _canon(host: Any) -> str | None:
+    """Postać kanoniczna literału (z odpakowaniem `::ffff:a.b.c.d` jak `check_target`); inny tekst bez zmian."""
     if not isinstance(host, str) or not host:
         return None
     try:
-        return ipaddress.ip_address(host).compressed
+        ip = ipaddress.ip_address(host)
     except ValueError:
         return host
-
-
-def _power(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        return None
-    return float(value)
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).compressed
 
 
 def _same_device(target: Mapping, report: ProbeReport) -> bool:
@@ -75,19 +74,6 @@ def _same_device(target: Mapping, report: ProbeReport) -> bool:
             and i.transport == target["transport"]
             and i.port == target.get("port")
             and i.unit_id == target.get("unit_id"))
-
-
-def _weak_doubt(target: Mapping, reports: Sequence[ProbeReport], matches: Sequence[ProbeReport]) -> bool:
-    """Wątpliwość przy słabym odcisku: niezgodna moc albo w wyniku jest inne / nierozpoznane urządzenie."""
-    want = _power(target.get("rated_power_w"))
-    if want is None or any(_power(r.identity.rated_power_w) != want for r in matches):
-        return True
-    for r in reports:
-        if any(r is m for m in matches):
-            continue
-        if r.identity is None or r.identity.profile_id == target["profile_id"]:
-            return True
-    return False
 
 
 def _logger_serial(target: Mapping, matches: Sequence[ProbeReport]) -> tuple[bool, int | None]:
@@ -107,6 +93,8 @@ def decide_relocation(target: Mapping, reports: Sequence[ProbeReport], *,
     fp = target.get("device_fp")
     if not isinstance(fp, str) or not fp or not target.get("profile_id") or not target.get("transport"):
         return _NOT_FOUND
+    if target.get("fp_kind") != FP_SERIAL:      # tożsamości nie da się udowodnić (bliźniaki), patrz wyżej
+        return _NOT_FOUND
     identified = [r for r in reports
                   if r.identity is not None and r.candidate is not None and r.identity.device_fp]
     if not identified:
@@ -120,8 +108,6 @@ def decide_relocation(target: Mapping, reports: Sequence[ProbeReport], *,
     host = matches[0].candidate.host
     if _canon(host) == _canon(target.get("host")):
         return _SAME
-    if target.get("fp_kind") != FP_SERIAL and _weak_doubt(target, reports, matches):
-        return _AMBIGUOUS
     consistent, serial = _logger_serial(target, matches)
     if not consistent:
         return _AMBIGUOUS
