@@ -229,3 +229,49 @@ async def test_no_addresses_in_logs(caplog):
         await sweep([_net("10.9.9.0/30")], transport="modbus_tcp", port=502, connect=connect, udp_probe=None)
         await sweep([_net("10.9.9.0/30")], transport="modbus_tcp", port=502, connect=bad, udp_probe=None)
     assert "10.9.9" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_solarman_candidate_carries_logger_serial():
+    async def udp_probe(target, port=48899, timeout=2.0):
+        reply = LoggerReply(raw="r", ip=target, mac="m", name="x", logger_serial=2712345678)
+        return NetworkProbeResult(sent=True, replies=[reply])
+
+    out = await sweep([_net("10.9.9.0/30")], transport="solarman_v5", port=8899,
+                      connect=None, udp_probe=udp_probe)
+    assert out and all(c.logger_serial == 2712345678 for c in out)
+
+
+@pytest.mark.asyncio
+async def test_outer_cancel_cancels_all_probes():
+    calls = 0
+
+    async def connect(host, port, timeout):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return False
+
+    task = asyncio.ensure_future(sweep([_net("10.9.9.0/24")], transport="modbus_tcp", port=502,
+                                       connect=connect, udp_probe=None, concurrency=4, per_try_s=5))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    seen = calls
+    await asyncio.sleep(0.2)
+    assert calls == seen
+
+
+@pytest.mark.asyncio
+async def test_hung_probe_frees_slot_after_per_try():
+    async def connect(host, port, timeout):
+        await asyncio.Event().wait()  # nigdy nie wraca
+        return True
+
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    out = await sweep([_net("10.9.9.0/29")], transport="modbus_tcp", port=502,
+                      connect=connect, udp_probe=None, concurrency=2, per_try_s=0.05, budget_s=30)
+    assert out == []
+    assert loop.time() - t0 < 2

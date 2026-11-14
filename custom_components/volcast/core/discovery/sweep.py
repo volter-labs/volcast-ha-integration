@@ -93,30 +93,41 @@ async def sweep(
             targets.append(text)
 
     sem = asyncio.Semaphore(max(1, concurrency))
-    hits: list[str] = []
+    hits: dict[str, int | None] = {}   # adres -> numer loggera (tylko transport V5)
+
+    async def probe(host: str) -> None:
+        if transport in _UDP_TRANSPORTS:
+            res = await udp_probe(target=host, timeout=per_try_s)  # type: ignore[misc]
+            replies = getattr(res, "replies", None) if res is not None else None
+            if replies:
+                serial = next((r.logger_serial for r in replies if getattr(r, "logger_serial", None) is not None), None)
+                hits[host] = serial
+        elif await connect(host, port, per_try_s):  # type: ignore[misc]
+            hits[host] = None
 
     async def one(host: str) -> None:
         async with sem:
             try:
-                if transport in _UDP_TRANSPORTS:
-                    res = await udp_probe(target=host, timeout=per_try_s)  # type: ignore[misc]
-                    ok = bool(res is not None and getattr(res, "replies", None))
-                else:
-                    ok = bool(await connect(host, port, per_try_s))  # type: ignore[misc]
+                await asyncio.wait_for(probe(host), per_try_s)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 — pojedyncza próba nie psuje skanu; bez adresu w logu
+            except Exception:  # noqa: BLE001 — pojedyncza próba (też timeout) nie psuje skanu; bez adresu w logu
                 return
-            if ok:
-                hits.append(host)
 
     tasks = [asyncio.ensure_future(one(h)) for h in targets]
-    if tasks:
-        _, pending = await asyncio.wait(tasks, timeout=budget_s)
-        for t in pending:
-            t.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+    try:
+        if tasks:
+            await asyncio.wait(tasks, timeout=budget_s)
+    finally:
+        # także przy anulowaniu z zewnątrz: żadna próba nie działa po powrocie
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-    hits.sort(key=lambda h: int(ipaddress.IPv4Address(h)))
-    return [Candidate(host=h, source="sweep", transports=(transport,)) for h in hits]
+    return [
+        Candidate(host=h, source="sweep", logger_serial=hits[h] if transport == "solarman_v5" else None,
+                  transports=(transport,))
+        for h in sorted(hits, key=lambda h: int(ipaddress.IPv4Address(h)))
+    ]
