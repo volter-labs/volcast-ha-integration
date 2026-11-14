@@ -12,6 +12,7 @@ from tests.conftest import FakeHass, _FakeStore
 from custom_components.volcast.production import VolcastProductionTracker
 from custom_components.volcast.reconciler import (
     DailyReconciler,
+    HourlyStats,
     ReconcileResult,
 )
 
@@ -753,6 +754,13 @@ async def test_reconcile_recent_runs_yesterday_then_today(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def _complete_stats(hourly: dict[int, float]) -> HourlyStats:
+    stats = HourlyStats(hourly)
+    stats.complete = True
+    stats.total_kwh = sum(hourly.values())
+    return stats
+
+
 def _ok_result(accepted: int = 0):
     from custom_components.volcast.http_retry import RetryResult
 
@@ -769,7 +777,7 @@ async def test_reconcile_closed_day_no_gaps_sends_day_totals_only():
     reconciler = _make_reconciler(tracker=tracker)
     target = _today_local(reconciler) - timedelta(days=1)
     tracker._accepted = {target.isoformat(): list(range(6, 19))}
-    stats = {h: 1.0 for h in range(6, 19)}
+    stats = _complete_stats({h: 1.0 for h in range(6, 19)})
 
     with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
          patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
@@ -797,6 +805,7 @@ async def test_reconcile_closed_day_with_gaps_sends_readings_and_day_totals():
     stats = {h: 1.0 for h in range(6, 18)}
     stats[18] = 4.12345
     stats[19] = 0.0
+    stats = _complete_stats(stats)
 
     with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
          patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
@@ -854,3 +863,93 @@ async def test_reconcile_open_day_payload_unchanged_without_day_totals(monkeypat
         await reconciler.reconcile_day(target)
     payload = mock_http.call_args.kwargs["payload"]
     assert set(payload) == {"readings", "is_reconciliation"}
+
+
+# ---------------------------------------------------------------------------
+# day_totals — kompletność statystyk doby
+# ---------------------------------------------------------------------------
+
+
+def _entries_utc(day: date, first_hour_utc_offset: int, sums: dict[int, float | None]):
+    """Wiersze godzinowe z kluczem = liczba godzin od północy lokalnej doby
+    (ujemna = baseline przed dobą); brak klucza = brak wiersza."""
+    tz = ZoneInfo("Europe/Warsaw")
+    midnight = datetime.combine(day, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+    return [
+        {"start": (midnight + timedelta(hours=k)).timestamp(), "sum": v}
+        for k, v in sorted(sums.items())
+    ]
+
+
+async def _fetch_stats(day: date, sums):
+    with patch(
+        "custom_components.volcast.reconciler.statistics_during_period",
+        return_value={"sensor.pv_energy": _entries_utc(day, 0, sums)},
+    ):
+        return await _make_reconciler()._fetch_ha_statistics(day)
+
+
+@pytest.mark.asyncio
+async def test_stats_without_baseline_are_incomplete():
+    day = date(2026, 5, 10)
+    # statystyki zaczynają się w środku doby, brak wiersza przed północą
+    sums = {h: 100.0 + h for h in range(0, 24)}
+    stats = await _fetch_stats(day, sums)
+    assert stats.complete is False
+
+
+@pytest.mark.asyncio
+async def test_stats_without_last_hour_are_incomplete():
+    day = date(2026, 5, 10)
+    sums = {h: 100.0 + h for h in range(-1, 23)}  # brak wiersza 23:00
+    stats = await _fetch_stats(day, sums)
+    assert stats.complete is False
+
+
+@pytest.mark.asyncio
+async def test_complete_day_with_gap_total_equals_true_total():
+    """Luka: godziny bez wierszy; godzina powrotu księguje cały zaległy zapas."""
+    day = date(2026, 5, 10)
+    sums = {h: 100.0 for h in range(-1, 10)}
+    sums.update({10: 100.0, 11: 100.5})          # 11: +0.5
+    # 12..13 bez wierszy (przerwa), 14: powrót, cały zapas w jednej godzinie
+    sums.update({14: 103.4, 15: 103.6})
+    sums.update({h: 103.6 for h in range(16, 24)})
+    stats = await _fetch_stats(day, sums)
+    assert stats.complete is True
+    assert round(stats.total_kwh, 3) == 3.6
+    assert 12 not in stats and 13 not in stats
+
+
+@pytest.mark.asyncio
+async def test_day_total_stable_across_runs_with_same_data():
+    day = date(2026, 5, 10)
+    sums = {h: 100.0 + 0.1 * h for h in range(-1, 24)}
+    first = await _fetch_stats(day, sums)
+    second = await _fetch_stats(day, sums)
+    assert first.complete and second.complete
+    assert round(first.total_kwh, 3) == round(second.total_kwh, 3)
+
+
+@pytest.mark.asyncio
+async def test_closed_day_with_incomplete_stats_sends_no_day_totals():
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    target = _today_local(reconciler) - timedelta(days=1)
+    tracker._accepted = {target.isoformat(): list(range(6, 19))}
+    stats = HourlyStats({h: 1.0 for h in range(6, 19)})  # complete=False
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http:
+        await reconciler.reconcile_day(target)
+    assert mock_http.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_dst_fall_back_day_total_counts_both_01_hours():
+    """Doba 25h (jesienna zmiana czasu): suma obejmuje obie godziny 01."""
+    day = date(2026, 10, 25)
+    sums = {k: 100.0 + k for k in range(-1, 25)}  # 25 godzin doby + baseline
+    stats = await _fetch_stats(day, sums)
+    assert stats.complete is True
+    assert round(stats.total_kwh, 3) == 25.0

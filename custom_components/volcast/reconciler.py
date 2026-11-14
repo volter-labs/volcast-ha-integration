@@ -44,6 +44,17 @@ def _now_local(tz) -> datetime:
     return datetime.now(tz)
 
 
+class HourlyStats(dict):
+    """{hour: kwh} + metadane doby z statystyk HA.
+
+    `complete` — statystyki doby wyglądają na kompletne (baseline przed pierwszą
+    godziną i skompilowana ostatnia godzina); `total_kwh` — suma wszystkich delt.
+    """
+
+    complete: bool = False
+    total_kwh: float = 0.0
+
+
 @dataclass
 class ReconcileResult:
     """Wynik pojedynczego wywołania reconcile_day."""
@@ -197,14 +208,17 @@ class DailyReconciler:
 
         # Suma doby zamkniętej z tych samych statystyk (suma delt godzinnych;
         # godzina powrotu po przerwie księguje cały zaległy zapas, więc suma
-        # jest prawdą dnia). Dla dzisiejszej doby nie wysyłamy — jest niepełna.
-        # Idempotentne: backend zapisuje wartość, ponowna wysyłka tego samego
-        # dnia (startup / sync_now / przebieg 00:30) jest nieszkodliwa.
+        # jest prawdą dnia). Wysyłamy TYLKO gdy doba jest zamknięta i statystyki
+        # są kompletne (baseline przed pierwszą godziną + skompilowana ostatnia
+        # godzina) — inaczej suma byłaby częściowa, a późniejszy przebieg mógłby
+        # wysłać dla tej doby wartość inną/niższą. Przy kompletnych danych
+        # ponowna wysyłka (startup / sync_now / przebieg 00:30) daje tę samą
+        # wartość, więc jest idempotentna.
         day_totals: list[dict] | None = None
-        if target_date < today:
+        if target_date < today and getattr(hourly_stats, "complete", False):
             day_totals = [{
                 "date": target_date.isoformat(),
-                "total_kwh": round(sum(max(k, 0.0) for k in hourly_stats.values()), 3),
+                "total_kwh": round(hourly_stats.total_kwh, 3),
             }]
 
         if not missing and day_totals is None:
@@ -307,8 +321,22 @@ class DailyReconciler:
         if not entries:
             return {}
 
-        hourly: dict[int, float] = {}
+        hourly = HourlyStats()
         prev_sum: float | None = None
+        # Kompletność doby (warunek wysyłki sumy dnia): jest wiersz-baseline
+        # tuż przed pierwszą godziną doby (pierwsza delta policzalna) ORAZ
+        # wiersz ostatniej godziny doby (skompilowany). Granice liczone w UTC,
+        # więc doby 23h/25h (zmiana czasu) działają bez wyjątków.
+        day_start_utc = datetime.combine(
+            target_date, time.min, tzinfo=self._tz
+        ).astimezone(timezone.utc)
+        day_end_utc = datetime.combine(
+            target_date + timedelta(days=1), time.min, tzinfo=self._tz
+        ).astimezone(timezone.utc)
+        baseline_start = day_start_utc - timedelta(hours=1)
+        last_start = day_end_utc - timedelta(hours=1)
+        have_baseline = False
+        have_last = False
         for entry in sorted(entries, key=lambda e: e["start"]):
             raw_start = entry["start"]
             if isinstance(raw_start, (int, float)):
@@ -320,7 +348,13 @@ class DailyReconciler:
                 local_start = raw_start
                 if local_start.tzinfo is None:
                     local_start = local_start.replace(tzinfo=timezone.utc)
+            start_utc = local_start.astimezone(timezone.utc)
             local_start = local_start.astimezone(self._tz)
+            if entry.get("sum") is not None:
+                if start_utc == baseline_start:
+                    have_baseline = True
+                elif start_utc == last_start:
+                    have_last = True
             if local_start.date() != target_date:
                 # Baseline-seed (poprzedni dzień) — zachowaj sum, nie raportuj.
                 prev_sum = entry.get("sum")
@@ -331,5 +365,9 @@ class DailyReconciler:
                 continue
             delta = max(cur - prev_sum, 0.0)
             hourly[local_start.hour] = delta
+            # Suma doby sumuje WSZYSTKIE delty (w dobie 25h godzina 01 występuje
+            # dwa razy, a klucz godziny jest wtedy nadpisywany).
+            hourly.total_kwh += delta
             prev_sum = cur
+        hourly.complete = have_baseline and have_last
         return hourly
