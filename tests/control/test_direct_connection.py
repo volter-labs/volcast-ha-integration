@@ -196,7 +196,7 @@ async def test_identity_mismatch_after_reconnect_blocks_writes(hass, modbus_tcp_
         await conn.async_start()
         assert conn.identity == "confirmed"
         for a in range(35003, 35011):
-            goodwe_bank.poke(a, 0x5A5A)                       # inne urządzenie pod tym adresem
+            goodwe_bank.poke(a, 0x5A59)                       # inne urządzenie pod tym adresem
         sim_faults.reset_after = 1                             # zerwanie → ponowne połączenie
         clock.advance(10.0)
         await conn.async_poll()
@@ -429,11 +429,29 @@ async def test_hourly_recheck_mismatch_drops_readings(hass, goodwe_udp_sim, good
         await conn.async_start()
         assert await conn.async_poll() is not None
         for a in range(35003, 35011):
-            goodwe_bank.poke(a, 0x5A5A)                       # inne urządzenie pod tym samym adresem
+            goodwe_bank.poke(a, 0x5A59)                       # inne urządzenie pod tym samym adresem
         clock.advance(3601.0)
         assert await conn.async_poll() is None
         assert conn.identity == "mismatch" and conn.reading is None
         assert any(k == "direct_identity_changed" for _, k in issues.created)
+    finally:
+        await conn.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_placeholder_serial_never_confirms_identity(hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Serial-zaślepka („0000…”) to tożsamość nieznana: bez potwierdzenia (bramki zapisu stoją), bez „inne urządzenie”.
+    clock = FakeClock()
+    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    try:
+        await conn.async_start()
+        assert conn.identity == "confirmed"
+        for a in range(35003, 35011):
+            goodwe_bank.poke(a, 0x3030)
+        clock.advance(3601.0)
+        await conn.async_poll()
+        assert conn.identity != "confirmed"
+        assert not any(k == "direct_identity_changed" for _, k in issues.created)
     finally:
         await conn.async_stop()
 
@@ -546,7 +564,7 @@ async def test_mismatch_retries_every_ten_minutes_and_recovers(hass, goodwe_udp_
         await conn.async_start()
         saved = goodwe_bank.read(35003, 8)
         for a in range(35003, 35011):
-            goodwe_bank.poke(a, 0x5A5A)
+            goodwe_bank.poke(a, 0x5A59)
         clock.advance(3601.0)
         await conn.async_poll()
         assert conn.identity == "mismatch"

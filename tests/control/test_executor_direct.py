@@ -188,7 +188,7 @@ async def test_direct_writes_only_with_all_gates(make_hass, goodwe_udp_sim, good
             assert h.conn.conflict
         if case == "identity_mismatch":
             for a in range(35003, 35011):
-                goodwe_bank.poke(a, 0x5A5A)
+                goodwe_bank.poke(a, 0x5A59)     # inny serial („ZYZY…”; jeden powtórzony znak = zaślepka)
             h.clock.advance(3601.0)
             await h.conn.async_poll()
             assert h.conn.identity == "mismatch"
@@ -405,7 +405,7 @@ async def test_restore_blocked_on_identity_mismatch(make_hass, goodwe_udp_sim, g
     h = await _owned_sell(make_hass, goodwe_udp_sim, goodwe_bank)
     try:
         for a in range(35003, 35011):
-            goodwe_bank.poke(a, 0x5A5A)
+            goodwe_bank.poke(a, 0x5A59)         # inny serial (nie zaślepka)
         h.clock.advance(3601.0)
         await h.conn.async_poll()
         n = len(goodwe_bank.writes)

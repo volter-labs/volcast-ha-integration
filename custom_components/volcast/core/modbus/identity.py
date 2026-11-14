@@ -8,7 +8,8 @@ Odcisk powstaje tylko dla urządzenia, które NAPRAWDĘ pasuje do profilu (model
 albo typ z `device_type.expect`) i ma czym się wyróżnić. Obraz zdegenerowany — same 0x0000,
 same 0xFFFF, puste albo niedrukowalne pola (falownik w trakcie startu, inne urządzenie
 odpowiadające zerami) — to tożsamość nieznana (None), nigdy stały odcisk, który potem
-„potwierdziłby” dowolne urządzenie odpowiadające tak samo.
+„potwierdziłby” dowolne urządzenie odpowiadające tak samo. Tak samo serial-zaślepka (jeden powtórzony
+znak): odcisk z seriala wiąże własność i przepięcie adresu z egzemplarzem, więc musi być unikalny.
 """
 from __future__ import annotations
 
@@ -36,6 +37,12 @@ def _decoded(spec: Mapping[str, Any] | None, image: RegisterImage):
         return None
 
 
+def _placeholder(serial: str) -> bool:
+    """Serial-zaślepka (np. po wymianie płyty: `000000…`, `AAAAAA…`, same myślniki): jeden powtórzony znak
+    bez względu na wielkość liter i myślniki. Dwa takie urządzenia miałyby jeden odcisk — to serial nieczytelny."""
+    return len(set(serial.replace("-", "").upper())) <= 1
+
+
 def _identity_words(profile, image: RegisterImage) -> list[int]:
     out: list[int] = []
     for block in profile.modbus.identify_reads:
@@ -54,7 +61,7 @@ def _fields(profile, image: RegisterImage) -> dict[str, Any]:
     degenerate = not words or all(w == 0 for w in words) or all(w == 0xFFFF for w in words)
     serial = _decoded(regs.get("serial"), image)
     serial = serial.strip() if isinstance(serial, str) else None
-    if not serial or not _SERIAL_RE.fullmatch(serial):
+    if not serial or not _SERIAL_RE.fullmatch(serial) or _placeholder(serial):
         serial = None
     matched = False
     model = None
