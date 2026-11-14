@@ -78,7 +78,7 @@ from ..core.profile import ORIGIN_FEED_ENDORSED, load_builtin, profile_from_dict
 from ..registry_compat import all_devices, device_config_entry_ids
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
-from .direct import DirectConnection
+from .direct import DirectConnection, serial_identity
 from .conflicts import ConflictMonitor
 from .executor import ControlGaps, VolcastExecutor
 from .ha_writer import EntityServiceWriter
@@ -387,6 +387,9 @@ class ControlRuntime:
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
 _TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp")
+# Adres tego samego egzemplarza (odcisk z seriala, `serial_identity`): jego zmiana to nie zmiana sterowania —
+# własność nie zależy od adresu (`DirectIO.owner`), więc bez powrotu przez starego wykonawcę po martwym łączu.
+_TARGET_ADDRESS = ("host", "logger_serial")
 
 
 def address_clashes(rt: ControlRuntime) -> tuple[str, ...]:
@@ -414,20 +417,41 @@ def lan_client_seen(conn) -> str | None:
     return None
 
 
-def _target_identity(target) -> tuple | None:
+def _target_identity(target, profile=None) -> tuple | None:
+    """Tożsamość celu dla porównania opcji. `profile` = profil DZIAŁAJĄCEGO wykonawcy bezpośredniego
+    (`_running_direct_profile`): przy odcisku z seriala bez adresu; bez profilu — wszystkie pola, jak dotąd."""
     if not isinstance(target, Mapping):
         return None
-    return tuple(target.get(k) for k in _TARGET_IDENTITY)
+    keys = _TARGET_IDENTITY
+    if serial_identity(target, profile) is not None:
+        keys = tuple(k for k in keys if k not in _TARGET_ADDRESS)
+    return tuple(target.get(k) for k in keys)
 
 
-def control_options_changed(old: Mapping, new: Mapping) -> bool:
+def control_options_changed(old: Mapping, new: Mapping, *, profile=None) -> bool:
     for key in CONTROL_OPTION_KEYS:
         if key == OPT_DIRECT_TARGET:
-            if _target_identity(old.get(key)) != _target_identity(new.get(key)):
+            if _target_identity(old.get(key), profile) != _target_identity(new.get(key), profile):
                 return True
         elif old.get(key) != new.get(key):
             return True
     return False
+
+
+def _running_direct_profile(runtime):
+    """Profil wykonawcy sterującego bezpośrednio (nie próba) — tylko on wiąże własność z odciskiem bez adresu.
+    Tryb encji, próba albo brak wykonawcy: None (zmiana adresu liczy się jak dotąd)."""
+    executor = getattr(runtime, "executor", None)
+    io = getattr(executor, "io", None)
+    if getattr(io, "kind", None) != CONTROL_MODE_DIRECT or getattr(io, "trial", True) is not False:
+        return None
+    return getattr(executor, "profile", None)
+
+
+def control_identity_changed(runtime, old: Mapping, new: Mapping) -> bool:
+    """`control_options_changed` z profilem działającego wykonawcy: zmiana samego adresu tego samego
+    egzemplarza (odcisk z seriala) nie jest zmianą sterowania."""
+    return control_options_changed(old, new, profile=_running_direct_profile(runtime))
 
 
 async def async_direct_search(hass, entry, *, manual=None, port: int | None = None, unit_id: int | None = None,
@@ -528,10 +552,11 @@ def changed_option_keys(old: Mapping, new: Mapping) -> set[str]:
 async def async_restore_if_control_changed(runtime, old: Mapping, new: Mapping) -> bool:
     """Stary wykonawca przywraca tryb bazowy, gdy zmiana opcji zmienia sterowanie.
 
-    True = powrót wykonany (wykonawca nie jest już właścicielem). Nigdy nie rzuca.
+    True = powrót wykonany (wykonawca nie jest już właścicielem). Nigdy nie rzuca. Zmiana samego adresu
+    tego samego egzemplarza (`control_identity_changed`) nie wymaga powrotu — nowy wykonawca przejmie rekord.
     """
     executor = getattr(runtime, "executor", None)
-    if executor is None or not control_options_changed(old, new) or not getattr(executor, "owned", False):
+    if executor is None or not control_identity_changed(runtime, old, new) or not getattr(executor, "owned", False):
         return False
     try:
         await executor.async_restore_now()
@@ -542,11 +567,11 @@ async def async_restore_if_control_changed(runtime, old: Mapping, new: Mapping) 
     return not getattr(executor, "owned", False)
 
 
-def _binding(options: Mapping) -> tuple:
+def _binding(options: Mapping, profile=None) -> tuple:
     """Z czym wiąże się własność wykonawcy złożonego dla tych opcji (sposób sterowania + cel/mapowanie)."""
     found = _direct_target(options)
     if found is not None:
-        return CONTROL_MODE_DIRECT, _target_identity(found[0])
+        return CONTROL_MODE_DIRECT, _target_identity(found[0], profile)
     return CONTROL_MODE_ENTITIES, options.get(OPT_PROFILE_ID), options.get(OPT_INVERTER_DOMAIN)
 
 
@@ -560,9 +585,10 @@ async def async_control_change_allowed(runtime, old: Mapping, new: Mapping) -> b
     if await async_restore_if_control_changed(runtime, old, new):
         return True
     executor = getattr(runtime, "executor", None)
-    if not control_options_changed(old, new) or not getattr(executor, "owned", False):
+    if not control_identity_changed(runtime, old, new) or not getattr(executor, "owned", False):
         return True
-    return _binding(old) == _binding(new)
+    profile = _running_direct_profile(runtime)
+    return _binding(old, profile) == _binding(new, profile)
 
 
 async def async_withdraw_if_revoked(hass, entry, rt) -> bool:

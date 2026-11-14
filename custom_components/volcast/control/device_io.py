@@ -31,7 +31,7 @@ from ..core.modbus.writer import NoWriteWriter, RegisterWriter
 from ..core.params import Params
 from ..core.registers import RegisterImage
 from ..core.write_sequence import ERROR
-from .direct import target_fingerprint
+from .direct import device_target_fingerprint, serial_identity, target_fingerprint
 
 NO_READING = ("unavailable", "unknown", "")
 # Odczyty mocy na żywo z własnym wiekiem (osobno od wieku SoC i guardu I-9);
@@ -369,15 +369,32 @@ class DirectIO:
         return {"target": self.target(rd)}
 
     # ── własność: profil + odcisk celu połączenia (z solą instalacji) + odcisk urządzenia ──
+    # Przy odcisku urządzenia z seriala odcisk celu nie zawiera adresu (`device_target_fingerprint`): ten sam
+    # egzemplarz pod nowym IP zachowuje własność i migawkę, a hamulec zdejmuje tryb wymuszony w pierwszym
+    # cyklu. Inaczej (brak odcisku, odcisk `model|moc`) — odcisk z adresem, jak dotąd (`target_fingerprint`).
 
-    def owner(self) -> dict:
+    def _owner_with(self, target_print: str) -> dict:
         fp = self.conn.target.get("device_fp")
         return {"profile": self._profile.id if self._profile else "", "mode": "direct",
-                "target": target_fingerprint(self.conn.target, self._salt),
-                "device": fp if isinstance(fp, str) else ""}
+                "target": target_print, "device": fp if isinstance(fp, str) else ""}
+
+    def owner(self) -> dict:
+        serial = serial_identity(self.conn.target, self._profile)
+        if serial is not None:
+            return self._owner_with(device_target_fingerprint(self.conn.target, serial, self._salt))
+        return self._owner_with(target_fingerprint(self.conn.target, self._salt))
 
     def owner_matches(self, record: Mapping[str, str]) -> bool:
-        return dict(record) == self.owner()
+        record = dict(record)
+        if record == self.owner():
+            return True
+        # Rekord sprzed odcisku bez adresu (odcisk z adresem) — rozpoznawany wyłącznie dla TEGO SAMEGO celu
+        # (ten sam adres, port, jednostka, odcisk urządzenia); wykonawca przepisuje go przy starcie na nową
+        # postać (`_drop_foreign_owner`). Pod innym adresem starego rekordu nie da się sprawdzić — jak dotąd
+        # nie pasuje (fail-closed).
+        if serial_identity(self.conn.target, self._profile) is None:
+            return False
+        return record == self._owner_with(target_fingerprint(self.conn.target, self._salt))
 
     def identity(self) -> str | None:
         """Identyfikacja urządzenia do klucza drabiny: profil + odcisk urządzenia z sondy (bez adresu

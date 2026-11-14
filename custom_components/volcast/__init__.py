@@ -41,7 +41,7 @@ from .control.history_import import async_import_history_once
 from .control.runtime import (RELOAD_FREE_KEYS, ControlRuntime, async_remove_control, async_restore_if_control_changed,
                               async_resume_control,
                               async_setup_control, async_unload_control, changed_option_keys,
-                              control_options_changed, freeze_control)
+                              control_identity_changed, freeze_control)
 from .coordinator import VolcastCoordinator
 from .discovery_runner import DiscoveryRunner
 from .frontend import async_register_card, async_register_panel, async_remove_panel
@@ -616,9 +616,11 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
                         pv_entity=new.get(CONF_PV_ENERGY_ENTITY) or None, now_utc=dt_util.utcnow()),
                     "volcast_history_import")
             return
-        if control_options_changed(old, new):
+        if control_identity_changed(control, old, new):
             # Najpierw zamrożenie: cykl startujący między powrotem a zatrzymaniem
             # (licznik, pobranie planu, wyłącznik) pisałby jeszcze przez STARE mapowanie.
+            # Zmiana samego adresu tego samego falownika (odcisk z seriala) to nie zmiana sterowania:
+            # bez zamrożenia i bez powrotu po martwym łączu — nowy wykonawca przejmie rekord własności.
             freeze_control(control)
         await async_restore_if_control_changed(control, old, new)
     await hass.config_entries.async_reload(entry.entry_id)

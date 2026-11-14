@@ -17,7 +17,8 @@ from custom_components.volcast.const import DOMAIN
 from custom_components.volcast.control import direct as direct_mod
 from custom_components.volcast.control import executor as ex_mod
 from custom_components.volcast.control.device_io import DirectIO
-from custom_components.volcast.control.direct import DirectConnection, target_fingerprint
+from custom_components.volcast.control.direct import (DirectConnection, device_target_fingerprint,
+                                                      target_fingerprint)
 from custom_components.volcast.control.executor import VolcastExecutor
 from custom_components.volcast.control.store import ControlState, ControlStore
 from custom_components.volcast.core.control.select import ProfileChoice
@@ -209,8 +210,10 @@ async def test_direct_sell_slot_end_to_end(make_hass, goodwe_udp_sim, goodwe_ban
         assert h.ex.last_decision.status == "write"
         assert gw_raw_word(goodwe_bank, MODE) == 10 and gw_raw_word(goodwe_bank, POWER) == 2000 + SELL_OFFSET
         assert h.ex.owned and h.ex._state.owner == {
-            "profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(h.target, SALT),
+            "profile": "goodwe-et", "mode": "direct",           # odcisk z seriala: cel bez adresu
+            "target": device_target_fingerprint(h.target, h.target["device_fp"], SALT),
             "device": h.target["device_fp"]}
+        assert h.ex._state.owner["target"] != target_fingerprint(h.target, SALT)
         assert SOC_MAX not in regs(goodwe_bank)                  # bez odczytu zwrotnego — nigdy pisany
         n = len(goodwe_bank.writes)
         await h.cycle()

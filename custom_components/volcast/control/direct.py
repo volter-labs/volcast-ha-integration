@@ -40,6 +40,7 @@ from ..const import (CONTROL_MODE_DIRECT, DIRECT_POLL_S, DIRECT_SLOW_POLL_S, DOM
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL)
 from ..core.control.conflict import CONFLICT_DOMAINS, SELF_DOMAIN, ContentionMonitor, EntrySnap, static_conflicts
 from ..core.discovery.known import HOST_KEYS
+from ..core.discovery.relocate import FP_SERIAL
 from ..core.modbus.blocks import make_block
 from ..core.modbus.client import RegisterClient
 from ..core.modbus.reading import DirectReading
@@ -73,6 +74,35 @@ Resolver = Callable[[str], Awaitable[Iterable[str] | None]]
 def target_fingerprint(target: Mapping, salt: bytes) -> str:
     """Odcisk celu połączenia (własność w trybie bezpośrednim): HMAC z solą instalacji — bez adresu jawnie."""
     msg = f"{target.get('transport')}|{target.get('host')}|{target.get('port')}|{target.get('unit_id')}"
+    return hmac.new(bytes(salt), msg.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def serial_identity(target: Mapping, profile) -> str | None:
+    """Odcisk urządzenia celu, gdy jednoznacznie wskazuje egzemplarz — wtedy własność i tożsamość sterowania
+    nie zależą od adresu (zmiana IP to nie inne urządzenie).
+
+    Tylko odcisk z seriala: poprawny odcisk (16 cyfr szesnastkowych), profil celu = podany profil i ten profil
+    ma rejestr seriala (`device_fingerprint` daje wtedy wyłącznie `profil|serial`, bez seriala — brak odcisku).
+    Jawne `fp_kind` inne niż `serial` (np. `model`) też wyłącza. None = dawne zachowanie (odcisk z adresem):
+    brak odcisku, odcisk słaby `model|moc` (dwa identyczne modele są nie do odróżnienia) albo brak profilu.
+    """
+    if not isinstance(target, Mapping) or profile is None:
+        return None
+    fp = _expected_fp(target.get("device_fp"))
+    if fp is None or target.get("profile_id") != getattr(profile, "id", None):
+        return None
+    if target.get("fp_kind", FP_SERIAL) != FP_SERIAL:
+        return None
+    raw = getattr(profile, "raw", None)
+    identify = raw.get("identify") if isinstance(raw, Mapping) else None
+    registers = identify.get("registers") if isinstance(identify, Mapping) else None
+    return fp if isinstance(registers, Mapping) and "serial" in registers else None
+
+
+def device_target_fingerprint(target: Mapping, device_fp: str, salt: bytes) -> str:
+    """Odcisk celu bez adresu (własność przy odcisku z seriala, `serial_identity`): HMAC z solą instalacji
+    z `transport|port|unit_id|device_fp` — przeżywa zmianę adresu tego samego egzemplarza."""
+    msg = f"device|{target.get('transport')}|{target.get('port')}|{target.get('unit_id')}|{device_fp}"
     return hmac.new(bytes(salt), msg.encode(), hashlib.sha256).hexdigest()[:16]
 
 
