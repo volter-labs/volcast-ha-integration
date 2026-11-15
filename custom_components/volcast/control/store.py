@@ -80,6 +80,9 @@ class ControlState:
     conflict_ack: list = field(default_factory=list)
     control_meta: dict = field(default_factory=dict)
     trusted_profile: dict | None = None
+    # ostatni tryb zapisany przez NAS (nazwa z profilu), trwały mimo restartu; osobny klucz magazynu,
+    # który poprzednia wersja pomija przy odczycie i gubi przy następnym zapisie
+    last_mode: str | None = None
 
 
 def control_meta_clean(raw) -> dict:
@@ -169,6 +172,7 @@ class ControlStore:
         device_target = raw.get(_OWNER_DEVICE_TARGET)
         if owner and isinstance(device_target, str) and device_target:
             owner["device_target"] = device_target
+        last_mode = raw.get("last_mode")
         return ControlState(
             plan_raw=plan if isinstance(plan, dict) else None,
             consent=consent if isinstance(consent, bool) else None,
@@ -183,7 +187,8 @@ class ControlStore:
             verification=dict(verification) if verification else {}, plan_only=b("plan_only", False),
             conflict_ack=conflict_ack_pairs(raw.get("conflict_ack")),
             control_meta=control_meta_clean(raw.get("control_meta")),
-            trusted_profile=trusted if isinstance(trusted := raw.get("trusted_profile"), dict) else None)
+            trusted_profile=trusted if isinstance(trusted := raw.get("trusted_profile"), dict) else None,
+            last_mode=last_mode if owner and isinstance(last_mode, str) and last_mode else None)
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)

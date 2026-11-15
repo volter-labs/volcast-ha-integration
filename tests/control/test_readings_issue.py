@@ -21,7 +21,8 @@ class _Report:
 
 
 class _Executor:
-    def __init__(self, last_mode=None, *, consent=True, switch=True, write_end=None):
+    def __init__(self, last_mode=None, *, consent=True, switch=True, write_end=None, in_sync=False):
+        self.plan_in_sync = in_sync
         self.last_written_mode = last_mode
         self.neutral_mode = NEUTRAL
         self.consent = consent
@@ -203,3 +204,102 @@ def test_relocator_link_dead_shares_the_trigger():
     conn.refused = lambda: "clash"
     conn.age_s = lambda: float("inf")
     assert rel.link_dead() is False
+
+
+# ── zatrzask a zgodność z planem (łącze żywe, nic do zapisu) ─────────────
+
+def test_cleared_when_link_alive_and_inverter_already_matches_the_plan(issues):
+    """Właściciel ustawił tryb domyślny ręcznie, krok planu neutralny: cykl niczego nie zapisuje."""
+    _, deleted = issues
+    hass, entry = _hass(), _entry()
+    _sync(hass, entry, False, _rt(dead=True, last_mode=FORCED, write_end=10.0))
+    _sync(hass, entry, True, _rt(dead=False, last_mode=FORCED, write_end=10.0, in_sync=False))
+    assert "forced_mode_stuck_e1" not in deleted
+    _sync(hass, entry, True, _rt(dead=False, last_mode=FORCED, write_end=10.0, in_sync=True))
+    assert "forced_mode_stuck_e1" in deleted
+
+
+def test_in_sync_with_a_dead_link_does_not_clear(issues):
+    _, deleted = issues
+    hass, entry = _hass(), _entry()
+    _sync(hass, entry, False, _rt(dead=True, last_mode=FORCED, write_end=10.0))
+    _sync(hass, entry, False, _rt(dead=True, last_mode=FORCED, write_end=10.0, in_sync=True))
+    assert "forced_mode_stuck_e1" not in deleted
+
+
+# ── ostatni tryb przeżywa restart (magazyn) ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_store_roundtrips_last_mode_beside_the_record(make_hass):
+    from custom_components.volcast.control.store import ControlState, ControlStore
+    store = ControlStore(make_hass(), "e1")
+    await store.async_save(ControlState(owned=True, owner={"profile": "p"}, last_mode=FORCED))
+    raw = await store._store.async_load()
+    assert raw["last_mode"] == FORCED
+    assert (await store.async_load()).last_mode == FORCED
+
+
+@pytest.mark.asyncio
+async def test_old_format_store_loads_with_no_last_mode(make_hass):
+    from custom_components.volcast.control.store import ControlStore
+    store = ControlStore(make_hass(), "e1")
+    await store._store.async_save({"owned": True, "owner": {"profile": "p"}, "snapshot": {}})
+    assert (await store.async_load()).last_mode is None
+
+
+@pytest.mark.asyncio
+async def test_last_mode_ignored_without_an_owner_record(make_hass):
+    from custom_components.volcast.control.store import ControlStore
+    store = ControlStore(make_hass(), "e1")
+    await store._store.async_save({"owned": False, "owner": {}, "last_mode": FORCED})
+    assert (await store.async_load()).last_mode is None
+    await store._store.async_save({"owned": True, "owner": {"profile": "p"}, "last_mode": 7})
+    assert (await store.async_load()).last_mode is None
+
+
+@pytest.mark.asyncio
+async def test_last_written_mode_survives_executor_restart(make_hass, goodwe_udp_sim, goodwe_bank):
+    from tests.control.test_executor_direct import (GW_V, Harness, gw_target)
+    from tests.control.test_executor import sell_ban
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=sell_ban())
+    try:
+        await h.ex.async_tick()
+        forced = h.ex._memory.last_written["mode"]
+        assert forced and forced != h.ex.neutral_mode and h.ex.last_written_mode == forced
+        await h.restart()
+        assert h.ex._memory.last_written.get("mode") is None     # pamięć cyklu po restarcie pusta
+        assert h.ex.last_written_mode == forced                   # ...ale ostatni nasz tryb jest z magazynu
+        assert h.ex.owned
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_no_extra_store_write_while_mode_unchanged(make_hass, goodwe_udp_sim, goodwe_bank):
+    from tests.control.test_executor_direct import (GW_V, Harness, gw_target)
+    from tests.control.test_executor import sell_ban
+    h = await Harness(make_hass, GW_V, gw_target(goodwe_udp_sim)).start(raw=sell_ban())
+    try:
+        await h.ex.async_tick()
+        saves = []
+        orig = h.store.async_save
+
+        async def spy(state):
+            saves.append(state.last_mode)
+            await orig(state)
+        h.store.async_save = spy
+        await h.cycle()
+        await h.cycle()
+        assert all(m == h.ex.last_written_mode for m in saves) and len(saves) <= 2
+    finally:
+        await h.close()
+
+
+def test_restart_mid_outage_raises_the_issue_from_persisted_mode(issues):
+    """Fresh runtime (empty latch), dead link, persisted forced mode -> raised; neutral persisted -> not."""
+    created, _ = issues
+    _sync(_hass(), _entry(), False, _rt(dead=True, last_mode=FORCED, write_end=None))
+    assert "forced_mode_stuck_e1" in created
+    created.clear()
+    _sync(_hass(), _entry(), False, _rt(dead=True, last_mode=NEUTRAL, write_end=None))
+    assert "forced_mode_stuck_e1" not in created

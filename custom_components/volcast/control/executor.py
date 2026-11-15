@@ -406,10 +406,18 @@ class VolcastExecutor:
 
     @property
     def last_written_mode(self) -> str | None:
-        """Tryb, który NASZ ostatni zapis ustawił (pamięć cyklu); None = nic nie zapisaliśmy od startu.
-        Tylko odczyt — nie wpływa na zapis."""
+        """Tryb, który NASZ ostatni zapis ustawił: pamięć cyklu, a po restarcie wartość z magazynu.
+        None = nie jesteśmy właścicielem albo nic nie zapisaliśmy. Tylko odczyt — nie wpływa na zapis."""
+        if not self._state.owned:
+            return None
         mode = self._memory.last_written.get("mode") if self._memory is not None else None
-        return mode if isinstance(mode, str) else None
+        return mode if isinstance(mode, str) else self._state.last_mode
+
+    @property
+    def plan_in_sync(self) -> bool:
+        """Ostatni cykl nie miał czego zapisywać (falownik zgodny z bieżącym krokiem planu)."""
+        d = self.last_decision
+        return d is not None and d.reason == "nothing_to_write"
 
     @property
     def neutral_mode(self) -> str | None:
@@ -1030,6 +1038,7 @@ class VolcastExecutor:
                                 "read-only profile — not reusing them; check the inverter settings")
                 self._create_issue(self._record_dropped_issue_id, "control_record_dropped")
             st.owned = False
+            st.last_mode = None
             st.snapshot = {}
             st.owner = {}
             st.restore_keys = None
@@ -1054,6 +1063,7 @@ class VolcastExecutor:
             # Falownik mógł zostać przy naszej ostatniej komendzie — sam log to za mało.
             self._create_issue(self._record_dropped_issue_id, "control_record_dropped")
         self._state.owned = False
+        self._state.last_mode = None
         self._state.snapshot = {}
         self._state.owner = {}
         self._state.restore_keys = None
@@ -1141,6 +1151,14 @@ class VolcastExecutor:
         if self._state.restore_keys is not None and key in self._state.restore_keys:
             self._state.restore_keys.remove(key)
 
+    def _sync_last_mode(self) -> bool:
+        """Ostatni tryb zapisany przez nas do stanu trwałego — tylko przy zmianie trybu (bez dodatkowych zapisów)."""
+        mode = self._memory.last_written.get("mode") if self._memory is not None else None
+        if not isinstance(mode, str) or mode == self._state.last_mode:
+            return False
+        self._state.last_mode = mode
+        return True
+
     def _note_written(self, keys) -> bool:
         """Klucze zapisane (albo może zapisane) przez nas; True, gdy stan się zmienił.
 
@@ -1149,8 +1167,9 @@ class VolcastExecutor:
         tego zapisu: nasza nastawa zmieniła znaczenie trybu, który zostawił właściciel.
         """
         keys = list(dict.fromkeys(keys))
+        mode_changed = self._sync_last_mode()
         if not keys:
-            return False
+            return mode_changed
         freed = set(keys)
         if freed & set(GROUP_KEYS):
             freed |= set(GROUP_KEYS)
@@ -1160,7 +1179,7 @@ class VolcastExecutor:
         if self._state.restore_keys is not None:
             # (stan sprzed pola: None = powrót obejmuje całą migawkę, nic do dopisania)
             self._state.restore_keys.extend(k for k in keys if k not in self._state.restore_keys)
-        return before != (self._state.taken_over, self._state.restore_keys)
+        return mode_changed or before != (self._state.taken_over, self._state.restore_keys)
 
     def _update_foreign_episode(self, rd: Reading) -> None:
         """Epizod trybu spoza profilu kończy dopiero odczyt trybu z profilu (brak odczytu — nic)."""
@@ -2052,6 +2071,7 @@ class VolcastExecutor:
         if not await self._async_save("baseline snapshot"):
             # Bez trwałej migawki restart nie wiedziałby, co przywrócić — nie piszemy.
             self._state.owned = False
+            self._state.last_mode = None
             self._state.snapshot = before
             self._state.owner = before_owner
             self._state.restore_keys = None
@@ -2656,6 +2676,7 @@ class VolcastExecutor:
 
     async def _release_ownership(self) -> None:
         self._state.owned = False
+        self._state.last_mode = None
         self._state.snapshot = {}
         self._state.owner = {}
         self._state.restore_keys = None

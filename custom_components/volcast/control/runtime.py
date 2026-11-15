@@ -214,7 +214,9 @@ def _sync_forced_mode_issue(hass, entry, rt) -> None:
         if entry.entry_id in latch:
             then = latch[entry.entry_id]
             wrote = ex.last_write_end is not None and (then is None or ex.last_write_end > then)
-            raised = not (wrote or (last is not None and last == neutral))     # None = pamięć po przeładowaniu
+            # Łącze żywe i falownik już zgodny z planem (cykl nie ma czego zapisywać) też kończy ostrzeżenie.
+            settled = rel is not None and not rel.link_dead() and ex.plan_in_sync
+            raised = not (wrote or settled or (last is not None and last == neutral))
         else:
             raised = forced and rel is not None and rel.link_dead()
             if raised:
