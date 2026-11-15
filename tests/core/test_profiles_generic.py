@@ -1,5 +1,27 @@
 """Test generyczny profili sterowany danymi: każdy `<katalog>/*.json` przez te same asercje.
 
+Profil „tylko encje” (`access: "entities_only"`) nie ma rejestrów, więc jego golden to migawka rejestru HA
+zamiast obrazu rejestrów. Katalog `<id>.golden/` takiego profilu zawiera TRZY pliki:
+
+  README.md       — skąd migawka (pochodzenie, kto i kiedy ją zebrał), bez danych osobowych;
+  entities.json   — migawka: {"config_entry": {"entry_id", "domain", "title"?},
+                      "devices":  [{"id", "manufacturer", "model"?, "name"?}],
+                      "entities": [{"entity_id", "unique_id", "device_id"?, "platform"? (domyślnie domena wpisu),
+                                    "unit"?, "device_class"?}],
+                      "states":   {"<entity_id>": {"state": "<tekst stanu>", "unit"?: "<jednostka stanu>"}}}
+                  — jeden wpis konfiguracji, jego urządzenia i WSZYSTKIE encje (także piszące; profil ma ich
+                  nie zmapować), stany tylko encji odczytowych potrzebnych do `reference`;
+  expected.json   — {"origin"?: "auto"|"manual", "reference": {"<klucz>": <liczba kanoniczna>, ...},
+                      "mapped"?: {"<klucz>": "<entity_id>", ...}}
+                  — `reference`: wartości po przejściu stanu przez mapę encji i transformacje profilu
+                  (moc baterii + = rozładowanie, sieć + = pobór); `mapped` (opcjonalnie) przypina dokładną
+                  mapę klucz → encja; reguły `origin` jak dla profili rejestrowych (draft, `reference` z SoC
+                  i mocami o niezerowym znaku), z `entities.json` zamiast `registers.json`.
+
+Odtworzenie przechodzi przez prawdziwe funkcje: klasyfikacja (profil musi uznać dokładnie jeden wpis za
+falownik) → wybór profilu → mapa encji (bez niejednoznaczności, wyłącznie czujniki) → wartości kanoniczne.
+Profile rejestrowe: zachowanie bez zmian.
+
 Katalog: zmienna `VOLCAST_PROFILES_DIR` czytana WYŁĄCZNIE tutaj (np. `profiles/` repo Volcast, golden
 obok profilu w `<id>.golden/`); domyślnie profile wbudowane pakietu (golden w `tests/golden/<id>/`,
 bez `expected.json` — stan wzorcowy wbudowanych pilnują testy per profil). Kod integracji zmiennej
@@ -15,7 +37,7 @@ from pathlib import Path
 import pytest
 
 from custom_components.volcast.core import profile_feed, regex_safety
-from custom_components.volcast.core.profile import PROFILES_DIR, builtin_ids, load_profile
+from custom_components.volcast.core.profile import PROFILES_DIR, ProfileError, builtin_ids, entities_only, load_profile
 from custom_components.volcast.core.profile_schema import validate_profile
 from tests.core import profile_golden as pg
 from tests.core.modbus.helpers import GOLDEN, golden_image, goodwe_image
@@ -101,19 +123,31 @@ def test_feed_loader_accepts(case):
 
 def test_identify_matches_own_golden(case):
     _, profile, golden = case
+    if entities_only(profile):
+        # Odpowiednik identyfikacji: migawka rejestru musi dać dokładnie jeden wpis i wybór tego profilu.
+        pg.replay_entities(profile, pg.load_entities_snapshot(golden))
+        return
     pg.assert_identify_matches(profile, pg.golden_dir_image(golden, profile))
 
 
 def test_identify_not_overbroad(case):
+    if entities_only(case[1]):
+        pg.assert_entities_only_rules(case[1])
+        return
     pg.assert_identify_not_overbroad(case[1])
 
 
 def test_identify_rejects_every_other_golden(case, all_images):
+    if entities_only(case[1]):
+        pytest.skip("profil entities_only nie identyfikuje po rejestrach")
     pg.assert_rejects_foreign_images(case[1], all_images)
 
 
 def test_every_read_key_decodes(case):
     _, profile, golden = case
+    if entities_only(profile):
+        pg.assert_entities_reads_resolve(profile, pg.load_entities_snapshot(golden))
+        return
     pg.assert_reads_decode(profile, pg.golden_dir_image(golden, profile))
 
 
@@ -122,17 +156,25 @@ def test_reads_decode_expected_reference(case):
     expected = _expected(path)
     if expected is None or expected["reference"] is None:
         pytest.skip("brak stanu wzorcowego w expected.json (ramki nagrane albo profil wbudowany)")
+    if entities_only(profile):
+        pg.assert_entities_reference(profile, pg.load_entities_snapshot(golden), expected)
+        return
     pg.assert_reference_decodes(profile, pg.golden_dir_image(golden, profile), expected["reference"])
 
 
 def test_intents_consistent(case):
     path, profile, _ = case
+    if entities_only(profile):
+        pytest.skip("profil entities_only nie ma intencji ani trybów")
     pg.assert_intents_consistent(profile)
     if (expected := _expected(path)) is not None:
         pg.assert_expected_lists_match(profile, expected)
 
 
 def test_capabilities_match_writes(case):
+    if entities_only(case[1]):
+        pg.assert_entities_only_rules(case[1])         # bez zapisu: żadna możliwość nie jest prawdziwa
+        return
     pg.assert_capabilities_match_writes(case[1])
 
 
@@ -509,4 +551,109 @@ def test_auto_origin_requires_registers_image(tmp_path):
     path, golden = _external(tmp_path, expected_edit=_auto)
     (golden / "registers.json").unlink()
     with pytest.raises(AssertionError, match="registers.json"):
+        pg.assert_origin_rules(load_profile(path), pg.load_expected(golden), golden)
+
+
+# --- Profil „tylko encje”: golden = migawka rejestru HA (`entities.json`) ---
+
+EO_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "entities_only_profile"
+EO_ID = "readonly-sample"
+
+
+def _eo_external(tmp_path, *, profile_edit=None, expected_edit=None, snapshot_edit=None, with_snapshot=True):
+    """Katalog w układzie repo Volcast z przykładowym profilem „tylko encje” i jego migawką."""
+    shutil.copytree(EO_FIXTURE, tmp_path, dirs_exist_ok=True)
+    path, golden = tmp_path / f"{EO_ID}.json", tmp_path / f"{EO_ID}.golden"
+    for name, edit in ((path, profile_edit), (golden / "expected.json", expected_edit),
+                       (golden / "entities.json", snapshot_edit)):
+        if edit:
+            doc = json.loads(name.read_text(encoding="utf-8"))
+            edit(doc)
+            name.write_text(json.dumps(doc), encoding="utf-8")
+    if not with_snapshot:
+        (golden / "entities.json").unlink()
+    return path, golden
+
+
+def _run_all_eo(path, golden):
+    """Asercje testu generycznego dla profilu entities_only (te same funkcje co testy parametryczne)."""
+    profile = load_profile(path)
+    expected = pg.load_expected(golden)
+    assert validate_profile(json.loads(path.read_text(encoding="utf-8")), parse_tree=True) == []
+    snapshot = pg.load_entities_snapshot(golden)
+    pg.replay_entities(profile, snapshot)
+    pg.assert_entities_only_rules(profile)
+    pg.assert_entities_reads_resolve(profile, snapshot)
+    pg.assert_entities_reference(profile, snapshot, expected)
+    pg.assert_ha_regexes_compile(profile)
+    pg.assert_sources_public(profile.raw)
+    pg.assert_origin_rules(profile, expected, golden)
+
+
+def test_entities_only_fixture_passes(tmp_path):
+    _run_all_eo(*_eo_external(tmp_path))
+
+
+def test_entities_only_fixture_passes_the_generic_run(tmp_path):
+    # Ten moduł jak w CI repo Volcast, ze WSZYSTKIMI testami per profil na katalogu z jednym profilem
+    # entities_only (żaden nie pada ani nie zbiera się z błędem; pominięte są tylko testy rejestrowe).
+    _eo_external(tmp_path)
+    env = {**os.environ, PROFILES_DIR_ENV: str(tmp_path)}
+    run = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", __file__,
+                          "-k", EO_ID], cwd=Path(__file__).resolve().parents[2], env=env,
+                         capture_output=True, text=True, timeout=300)
+    assert run.returncode == 0, run.stdout[-2000:]
+    assert "passed" in run.stdout and "failed" not in run.stdout and "error" not in run.stdout.lower()
+
+
+def test_entities_only_wrong_reference_sign_fails(tmp_path):
+    def flip(e):
+        e["reference"]["battery_power_w"] = 1500          # bez negacji źródła: ładowanie + zamiast −
+    with pytest.raises(AssertionError, match="battery_power_w"):
+        _run_all_eo(*_eo_external(tmp_path, expected_edit=flip))
+
+
+def test_entities_only_mapped_drift_fails(tmp_path):
+    def drift(e):
+        e["mapped"]["pv_power_w"] = "sensor.unit1_pv_power"
+    with pytest.raises(AssertionError, match="mapa encji"):
+        _run_all_eo(*_eo_external(tmp_path, expected_edit=drift))
+
+
+def test_entities_only_missing_snapshot_fails_readably(tmp_path):
+    with pytest.raises(AssertionError, match="entities.json"):
+        _run_all_eo(*_eo_external(tmp_path, with_snapshot=False))
+
+
+def test_entities_only_profile_not_claiming_the_snapshot_fails(tmp_path):
+    def other_manufacturer(raw):
+        raw["ha"]["integrations"][0]["model_regex"] = ["(?i)\\bsomething else\\b"]
+    with pytest.raises(AssertionError, match="rozpoznaje 0 wpisów"):
+        _run_all_eo(*_eo_external(tmp_path, profile_edit=other_manufacturer))
+
+
+def test_entities_only_writable_entity_in_the_map_fails(tmp_path):
+    # Profil z regexem łapiącym też encję `number` — walidator profilu to odrzuca; migawka z niejednoznaczną
+    # mapą (dwa czujniki pod jednym kluczem) pada na etapie odtworzenia.
+    def twin(snapshot):
+        snapshot["entities"].append({"entity_id": "sensor.totals_pv_power_2", "unique_id": "local:10.0.0.10_total/pv_power",
+                                     "device_id": "d-total", "unit": "W"})
+    with pytest.raises(AssertionError, match="niejednoznaczna"):
+        _run_all_eo(*_eo_external(tmp_path, snapshot_edit=twin))
+
+
+def test_entities_only_broad_model_regex_fails(tmp_path):
+    def broaden(raw):
+        raw["ha"]["integrations"][0]["model_regex"] = [".*"]
+    with pytest.raises(ProfileError, match="za szeroki"):         # bramę trzyma walidator profilu
+        _run_all_eo(*_eo_external(tmp_path, profile_edit=broaden))
+
+
+def test_entities_only_auto_origin_requires_the_snapshot_and_nonzero_signs(tmp_path):
+    path, golden = _eo_external(tmp_path)
+    (golden / "entities.json").unlink()
+    with pytest.raises(AssertionError, match="entities.json"):
+        pg.assert_origin_rules(load_profile(path), pg.load_expected(golden), golden)
+    path, golden = _eo_external(tmp_path / "b", expected_edit=lambda e: e["reference"].update(grid_power_w=0))
+    with pytest.raises(AssertionError, match="grid_power_w = 0"):
         pg.assert_origin_rules(load_profile(path), pg.load_expected(golden), golden)

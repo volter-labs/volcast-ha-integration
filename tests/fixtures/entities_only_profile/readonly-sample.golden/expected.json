@@ -1,0 +1,17 @@
+{
+ "origin": "auto",
+ "reference": {
+  "soc": 57,
+  "pv_power_w": 3200,
+  "load_power_w": 3500,
+  "grid_power_w": 800,
+  "battery_power_w": -1500
+ },
+ "mapped": {
+  "soc": "sensor.totals_battery_state_of_charge",
+  "pv_power_w": "sensor.totals_pv_power",
+  "load_power_w": "sensor.totals_load_power",
+  "grid_power_w": "sensor.totals_grid_power",
+  "battery_power_w": "sensor.totals_battery_power"
+ }
+}

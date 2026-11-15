@@ -1,0 +1,109 @@
+{
+ "config_entry": {
+  "entry_id": "c1",
+  "domain": "example_readonly",
+  "title": "Example reader"
+ },
+ "devices": [
+  {
+   "id": "d-total",
+   "manufacturer": "Example Reader",
+   "name": "Totals"
+  },
+  {
+   "id": "d-unit",
+   "manufacturer": "Example Reader",
+   "name": "Unit 1"
+  }
+ ],
+ "entities": [
+  {
+   "entity_id": "sensor.totals_battery_state_of_charge",
+   "unique_id": "local:10.0.0.10_total/battery_state_of_charge",
+   "device_id": "d-total",
+   "unit": "%",
+   "device_class": "battery"
+  },
+  {
+   "entity_id": "sensor.totals_pv_power",
+   "unique_id": "local:10.0.0.10_total/pv_power",
+   "device_id": "d-total",
+   "unit": "W",
+   "device_class": "power"
+  },
+  {
+   "entity_id": "sensor.totals_load_power",
+   "unique_id": "local:10.0.0.10_total/load_power",
+   "device_id": "d-total",
+   "unit": "W",
+   "device_class": "power"
+  },
+  {
+   "entity_id": "sensor.totals_grid_power",
+   "unique_id": "local:10.0.0.10_total/grid_power",
+   "device_id": "d-total",
+   "unit": "W",
+   "device_class": "power"
+  },
+  {
+   "entity_id": "sensor.totals_battery_power",
+   "unique_id": "local:10.0.0.10_total/battery_power",
+   "device_id": "d-total",
+   "unit": "W",
+   "device_class": "power"
+  },
+  {
+   "entity_id": "sensor.unit1_pv_power",
+   "unique_id": "local:10.0.0.10_unit_1/pv_power",
+   "device_id": "d-unit",
+   "unit": "W",
+   "device_class": "power"
+  },
+  {
+   "entity_id": "sensor.unit1_grid_power",
+   "unique_id": "local:10.0.0.10_unit_1/grid_power",
+   "device_id": "d-unit",
+   "unit": "W",
+   "device_class": "power"
+  },
+  {
+   "entity_id": "number.unit1_max_charge_current",
+   "unique_id": "local:10.0.0.10_unit_1/max_charge_current",
+   "device_id": "d-unit",
+   "unit": "A",
+   "device_class": "current"
+  },
+  {
+   "entity_id": "select.unit1_work_mode",
+   "unique_id": "local:10.0.0.10_unit_1/work_mode",
+   "device_id": "d-unit"
+  },
+  {
+   "entity_id": "switch.unit1_use_timer",
+   "unique_id": "local:10.0.0.10_unit_1/use_timer",
+   "device_id": "d-unit"
+  }
+ ],
+ "states": {
+  "sensor.totals_battery_state_of_charge": {
+   "state": "57",
+   "unit": "%"
+  },
+  "sensor.totals_pv_power": {
+   "state": "3200",
+   "unit": "W"
+  },
+  "sensor.totals_load_power": {
+   "state": "3500",
+   "unit": "W"
+  },
+  "sensor.totals_grid_power": {
+   "state": "800",
+   "unit": "W"
+  },
+  "sensor.totals_battery_power": {
+   "state": "1500",
+   "unit": "W"
+  }
+ }
+}

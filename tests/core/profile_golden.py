@@ -5,8 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from custom_components.volcast.core.control.readings import RawState, normalize_readings_report
+from custom_components.volcast.core.control.select import InverterHint, select_profile
+from custom_components.volcast.core.discovery.classify import classify, is_inverter
+from custom_components.volcast.core.discovery.models import ConfigEntrySnap, DeviceSnap, EntitySnap
+from custom_components.volcast.core.entity_map import EntityCandidate, resolve_entities
 from custom_components.volcast.core.modbus.identity import identity_info
-from custom_components.volcast.core.profile import PROFILES_DIR
+from custom_components.volcast.core.profile import PROFILES_DIR, entities_only
 from custom_components.volcast.core.registers import RegisterImage, read_values
 from custom_components.volcast.core.transports.modbus_frames import parse_aa55_read
 
@@ -113,11 +118,17 @@ def assert_origin_rules(profile, expected: dict, golden_dir: Path, packaged_ids=
         return
     raw = profile.raw
     assert raw["status"] == "draft", f"{profile.id}: profil z automatu musi mieć status draft"
-    assert raw["modbus"]["status"] == "draft", f"{profile.id}: profil z automatu musi mieć modbus.status draft"
-    assert (Path(golden_dir) / "registers.json").is_file(), f"{profile.id}: profil z automatu bez registers.json"
+    if entities_only(profile):
+        # Profil „tylko encje”: obrazem jest `entities.json`, a klucze odczytu to klucze jego encji HA.
+        assert (Path(golden_dir) / "entities.json").is_file(), f"{profile.id}: profil z automatu bez entities.json"
+        readable = {k for integ in raw["ha"]["integrations"] for k in integ["entities"]}
+    else:
+        assert raw["modbus"]["status"] == "draft", f"{profile.id}: profil z automatu musi mieć modbus.status draft"
+        assert (Path(golden_dir) / "registers.json").is_file(), f"{profile.id}: profil z automatu bez registers.json"
+        readable = set(raw["read"])
     reference = expected["reference"]
     assert reference, f"{profile.id}: profil z automatu bez reference w expected.json"
-    required = [k for k in AUTO_REFERENCE_KEYS if k in raw["read"]]
+    required = [k for k in AUTO_REFERENCE_KEYS if k in readable]
     assert required, f"{profile.id}: profil z automatu nie czyta żadnego z {list(AUTO_REFERENCE_KEYS)}"
     assert not set(required) - set(reference), \
         f"{profile.id}: reference musi obejmować {required}, brak {sorted(set(required) - set(reference))}"
@@ -207,3 +218,71 @@ def assert_capabilities_match_writes(profile) -> None:
     }
     for cap, want in expected.items():
         assert caps[cap] is want, f"{profile.id}: capability {cap}={caps[cap]} nie zgadza się z kluczami zapisu"
+
+
+# --- Profil „tylko encje”: obraz golden to migawka rejestru HA (`entities.json`), nie rejestry ---------------
+
+def load_entities_snapshot(golden_dir: Path) -> dict:
+    path = Path(golden_dir) / "entities.json"
+    assert path.is_file(), f"brak {path} — profil entities_only z katalogu zewnętrznego musi mieć entities.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def replay_entities(profile, snapshot: dict) -> tuple[dict, dict]:
+    """Migawka przez prawdziwą ścieżkę: klasyfikacja → wybór profilu → mapa encji → wartości kanoniczne.
+
+    Zwraca (mapa klucz → entity_id, wartości kanoniczne klucz → liczba). Asercje wejścia: profil musi
+    rozpoznać dokładnie jeden wpis jako falownik i zostać wybrany; mapa bez niejednoznaczności ani
+    niezgodnych jednostek; w mapie wyłącznie czujniki (żadna encja zapisu)."""
+    entry = snapshot["config_entry"]
+    entries = [ConfigEntrySnap(entry["entry_id"], entry["domain"], entry.get("title", entry["domain"]), None)]
+    devices = [DeviceSnap(id=d["id"], manufacturer=d.get("manufacturer"), model=d.get("model"), name=d.get("name"),
+                          sw_version=None, hw_version=None, serial_number=None, identifiers=(),
+                          config_entry_ids=(entry["entry_id"],)) for d in snapshot["devices"]]
+    entities = [EntitySnap(entity_id=e["entity_id"], platform=e.get("platform", entry["domain"]),
+                           unique_id=e["unique_id"], device_id=e.get("device_id"), config_entry_id=entry["entry_id"],
+                           device_class=e.get("device_class"), unit=e.get("unit"), translation_key=None,
+                           original_name=None, disabled=False) for e in snapshot["entities"]]
+    found = classify(devices, entities, entries, {}, profiles=[profile]).inverters
+    assert len(found) == 1, f"{profile.id}: profil rozpoznaje {len(found)} wpisów jako falownik, oczekiwano 1"
+    hints = [h for d in found[0].devices
+             if is_inverter(h := InverterHint(found[0].domain, d.manufacturer, d.model), [profile])]
+    choice = select_profile(hints, [profile])
+    assert choice is not None and choice.profile.id == profile.id, f"{profile.id}: wybór profilu z migawki: {choice}"
+    res = resolve_entities(profile, choice.integration_domain,
+                           [EntityCandidate(e.entity_id, e.platform, e.unique_id, e.unit) for e in found[0].entities])
+    assert not res.ambiguous and not res.incompatible, \
+        f"{profile.id}: mapa encji niejednoznaczna {res.ambiguous} albo z niezgodną jednostką {res.incompatible}"
+    writable = sorted(eid for eid in res.mapped.values() if not eid.startswith("sensor."))
+    assert not writable, f"{profile.id}: w mapie encje inne niż czujniki {writable}"
+    states = snapshot.get("states", {})
+    raw = {k: RawState(states[eid].get("state"), states[eid].get("unit")) for k, eid in res.mapped.items()
+           if eid in states}
+    values, _ = normalize_readings_report(raw, profile, choice.integration_domain)
+    return dict(res.mapped), dict(values)
+
+
+def assert_entities_reads_resolve(profile, snapshot: dict) -> None:
+    """Każdy klucz zmapowany z migawki daje wartość kanoniczną (odpowiednik `assert_reads_decode`)."""
+    mapped, values = replay_entities(profile, snapshot)
+    missing = sorted(k for k in mapped if k not in values)
+    assert not missing, f"{profile.id}: migawka golden nie daje wartości dla {missing}"
+
+
+def assert_entities_reference(profile, snapshot: dict, expected: dict) -> None:
+    """Stan wzorcowy `expected.json` (`reference`, opcjonalnie `mapped`) zgodny z odtworzeniem migawki."""
+    mapped, values = replay_entities(profile, snapshot)
+    if "mapped" in expected:
+        assert mapped == expected["mapped"], f"{profile.id}: mapa encji {mapped} ≠ expected.mapped {expected['mapped']}"
+    for key, want in (expected["reference"] or {}).items():
+        assert key in values, f"{profile.id}: klucz {key!r} z expected.json nie ma wartości z migawki (mapa {sorted(mapped)})"
+        assert values[key] == pytest.approx(want), f"{profile.id}: {key} = {values[key]!r}, oczekiwano {want!r}"
+
+
+def assert_entities_only_rules(profile) -> None:
+    """Profil „tylko encje” bez sterowania: żadna możliwość nie jest prawdziwa, a jedyną domeną encji jest
+    czujnik. Szerokość `model_regex` pilnuje walidator profilu (`validate_profile`)."""
+    caps = profile.raw["capabilities"]
+    assert not any(v for v in caps.values()), f"{profile.id}: profil entities_only z możliwościami {caps}"
+    for integ in profile.raw["ha"]["integrations"]:
+        assert {e["domain"] for e in integ["entities"].values()} <= {"sensor"}

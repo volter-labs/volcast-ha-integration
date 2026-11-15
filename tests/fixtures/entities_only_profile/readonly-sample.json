@@ -1,0 +1,60 @@
+{
+ "schema_version": 1,
+ "id": "readonly-sample",
+ "label": "Read-only sample",
+ "status": "draft",
+ "sources": [
+  {
+   "what": "entity contract of the sample integration",
+   "ref": "https://example.org/entities"
+  }
+ ],
+ "access": "entities_only",
+ "min_engine": 3,
+ "ha": {
+  "integrations": [
+   {
+    "domain": "example_readonly",
+    "ems": false,
+    "status": "draft",
+    "model_regex": [
+     "(?i)\\bexample reader\\b"
+    ],
+    "entities": {
+     "soc": {
+      "domain": "sensor",
+      "unique_id_regex": "_total/battery_state_of_charge$"
+     },
+     "pv_power_w": {
+      "domain": "sensor",
+      "unique_id_regex": "_total/pv_power$"
+     },
+     "load_power_w": {
+      "domain": "sensor",
+      "unique_id_regex": "_total/load_power$"
+     },
+     "grid_power_w": {
+      "domain": "sensor",
+      "unique_id_regex": "_total/grid_power$"
+     },
+     "battery_power_w": {
+      "domain": "sensor",
+      "unique_id_regex": "_total/battery_power$",
+      "transform": "negate"
+     }
+    }
+   }
+  ]
+ },
+ "capabilities": {
+  "force_charge_from_grid": false,
+  "sell_from_battery": false,
+  "force_discharge": false,
+  "standby": false,
+  "set_power_w": false,
+  "limit_export": false,
+  "set_soc_floor": false,
+  "set_soc_ceiling": false,
+  "time_windows": 0
+ }
+}
