@@ -19,7 +19,8 @@ from custom_components.volcast.core.profile import (
     load_builtin, load_profile, packaged_ids, profile_from_dict, writes_allowed,
 )
 from custom_components.volcast.core.profile_schema import (
-    ACCESS_ENTITIES_ONLY, CAPABILITY_KEYS, PROFILE_ENGINE, REGISTER_SECTIONS, TRANSPORTS, validate_profile,
+    ACCESS_ENTITIES_ONLY, CAPABILITY_KEYS, GENERIC_HA_PLATFORMS, PROFILE_ENGINE, REGISTER_SECTIONS, TRANSPORTS,
+    validate_profile,
 )
 from tests.core.profile_fixtures import eo_profile, ms_profile
 
@@ -139,6 +140,46 @@ def test_integration_without_entities_is_rejected():
     p = eo_profile()
     p["ha"]["integrations"][0]["entities"] = {}
     _only(p, f"{ENT}: oczekiwano co najmniej jednej encji (profil entities_only)")
+
+
+INT = "$.ha.integrations[0]"
+BROAD_MSG = ("wzorzec za szeroki: pasuje do pustego tekstu albo ogólnego producenta/modelu (np. \"A\", \"0\", "
+             "\"NOT-A-MODEL\") — dodaj nazwę marki")
+
+
+def test_integration_model_regex_is_required():
+    # Wzorzec producenta to jedyna rzecz, która czyni domenę profilu „tylko encje” falownikiem.
+    p = eo_profile()
+    del p["ha"]["integrations"][0]["model_regex"]
+    _only(p, f"{INT}.model_regex: wymagane w profilu entities_only")
+
+
+@pytest.mark.parametrize("rx", [".", "(?i)^a", "\\w", "[A-Z0-9]", "(?i)model|.", "^", "(?i)not", "0"])
+def test_too_broad_integration_model_regex_is_rejected(rx):
+    p = eo_profile()
+    p["ha"]["integrations"][0]["model_regex"] = ["(?i)\\btest ?entities\\b", rx]
+    _only(p, f"{INT}.model_regex[1]: {BROAD_MSG}")
+
+
+@pytest.mark.parametrize("rx", ["(?i)\\bsolar ?assistant\\b", "^SolarAssistant", "(?i)^acme\\b"])
+def test_brand_integration_model_regex_is_accepted(rx):
+    p = eo_profile()
+    p["ha"]["integrations"][0]["model_regex"] = [rx]
+    assert validate_profile(p) == []
+
+
+@pytest.mark.parametrize("domain", sorted(GENERIC_HA_PLATFORMS))
+def test_generic_platform_domain_is_rejected(domain):
+    p = eo_profile()
+    p["ha"]["integrations"][0]["domain"] = domain
+    _only(p, f"{INT}.domain: ogólna platforma HA {domain!r} niedozwolona w profilu entities_only")
+
+
+def test_register_profile_integration_rules_unchanged():
+    # Profil rejestrowy: `model_regex` integracji opcjonalny, bez reguły szerokości i listy platform.
+    p = ms_profile()
+    p["ha"]["integrations"][0].update(domain="modbus", model_regex=["."])
+    assert validate_profile(p) == []
 
 
 @pytest.mark.parametrize("cap", CAPABILITY_KEYS)
@@ -389,7 +430,8 @@ def test_entities_only_profile_load_errors_are_profile_errors():
 
 
 def test_entities_option_for_entities_only_profile_is_read_only_not_unverified():
-    # Profil „tylko encje” nie ma encji zapisu z założenia — kod „brak encji zapisu”, nie „niezweryfikowany”
+    # Profil „tylko encje” nie ma encji zapisu z założenia — kod „brak encji zapisu”,
+    # nie „niezweryfikowany”
     # (ten sugerowałby, że weryfikacja włączy sterowanie). Kod z zamkniętego zbioru protokołu parowania.
     from custom_components.volcast.core.control.select import ProfileChoice
     for status in ("draft", "verified"):

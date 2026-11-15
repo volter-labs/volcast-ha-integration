@@ -14,7 +14,8 @@ from typing import Any
 
 from .control.readings import EXTRA_KEYS, MEASURED_KEYS
 from .params import TOU_FIELDS, WRITE_PARAMS
-from .regex_safety import REGEX_HINTS, iter_regex_fields, regex_problem
+from .regex_safety import (IDENTIFY_PROBES, REGEX_HINTS, iter_regex_fields, regex_problem, safe_search,
+                           text_problem)
 
 # Odczyty pomiarowe, liczniki i limity — ta sama zamknięta lista co mapa źródeł chmury
 # (`core/control/readings.py`, jedno źródło) — plus odczyt nastaw do uzgadniania z falownikiem.
@@ -608,6 +609,18 @@ def _ha_entity_domain(key: str) -> str:
     return "sensor"
 
 
+_BROAD_MSG = ('wzorzec za szeroki: pasuje do pustego tekstu albo ogólnego producenta/modelu (np. "A", "0", '
+              '"NOT-A-MODEL") — dodaj nazwę marki')
+
+
+def _too_broad(rx: Any) -> bool:
+    """Ta sama miara szerokości co `identify.model_regex` (`regex_safety.identify_issues`): wzorzec pasujący do
+    pustego tekstu albo do któregoś z `IDENTIFY_PROBES`."""
+    if not isinstance(rx, str) or not rx or text_problem(rx) is not None:
+        return False   # pusty tekst i wzorzec niebezpieczny zgłaszają inne reguły
+    return safe_search(rx, "") is not None or any(safe_search(rx, probe) for probe in IDENTIFY_PROBES)
+
+
 def _ha(v: _V, raw: Any, *, entities_only: bool = False) -> None:
     """`entities_only`: tylko klucze odczytów (`ENTITIES_ONLY_KEYS`) i tylko domeny `ENTITIES_ONLY_DOMAINS`
     — profil nie może wskazać żadnej encji, przez którą dałoby się pisać do falownika. Taki profil to
@@ -625,6 +638,11 @@ def _ha(v: _V, raw: Any, *, entities_only: bool = False) -> None:
         if it is None:
             continue
         v.str_(it.get("domain"), f"{p}.domain")
+        if entities_only and it.get("domain") in GENERIC_HA_PLATFORMS:
+            v.err(f"{p}.domain", f"ogólna platforma HA {it['domain']!r} niedozwolona w profilu {ACCESS_ENTITIES_ONLY}")
+        if entities_only and "model_regex" not in it:
+            # W profilu „tylko encje” wzorzec producenta czyni domenę falownikiem (`select.declared_by_profile`).
+            v.err(f"{p}.model_regex", f"wymagane w profilu {ACCESS_ENTITIES_ONLY}")
         if "model_regex" in it:
             # Rozstrzyga między profilami tej samej domeny po tekście „producent model” urządzenia HA.
             mr = v.str_list(it["model_regex"], f"{p}.model_regex")
@@ -632,6 +650,8 @@ def _ha(v: _V, raw: Any, *, entities_only: bool = False) -> None:
                 v.err(f"{p}.model_regex", "oczekiwano niepustej listy")
             for j, r in enumerate(mr or ()):
                 v.regex(r, f"{p}.model_regex[{j}]")
+                if entities_only and _too_broad(r):
+                    v.err(f"{p}.model_regex[{j}]", _BROAD_MSG)
         v.bool_(it.get("ems"), f"{p}.ems")
         v.enum(it.get("status"), f"{p}.status", ("draft", "verified"))
         ents = it.get("entities")
