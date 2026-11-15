@@ -69,10 +69,13 @@ def _option(oid: str, available: bool, code: str) -> dict:
 
 def entities_option(choice, mapped) -> dict:
     """Opcja „przez encje”: ta sama reguła co w opcjach (`entity_mode_ready`) — tylko profil i wpis integracji
-    `verified` z encją trybu; niezweryfikowany → `entities_profile_unverified`, inaczej brak encji zapisu."""
+    `verified` z encją trybu; niezweryfikowany → `entities_profile_unverified`, inaczej brak encji zapisu.
+    Profil „tylko encje” → brak encji zapisu (tylko odczyt z założenia; weryfikacja tego nie zmieni)."""
     if entity_mode_ready(choice, mapped or {}):
         return _option(ENTITIES, True, ENTITIES_OK)
     domain = getattr(choice, "integration_domain", None)
+    if choice is not None and entities_only(choice.profile):
+        return _option(ENTITIES, False, ENTITIES_NO_WRITE)
     if choice is not None and domain and not control_verified(choice.profile, domain):
         return _option(ENTITIES, False, ENTITIES_UNVERIFIED)
     return _option(ENTITIES, False, ENTITIES_NO_WRITE)

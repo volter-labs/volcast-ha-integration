@@ -386,3 +386,17 @@ def test_entities_only_profile_load_errors_are_profile_errors():
     raw["capabilities"]["standby"] = True
     with pytest.raises(ProfileError):
         profile_from_dict(raw)
+
+
+def test_entities_option_for_entities_only_profile_is_read_only_not_unverified():
+    # Profil „tylko encje” nie ma encji zapisu z założenia — kod „brak encji zapisu”, nie „niezweryfikowany”
+    # (ten sugerowałby, że weryfikacja włączy sterowanie). Kod z zamkniętego zbioru protokołu parowania.
+    from custom_components.volcast.core.control.select import ProfileChoice
+    for status in ("draft", "verified"):
+        raw = eo_profile()
+        raw["status"] = status
+        raw["ha"]["integrations"][0]["status"] = status
+        choice = ProfileChoice(profile_from_dict(raw, origin=ORIGIN_PACKAGE), "test_entities", None)
+        opt = ds.entities_option(choice, {"soc": "sensor.soc"})
+        assert opt == {"id": "entities", "available": False, "description_code": ds.ENTITIES_NO_WRITE}
+        assert opt["description_code"] in ds.DESCRIPTION_CODES
