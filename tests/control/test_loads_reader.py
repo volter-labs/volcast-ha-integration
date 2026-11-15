@@ -223,3 +223,14 @@ def test_monitor_charger_gets_no_executor_block():
 
 def test_charger_without_class_is_still_regulated():
     assert _one(_states())["control_class"] == "regulated"
+
+
+def test_corrupted_monitor_entry_sends_no_control_fields():
+    # opcje monitora z rolami sterującymi (uszkodzone/stare): do chmury idą tylko status, moc, energia
+    roles = {**ROLES, "start_stop": "select.wb_start_stop"}
+    s = _states(setpoint=("16", {"unit_of_measurement": "A", "min": 6, "max": 32, "step": 1}))
+    s.set("select.wb_start_stop", "Stop charging", {"options": ["Start charging", "Stop charging"]})
+    (e,) = _reader([{"device_id": "dev1", "label": "Wallbox", "control_class": "monitor", "roles": roles}], s).read()
+    assert set(e) == {"key", "kind", "label", "control_class", "status_raw", "status_options", "power_w",
+                      "energy_kwh", "source"}
+    assert e["source"] == {"executor": "ha", "device_ref": "dev1"}

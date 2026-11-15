@@ -79,3 +79,35 @@ def test_regulated_charger_is_stored_without_class_key():
     asyncio.run(f.async_step_ev_charger_roles({"status": "sensor.wb_status", "setpoint": "number.wb_cur"}))
     assert saved["ev_chargers"] == [{"device_id": "dev1", "label": "Wallbox",
                                      "roles": {"status": "sensor.wb_status", "setpoint": "number.wb_cur"}}]
+
+
+def test_saved_regulated_charger_redetected_as_monitor_loses_control_roles():
+    saved = [{"device_id": "dev1", "label": "Wallbox",
+              "roles": {"status": "sensor.wb_status", "setpoint": "number.wb_cur",
+                        "start": "button.wb_start", "stop": "button.wb_stop"}}]
+    f, _, out = _flow(_finding(), options={"ev_chargers": saved})
+    asyncio.run(f.async_step_ev_charger({"chargers": ["dev1"]}))
+    asyncio.run(f.async_step_ev_charger_roles({"status": "sensor.wb_status", "power": "sensor.wb_power"}))
+    assert out["ev_chargers"] == [{"device_id": "dev1", "label": "Wallbox", "control_class": "monitor",
+                                   "roles": {"status": "sensor.wb_status", "power": "sensor.wb_power"}}]
+
+
+def test_regulated_charger_keeps_saved_roles_outside_the_form():
+    roles = {"status": ChargerRole("sensor.wb_status", "sensor"),
+             "setpoint": ChargerRole("number.wb_cur", "number", unit="A", min=6, max=16)}
+    saved = [{"device_id": "dev1", "label": "Wallbox",
+              "roles": {"status": "sensor.wb_status", "setpoint": "number.wb_cur",
+                        "start": "button.wb_start", "stop": "button.wb_stop"}}]
+    f, _, out = _flow(_finding("regulated", roles), options={"ev_chargers": saved})
+    asyncio.run(f.async_step_ev_charger({"chargers": ["dev1"]}))
+    asyncio.run(f.async_step_ev_charger_roles({"status": "sensor.wb_status", "setpoint": "number.wb_cur"}))
+    assert out["ev_chargers"][0]["roles"] == saved[0]["roles"]
+    assert "control_class" not in out["ev_chargers"][0]
+
+
+def test_saved_monitor_charger_not_in_findings_is_kept_unchanged():
+    saved = [{"device_id": "gone", "label": "Old", "control_class": "monitor",
+              "roles": {"status": "sensor.old_status", "energy": "sensor.old_energy"}}]
+    f, _, out = _flow(_finding(), options={"ev_chargers": saved})
+    asyncio.run(f.async_step_ev_charger({"chargers": ["gone"]}))
+    assert out["ev_chargers"] == saved

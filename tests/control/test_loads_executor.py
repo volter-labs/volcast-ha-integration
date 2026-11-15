@@ -1756,6 +1756,13 @@ def test_monitor_charger_never_writes_or_calls_anything(roles):
         await ex.async_tick()
         assert h.services.calls == []
         assert ex.report_for("dev1") is None
+        assert ex._watched == ()                 # nic nie obserwowane: brak wstrzymania i zdarzeń ręcznych
+        ex.on_state_event(SimpleNamespace(
+            data={"entity_id": STATUS, "old_state": SimpleNamespace(state="Charging", context=None),
+                  "new_state": SimpleNamespace(state="Finished",
+                                               context=SimpleNamespace(id="u1", user_id="user", parent_id=None))},
+            context=None))
         assert ex.state.manual_event is None and ex.state.held_since is None
+        assert h.services.calls == []
         await ex.async_stop()
     asyncio.run(body())
