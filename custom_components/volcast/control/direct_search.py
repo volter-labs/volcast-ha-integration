@@ -31,7 +31,7 @@ from ..core.control.select import control_verified
 from ..core.discovery.identify import Candidate, candidates_from, probe_order
 from ..core.discovery.network import probe_udp_48899
 from ..core.discovery.probe import ProbeReport, discover
-from ..core.profile import ProfileError, builtin_ids, direct_verified, load_builtin
+from ..core.profile import ProfileError, builtin_ids, direct_verified, entities_only, load_builtin
 from ..core.transports.factory import make_transport
 from .direct import async_entry_snaps
 from .store import async_installation_salt
@@ -107,6 +107,7 @@ def direct_option(report: ProbeReport | None, profiles: Sequence, clash: Sequenc
       a wybór uruchamia wyszukiwanie i ustawia cel.
     * Bez sondy (`report` None): `held_by` = profil falownika, którego port trzyma integracja w HA (adres
       lokalny) — sonda tego adresu nie dotyka, więc bezpośrednio da się dopiero po wyłączeniu integracji.
+      Profil „tylko encje” nie ma ścieżki rejestrów — dla niego bez oferty.
     * Inaczej (nieustalona kolizja, inny wpis Volcast, nieudana próba, nic w sieci) → `direct_unavailable`."""
     if report is not None:
         if offer_reason(report, profiles, clash) is None:
@@ -115,7 +116,7 @@ def direct_option(report: ProbeReport | None, profiles: Sequence, clash: Sequenc
         if _foreign_clash(clash) and offer_reason(report, profiles) is None:
             return _option(DIRECT, True, DIRECT_REQUIRES_DISABLE)
         return _option(DIRECT, False, DIRECT_UNAVAILABLE)
-    if held_by is not None:
+    if held_by is not None and not entities_only(held_by):
         return _option(DIRECT, True, DIRECT_REQUIRES_DISABLE)
     return _option(DIRECT, False, DIRECT_UNAVAILABLE)
 

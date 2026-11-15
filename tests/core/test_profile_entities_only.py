@@ -6,6 +6,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from custom_components.volcast.control import direct_search as ds
 from custom_components.volcast.core import profile_feed as pf
 from custom_components.volcast.core.control.select import control_verified
 from custom_components.volcast.core.discovery.identify import _groups
@@ -217,6 +218,16 @@ def test_never_writes_even_verified(origin):
 def test_full_packaged_profile_still_writes():
     assert writes_allowed(profile_from_dict(ms_profile(), origin=ORIGIN_PACKAGE)) is True
 
+
+def test_direct_not_offered_when_its_integration_holds_the_port():
+    p = profile_from_dict(eo_profile(), origin=ORIGIN_PACKAGE)
+    opt = ds.direct_option(None, [p], held_by=p)
+    assert opt["available"] is False and opt["description_code"] == ds.DIRECT_UNAVAILABLE
+
+
+def test_direct_still_offered_for_a_register_profile_held_by_its_integration():
+    p = profile_from_dict(ms_profile(), origin=ORIGIN_PACKAGE)
+    assert ds.direct_option(None, [p], held_by=p)["description_code"] == ds.DIRECT_REQUIRES_DISABLE
 
 
 # --- silnik i feed --------------------------------------------------------------------------------------
