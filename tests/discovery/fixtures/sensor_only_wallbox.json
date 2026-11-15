@@ -1,0 +1,315 @@
+{
+ "_comment": "Migawka rejestrow ladowarki tylko do odczytu (bez encji sterujacych), nazwy neutralne.",
+ "config_entries": [
+  {
+   "entry_id": "wb1",
+   "domain": "example_wallbox",
+   "title": "Wall box",
+   "host": null
+  }
+ ],
+ "devices": [
+  {
+   "id": "dev-wb",
+   "manufacturer": "Example",
+   "model": null,
+   "name": "Wall box",
+   "sw_version": null,
+   "hw_version": null,
+   "serial_number": null,
+   "identifiers": [
+    [
+     "example_wallbox",
+     "wb0001"
+    ]
+   ],
+   "config_entry_ids": [
+    "wb1"
+   ]
+  }
+ ],
+ "entities": [
+  {
+   "entity_id": "sensor.wall_box_status",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_status",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "enum",
+   "unit": null,
+   "translation_key": null,
+   "original_name": "Status",
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "booting",
+     "not_connected",
+     "connected",
+     "ready",
+     "negotiating",
+     "error",
+     "charging_finished",
+     "waiting_car",
+     "charging_reduced",
+     "charging"
+    ]
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_power",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_total_power_w",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": "Power",
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.wall_box_session_energy",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_session_energy_wh",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "energy",
+   "unit": "Wh",
+   "translation_key": null,
+   "original_name": "Session energy",
+   "disabled": false,
+   "capabilities": {
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_lifetime_energy",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_energy_wh",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "energy",
+   "unit": "Wh",
+   "translation_key": null,
+   "original_name": "Lifetime energy",
+   "disabled": false,
+   "capabilities": {
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_a_current",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_phase_a_current",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "current",
+   "unit": "A",
+   "translation_key": null,
+   "original_name": "Phase A current",
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_a_voltage",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_phase_a_voltage",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": "Phase A voltage",
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_b_current",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_phase_b_current",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "current",
+   "unit": "A",
+   "translation_key": null,
+   "original_name": "Phase B current",
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_b_voltage",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_phase_b_voltage",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": "Phase B voltage",
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_c_current",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_phase_c_current",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "current",
+   "unit": "A",
+   "translation_key": null,
+   "original_name": "Phase C current",
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_c_voltage",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_phase_c_voltage",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": "Phase C voltage",
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "binary_sensor.wall_box_vehicle_connected",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_vehicle_connected",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "plug",
+   "unit": null,
+   "translation_key": null,
+   "original_name": "Vehicle connected",
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "binary_sensor.wall_box_charging",
+   "platform": "example_wallbox",
+   "unique_id": "wb0001_charging",
+   "device_id": "dev-wb",
+   "config_entry_id": "wb1",
+   "device_class": "battery_charging",
+   "unit": null,
+   "translation_key": null,
+   "original_name": "Charging",
+   "disabled": false,
+   "capabilities": null
+  }
+ ],
+ "states": [
+  {
+   "entity_id": "sensor.wall_box_status",
+   "state": "charging",
+   "attributes": {
+    "device_class": "enum",
+    "options": [
+     "booting",
+     "not_connected",
+     "connected",
+     "ready",
+     "negotiating",
+     "error",
+     "charging_finished",
+     "waiting_car",
+     "charging_reduced",
+     "charging"
+    ]
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_power",
+   "state": "7200",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_session_energy",
+   "state": "4200",
+   "attributes": {
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_lifetime_energy",
+   "state": "12345600",
+   "attributes": {
+    "unit_of_measurement": "Wh",
+    "device_class": "energy",
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_a_current",
+   "state": "10.5",
+   "attributes": {
+    "unit_of_measurement": "A",
+    "device_class": "current"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_a_voltage",
+   "state": "231",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_b_current",
+   "state": "10.5",
+   "attributes": {
+    "unit_of_measurement": "A",
+    "device_class": "current"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_b_voltage",
+   "state": "231",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_c_current",
+   "state": "10.5",
+   "attributes": {
+    "unit_of_measurement": "A",
+    "device_class": "current"
+   }
+  },
+  {
+   "entity_id": "sensor.wall_box_phase_c_voltage",
+   "state": "231",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage"
+   }
+  },
+  {
+   "entity_id": "binary_sensor.wall_box_vehicle_connected",
+   "state": "on",
+   "attributes": {
+    "device_class": "plug"
+   }
+  },
+  {
+   "entity_id": "binary_sensor.wall_box_charging",
+   "state": "on",
+   "attributes": {
+    "device_class": "battery_charging"
+   }
+  }
+ ]
+}
