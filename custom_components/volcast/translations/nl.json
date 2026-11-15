@@ -375,6 +375,7 @@
       "role_required": "De statusentiteit is verplicht.",
       "entity_not_found": "De entiteit is niet gevonden. Kies een bestaande entiteit.",
       "status_without_options": "Kies een sensor of select met een lijst van mogelijke toestanden. Een aan/uit-sensor laat het laden niet zien.",
+      "monitor_without_measurement": "Kies ook een vermogens- of energiesensor. Een lader met alleen een status kan niet worden gevolgd.",
       "unit_mismatch": "Een van de entiteiten meldt een eenheid die Volcast voor deze waarde niet kan gebruiken. Ga terug en kies een andere entiteit.",
       "prices_current_only": "Deze sensor heeft alleen de actuele prijs. Gebruik voor planning je eigen prijslijst in de app of een integratie met prognose.",
       "price_horizon_short": "De prognose reikt maar {hours} uur; voor planning is minstens 6 uur vooruit nodig.",

@@ -375,6 +375,7 @@
       "role_required": "L'entité d'état est obligatoire.",
       "entity_not_found": "L'entité est introuvable. Choisissez une entité existante.",
       "status_without_options": "Choisissez un capteur ou un select avec une liste d'états possibles. Un capteur marche/arrêt n'indique pas la charge.",
+      "monitor_without_measurement": "Choisissez aussi un capteur de puissance ou d'énergie. Une borne avec seulement un statut ne peut pas être suivie.",
       "unit_mismatch": "L’une des entités indique une unité que Volcast ne peut pas utiliser pour cette valeur. Revenez en arrière et choisissez une autre entité.",
       "prices_current_only": "Ce capteur n'a que le prix actuel. Pour planifier, utilisez votre propre grille tarifaire dans l'app ou une intégration avec prévision.",
       "price_horizon_short": "La prévision ne couvre que {hours} h ; la planification exige au moins 6 h d'avance.",

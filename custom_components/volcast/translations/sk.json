@@ -375,6 +375,7 @@
       "role_required": "Entita stavu je povinná.",
       "entity_not_found": "Entita sa nenašla. Vyberte existujúcu entitu.",
       "status_without_options": "Vyberte senzor alebo select so zoznamom možných stavov. Senzor zapnuté/vypnuté nabíjanie neukazuje.",
+      "monitor_without_measurement": "Vyberte aj senzor výkonu alebo energie. Nabíjačku len so stavom nemožno sledovať.",
       "unit_mismatch": "Jedna z entít udáva jednotku, ktorú Volcast pre túto hodnotu nemôže použiť. Vráťte sa a vyberte inú entitu.",
       "prices_current_only": "Tento senzor má len aktuálnu cenu. Na plánovanie použite vlastný cenník v aplikácii alebo integráciu s predpoveďou.",
       "price_horizon_short": "Predpoveď siaha len {hours} h; na plánovanie treba aspoň 6 h dopredu.",

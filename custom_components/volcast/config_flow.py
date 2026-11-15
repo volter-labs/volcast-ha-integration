@@ -814,7 +814,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         saved = next((c for c in self._ev_saved() if c["device_id"] == finding.device_id), None)
         current = dict(saved.get("roles") or {}) if saved else {r: v.entity_id for r, v in finding.roles.items()}
         fields: dict[Any, Any] = {}
-        for role in _EV_ROLES + tuple(r for r in finding.roles if r not in _EV_ROLES):
+        # ładowarka tylko do odczytu: bez pól sterujących, więc nie da się do niej dopisać encji sterującej
+        shown = _EV_MONITOR_ROLES if finding.control_class == "monitor" else (
+            _EV_ROLES + tuple(r for r in finding.roles if r not in _EV_ROLES))
+        for role in shown:
             sel = selector.EntitySelector(selector.EntitySelectorConfig(domain=list(_EV_ROLE_DOMAINS.get(role, ("sensor",)))))
             key = (vol.Required if role == "status" else vol.Optional)(
                 role, description={"suggested_value": current.get(role)})
@@ -849,13 +852,20 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return self._ev_roles_form(finding, {"status": EV_ENTITY_NOT_FOUND})
         if not self._ev_status_has_options(roles["status"]):
             return self._ev_roles_form(finding, {"status": EV_STATUS_WITHOUT_OPTIONS})
-        # role zapisane poza polami formularza (np. start/stop) zostają przy ponownym zapisie
-        shown = set(_EV_ROLES) | set(finding.roles)
-        prev = next((s for s in self._ev_saved() if s["device_id"] == finding.device_id), None)
-        extra = {r: v for r, v in (prev.get("roles") or {}).items() if r not in shown} if prev else {}
-        roles = {**extra, **roles}
-        self._ev_done.append({"device_id": finding.device_id, "roles": roles,
-                              "label": finding.name or finding.model or ""})
+        entry: dict[str, Any] = {"device_id": finding.device_id, "label": finding.name or finding.model or ""}
+        if finding.control_class == "monitor":
+            # tylko odczyt: zapisujemy wyłącznie role pomiarowe i klasę, nigdy encji sterujących
+            roles = {r: v for r, v in roles.items() if r in _EV_MONITOR_ROLES}
+            if "power" not in roles and "energy" not in roles:
+                return self._ev_roles_form(finding, {"base": EV_MONITOR_WITHOUT_MEASUREMENT})
+            entry["control_class"] = "monitor"
+        else:
+            # role zapisane poza polami formularza (np. start/stop) zostają przy ponownym zapisie
+            shown = set(_EV_ROLES) | set(finding.roles)
+            prev = next((s for s in self._ev_saved() if s["device_id"] == finding.device_id), None)
+            extra = {r: v for r, v in (prev.get("roles") or {}).items() if r not in shown} if prev else {}
+            roles = {**extra, **roles}
+        self._ev_done.append({**entry, "roles": roles})
         queue.pop(0)
         return await self._async_ev_next()
 
@@ -1407,8 +1417,10 @@ OPT_EV_CHARGERS = "ev_chargers"
 EV_NONE_FOUND = "no_ev_chargers"
 EV_STATUS_WITHOUT_OPTIONS = "status_without_options"
 EV_ENTITY_NOT_FOUND = "entity_not_found"
+EV_MONITOR_WITHOUT_MEASUREMENT = "monitor_without_measurement"
 _EV_SELECT = "chargers"
 _EV_ROLES = ("status", "setpoint", "start_stop", "power", "energy")
+_EV_MONITOR_ROLES = ("status", "power", "energy")
 _EV_ROLE_DOMAINS = {
     "status": ("sensor", "select"), "setpoint": ("number",),
     "start_stop": ("switch", "select"), "start": ("button",), "stop": ("button",),

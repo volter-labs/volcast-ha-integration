@@ -375,6 +375,7 @@
       "role_required": "Die Status-Entität ist erforderlich.",
       "entity_not_found": "Die Entität wurde nicht gefunden. Wähle eine vorhandene Entität.",
       "status_without_options": "Wähle einen Sensor oder ein Select mit einer Liste möglicher Zustände. Ein Ein/Aus-Sensor zeigt das Laden nicht an.",
+      "monitor_without_measurement": "Wählen Sie zusätzlich einen Leistungs- oder Energiesensor. Eine Wallbox nur mit Status lässt sich nicht verfolgen.",
       "unit_mismatch": "Eine der Entitäten meldet eine Einheit, die Volcast für diesen Wert nicht verwenden kann. Gehe zurück und wähle eine andere Entität.",
       "prices_current_only": "Dieser Sensor hat nur den aktuellen Preis. Nutze für die Planung eine eigene Preisliste in der App oder eine Integration mit Prognose.",
       "price_horizon_short": "Die Prognose reicht nur {hours} h; für die Planung sind mindestens 6 h im Voraus nötig.",

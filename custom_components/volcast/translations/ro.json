@@ -375,6 +375,7 @@
       "role_required": "Entitatea de stare este obligatorie.",
       "entity_not_found": "Entitatea nu a fost găsită. Alege o entitate existentă.",
       "status_without_options": "Alegeți un senzor sau un select cu o listă de stări posibile. Un senzor pornit/oprit nu arată încărcarea.",
+      "monitor_without_measurement": "Alegeți și un senzor de putere sau de energie. O stație de încărcare doar cu stare nu poate fi urmărită.",
       "unit_mismatch": "Una dintre entități raportează o unitate pe care Volcast nu o poate folosi pentru această valoare. Reveniți și alegeți altă entitate.",
       "prices_current_only": "Acest senzor are doar prețul curent. Pentru planificare, folosește lista ta de prețuri din aplicație sau o integrare cu prognoză.",
       "price_horizon_short": "Prognoza acoperă doar {hours} h; pentru planificare sunt necesare cel puțin 6 h înainte.",

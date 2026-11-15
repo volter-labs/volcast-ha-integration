@@ -375,6 +375,7 @@
       "role_required": "A entidade de estado é obrigatória.",
       "entity_not_found": "A entidade não foi encontrada. Escolha uma entidade existente.",
       "status_without_options": "Escolha um sensor ou select com uma lista de estados possíveis. Um sensor ligado/desligado não mostra o carregamento.",
+      "monitor_without_measurement": "Escolha também um sensor de potência ou de energia. Um carregador só com estado não pode ser acompanhado.",
       "unit_mismatch": "Uma das entidades indica uma unidade que a Volcast não consegue usar para este valor. Volte atrás e escolha outra entidade.",
       "prices_current_only": "Este sensor só tem o preço atual. Para planear, use a sua própria tabela de preços na app ou uma integração com previsão.",
       "price_horizon_short": "A previsão só chega a {hours} h; para planear são precisas pelo menos 6 h de antecedência.",

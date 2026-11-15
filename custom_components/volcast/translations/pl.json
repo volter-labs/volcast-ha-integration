@@ -375,6 +375,7 @@
       "role_required": "Encja statusu jest wymagana.",
       "entity_not_found": "Nie znaleziono encji. Wybierz istniejącą encję.",
       "status_without_options": "Wybierz sensor lub select z listą możliwych stanów. Czujnik włącz/wyłącz nie pokazuje ładowania.",
+      "monitor_without_measurement": "Wybierz także sensor mocy lub energii. Ładowarki z samym statusem nie da się śledzić.",
       "unit_mismatch": "Jedna z encji podaje jednostkę, której Volcast nie może użyć dla tej wartości. Wróć i wybierz inną encję.",
       "prices_current_only": "Ten czujnik ma tylko bieżącą cenę. Do planowania użyj cennika własnego w aplikacji albo integracji z prognozą.",
       "price_horizon_short": "Prognoza sięga tylko {hours} h; do planowania potrzeba co najmniej 6 h w przód.",
