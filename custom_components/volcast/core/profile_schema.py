@@ -110,7 +110,8 @@ ENTITIES_ONLY_DOMAINS = ("sensor",)
 GENERIC_HA_PLATFORMS: frozenset[str] = frozenset({
     "mqtt", "modbus", "template", "rest", "command_line", "sql", "snmp", "esphome", "tasmota", "zha",
     "zwave_js", "homekit_controller", "shelly", "tuya", "integration", "utility_meter", "group", "min_max",
-    "derivative", "statistics", "input_number", "homeassistant",
+    "derivative", "statistics", "input_number", "homeassistant", "matter", "knx", "deconz", "zwave_me",
+    "enocean", "rfxtrx", "homematicip_cloud", "nut",
 })
 # Tylko odczyty pomiarowe, liczniki i limity (klucze źródeł chmury) — bez odczytu nastaw i trybu.
 ENTITIES_ONLY_KEYS = frozenset((*MEASURED_KEYS, *EXTRA_KEYS))
