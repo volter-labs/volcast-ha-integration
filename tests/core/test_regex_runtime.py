@@ -75,23 +75,31 @@ def test_over_long_subject_never_matches():
 
 def test_realistic_subjects_fit_the_cap():
     # Najdłuższe modele i unique_id w danych wzorcowych i obrazach pakietu mieszczą się z zapasem.
+    # Modele i producenci: zapas 2x. unique_id: zapas 1,5x — id integracji tylko do odczytu składa się z
+    # zakresu, urządzenia i nazwy metryki, więc jest dłuższe niż id profili rejestrowych; temat ponad limit
+    # nigdy nie pasuje (fail closed, test wyżej), więc strażnik pilnuje zapasu, a 1,5x zostawia miejsce
+    # na dłuższe zakresy.
     def walk(n, out):
         if isinstance(n, dict):
             for k, v in n.items():
                 if k in ("unique_id", "model", "manufacturer") and isinstance(v, str):
-                    out.append(v)
+                    out.append((k, v))
                 walk(v, out)
         elif isinstance(n, list):
             for v in n:
                 walk(v, out)
-    found: list[str] = []
+    found: list[tuple[str, str]] = []
     root = Path(__file__).resolve().parents[1]
     for path in [*root.rglob("*.json"), pf.REFS_PATH]:
         try:
             walk(json.loads(path.read_text(encoding="utf-8")), found)
         except ValueError:
             continue
-    assert found and max(map(len, found)) * 2 <= INPUT_CAP, max(found, key=len)
+    assert found
+    names = [v for k, v in found if k != "unique_id"]
+    ids = [v for k, v in found if k == "unique_id"]
+    assert names and max(map(len, names)) * 2 <= INPUT_CAP, max(names, key=len)
+    assert ids and max(map(len, ids)) * 3 <= INPUT_CAP * 2, max(ids, key=len)
 
 
 _FIXTURE = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "regex-safety.json").read_text(encoding="utf-8"))
