@@ -281,6 +281,10 @@ class Relocator:
         silent = age if math.isfinite(age) else now - self._started_at
         return True if silent >= RELOCATE_AFTER_S else None
 
+    def link_dead(self) -> bool:
+        """Martwe łącze wg wyzwalacza relokacji (jedno źródło progu także dla Napraw)."""
+        return self._dead(self._clock()) is True
+
     @callback
     def check(self, _now=None) -> None:
         if self._stopped or (self._task is not None and not self._task.done()):

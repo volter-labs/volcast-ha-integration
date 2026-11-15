@@ -181,16 +181,77 @@ def readings_missing(telemetry) -> bool:
     return all(sources.get(k, "none") == "none" for k in REQUIRED_READINGS)
 
 
-def sync_readings_issue(hass, entry, telemetry) -> None:
-    """Zgłoszenie `no_readings_<entry_id>` istnieje dokładnie wtedy, gdy po cyklu telemetrii nie ma żadnego
-    wymaganego odczytu; pojawienie się odczytów je kasuje."""
-    issue_id = f"no_readings_{entry.entry_id}"
-    if readings_missing(telemetry):
-        ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False,
-                              severity=getattr(getattr(ir, "IssueSeverity", None), "ERROR", "error"),
-                              translation_key="no_readings")
+# Zatrzask „tryb wymuszony zostaje” per wpis: chwila ostatniego zapisu w momencie zgłoszenia. Poza danymi
+# wykonawcy, więc przeżywa przeładowanie wpisu (przepięcie adresu), które zeruje pamięć wykonawcy.
+_STUCK_KEY = "volcast_forced_mode_stuck"
+_LINK_ISSUES = ("no_readings", "direct_unreachable", "forced_mode_stuck")
+
+
+def _issue_severity():
+    return getattr(getattr(ir, "IssueSeverity", None), "ERROR", "error")
+
+
+def _direct_mode(entry, rt) -> bool:
+    """Tryb bezpośredni z połączeniem na stałe (nie próba) — ten sam warunek co `start_relocator`."""
+    conn = getattr(rt, "direct", None)
+    return conn is not None and getattr(conn, "trial", True) is False \
+        and (getattr(entry, "options", None) or {}).get(OPT_CONTROL_MODE) == CONTROL_MODE_DIRECT
+
+
+def _sync_forced_mode_issue(hass, entry, rt) -> None:
+    """`forced_mode_stuck_<entry_id>`: łącze bezpośrednie martwe (wyzwalacz Relocatora), a ostatni tryb
+    ZAPISANY przez Volcast nie jest neutralny. Raz zgłoszone trzyma się do pierwszego zapisu po zgłoszeniu
+    (tryb neutralny albo bieżący krok planu) albo do wyłączenia sterowania. Tylko odczyt wykonawcy."""
+    issue_id = f"forced_mode_stuck_{entry.entry_id}"
+    latch = hass.data.setdefault(_STUCK_KEY, {})
+    ex = getattr(rt, "executor", None)
+    rel = getattr(rt, "relocator", None)
+    if ex is None or not _direct_mode(entry, rt) or ex.consent is False or not ex.local_switch:
+        raised = False
     else:
+        last, neutral = ex.last_written_mode, ex.neutral_mode
+        forced = last is not None and last != neutral
+        if entry.entry_id in latch:
+            then = latch[entry.entry_id]
+            wrote = ex.last_write_end is not None and (then is None or ex.last_write_end > then)
+            raised = not (wrote or (last is not None and last == neutral))     # None = pamięć po przeładowaniu
+        else:
+            raised = forced and rel is not None and rel.link_dead()
+            if raised:
+                latch[entry.entry_id] = ex.last_write_end
+    if raised:
+        ir.async_create_issue(hass, DOMAIN, issue_id, is_fixable=False, severity=_issue_severity(),
+                              translation_key="forced_mode_stuck")
+    else:
+        latch.pop(entry.entry_id, None)
         ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
+def clear_link_issues(hass, entry_id: str) -> None:
+    """Zdejmij zgłoszenia łącza i zatrzask wpisu (usunięcie / wyłączenie wpisu); nigdy nie rzuca."""
+    (hass.data.get(_STUCK_KEY) or {}).pop(entry_id, None)
+    for key in _LINK_ISSUES:
+        try:
+            ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry_id}")
+        except Exception:  # noqa: BLE001 — sprzątanie nie może się wywrócić
+            pass
+
+
+def sync_readings_issue(hass, entry, telemetry, *, rt=None) -> None:
+    """Brak wymaganych odczytów po cyklu telemetrii: w trybie encji `no_readings_<entry_id>`, w bezpośrednim
+    `direct_unreachable_<entry_id>` (bez adresu); pojawienie się odczytów kasuje. Z `rt` dochodzi
+    `forced_mode_stuck_<entry_id>` (tryb bezpośredni)."""
+    direct = _direct_mode(entry, rt)
+    shown, hidden = ("direct_unreachable", "no_readings") if direct else ("no_readings", "direct_unreachable")
+    if rt is not None:
+        ir.async_delete_issue(hass, DOMAIN, f"{hidden}_{entry.entry_id}")      # zmiana trybu nie zostawia sieroty
+    if readings_missing(telemetry):
+        ir.async_create_issue(hass, DOMAIN, f"{shown}_{entry.entry_id}", is_fixable=False,
+                              severity=_issue_severity(), translation_key=shown)
+    else:
+        ir.async_delete_issue(hass, DOMAIN, f"{shown}_{entry.entry_id}")
+    if rt is not None:
+        _sync_forced_mode_issue(hass, entry, rt)
 
 
 @dataclass
@@ -1227,7 +1288,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         async def _flush_and_check() -> bool:
             result = await _flush()
             try:
-                sync_readings_issue(hass, entry, telemetry)      # po każdym cyklu, także nieudanej wysyłce
+                sync_readings_issue(hass, entry, telemetry, rt=rt)   # po każdym cyklu, także nieudanej wysyłce
             except Exception as err:  # noqa: BLE001 — zgłoszenie nigdy nie psuje telemetrii
                 _LOGGER.debug("Volcast readings repair check failed (%s)", type(err).__name__)
             return result
@@ -1529,6 +1590,7 @@ async def async_unload_control(hass, rt: ControlRuntime, *, restore: bool = Fals
         entry = getattr(rt, "entry", None)
         if entry is not None:
             _cancel_onboarding(hass, entry.entry_id)
+            clear_link_issues(hass, entry.entry_id)
         try:
             await rt.executor.async_restore_now()
         except Exception as err:  # noqa: BLE001 — rozładunek wpisu nie może się przez to wywrócić
@@ -1604,6 +1666,7 @@ async def async_remove_control(hass, entry) -> None:
         _LOGGER.debug("Volcast EV charger state removal failed (%s)", type(err).__name__)
     hass.data.get(_LOCKS_KEY, {}).pop(entry.entry_id, None)
     forget_relocation(hass, entry.entry_id)
+    clear_link_issues(hass, entry.entry_id)
     try:
         ir.async_delete_issue(hass, DOMAIN, f"control_record_dropped_{entry.entry_id}")
     except Exception:  # noqa: BLE001 — usunięcie wpisu nie może się wywrócić

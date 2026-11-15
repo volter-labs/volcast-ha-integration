@@ -405,6 +405,17 @@ class VolcastExecutor:
                     and self._clock() < self._memory.paused_until)
 
     @property
+    def last_written_mode(self) -> str | None:
+        """Tryb, który NASZ ostatni zapis ustawił (pamięć cyklu); None = nic nie zapisaliśmy od startu.
+        Tylko odczyt — nie wpływa na zapis."""
+        mode = self._memory.last_written.get("mode") if self._memory is not None else None
+        return mode if isinstance(mode, str) else None
+
+    @property
+    def neutral_mode(self) -> str | None:
+        return self._profile.neutral_mode if self._profile is not None else None
+
+    @property
     def owned(self) -> bool:
         """Czy to my zmienialiśmy nastawy falownika (jest co przywracać)."""
         return self._state.owned
