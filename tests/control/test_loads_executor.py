@@ -1716,3 +1716,46 @@ def test_held_since_absent_without_hold_and_stale_plan_keeps_it():
         assert ex.report_for("dev1")["held_since"] is None
         await ex.async_stop()
     asyncio.run(body())
+
+
+# ── ładowarka tylko do odczytu (monitor) ───────────────────────────────────────
+
+def _monitor_make(hass, roles):
+    clock = Clock()
+    entry = SimpleNamespace(entry_id="e1", options={"ev_chargers": [
+        {"device_id": "dev1", "label": "Wallbox", "control_class": "monitor", "roles": roles}]})
+    ex = LoadsExecutor(hass, entry, writer=EntityServiceWriter(hass),
+                       roles_provider=lambda key: charger_roles(entry.options, key),
+                       store=LoadsStore(hass, "e1"),
+                       consent_getter=lambda: True, local_switch_getter=lambda: True,
+                       plan_only_getter=lambda: False,
+                       clock=lambda: clock.mono, utcnow=lambda: clock.utc, readback_s=0)
+    return ex, clock
+
+
+@pytest.mark.parametrize("roles", [
+    {"status": STATUS, "power": "sensor.wb_current"},
+    # także opcje z uszkodzonym zapisem: rola sterująca przy klasie monitor nigdy nie jest używana
+    {"status": STATUS, "setpoint": CURRENT, "start_stop": START_STOP},
+])
+def test_monitor_charger_never_writes_or_calls_anything(roles):
+    async def body():
+        h = _hass()
+        ex, clock = _monitor_make(h, roles)
+        await ex.async_start()
+        for mode, power in (("forced", 11100.0), ("off", None), ("forced", None)):
+            await ex.async_on_plan(_schedule(_slot(mode=mode, power=power)))
+            h.states.set(STATUS, "Charging")
+            clock.advance(61)
+            await ex.async_tick()
+            h.states.set(STATUS, "Finished")
+            clock.advance(61)
+            await ex.async_tick()
+        # długo bez świeżego planu: reguła awaryjna (pełna moc) też nie zapisuje
+        clock.advance(3 * 3600)
+        await ex.async_tick()
+        assert h.services.calls == []
+        assert ex.report_for("dev1") is None
+        assert ex.state.manual_event is None and ex.state.held_since is None
+        await ex.async_stop()
+    asyncio.run(body())

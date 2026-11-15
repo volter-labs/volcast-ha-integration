@@ -155,6 +155,14 @@ def charger_roles(options: Mapping, device_id: str) -> dict | None:
     return None
 
 
+def is_monitor_charger(options: Mapping, device_id: str) -> bool:
+    """Ładowarka klasy `monitor` (tylko odczyt): wykonawca nie zapisuje do niej niczego, nie obserwuje jej
+    i nie wykrywa ręcznej ingerencji, choćby plan z chmury wskazywał ją w slocie."""
+    saved = options.get("ev_chargers") if isinstance(options, Mapping) else None
+    return any(isinstance(c, dict) and c.get("device_id") == device_id and c.get("control_class") == "monitor"
+               for c in (saved if isinstance(saved, list) else ()))
+
+
 def _num(v) -> float | None:
     if isinstance(v, bool):
         return None
@@ -273,7 +281,7 @@ class LoadsExecutor:
         """Blok `executor` wpisu ładowarki w telemetrii; None dla innej ładowarki albo bez planu.
         `manual_at` idzie tylko razem z niewysłanym zdarzeniem."""
         meta = self._meta
-        if meta is None or meta.load_key != key:
+        if meta is None or meta.load_key != key or is_monitor_charger(self._entry.options, key):
             return None
         s = self._state
         event = s.manual_event
@@ -486,7 +494,7 @@ class LoadsExecutor:
     # ── ręczna ingerencja ─────────────────────────────────────────────────
     def _watch(self, key: str) -> None:
         """Obserwacja encji `status` i `start_stop` ładowarki z planu (ponowna tylko przy zmianie encji)."""
-        roles = self._roles(key) or {}
+        roles = {} if is_monitor_charger(self._entry.options, key) else self._roles(key) or {}
         ents = tuple(e for e in (roles.get("status"), roles.get("start_stop")) if isinstance(e, str) and e)
         if ents == self._watched or self._stopped:
             return
@@ -615,7 +623,10 @@ class LoadsExecutor:
         async_dispatcher_send(self._hass, SIGNAL_CONTROL_STATE_UPDATED.format(entry_id=self._entry.entry_id))
 
     def _charger(self, key: str) -> _Charger | None:
-        """Role ładowarki; None, gdy brak statusu albo rola do zapisu jest spoza ładowarki."""
+        """Role ładowarki; None, gdy brak statusu, rola do zapisu jest spoza ładowarki albo ładowarka jest
+        tylko do odczytu (`monitor`) — wtedy cykl i obserwator ręcznej ingerencji nic z nią nie robią."""
+        if is_monitor_charger(self._entry.options, key):
+            return None
         roles = self._roles(key)
         if not roles or not isinstance(roles.get("status"), str):
             return None

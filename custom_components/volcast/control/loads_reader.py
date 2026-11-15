@@ -4,6 +4,9 @@ Czyta encje ról zapisanych w opcjach (`ev_chargers`) i przekazuje je dalej bez 
 stan encji statusu idzie jako tekst, tak jak go podaje HA. Jedyna obróbka to przeliczenie
 jednostek (moc do W, energia do kWh, nastawa do A albo W). Nieznana jednostka nie jest zgadywana.
 
+Ładowarka klasy `monitor` (`control_class` w opcjach; tylko odczyt, bez encji sterujących) idzie z
+`control_class: "monitor"`, bez `setpoint` i bez bloku `executor`. Pozostałe jak dotąd `regulated`.
+
 Rola `start_stop` (gdy przypisana): `start_stop_state` i `start_stop_options` dosłownie. Blok
 `executor` (`last_write_at`, `last_action`, `manual_event`, `manual_at`, `fallback`) — z wykonawcy
 ładowarki, tylko dla ładowarki, którą wykonawca prowadzi.
@@ -86,9 +89,10 @@ class LoadsReader:
         roles = charger.get("roles") if isinstance(charger.get("roles"), dict) else {}
         status = self._state(roles, "status")
         options = status.attributes.get("options") if status is not None else None
+        monitor = charger.get("control_class") == "monitor"
         entry: dict[str, Any] = {
             "key": key, "kind": "ev_charger", "label": charger.get("label"),
-            "control_class": "regulated",
+            "control_class": "monitor" if monitor else "regulated",
             "status_raw": status.state if status is not None else None,
             "status_options": [str(o) for o in options] if isinstance(options, (list, tuple)) else None,
         }
@@ -98,7 +102,8 @@ class LoadsReader:
             entry["power_w"] = round(power, 3) if power >= 0 else None
         energy = self._scaled(self._state(roles, "energy"), _ENERGY_TO_KWH)
         entry["energy_kwh"] = round(energy, 6) if energy is not None else None
-        entry["setpoint"] = self._setpoint(self._state(roles, "setpoint"))
+        if not monitor:
+            entry["setpoint"] = self._setpoint(self._state(roles, "setpoint"))
         entry["source"] = {"executor": "ha", "device_ref": roles.get("setpoint") or key}
         if isinstance(roles.get("start_stop"), str) and roles.get("start_stop"):
             # stan i opcje encji start/stop dosłownie (jak status) — tylko gdy rola jest przypisana
@@ -107,7 +112,8 @@ class LoadsReader:
             entry["start_stop_state"] = str(sw.state)[:_MAX_TEXT] if sw is not None else None
             entry["start_stop_options"] = [str(o)[:_MAX_TEXT] for o in list(sw_options)[:_MAX_OPTIONS]] \
                 if isinstance(sw_options, (list, tuple)) else None
-        report = self._report(key)
+        # ładowarki tylko do odczytu wykonawca nie prowadzi — bez bloku `executor`
+        report = None if monitor else self._report(key)
         if report is not None:
             entry["executor"] = report
         return entry

@@ -194,3 +194,32 @@ def test_failing_executor_report_does_not_drop_the_charger():
                     executor_report=boom)
     (e,) = r.read()
     assert e["key"] == "dev1" and "executor" not in e
+
+
+# ── ładowarka tylko do odczytu (monitor) ───────────────────────────────────────
+
+def test_wh_counter_is_sent_in_kwh():
+    assert _one(_states(energy=("12345", "Wh")))["energy_kwh"] == 12.345
+
+
+def test_monitor_charger_sends_monitor_class_and_no_setpoint():
+    roles = {"status": "sensor.wb_status", "power": "sensor.wb_power", "energy": "sensor.wb_energy"}
+    s = _states(power=("7350", "W"), energy=("12345", "Wh"))
+    (e,) = _reader([{"device_id": "dev1", "label": "Wallbox", "control_class": "monitor", "roles": roles}], s).read()
+    assert e["control_class"] == "monitor"
+    assert "setpoint" not in e and "start_stop_state" not in e
+    assert e["power_w"] == 7350.0 and e["energy_kwh"] == 12.345
+    assert e["source"] == {"executor": "ha", "device_ref": "dev1"}
+
+
+def test_monitor_charger_gets_no_executor_block():
+    roles = {"status": "sensor.wb_status", "power": "sensor.wb_power"}
+    hass = SimpleNamespace(states=_states())
+    entry = SimpleNamespace(options={"ev_chargers": [
+        {"device_id": "dev1", "label": "Wallbox", "control_class": "monitor", "roles": roles}]})
+    (e,) = LoadsReader(hass, entry, executor_report=lambda key: {"held_since": None}).read()
+    assert "executor" not in e
+
+
+def test_charger_without_class_is_still_regulated():
+    assert _one(_states())["control_class"] == "regulated"
