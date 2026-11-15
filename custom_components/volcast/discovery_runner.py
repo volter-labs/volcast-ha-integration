@@ -163,8 +163,10 @@ class DiscoveryRunner:
         entities = self._step(
             "entities", errors, lambda: self._snap_entities(skipped_devices), [])
         entries = self._step("config_entries", errors, self._snap_entries, [])
+        # profile przed klasyfikacją: ich wpisy integracji z wzorcem rozszerzają domeny falowników
+        profiles = await self._profiles(errors)
         classification = self._step(
-            "classify", errors, lambda: classify(devices, entities, entries, {}),
+            "classify", errors, lambda: classify(devices, entities, entries, {}, profiles=profiles),
             Classification([], [], []))
         self.classification = classification
         states = self._step(
@@ -176,7 +178,6 @@ class DiscoveryRunner:
         except Exception as err:  # noqa: BLE001 — sonda z założenia nie rzuca, ale na wszelki wypadek
             errors.append(_err("network", err))
             network = None
-        profiles = await self._profiles(errors)
         return build_report(
             classification=classification, states=states, history_days=history_days,
             network=network, errors=errors,
@@ -184,7 +185,7 @@ class DiscoveryRunner:
             generated_at=dt_util.utcnow().isoformat(), devices=devices, profiles=profiles)
 
     async def _profiles(self, errors: list[str]) -> list:
-        """Profile marek — tylko do zgłoszenia niejednoznacznego wyboru profilu w raporcie."""
+        """Profile marek — domeny falowników z danych (klasyfikacja) i niejednoznaczny wybór profilu w raporcie."""
         try:
             return await self.hass.async_add_executor_job(load_profiles)
         except Exception as err:  # noqa: BLE001 — błąd kroku → errors

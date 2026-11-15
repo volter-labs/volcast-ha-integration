@@ -422,3 +422,27 @@ async def test_ambiguous_profile_reported_for_unbranded_solarman(make_hass):
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
     assert rep["inverters"][0]["profile_candidates"] == ["sofar-hyd", "solis-hybrid"]
     assert rep["errors"] == []
+
+
+async def test_integration_declared_by_a_loaded_profile_is_an_inverter(make_hass, monkeypatch):
+    # Profil (pakiet albo feed) deklaruje integrację z wzorcem producenta → wpis tej domeny jest falownikiem.
+    from custom_components.volcast.core.profile import profile_from_dict
+    from tests.core.profile_fixtures import eo_profile
+    raw = eo_profile()
+    raw["ha"]["integrations"][0].update(domain="solar_assistant", model_regex=["(?i)\\bsolar ?assistant\\b"])
+    monkeypatch.setattr(dr_mod, "load_profiles", lambda: [profile_from_dict(raw)])
+    entry = SimpleNamespace(entry_id="sa1", domain="solar_assistant", title="Solar Assistant", data={})
+    dev = _device(manufacturer="SolarAssistant", model=None, serial_number=None, identifiers=set(),
+                  config_entries={"sa1"})
+    ent = _entity(entity_id="sensor.total_pv_power", platform="solar_assistant",
+                  unique_id="local:10.0.0.10_total/pv_power", config_entry_id="sa1")
+    hass = make_hass(devices=[dev], entities=[ent], entries=[entry], states={}, components={"recorder"})
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert [i["domain"] for i in rep["inverters"]] == ["solar_assistant"]
+    assert rep["errors"] == []
+    # bez takiego profilu — jak dotąd: nic
+    monkeypatch.setattr(dr_mod, "load_profiles", lambda: [])
+    with _ok_probe():
+        rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
+    assert rep["inverters"] == []
