@@ -59,8 +59,9 @@ _V5 = "solarman_v5"
 STATE_KEY = "volcast_relocation"                  # entry_id → RelocationState (przeżywa przeładowanie)
 SEARCH_LOCKS_KEY = "volcast_search_locks"         # entry_id → asyncio.Lock (ręczne i samoczynne wyszukiwanie)
 
-# Wyniki poza `decide_relocation`: cel zmieniony w trakcie wyszukiwania; zapis byłby zmianą sterowania.
-TARGET_CHANGED, BLOCKED = "target_changed", "blocked"
+# Wyniki poza `decide_relocation`: cel zmieniony w trakcie wyszukiwania; zapis byłby zmianą sterowania;
+# zapis opcji się nie udał.
+TARGET_CHANGED, BLOCKED, ERROR = "target_changed", "blocked", "error"
 
 
 def search_lock(hass, entry_id: str) -> asyncio.Lock:
@@ -193,8 +194,7 @@ async def ha_adapters(hass) -> list:
 
 
 def search_factory(port: int | None, unit_id: int | None) -> Callable | None:
-    """Fabryka transportu z portem i unitem celu (jak ręczne wyszukiwanie) — raport ma wtedy ten sam
-    port co cel, inaczej `decide_relocation` uznałby ten sam egzemplarz za obcy."""
+    """Fabryka transportu z portem i unitem celu (jak ręczne wyszukiwanie): ramki idą na port i unit celu."""
     if port is None and unit_id is None:
         return None
 
@@ -203,6 +203,17 @@ def search_factory(port: int | None, unit_id: int | None) -> Callable | None:
                                          unit=unit_id if unit_id is not None else cfg.unit),
                                  allow_loopback=ds.ALLOW_LOOPBACK)
     return factory
+
+
+def probed_link(report, port: int | None, unit_id: int | None):
+    """Tożsamość z wykrywania niesie port i unit DOMYŚLNE profilu, choć `search_factory` wysłał ramki na port
+    i unit celu — wpisujemy te faktycznie użyte (jak ręczne wyszukiwanie w opcjach), inaczej
+    `decide_relocation` uznałby ten sam egzemplarz za obcy."""
+    ident = getattr(report, "identity", None)
+    if ident is None:
+        return report
+    return replace(report, identity=replace(ident, port=ident.port if port is None else port,
+                                            unit_id=ident.unit_id if unit_id is None else unit_id))
 
 
 class Relocator:
@@ -314,7 +325,11 @@ class Relocator:
         st.last_candidates, st.last_truncated = count, truncated
         outcome = decision.outcome
         if outcome == "relocated" and not self._stopped:
-            outcome = self._apply(decision, target)
+            try:
+                outcome = self._apply(decision, target)
+            except Exception as err:  # noqa: BLE001 — zapis opcji nigdy nie wywraca zadania; bez adresu w logu
+                _LOGGER.warning("Volcast direct relocation: options update failed (%s)", type(err).__name__)
+                outcome = ERROR
         st.last_outcome, st.last_at = outcome, self._utcnow().isoformat()
         _LOGGER.debug("Volcast direct relocation: %s", outcome)
 
@@ -349,8 +364,9 @@ class Relocator:
         return decision, target, len(candidates), False
 
     async def _default_search(self, candidates: Sequence[Candidate], *, port, unit_id) -> list:
-        return await ds.async_search(self._hass, self._entry, [self._conn.profile], candidates=candidates,
-                                     transport_factory=search_factory(port, unit_id))
+        reports = await ds.async_search(self._hass, self._entry, [self._conn.profile], candidates=candidates,
+                                        transport_factory=search_factory(port, unit_id))
+        return [probed_link(r, port, unit_id) for r in reports]
 
     def _apply(self, decision: Relocation, searched: dict | None) -> str:
         """Zapis nowego adresu (synchronicznie, bez `await` między sprawdzeniem a zapisem)."""

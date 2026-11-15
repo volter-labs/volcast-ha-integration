@@ -606,3 +606,103 @@ async def test_tcp_connect_closes_the_socket_and_sends_nothing(monkeypatch):
     monkeypatch.setattr(asyncio, "open_connection", refused)
     assert await rl.tcp_connect(NEW, 502, 0.5) is False
 
+
+@pytest.mark.asyncio
+async def test_failed_write_is_recorded_not_raised():
+    def boom(old, new):
+        raise RuntimeError("registry")
+    ctx = _make(Net(reports=[_report(NEW)]), control_change=boom)
+    assert await _run(ctx, 180.0)
+    assert ctx.hass.config_entries.updates == [] and ctx.rel.state.last_outcome == rl.ERROR
+    assert ctx.rel.state.relocations == 0
+
+
+# ── prawdziwa identyfikacja (discover) na symulatorze ───────────────────────
+
+PLACEHOLDER = {a: 0x3030 for a in range(35003, 35011)}       # serial „0000…”
+
+
+async def _real(make_hass, monkeypatch, sim_host, *, port, unit, device_fp=None, words=None):
+    """Relocator z PRAWDZIWYM `ds.async_search` + `discover` i kolizjami; atrapy tylko sieci (skan zwraca symulator)."""
+    from custom_components.volcast.control.store import async_installation_salt
+    monkeypatch.setattr(ds, "ALLOW_LOOPBACK", True)
+    entry = FakeEntry({})
+    hass = make_hass(entries=[entry])
+    hass.config_entries = FakeEntries(entry)
+    salt = await async_installation_salt(hass)
+    fp = device_fp or device_fingerprint(salt, GW_V, RegisterImage({**goodwe_words(), **(words or {})}))
+    target = {"profile_id": "goodwe-et", "transport": "modbus_tcp", "host": OLD, "port": port, "unit_id": unit,
+              "device_fp": fp, "unreadable": ["soc_max"], "capabilities": {"mode": True}}
+    entry.options = {"control_mode": "direct", "direct_target": target}
+    net = Net(swept=[Candidate(sim_host, "sweep")])
+    clock = Clock()
+    rel = rl.Relocator(hass, entry, FakeConn(clock), control_change=lambda o, n: False,
+                       onboarding_active=lambda: False, adapters=net.adapters, udp_probe=net.udp_probe,
+                       sweep_fn=net.sweep, clock=clock, utcnow=lambda: NOW)
+    return SimpleNamespace(rel=rel, hass=hass, entry=entry, clock=clock, net=net, target=target)
+
+
+async def _tcp_sim(words=None):
+    """Symulator Modbus TCP z unitem 7 (port losowy) — bank bez rejestrów nieczytelnych (szybka sonda)."""
+    from tests.sim.device import Faults, RegisterBank
+    from tests.sim.servers import modbus_tcp_server
+    return await modbus_tcp_server(RegisterBank({**goodwe_words(), **(words or {})}), Faults(), unit=7)
+
+
+@pytest.mark.asyncio
+async def test_real_discovery_with_non_default_port_and_unit_relocates(make_hass, monkeypatch):
+    server = await _tcp_sim()
+    try:
+        ctx = await _real(make_hass, monkeypatch, server.host, port=server.port, unit=7)
+        assert server.port != 502
+        assert await _run(ctx, 180.0)
+        assert ctx.rel.state.last_outcome == "relocated"
+        assert ctx.hass.config_entries.updates[0]["direct_target"] == {**ctx.target, "host": server.host}
+    finally:
+        await server.close()
+
+
+@pytest.mark.asyncio
+async def test_real_discovery_of_another_device_changes_nothing(make_hass, monkeypatch):
+    server = await _tcp_sim()
+    try:
+        ctx = await _real(make_hass, monkeypatch, server.host, port=server.port, unit=7, device_fp=FOREIGN_FP)
+        assert await _run(ctx, 180.0)
+        assert ctx.rel.state.last_outcome == "foreign_only" and ctx.hass.config_entries.updates == []
+    finally:
+        await server.close()
+
+
+@pytest.mark.asyncio
+async def test_saved_placeholder_identity_is_never_relocated(make_hass, monkeypatch):
+    # Zapisany cel z seriala-zaślepki działa pod swoim adresem, ale wykrywanie nie da mu nowej tożsamości.
+    server = await _tcp_sim(PLACEHOLDER)
+    try:
+        ctx = await _real(make_hass, monkeypatch, server.host, port=server.port, unit=7, words=PLACEHOLDER)
+        assert await _run(ctx, 180.0)
+        assert ctx.rel.state.last_outcome == "not_found" and ctx.hass.config_entries.updates == []
+    finally:
+        await server.close()
+
+
+@pytest.mark.asyncio
+async def test_saved_placeholder_identity_keeps_the_neutral_brake(make_hass, goodwe_udp_sim, goodwe_bank,
+                                                                  issues):  # noqa: F811
+    from tests.control.test_direct_safeguards import _stale
+    from tests.control.test_executor_direct import MODE, Harness, gw_raw_word, gw_target
+    from tests.control.test_owner_relocation import _io, _seed
+    for addr, word in PLACEHOLDER.items():
+        goodwe_bank.poke(addr, word)
+    fp = device_fingerprint(SALT, GW_V, RegisterImage({**goodwe_words(), **PLACEHOLDER}))
+    target = gw_target(goodwe_udp_sim, device_fp=fp)
+    goodwe_bank.poke(MODE, 11)                                # nasz tryb wymuszony (charge_battery)
+    store = await _seed(make_hass, _io(target).owner())
+    h = await Harness(make_hass, GW_V, target, store=store).start()
+    try:
+        assert h.conn.identity == "confirmed" and h.ex.owned
+        _stale(h)
+        await h.ex.async_tick()
+        assert gw_raw_word(goodwe_bank, MODE) == 1 and "neutral_brake" in h.ex.last_decision.notes
+    finally:
+        await h.close()
+

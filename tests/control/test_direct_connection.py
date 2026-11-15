@@ -439,18 +439,22 @@ async def test_hourly_recheck_mismatch_drops_readings(hass, goodwe_udp_sim, good
 
 
 @pytest.mark.asyncio
-async def test_placeholder_serial_never_confirms_identity(hass, goodwe_udp_sim, goodwe_bank, issues):
-    # Serial-zaślepka („0000…”) to tożsamość nieznana: bez potwierdzenia (bramki zapisu stoją), bez „inne urządzenie”.
+async def test_saved_target_with_placeholder_serial_still_confirms(hass, goodwe_udp_sim, goodwe_bank, issues):
+    # Instalacja sprzed reguły zaślepek: zapisany odcisk z seriala „0000…” nadal potwierdza ten sam falownik
+    # (reguła dotyczy tylko NOWEJ tożsamości z wykrywania — inaczej sterowanie, także hamulec, stanęłoby po cichu).
+    words = {**goodwe_words(), **{a: 0x3030 for a in range(35003, 35011)}}
+    for a in range(35003, 35011):
+        goodwe_bank.poke(a, 0x3030)
+    fp = device_fingerprint(SALT, GOODWE, RegisterImage(words))
+    assert fp is not None
     clock = FakeClock()
-    conn = _conn(hass(), _target(goodwe_udp_sim), clock=clock)
+    conn = _conn(hass(), _target(goodwe_udp_sim, device_fp=fp), clock=clock)
     try:
         await conn.async_start()
         assert conn.identity == "confirmed"
-        for a in range(35003, 35011):
-            goodwe_bank.poke(a, 0x3030)
         clock.advance(3601.0)
-        await conn.async_poll()
-        assert conn.identity != "confirmed"
+        assert await conn.async_poll() is not None
+        assert conn.identity == "confirmed"
         assert not any(k == "direct_identity_changed" for _, k in issues.created)
     finally:
         await conn.async_stop()

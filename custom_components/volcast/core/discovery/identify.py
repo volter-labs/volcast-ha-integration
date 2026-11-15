@@ -197,7 +197,8 @@ async def identify_detailed(candidate: Candidate, profiles: Sequence[Any], *, tr
                             info = identity_info(prof, image)
                             if not info["matched"]:
                                 continue
-                            fp = device_fingerprint(salt, prof, image)
+                            # nowa tożsamość: serial-zaślepka nie wyróżnia egzemplarza (`identity_unknown`)
+                            fp = device_fingerprint(salt, prof, image, reject_placeholder=True)
                             if fp is None:
                                 _note(errors, "identity_unknown")
                                 continue

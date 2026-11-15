@@ -26,24 +26,37 @@ def _with_serial(text: str) -> dict[int, int]:
     return words
 
 
-def _fp(text: str) -> str | None:
-    return device_fingerprint(SALT, GW, RegisterImage(_with_serial(text)))
+PLACEHOLDERS = ["0000000000000000", "000000", "AAAAAAAAAAAAAAAA", "aAaAaAaA", "999999999", "----------------",
+                "0000-0000-0000", "------"]
+REAL = ["95010ETU221W0123", "000001", "A0A0A0", "AB-CDEF"]
 
 
-@pytest.mark.parametrize("serial", ["0000000000000000", "000000", "AAAAAAAAAAAAAAAA", "aAaAaAaA", "999999999",
-                                    "----------------", "0000-0000-0000", "------"])
-def test_placeholder_serial_is_unreadable(serial):
+def _fp(text: str, *, new: bool = True) -> str | None:
+    """`new` = nowa tożsamość z wykrywania (reguła zaślepek); False = potwierdzenie zapisanego celu."""
+    return device_fingerprint(SALT, GW, RegisterImage(_with_serial(text)), reject_placeholder=new)
+
+
+@pytest.mark.parametrize("serial", PLACEHOLDERS)
+def test_placeholder_serial_never_yields_a_new_identity(serial):
     assert _fp(serial) is None
 
 
-@pytest.mark.parametrize("serial", ["95010ETU221W0123", "000001", "A0A0A0", "AB-CDEF"])
-def test_real_serials_still_fingerprint(serial):
-    fp = _fp(serial)
+@pytest.mark.parametrize("serial", PLACEHOLDERS)
+def test_saved_placeholder_identity_still_confirms(serial):
+    # Instalacja sprzed reguły: odcisk zapisanego celu liczony jak dawniej (potwierdzenie tego samego falownika).
+    fp = _fp(serial, new=False)
     assert isinstance(fp, str) and len(fp) == 16
+    assert device_fingerprint(SALT, GW, RegisterImage(_with_serial(serial))) == fp
 
 
-def test_two_placeholder_devices_never_share_a_fingerprint():
-    assert _fp("0000000000000000") is None and _fp("0000000000000000") == _fp("1111111111111111")
+@pytest.mark.parametrize("serial", REAL)
+def test_real_serials_fingerprint_the_same_in_both_modes(serial):
+    fp = _fp(serial)
+    assert isinstance(fp, str) and len(fp) == 16 and fp == _fp(serial, new=False)
+
+
+def test_two_placeholder_devices_never_share_a_new_fingerprint():
+    assert _fp("0000000000000000") is None and _fp("1111111111111111") is None
     assert _fp("95010ETU221W0123") != _fp("95010ETU221W0124")
 
 

@@ -8,8 +8,13 @@ Odcisk powstaje tylko dla urządzenia, które NAPRAWDĘ pasuje do profilu (model
 albo typ z `device_type.expect`) i ma czym się wyróżnić. Obraz zdegenerowany — same 0x0000,
 same 0xFFFF, puste albo niedrukowalne pola (falownik w trakcie startu, inne urządzenie
 odpowiadające zerami) — to tożsamość nieznana (None), nigdy stały odcisk, który potem
-„potwierdziłby” dowolne urządzenie odpowiadające tak samo. Tak samo serial-zaślepka (jeden powtórzony
-znak): odcisk z seriala wiąże własność i przepięcie adresu z egzemplarzem, więc musi być unikalny.
+„potwierdziłby” dowolne urządzenie odpowiadające tak samo.
+
+Serial-zaślepka (jeden powtórzony znak, np. po wymianie płyty) nie daje NOWEJ tożsamości
+(`reject_placeholder=True` — wykrywanie: onboarding, ręczne wyszukiwanie, odnajdywanie pod nowym adresem):
+odcisk z seriala wiąże własność i przepięcie adresu z egzemplarzem, więc musi być unikalny. Potwierdzenie
+już zapisanego celu liczy odcisk jak dawniej — istniejąca instalacja dalej steruje (także hamulcem) pod
+swoim adresem, a nowego adresu dla niej wykrywanie nigdy nie znajdzie.
 """
 from __future__ import annotations
 
@@ -61,7 +66,7 @@ def _fields(profile, image: RegisterImage) -> dict[str, Any]:
     degenerate = not words or all(w == 0 for w in words) or all(w == 0xFFFF for w in words)
     serial = _decoded(regs.get("serial"), image)
     serial = serial.strip() if isinstance(serial, str) else None
-    if not serial or not _SERIAL_RE.fullmatch(serial) or _placeholder(serial):
+    if not serial or not _SERIAL_RE.fullmatch(serial):
         serial = None
     matched = False
     model = None
@@ -92,13 +97,18 @@ def identity_info(profile, image: RegisterImage) -> dict[str, Any]:
     return {"matched": f["matched"], "model": f["model"], "rated_power_w": f["rated_power_w"]}
 
 
-def device_fingerprint(salt: bytes, profile, image: RegisterImage) -> str | None:
-    """Odcisk urządzenia; None = urządzenie nie pasuje do profilu albo nie ma czym się wyróżnić."""
+def device_fingerprint(salt: bytes, profile, image: RegisterImage, *, reject_placeholder: bool = False) -> str | None:
+    """Odcisk urządzenia; None = urządzenie nie pasuje do profilu albo nie ma czym się wyróżnić.
+
+    `reject_placeholder=True` (nowa tożsamość z wykrywania): serial-zaślepka = serial nieczytelny (None).
+    Domyślnie (potwierdzenie zapisanego celu) odcisk liczony jak dawniej."""
     if not isinstance(salt, (bytes, bytearray)) or len(salt) < MIN_SALT_BYTES:
         raise ValueError("fingerprint needs the installation salt")
     f = _fields(profile, image)
     if not f["matched"]:
         return None
+    if f["serial"] and reject_placeholder and _placeholder(f["serial"]):
+        return None                     # profil ma serial, a ten nie wyróżnia egzemplarza: tożsamość nieznana
     if f["serial"]:
         msg = f"{profile.id}|{f['serial']}"
     elif "serial" in profile.raw.get("identify", {}).get("registers", {}):

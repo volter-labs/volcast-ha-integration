@@ -1182,7 +1182,7 @@ async def test_register_probe_never_returns_a_feed_profile_when_a_packaged_one_m
     monkeypatch.setattr(identify_mod, "_read_identify", fake_read)
     monkeypatch.setattr(identify_mod, "identity_info", lambda prof, image: {
         "matched": True, "model": "M", "rated_power_w": None})
-    monkeypatch.setattr(identify_mod, "device_fingerprint", lambda salt, prof, image: "f" * 16)
+    monkeypatch.setattr(identify_mod, "device_fingerprint", lambda salt, prof, image, **kw: "f" * 16)
     monkeypatch.setattr(identify_mod, "RegisterClient", lambda *a, **k: object())
     feed_raw = _copy_as("goodwe-et", "aaa-broad")
     # Feed obsługuje łącze, które sonda próbuje PIERWSZE, a profil pakietu nie.
