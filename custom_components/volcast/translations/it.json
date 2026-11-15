@@ -427,6 +427,14 @@
       "title": "Volcast non riesce a leggere il tuo inverter",
       "description": "Volcast non riceve letture di carica della batteria, potenza FV o potenza di rete, quindi non può pianificare né controllare. Verifica che l’integrazione dell’inverter sia caricata e le sue entità disponibili, oppure scegli le letture manualmente nelle opzioni di Volcast, poi controlla i log di Home Assistant."
     },
+    "direct_unreachable": {
+      "title": "Volcast non riesce a connettersi all'inverter",
+      "description": "Volcast non riceve risposta dall'inverter sulla rete locale, quindi non può pianificare né controllare. Lo cerca automaticamente, anche con un nuovo indirizzo. Se la situazione persiste: verifica che l'inverter e il suo modulo di rete siano accesi e che il server Home Assistant sia sulla stessa rete dell'inverter. Puoi anche avviare la ricerca manualmente: opzioni di Volcast → Dettagli dell'impianto → Cerca l'inverter sulla rete locale."
+    },
+    "forced_mode_stuck": {
+      "title": "L'inverter potrebbe essere rimasto in una modalità impostata da Volcast",
+      "description": "Volcast ha perso la connessione con l'inverter mentre questo funzionava in una modalità forzata (ad esempio carica della batteria dalla rete o vendita di energia). L'inverter potrebbe rimanere in quella modalità finché la connessione non viene ripristinata. Se la connessione non torna, imposta la modalità di funzionamento dell'inverter su quella normale (predefinita) nell'app del produttore dell'inverter o sul suo display."
+    },
     "prices_sell_no_data": {
       "title": "La fonte del prezzo di vendita non fornisce prezzi",
       "description": "Volcast non sta inviando i prezzi dell'energia al cloud di Volcast perché la fonte del prezzo di vendita {source} non fornisce prezzi: l'entità manca o non è disponibile, oppure l'azione dei prezzi non restituisce un risultato aggiornato. I prezzi di acquisto e di vendita vengono inviati insieme, quindi senza prezzi di vendita il piano non può usare prezzi aggiornati. Controlla che questa fonte funzioni, oppure cambia o rimuovi la fonte del prezzo di vendita nelle opzioni di Volcast."

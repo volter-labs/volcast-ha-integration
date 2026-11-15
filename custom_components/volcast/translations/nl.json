@@ -427,6 +427,14 @@
       "title": "Volcast kan uw omvormer niet uitlezen",
       "description": "Volcast ontvangt geen metingen van batterijlading, PV-vermogen of netvermogen en kan daardoor niet plannen of regelen. Controleer of de omvormerintegratie is geladen en de entiteiten beschikbaar zijn, of kies de metingen handmatig in de Volcast-opties en controleer daarna de Home Assistant-logs."
     },
+    "direct_unreachable": {
+      "title": "Volcast kan geen verbinding maken met de omvormer",
+      "description": "Volcast krijgt geen reactie van de omvormer op het lokale netwerk en kan daardoor niet plannen of regelen. Hij zoekt de omvormer automatisch, ook op een nieuw adres. Als dit aanhoudt: controleer of de omvormer en zijn netwerkmodule zijn ingeschakeld en of de Home Assistant-server op hetzelfde netwerk zit als de omvormer. Je kunt het zoeken ook handmatig starten: Volcast-opties → Installatiegegevens → Omvormer zoeken op het lokale netwerk."
+    },
+    "forced_mode_stuck": {
+      "title": "De omvormer is mogelijk in een door Volcast ingestelde modus blijven steken",
+      "description": "Volcast verloor de verbinding met de omvormer terwijl deze in een geforceerde modus werkte (bijvoorbeeld de batterij laden vanuit het net of energie verkopen). De omvormer kan in die modus blijven totdat de verbinding is hersteld. Komt de verbinding niet terug, zet dan de bedrijfsmodus van de omvormer terug op de normale (standaard) modus in de app van de omvormerfabrikant of op het display ervan."
+    },
     "prices_sell_no_data": {
       "title": "De bron voor de verkoopprijs levert geen prijzen",
       "description": "Volcast stuurt geen energieprijzen naar de Volcast-cloud, omdat de bron voor de verkoopprijs {source} geen prijzen levert: de entiteit ontbreekt of is niet beschikbaar, of de prijsactie geeft geen actueel resultaat. Inkoop- en verkoopprijzen worden samen verstuurd, dus zonder verkoopprijzen kan het plan geen actuele prijzen gebruiken. Controleer of deze bron werkt, of wijzig of wis de bron voor de verkoopprijs in de Volcast-opties."

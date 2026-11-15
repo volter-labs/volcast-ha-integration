@@ -427,6 +427,14 @@
       "title": "Volcast ne peut pas lire votre onduleur",
       "description": "Volcast ne reçoit aucune mesure de charge de batterie, de puissance PV ou de puissance réseau, il ne peut donc ni planifier ni piloter. Vérifiez que l’intégration de l’onduleur est chargée et que ses entités sont disponibles, ou choisissez les mesures manuellement dans les options de Volcast, puis consultez les journaux de Home Assistant."
     },
+    "direct_unreachable": {
+      "title": "Volcast ne peut pas se connecter à l'onduleur",
+      "description": "Volcast ne reçoit aucune réponse de l'onduleur sur le réseau local, il ne peut donc ni planifier ni piloter. Il recherche l'onduleur automatiquement, y compris à une nouvelle adresse. Si cela dure : vérifiez que l'onduleur et son module réseau sont allumés et que le serveur Home Assistant se trouve sur le même réseau que l'onduleur. Vous pouvez aussi lancer la recherche manuellement : options de Volcast → Détails de l'installation → Rechercher l'onduleur sur le réseau local."
+    },
+    "forced_mode_stuck": {
+      "title": "L'onduleur a peut-être gardé un mode défini par Volcast",
+      "description": "Volcast a perdu la connexion avec l'onduleur alors que celui-ci fonctionnait dans un mode forcé (par exemple charge de la batterie depuis le réseau ou vente d'énergie). L'onduleur peut rester dans ce mode jusqu'au rétablissement de la connexion. Si la connexion ne revient pas, remettez le mode de fonctionnement de l'onduleur sur le mode normal (par défaut) dans l'application du fabricant de l'onduleur ou sur son afficheur."
+    },
     "prices_sell_no_data": {
       "title": "La source du prix de vente ne fournit aucun prix",
       "description": "Volcast n'envoie pas de prix de l'énergie au cloud Volcast, car la source du prix de vente {source} ne fournit aucun prix : l'entité est absente ou indisponible, ou l'action de prix ne renvoie pas de résultat à jour. Les prix d'achat et de vente sont envoyés ensemble ; sans prix de vente, le plan ne peut donc pas utiliser de prix à jour. Vérifiez que cette source fonctionne, ou modifiez ou retirez la source du prix de vente dans les options de Volcast."

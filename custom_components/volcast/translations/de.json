@@ -427,6 +427,14 @@
       "title": "Volcast kann den Wechselrichter nicht auslesen",
       "description": "Volcast erhält keine Messwerte für Batterieladestand, PV-Leistung oder Netzleistung und kann daher nicht planen oder steuern. Prüfe, ob die Wechselrichter-Integration geladen ist und ihre Entitäten verfügbar sind, oder wähle die Messwerte manuell in den Volcast-Optionen. Prüfe danach die Home-Assistant-Protokolle."
     },
+    "direct_unreachable": {
+      "title": "Volcast kann den Wechselrichter nicht erreichen",
+      "description": "Volcast erhält im lokalen Netzwerk keine Antwort vom Wechselrichter und kann daher nicht planen oder steuern. Er sucht den Wechselrichter automatisch, auch unter einer neuen Adresse. Wenn das länger andauert: Prüfe, ob der Wechselrichter und sein Netzwerkmodul eingeschaltet sind und ob der Home-Assistant-Server im selben Netzwerk wie der Wechselrichter ist. Du kannst die Suche auch manuell starten: Volcast-Optionen → Anlagendetails → Wechselrichter im lokalen Netzwerk suchen."
+    },
+    "forced_mode_stuck": {
+      "title": "Der Wechselrichter ist möglicherweise im von Volcast gesetzten Modus geblieben",
+      "description": "Volcast hat die Verbindung zum Wechselrichter verloren, während dieser in einem erzwungenen Modus arbeitete (z. B. Laden der Batterie aus dem Netz oder Verkauf von Energie). Der Wechselrichter kann in diesem Modus bleiben, bis die Verbindung wiederhergestellt ist. Kommt die Verbindung nicht zurück, stelle den Betriebsmodus des Wechselrichters in der App des Wechselrichterherstellers oder auf dessen Display auf den normalen (Standard-)Modus um."
+    },
     "prices_sell_no_data": {
       "title": "Die Verkaufspreisquelle liefert keine Preise",
       "description": "Volcast sendet keine Energiepreise an die Volcast-Cloud, weil die Verkaufspreisquelle {source} keine Preise liefert: Die Entität fehlt oder ist nicht verfügbar, oder die Preisaktion liefert kein aktuelles Ergebnis. Einkaufs- und Verkaufspreise werden zusammen gesendet, daher kann der Plan ohne Verkaufspreise keine aktuellen Preise verwenden. Prüfe, ob diese Quelle funktioniert, oder ändere oder entferne die Verkaufspreisquelle in den Volcast-Optionen."

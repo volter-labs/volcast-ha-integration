@@ -427,6 +427,14 @@
       "title": "Volcast nu poate citi invertorul",
       "description": "Volcast nu primește citiri ale încărcării bateriei, ale puterii FV sau ale puterii din rețea, așa că nu poate planifica sau controla. Verificați dacă integrarea invertorului este încărcată și entitățile sunt disponibile sau alegeți citirile manual în opțiunile Volcast, apoi verificați jurnalele Home Assistant."
     },
+    "direct_unreachable": {
+      "title": "Volcast nu se poate conecta la invertor",
+      "description": "Volcast nu primește niciun răspuns de la invertor în rețeaua locală, așa că nu poate planifica sau controla. Caută invertorul automat, inclusiv la o adresă nouă. Dacă situația persistă: verificați dacă invertorul și modulul său de rețea sunt pornite și dacă serverul Home Assistant se află în aceeași rețea cu invertorul. Puteți porni și manual căutarea: opțiunile Volcast → Detalii instalație → Caută invertorul în rețeaua locală."
+    },
+    "forced_mode_stuck": {
+      "title": "Invertorul ar fi putut rămâne într-un mod setat de Volcast",
+      "description": "Volcast a pierdut conexiunea cu invertorul în timp ce acesta funcționa într-un mod forțat (de exemplu încărcarea bateriei din rețea sau vânzarea energiei). Invertorul poate rămâne în acel mod până la restabilirea conexiunii. Dacă conexiunea nu revine, treceți modul de funcționare al invertorului pe cel normal (implicit) în aplicația producătorului invertorului sau pe afișajul acestuia."
+    },
     "prices_sell_no_data": {
       "title": "Sursa prețului de vânzare nu oferă prețuri",
       "description": "Volcast nu trimite prețurile energiei în cloudul Volcast, deoarece sursa prețului de vânzare {source} nu oferă prețuri: entitatea lipsește sau nu este disponibilă, ori acțiunea de prețuri nu returnează un rezultat actual. Prețurile de cumpărare și de vânzare sunt trimise împreună, așa că fără prețuri de vânzare planul nu poate folosi prețuri actuale. Verificați dacă această sursă funcționează sau schimbați ori ștergeți sursa prețului de vânzare în opțiunile Volcast."

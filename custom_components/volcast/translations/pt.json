@@ -427,6 +427,14 @@
       "title": "A Volcast não consegue ler o seu inversor",
       "description": "A Volcast não recebe leituras de carga da bateria, potência FV ou potência da rede, por isso não consegue planear nem controlar. Verifique se a integração do inversor está carregada e se as entidades estão disponíveis, ou escolha as leituras manualmente nas opções da Volcast e depois consulte os registos do Home Assistant."
     },
+    "direct_unreachable": {
+      "title": "A Volcast não consegue ligar-se ao inversor",
+      "description": "A Volcast não recebe resposta do inversor na rede local, por isso não consegue planear nem controlar. Procura o inversor automaticamente, inclusive num novo endereço. Se isto persistir: verifique se o inversor e o respetivo módulo de rede estão ligados e se o servidor Home Assistant está na mesma rede que o inversor. Também pode iniciar a pesquisa manualmente: opções da Volcast → Detalhes da instalação → Procurar o inversor na rede local."
+    },
+    "forced_mode_stuck": {
+      "title": "O inversor pode ter ficado no modo definido pela Volcast",
+      "description": "A Volcast perdeu a ligação ao inversor enquanto este funcionava num modo forçado (por exemplo, carregar a bateria da rede ou vender energia). O inversor pode manter-se nesse modo até a ligação ser restabelecida. Se a ligação não voltar, mude o modo de funcionamento do inversor para o normal (predefinido) na aplicação do fabricante do inversor ou no respetivo ecrã."
+    },
     "prices_sell_no_data": {
       "title": "A fonte do preço de venda não fornece preços",
       "description": "A Volcast não está a enviar preços de energia para a cloud da Volcast porque a fonte do preço de venda {source} não fornece preços: a entidade não existe ou está indisponível, ou a ação de preços não devolve um resultado atual. Os preços de compra e de venda são enviados em conjunto, por isso, sem preços de venda, o plano não pode usar preços atuais. Verifique se esta fonte funciona, ou altere ou limpe a fonte do preço de venda nas opções da Volcast."

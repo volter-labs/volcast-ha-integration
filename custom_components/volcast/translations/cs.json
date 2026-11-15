@@ -427,6 +427,14 @@
       "title": "Volcast nemůže načíst data ze střídače",
       "description": "Volcast nedostává údaje o stavu nabití baterie, výkonu FV ani výkonu ze sítě, takže nemůže plánovat ani řídit. Zkontrolujte, zda je integrace střídače načtena a její entity jsou dostupné, nebo vyberte údaje ručně v možnostech Volcast a pak zkontrolujte protokoly Home Assistant."
     },
+    "direct_unreachable": {
+      "title": "Volcast se nemůže připojit ke střídači",
+      "description": "Volcast nedostává odpověď od střídače v místní síti, takže nemůže plánovat ani řídit. Hledá ho automaticky, i na nové adrese. Pokud to trvá dlouho: zkontrolujte, zda je střídač i jeho síťový modul zapnutý a zda je server Home Assistant ve stejné síti jako střídač. Vyhledávání můžete spustit i ručně: možnosti Volcast → Podrobnosti o instalaci → Vyhledat střídač v místní síti."
+    },
+    "forced_mode_stuck": {
+      "title": "Střídač mohl zůstat v režimu nastaveném Volcastem",
+      "description": "Volcast ztratil spojení se střídačem, když pracoval ve vynuceném režimu (např. nabíjení baterie ze sítě nebo prodej energie). Střídač může v tomto režimu zůstat, dokud se spojení neobnoví. Pokud se spojení nevrátí, přepněte provozní režim střídače na běžný (výchozí) v aplikaci výrobce střídače nebo na jeho displeji."
+    },
     "prices_sell_no_data": {
       "title": "Zdroj prodejní ceny neposkytuje ceny",
       "description": "Volcast neodesílá ceny energie do cloudu Volcast, protože zdroj prodejní ceny {source} neposkytuje ceny: entita chybí nebo není dostupná, nebo cenová akce nevrací aktuální výsledek. Nákupní a prodejní ceny se odesílají společně, takže bez prodejních cen nemůže plán používat aktuální ceny. Zkontrolujte, zda tento zdroj funguje, nebo zdroj prodejní ceny změňte či odeberte v možnostech Volcast."

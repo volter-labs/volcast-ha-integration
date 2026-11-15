@@ -427,6 +427,14 @@
       "title": "Volcast nie może odczytać falownika",
       "description": "Volcast nie otrzymuje odczytów stanu naładowania baterii, mocy PV ani mocy sieci, więc nie może planować ani sterować. Sprawdź, czy integracja falownika jest załadowana i jej encje są dostępne, albo wybierz odczyty ręcznie w opcjach Volcast, a potem sprawdź logi Home Assistant."
     },
+    "direct_unreachable": {
+      "title": "Volcast nie może połączyć się z falownikiem",
+      "description": "Volcast nie dostaje odpowiedzi od falownika w sieci lokalnej, więc nie może planować ani sterować. Szuka go automatycznie, także pod nowym adresem. Jeśli to trwa: sprawdź, czy falownik i jego moduł sieciowy są włączone oraz czy serwer Home Assistant jest w tej samej sieci co falownik. Wyszukiwanie możesz też uruchomić ręcznie: opcje Volcast → Szczegóły instalacji → Wyszukaj falownik w sieci lokalnej."
+    },
+    "forced_mode_stuck": {
+      "title": "Falownik mógł zostać w trybie ustawionym przez Volcast",
+      "description": "Volcast stracił połączenie z falownikiem, gdy ten pracował w trybie wymuszonym (np. ładowanie baterii z sieci albo sprzedaż energii). Falownik może w nim pozostać do czasu odzyskania połączenia. Jeśli połączenie nie wraca, przestaw tryb pracy falownika na zwykły (domyślny) w aplikacji producenta falownika lub na jego wyświetlaczu."
+    },
     "prices_sell_no_data": {
       "title": "Źródło ceny sprzedaży nie podaje cen",
       "description": "Volcast nie wysyła cen energii do chmury Volcast, ponieważ źródło ceny sprzedaży {source} nie podaje cen: encji nie ma albo jest niedostępna, albo akcja cenowa nie zwraca aktualnego wyniku. Ceny zakupu i sprzedaży są wysyłane razem, więc bez cen sprzedaży plan nie może korzystać z aktualnych cen. Sprawdź, czy to źródło działa, albo zmień lub wyczyść źródło ceny sprzedaży w opcjach Volcast."

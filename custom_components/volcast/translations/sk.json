@@ -427,6 +427,14 @@
       "title": "Volcast nemôže načítať údaje zo meniča",
       "description": "Volcast nedostáva údaje o stave nabitia batérie, výkone FV ani výkone zo siete, takže nemôže plánovať ani riadiť. Skontrolujte, či je integrácia meniča načítaná a jej entity sú dostupné, alebo vyberte údaje ručne v možnostiach Volcast a potom skontrolujte protokoly Home Assistant."
     },
+    "direct_unreachable": {
+      "title": "Volcast sa nedokáže pripojiť k meniču",
+      "description": "Volcast nedostáva odpoveď od meniča v miestnej sieti, takže nemôže plánovať ani riadiť. Hľadá ho automaticky, aj na novej adrese. Ak to trvá: skontrolujte, či je menič aj jeho sieťový modul zapnutý a či je server Home Assistant v rovnakej sieti ako menič. Vyhľadávanie môžete spustiť aj ručne: možnosti Volcast → Podrobnosti o inštalácii → Vyhľadať striedač v miestnej sieti."
+    },
+    "forced_mode_stuck": {
+      "title": "Menič mohol zostať v režime nastavenom Volcastom",
+      "description": "Volcast stratil spojenie s meničom, keď ten pracoval vo vynútenom režime (napr. nabíjanie batérie zo siete alebo predaj energie). Menič môže v tomto režime zostať, kým sa spojenie neobnoví. Ak sa spojenie nevráti, prepnite prevádzkový režim meniča na bežný (predvolený) v aplikácii výrobcu meniča alebo na jeho displeji."
+    },
     "prices_sell_no_data": {
       "title": "Zdroj predajnej ceny neposkytuje ceny",
       "description": "Volcast neodosiela ceny energie do cloudu Volcast, pretože zdroj predajnej ceny {source} neposkytuje ceny: entita chýba alebo nie je dostupná, alebo cenová akcia nevracia aktuálny výsledok. Nákupné a predajné ceny sa odosielajú spolu, takže bez predajných cien nemôže plán používať aktuálne ceny. Skontrolujte, či tento zdroj funguje, alebo zdroj predajnej ceny zmeňte či odstráňte v možnostiach Volcast."

@@ -427,6 +427,14 @@
       "title": "Volcast no puede leer tu inversor",
       "description": "Volcast no recibe lecturas de carga de batería, potencia FV ni potencia de red, así que no puede planificar ni controlar. Comprueba que la integración del inversor esté cargada y sus entidades disponibles, o elige las lecturas manualmente en las opciones de Volcast, y luego revisa los registros de Home Assistant."
     },
+    "direct_unreachable": {
+      "title": "Volcast no puede conectarse al inversor",
+      "description": "Volcast no recibe respuesta del inversor en la red local, así que no puede planificar ni controlar. Lo busca automáticamente, también en una dirección nueva. Si esto sigue así: comprueba que el inversor y su módulo de red estén encendidos y que el servidor de Home Assistant esté en la misma red que el inversor. También puedes iniciar la búsqueda manualmente: opciones de Volcast → Detalles de la instalación → Buscar el inversor en la red local."
+    },
+    "forced_mode_stuck": {
+      "title": "El inversor puede haberse quedado en un modo establecido por Volcast",
+      "description": "Volcast perdió la conexión con el inversor mientras este funcionaba en un modo forzado (por ejemplo, cargar la batería desde la red o vender energía). El inversor puede permanecer en ese modo hasta que se restablezca la conexión. Si la conexión no vuelve, cambia el modo de funcionamiento del inversor al normal (predeterminado) en la aplicación del fabricante del inversor o en su pantalla."
+    },
     "prices_sell_no_data": {
       "title": "La fuente del precio de venta no ofrece precios",
       "description": "Volcast no está enviando precios de la energía a la nube de Volcast porque la fuente del precio de venta {source} no ofrece precios: la entidad falta o no está disponible, o la acción de precios no devuelve un resultado actual. Los precios de compra y de venta se envían juntos, así que sin precios de venta el plan no puede usar precios actuales. Comprueba que esta fuente funciona, o cambia o quita la fuente del precio de venta en las opciones de Volcast."

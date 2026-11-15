@@ -443,6 +443,14 @@
       "title": "Volcast cannot read your inverter",
       "description": "Volcast receives no battery charge, PV power or grid power readings, so it cannot plan or control. Check that the inverter integration is loaded and its entities are available, or choose the readings manually in the Volcast options, then check the Home Assistant logs."
     },
+    "direct_unreachable": {
+      "title": "Volcast cannot connect to the inverter",
+      "description": "Volcast gets no response from the inverter on the local network, so it cannot plan or control. It searches for the inverter automatically, including at a new address. If this lasts: check that the inverter and its network module are switched on and that the Home Assistant server is on the same network as the inverter. You can also start the search manually: Volcast options → Installation details → Search for the inverter on the local network."
+    },
+    "forced_mode_stuck": {
+      "title": "The inverter may be stuck in a mode set by Volcast",
+      "description": "Volcast lost the connection to the inverter while it was running in a forced mode (for example charging the battery from the grid or selling energy). The inverter may stay in that mode until the connection is restored. If the connection does not come back, switch the inverter's operating mode to the normal (default) one in the inverter manufacturer's app or on its display."
+    },
     "prices_sell_no_data": {
       "title": "The sale price source gives no prices",
       "description": "Volcast is not sending energy prices to the Volcast cloud because the sale price source {source} gives no prices: the entity is missing or unavailable, or the price action returns no current result. Purchase and sale prices are sent together, so without sale prices the plan cannot use current prices. Check that this source works, or change or clear the sale price source in the Volcast options."
