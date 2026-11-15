@@ -380,10 +380,11 @@ def test_charger_with_control_keeps_regulated_class():
     assert f.control_class == "regulated"
 
 
-def _inverter_device_entities():
-    """Urządzenie falownika w stylu integracji z dziesiątkami encji sterujących (numbers/selects/switches)."""
+def _inverter_device_entities(soc=True):
+    """Urządzenie falownika w stylu integracji z dziesiątkami encji sterujących (numbers/selects/switches);
+    hybrydowy falownik ma też sensor SoC baterii."""
     d = "inv1"
-    return [
+    ents = [
         _ent("sensor.inverters_1_device_mode", "enum", name="Device mode", device=d,
              caps={"options": ["Battery charging", "Grid connected", "Standby", "Fault"]}),
         _ent("number.inverters_1_max_charge_current", None, "A", name="Max charge current", device=d,
@@ -399,6 +400,18 @@ def _inverter_device_entities():
         _ent("sensor.inverters_1_pv_power", "power", "W", name="PV power", device=d),
         _ent("sensor.inverters_1_battery_energy", "energy", "kWh", name="Battery energy", device=d),
     ]
+    if soc:
+        ents.append(_ent("sensor.inverters_1_battery_soc", "battery", "%", name="Battery SoC", device=d))
+    return ents
+
+
+def _rehome(ents, entry):
+    return [EntitySnap(**{**e.__dict__, "config_entry_id": entry}) for e in ents]
+
+
+def _device(id, entry, manufacturer="X", name=None):
+    return DeviceSnap(id=id, manufacturer=manufacturer, model=None, name=name or id, sw_version=None,
+                      hw_version=None, serial_number=None, identifiers=(), config_entry_ids=(entry,))
 
 
 def test_todays_classifier_flags_an_inverter_device_with_charging_mode_sensor():
@@ -409,20 +422,67 @@ def test_todays_classifier_flags_an_inverter_device_with_charging_mode_sensor():
     assert f.roles["setpoint"].entity_id.startswith("number.inverters_1_")
 
 
-def test_device_of_an_inverter_finding_is_never_a_charger():
-    ents = _inverter_device_entities()
-    assert classify_chargers([_dev("inv1")], ents, {}, exclude_device_ids=frozenset({"inv1"})) == []
-    # inne urządzenie tego samego wpisu nadal może być ładowarką
-    both = ents + _wb(device="d1")
+def test_classify_chargers_skips_excluded_devices_only():
+    both = _inverter_device_entities() + _wb(device="d1")
     found = classify_chargers([_dev("inv1"), _dev("d1")], both, {}, exclude_device_ids=frozenset({"inv1"}))
     assert [f.device_id for f in found] == ["d1"]
 
 
-def test_classify_excludes_devices_of_inverter_findings():
-    inv_dev = DeviceSnap(id="inv1", manufacturer="X", model=None, name="Inverters 1", sw_version=None,
-                         hw_version=None, serial_number=None, identifiers=(), config_entry_ids=("einv",))
-    entry = ConfigEntrySnap(entry_id="einv", domain="goodwe", title="Inverter", host=None)
-    ents = [EntitySnap(**{**e.__dict__, "config_entry_id": "einv"}) for e in _inverter_device_entities()]
-    c = classify([inv_dev], ents, [entry], {})
+_INV_ENTRY = ConfigEntrySnap(entry_id="einv", domain="goodwe", title="Inverter", host=None)
+
+
+def test_classify_excludes_inverter_device_with_battery_soc():
+    ents = _rehome(_inverter_device_entities(), "einv")
+    c = classify([_device("inv1", "einv")], ents, [_INV_ENTRY], {})
     assert [i.config_entry_id for i in c.inverters] == ["einv"]
+    assert c.chargers == []
+
+
+def test_classify_inverter_device_without_soc_stays_a_candidate():
+    # stan sprzed wykluczenia (zachowanie dotychczasowe): bez sensora SoC nie ma dowodu, że to falownik;
+    # kandydat trafia tylko do formularza opcji i wymaga jawnego potwierdzenia użytkownika
+    ents = _rehome(_inverter_device_entities(soc=False), "einv")
+    c = classify([_device("inv1", "einv")], ents, [_INV_ENTRY], {})
+    assert [f.device_id for f in c.chargers] == ["inv1"]
+
+
+def test_classify_soc_from_state_attributes_counts():
+    ents = [e for e in _rehome(_inverter_device_entities(soc=False), "einv")]
+    ents.append(EntitySnap(entity_id="sensor.inverters_1_soc", platform="p", unique_id="soc", device_id="inv1",
+                           config_entry_id="einv", device_class=None, unit=None, translation_key=None,
+                           original_name=None, disabled=False))
+    states = {"sensor.inverters_1_soc": StateSnap("sensor.inverters_1_soc", "55",
+                                                  {"device_class": "battery", "unit_of_measurement": "%"})}
+    assert classify([_device("inv1", "einv")], ents, [_INV_ENTRY], states).chargers == []
+
+
+def test_classify_separate_wallbox_under_inverter_entry_is_found():
+    devs = [_device("inv1", "einv"), _device("d1", "einv", name="Wallbox"), _device("d2", "einv", name="Reader")]
+    sensor_only = _rehome(_wb(device="d2"), "einv")
+    regulated = _rehome([_ent("sensor.rb_status", "enum", device="d1",
+                              caps={"options": ["available", "plugged_in", "charging"]}),
+                         _ent("number.rb_cur", "current", "A", device="d1",
+                              caps={"min": 6, "max": 16, "step": 1})], "einv")
+    ents = _rehome(_inverter_device_entities(), "einv") + regulated + sensor_only
+    c = classify(devs, ents, [_INV_ENTRY], {})
+    assert {f.device_id: f.control_class for f in c.chargers} == {"d1": "regulated", "d2": "monitor"}
+
+
+def test_classify_wallbox_of_inverter_brand_by_manufacturer_is_found():
+    # marka falownika w producencie, integracja spoza znanych domen: sama marka nie wyklucza urządzenia
+    entry = ConfigEntrySnap(entry_id="ew", domain="some_wallbox", title="Wallbox", host=None)
+    c = classify([_device("d1", "ew", manufacturer="GoodWe")], _rehome(_wb(device="d1"), "ew"), [entry], {})
+    assert [i.matched_by for i in c.inverters] == ["manufacturer"]
+    assert [(f.device_id, f.control_class) for f in c.chargers] == [("d1", "monitor")]
+
+
+def test_classify_every_device_of_an_entities_only_entry_is_excluded():
+    from tests.discovery.test_classify_profile_domains import SA, _sa_profile
+    entry = ConfigEntrySnap(entry_id="sa1", domain=SA, title="Solar Assistant", host=None)
+    devs = [_device("total", "sa1", manufacturer="SolarAssistant"),
+            _device("d1", "sa1", manufacturer="SolarAssistant")]
+    # d1 bez sensora SoC i z encjami ładowarki: w innym wpisie byłby kandydatem
+    ents = _rehome(_wb(device="d1"), "sa1")
+    c = classify(devs, ents, [entry], {}, profiles=[_sa_profile()])
+    assert [i.matched_by for i in c.inverters] == ["domain"]
     assert c.chargers == []

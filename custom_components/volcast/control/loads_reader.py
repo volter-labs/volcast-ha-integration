@@ -104,8 +104,9 @@ class LoadsReader:
         entry["energy_kwh"] = round(energy, 6) if energy is not None else None
         if not monitor:
             entry["setpoint"] = self._setpoint(self._state(roles, "setpoint"))
-        entry["source"] = {"executor": "ha", "device_ref": roles.get("setpoint") or key}
-        if isinstance(roles.get("start_stop"), str) and roles.get("start_stop"):
+        # ładowarka tylko do odczytu niczego nie steruje: role sterujące z uszkodzonych opcji się nie liczą
+        entry["source"] = {"executor": "ha", "device_ref": key if monitor else roles.get("setpoint") or key}
+        if not monitor and isinstance(roles.get("start_stop"), str) and roles.get("start_stop"):
             # stan i opcje encji start/stop dosłownie (jak status) — tylko gdy rola jest przypisana
             sw = self._state(roles, "start_stop")
             sw_options = sw.attributes.get("options") if sw is not None else None

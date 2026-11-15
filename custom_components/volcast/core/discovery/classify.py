@@ -57,6 +57,31 @@ def _energy_like(e: EntitySnap, states: dict[str, StateSnap]) -> bool:
     return dc == "energy" or unit in ("kWh", "Wh", "MWh")
 
 
+def _battery_soc(e: EntitySnap, states: dict[str, StateSnap]) -> bool:
+    """Sensor stanu naładowania baterii: `device_class` battery w % (rejestr albo atrybuty stanu)."""
+    if e.disabled or not e.entity_id.startswith("sensor."):
+        return False
+    st = states.get(e.entity_id)
+    dc = e.device_class or (st.attributes.get("device_class") if st else None)
+    unit = e.unit or (st.attributes.get("unit_of_measurement") if st else None)
+    return dc == "battery" and unit == "%"
+
+
+def _charger_excluded(findings: dict[str, InverterFinding], read_only_entries: set[str],
+                      entities: list[EntitySnap], states: dict[str, StateSnap]) -> frozenset[str]:
+    """Urządzenia, które nie mogą być kandydatem na ładowarkę: wszystkie urządzenia wpisu zadeklarowanego
+    przez profil „tylko encje” (ta integracja jest dla nas w całości tylko do odczytu) oraz urządzenie
+    znaleziska falownika, które samo wygląda na falownik lub baterię (ma sensor SoC). Inne urządzenia
+    wpisu albo marki falownika (np. osobna ładowarka) zostają kandydatami."""
+    with_soc = {e.device_id for e in entities if e.device_id and _battery_soc(e, states)}
+    out: set[str] = set()
+    for f in findings.values():
+        for d in f.devices:
+            if d.id in with_soc or any(eid in read_only_entries for eid in d.config_entry_ids):
+                out.add(d.id)
+    return frozenset(out)
+
+
 def _load_score(e: EntitySnap) -> int:
     text = f"{e.entity_id} {e.unique_id} {e.original_name or ''}".lower()
     return 0 if any(h in text for h in LOAD_HINTS) else 1
@@ -117,7 +142,7 @@ def classify(
     return Classification(inverters=list(findings.values()), price_entities=prices,
                           energy_candidates=energy,
                           chargers=_chargers(devices, entities, states,
-                                             frozenset(d.id for f in findings.values() for d in f.devices)))
+                                             _charger_excluded(findings, declared, entities, states)))
 
 
 def _chargers(devices: list[DeviceSnap], entities: list[EntitySnap],
