@@ -1,0 +1,3655 @@
+{
+ "_comment": "Migawka rejestrow oficjalnej integracji `solar_assistant` (anonimizowana, 144 encje: 103 piszace). unique_id SYNTEZOWANE z kontraktu encji integracji `<zakres>_<temat>` (zakres `local:10.0.0.10`, adres z puli dokumentacyjnej), a nie przechwycone z rejestru; id encji, domeny, jednostki i klasy urzadzen pochodza z prawdziwej instalacji, bez nazw wlasnych. Wartosci stanow wiarygodne, nie z pomiaru.",
+ "config_entries": [
+  {
+   "entry_id": "sa1",
+   "domain": "solar_assistant",
+   "title": "Solar Assistant",
+   "host": "10.0.0.10"
+  }
+ ],
+ "devices": [
+  {
+   "id": "dev-total",
+   "manufacturer": "SolarAssistant",
+   "model": null,
+   "name": "Totals",
+   "sw_version": null,
+   "hw_version": null,
+   "serial_number": null,
+   "identifiers": [
+    [
+     "solar_assistant",
+     "local:10.0.0.10_total"
+    ]
+   ],
+   "config_entry_ids": [
+    "sa1"
+   ]
+  },
+  {
+   "id": "dev-inverter-1",
+   "manufacturer": "SolarAssistant",
+   "model": null,
+   "name": "Inverters 1",
+   "sw_version": null,
+   "hw_version": null,
+   "serial_number": null,
+   "identifiers": [
+    [
+     "solar_assistant",
+     "local:10.0.0.10_inverter_1"
+    ]
+   ],
+   "config_entry_ids": [
+    "sa1"
+   ]
+  },
+  {
+   "id": "dev-battery-1",
+   "manufacturer": "SolarAssistant",
+   "model": null,
+   "name": "Batteries 1",
+   "sw_version": null,
+   "hw_version": null,
+   "serial_number": null,
+   "identifiers": [
+    [
+     "solar_assistant",
+     "local:10.0.0.10_battery_1"
+    ]
+   ],
+   "config_entry_ids": [
+    "sa1"
+   ]
+  },
+  {
+   "id": "dev-battery-2",
+   "manufacturer": "SolarAssistant",
+   "model": null,
+   "name": "Batteries 2",
+   "sw_version": null,
+   "hw_version": null,
+   "serial_number": null,
+   "identifiers": [
+    [
+     "solar_assistant",
+     "local:10.0.0.10_battery_2"
+    ]
+   ],
+   "config_entry_ids": [
+    "sa1"
+   ]
+  },
+  {
+   "id": "dev-unit",
+   "manufacturer": "SolarAssistant",
+   "model": null,
+   "name": "SolarAssistant (10.0.0.10)",
+   "sw_version": null,
+   "hw_version": null,
+   "serial_number": null,
+   "identifiers": [
+    [
+     "solar_assistant",
+     "local:10.0.0.10_system"
+    ]
+   ],
+   "config_entry_ids": [
+    "sa1"
+   ]
+  }
+ ],
+ "entities": [
+  {
+   "entity_id": "binary_sensor.solarassistant_unit_connection",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_system/connection",
+   "device_id": "dev-unit",
+   "config_entry_id": "sa1",
+   "device_class": "connectivity",
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "number.inverters_1_battery_absorption_charge_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/battery_absorption_charge_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_battery_capacity",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/battery_capacity",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "Ah",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_battery_equalization_charge_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/battery_equalization_charge_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_battery_float_charge_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/battery_float_charge_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/capacity_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/capacity_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/capacity_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/capacity_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/capacity_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/capacity_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/charge_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/charge_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/charge_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/charge_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/charge_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/charge_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_down_time",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_down_time",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "h",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_max_run_time",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_max_run_time",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "h",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_peak_shaving_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_peak_shaving_power",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_start_capacity",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_start_capacity",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_start_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_start_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_stop_capacity",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_stop_capacity",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_stop_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_stop_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_frequency_high",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_frequency_high",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "frequency",
+   "unit": "Hz",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_frequency_low",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_frequency_low",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "frequency",
+   "unit": "Hz",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_peak_shaving_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_peak_shaving_power",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_trickle_feed",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_trickle_feed",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_voltage_high",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_voltage_high",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_voltage_low",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_voltage_low",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_charge_current",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/max_charge_current",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "current",
+   "unit": "A",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_discharge_current",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/max_discharge_current",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "current",
+   "unit": "A",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_generator_charge_current",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/max_generator_charge_current",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "current",
+   "unit": "A",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_grid_charge_current",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/max_grid_charge_current",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "current",
+   "unit": "A",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_sell_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/max_sell_power",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_solar_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/max_solar_power",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_output_shutdown_capacity",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/output_shutdown_capacity",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_output_shutdown_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/output_shutdown_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/power_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/power_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/power_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/power_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/power_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/power_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_start_battery_discharge_capacity",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/start_battery_discharge_capacity",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_start_battery_discharge_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/start_battery_discharge_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_start_grid_charge_capacity",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/start_grid_charge_capacity",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_start_grid_charge_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/start_grid_charge_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_stop_battery_discharge_capacity",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/stop_battery_discharge_capacity",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_stop_battery_discharge_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/stop_battery_discharge_voltage",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/voltage_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/voltage_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/voltage_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/voltage_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/voltage_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/voltage_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_auxiliary_load_output_on_grid_always_on",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/auxiliary_load_output_on_grid_always_on",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_auxiliary_port",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/auxiliary_port",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_auxiliary_pv_export_cutoff",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/auxiliary_pv_export_cutoff",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_battery_operation",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/battery_operation",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_battery_type",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/battery_type",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_energy_pattern",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/energy_pattern",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_force_generator_on",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/force_generator_on",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_force_off_grid",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/force_off_grid",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_generator_charge",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_charge",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_generator_connected_to_grid_input",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_connected_to_grid_input",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_generator_peak_shaving",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/generator_peak_shaving",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_grid_charge",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_charge",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_grid_peak_shaving",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_peak_shaving",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_lithium_protocol",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/lithium_protocol",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/program_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/program_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/program_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/program_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/program_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/program_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_remote_switch",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/remote_switch",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_solar_export_when_battery_full",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/solar_export_when_battery_full",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/time_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/time_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/time_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/time_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/time_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/time_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_work_mode",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/work_mode",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_2_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_battery_1/power",
+   "device_id": "dev-battery-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.batteries_2_state_of_charge",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_battery_1/state_of_charge",
+   "device_id": "dev-battery-1",
+   "config_entry_id": "sa1",
+   "device_class": "battery",
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.batteries_2_temperature",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_battery_1/temperature",
+   "device_id": "dev-battery-1",
+   "config_entry_id": "sa1",
+   "device_class": "temperature",
+   "unit": "°C",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.batteries_2_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_battery_1/voltage",
+   "device_id": "dev-battery-1",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.batteries_3_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_battery_2/power",
+   "device_id": "dev-battery-2",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.batteries_3_state_of_charge",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_battery_2/state_of_charge",
+   "device_id": "dev-battery-2",
+   "config_entry_id": "sa1",
+   "device_class": "battery",
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.batteries_3_temperature",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_battery_2/temperature",
+   "device_id": "dev-battery-2",
+   "config_entry_id": "sa1",
+   "device_class": "temperature",
+   "unit": "°C",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.batteries_3_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_battery_2/voltage",
+   "device_id": "dev-battery-2",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.inverters_2_device_mode",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/device_mode",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.inverters_2_grid_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_power",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.inverters_2_load_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/load_power",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.inverters_2_pv_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/pv_power",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.inverters_2_temperature",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/temperature",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": "temperature",
+   "unit": "°C",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_unit_cpu_temperature",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_system/cpu_temperature",
+   "device_id": "dev-unit",
+   "config_entry_id": "sa1",
+   "device_class": "temperature",
+   "unit": "°C",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_unit_free_storage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_system/free_storage",
+   "device_id": "dev-unit",
+   "config_entry_id": "sa1",
+   "device_class": "data_size",
+   "unit": "MB",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_unit_site_id",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_system/site_id",
+   "device_id": "dev-unit",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_unit_software_version",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_system/software_version",
+   "device_id": "dev-unit",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.rpi_solar_assistant_cpu_usage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_system/cpu_usage",
+   "device_id": "dev-unit",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.rpi_solar_assistant_free_memory",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_system/free_memory",
+   "device_id": "dev-unit",
+   "config_entry_id": "sa1",
+   "device_class": "data_size",
+   "unit": "MB",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_ac_output_frequency",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/ac_output_frequency",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "frequency",
+   "unit": "Hz",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_ac_output_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/ac_output_voltage",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_current",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/battery_current",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "current",
+   "unit": "A",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_energy_in",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/battery_energy_in",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "energy",
+   "unit": "kWh",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_energy_out",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/battery_energy_out",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "energy",
+   "unit": "kWh",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/battery_power",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_state_of_charge",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/battery_state_of_charge",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "battery",
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_temperature",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/battery_temperature",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "temperature",
+   "unit": "°C",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/battery_voltage",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_capacity",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/capacity",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "Ah",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_energy_in",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/grid_energy_in",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "energy",
+   "unit": "kWh",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_energy_out",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/grid_energy_out",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "energy",
+   "unit": "kWh",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_frequency",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/grid_frequency",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "frequency",
+   "unit": "Hz",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/grid_power",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_voltage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/grid_voltage",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "voltage",
+   "unit": "V",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_inverter_mode",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/inverter_mode",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_load_energy",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/load_energy",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "energy",
+   "unit": "kWh",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_load_percentage",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/load_percentage",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": "%",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_load_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/load_power",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_pv_energy",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/pv_energy",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "energy",
+   "unit": "kWh",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_pv_power",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_total/pv_power",
+   "device_id": "dev-total",
+   "config_entry_id": "sa1",
+   "device_class": "power",
+   "unit": "W",
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/gen_charge_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/gen_charge_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/gen_charge_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/gen_charge_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/gen_charge_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/gen_charge_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_charge_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_charge_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_charge_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_charge_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_charge_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/grid_charge_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_1",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/sell_point_1",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_2",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/sell_point_2",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_3",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/sell_point_3",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_4",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/sell_point_4",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_5",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/sell_point_5",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_6",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/sell_point_6",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  },
+  {
+   "entity_id": "switch.inverters_1_use_timer",
+   "platform": "solar_assistant",
+   "unique_id": "local:10.0.0.10_inverter_1/use_timer",
+   "device_id": "dev-inverter-1",
+   "config_entry_id": "sa1",
+   "device_class": null,
+   "unit": null,
+   "translation_key": null,
+   "original_name": null,
+   "disabled": false,
+   "capabilities": null
+  }
+ ],
+ "states": [
+  {
+   "entity_id": "binary_sensor.solarassistant_unit_connection",
+   "state": "on",
+   "attributes": {
+    "device_class": "connectivity"
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_battery_absorption_charge_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_battery_capacity",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "Ah",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_battery_equalization_charge_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_battery_float_charge_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_1",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_2",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_3",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_4",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_5",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_capacity_point_6",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_1",
+   "state": "50",
+   "attributes": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_2",
+   "state": "50",
+   "attributes": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_3",
+   "state": "50",
+   "attributes": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_4",
+   "state": "50",
+   "attributes": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_5",
+   "state": "50",
+   "attributes": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_charge_point_6",
+   "state": "50",
+   "attributes": {
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_down_time",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "h",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_max_run_time",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "h",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_peak_shaving_power",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_start_capacity",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_start_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_stop_capacity",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_generator_stop_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_frequency_high",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "Hz",
+    "device_class": "frequency",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_frequency_low",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "Hz",
+    "device_class": "frequency",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_peak_shaving_power",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_trickle_feed",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_voltage_high",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_grid_voltage_low",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_charge_current",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "A",
+    "device_class": "current",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_discharge_current",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "A",
+    "device_class": "current",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_generator_charge_current",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "A",
+    "device_class": "current",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_grid_charge_current",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "A",
+    "device_class": "current",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_sell_power",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_max_solar_power",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_output_shutdown_capacity",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_output_shutdown_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_1",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_2",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_3",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_4",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_5",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_power_point_6",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_start_battery_discharge_capacity",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_start_battery_discharge_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_start_grid_charge_capacity",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_start_grid_charge_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_stop_battery_discharge_capacity",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_stop_battery_discharge_voltage",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_1",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_2",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_3",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_4",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_5",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "number.inverters_1_voltage_point_6",
+   "state": "50",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "min": 0,
+    "max": 100,
+    "step": 1
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_auxiliary_load_output_on_grid_always_on",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_auxiliary_port",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_auxiliary_pv_export_cutoff",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_battery_operation",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_battery_type",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_energy_pattern",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_force_generator_on",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_force_off_grid",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_generator_charge",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_generator_connected_to_grid_input",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_generator_peak_shaving",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_grid_charge",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_grid_peak_shaving",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_lithium_protocol",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_1",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_2",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_3",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_4",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_5",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_program_point_6",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_remote_switch",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_solar_export_when_battery_full",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_1",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_2",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_3",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_4",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_5",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_time_point_6",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "select.inverters_1_work_mode",
+   "state": "Option 1",
+   "attributes": {
+    "options": [
+     "Option 1",
+     "Option 2"
+    ]
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_2_power",
+   "state": "850",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_2_state_of_charge",
+   "state": "57",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "device_class": "battery",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_2_temperature",
+   "state": "24.5",
+   "attributes": {
+    "unit_of_measurement": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_2_voltage",
+   "state": "52.3",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_3_power",
+   "state": "850",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_3_state_of_charge",
+   "state": "57",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "device_class": "battery",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_3_temperature",
+   "state": "24.5",
+   "attributes": {
+    "unit_of_measurement": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.batteries_3_voltage",
+   "state": "52.3",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.inverters_2_device_mode",
+   "state": "Battery first",
+   "attributes": {}
+  },
+  {
+   "entity_id": "sensor.inverters_2_grid_power",
+   "state": "850",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.inverters_2_load_power",
+   "state": "850",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.inverters_2_pv_power",
+   "state": "850",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.inverters_2_temperature",
+   "state": "24.5",
+   "attributes": {
+    "unit_of_measurement": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_unit_cpu_temperature",
+   "state": "24.5",
+   "attributes": {
+    "unit_of_measurement": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_unit_free_storage",
+   "state": "2048",
+   "attributes": {
+    "unit_of_measurement": "MB",
+    "device_class": "data_size",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_unit_site_id",
+   "state": "site-0001",
+   "attributes": {}
+  },
+  {
+   "entity_id": "sensor.solarassistant_unit_software_version",
+   "state": "2026.1.0",
+   "attributes": {}
+  },
+  {
+   "entity_id": "sensor.rpi_solar_assistant_cpu_usage",
+   "state": "57",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.rpi_solar_assistant_free_memory",
+   "state": "2048",
+   "attributes": {
+    "unit_of_measurement": "MB",
+    "device_class": "data_size",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_ac_output_frequency",
+   "state": "50.0",
+   "attributes": {
+    "unit_of_measurement": "Hz",
+    "device_class": "frequency",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_ac_output_voltage",
+   "state": "52.3",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_current",
+   "state": "12",
+   "attributes": {
+    "unit_of_measurement": "A",
+    "device_class": "current",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_energy_in",
+   "state": "1234.5",
+   "attributes": {
+    "unit_of_measurement": "kWh",
+    "device_class": "energy",
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_energy_out",
+   "state": "1234.5",
+   "attributes": {
+    "unit_of_measurement": "kWh",
+    "device_class": "energy",
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_power",
+   "state": "1500",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_state_of_charge",
+   "state": "57",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "device_class": "battery",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_temperature",
+   "state": "24.5",
+   "attributes": {
+    "unit_of_measurement": "°C",
+    "device_class": "temperature",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_battery_voltage",
+   "state": "52.3",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_capacity",
+   "state": "100",
+   "attributes": {
+    "unit_of_measurement": "Ah",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_energy_in",
+   "state": "1234.5",
+   "attributes": {
+    "unit_of_measurement": "kWh",
+    "device_class": "energy",
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_energy_out",
+   "state": "1234.5",
+   "attributes": {
+    "unit_of_measurement": "kWh",
+    "device_class": "energy",
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_frequency",
+   "state": "50.0",
+   "attributes": {
+    "unit_of_measurement": "Hz",
+    "device_class": "frequency",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_power",
+   "state": "800",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_grid_voltage",
+   "state": "52.3",
+   "attributes": {
+    "unit_of_measurement": "V",
+    "device_class": "voltage",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_inverter_mode",
+   "state": "Battery first",
+   "attributes": {}
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_load_energy",
+   "state": "1234.5",
+   "attributes": {
+    "unit_of_measurement": "kWh",
+    "device_class": "energy",
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_load_percentage",
+   "state": "57",
+   "attributes": {
+    "unit_of_measurement": "%",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_load_power",
+   "state": "3500",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_pv_energy",
+   "state": "1234.5",
+   "attributes": {
+    "unit_of_measurement": "kWh",
+    "device_class": "energy",
+    "state_class": "total_increasing"
+   }
+  },
+  {
+   "entity_id": "sensor.solarassistant_energy_pv_power",
+   "state": "3200",
+   "attributes": {
+    "unit_of_measurement": "W",
+    "device_class": "power",
+    "state_class": "measurement"
+   }
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_1",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_2",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_3",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_4",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_5",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_gen_charge_point_6",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_1",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_2",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_3",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_4",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_5",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_grid_charge_point_6",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_1",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_2",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_3",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_4",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_5",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_sell_point_6",
+   "state": "off",
+   "attributes": {}
+  },
+  {
+   "entity_id": "switch.inverters_1_use_timer",
+   "state": "off",
+   "attributes": {}
+  }
+ ]
+}
