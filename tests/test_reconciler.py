@@ -884,6 +884,32 @@ async def test_reconcile_open_day_payload_unchanged_without_day_totals(monkeypat
     assert set(payload) == {"readings", "is_reconciliation"}
 
 
+@pytest.mark.asyncio
+async def test_reconcile_open_day_with_complete_stats_sends_no_day_totals(monkeypatch):
+    """Dzisiejsza (niezamknięta) doba z kompletnymi statystykami: day_totals
+    wysyłamy tylko dla doby zamkniętej, więc brak day_totals mimo complete=True."""
+    from custom_components.volcast import reconciler as reconciler_mod
+
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    fixed_now = datetime(2026, 7, 24, 13, 40, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(reconciler_mod, "_now_local", lambda tz: fixed_now)
+    target = fixed_now.date()
+    stats = _complete_stats({h: 1.0 for h in range(6, 13)})
+
+    tracker._accepted = {target.isoformat(): list(range(6, 12))}  # 12 — luka
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http, \
+         patch("custom_components.volcast.reconciler.async_get_clientsession",
+               return_value=MagicMock()):
+        mock_http.return_value = _ok_result(accepted=1)
+        await reconciler.reconcile_day(target)
+
+    assert mock_http.call_count == 1
+    payload = mock_http.call_args.kwargs["payload"]
+    assert "day_totals" not in payload
+
+
 # ---------------------------------------------------------------------------
 # day_totals — kompletność statystyk doby
 # ---------------------------------------------------------------------------
