@@ -756,7 +756,10 @@ class TelemetrySender:
             self._fz_sig, self._fz_changed_at = sig, now
             self._fz_reports = {}
         pair = sig[:len(_FROZEN_PAIR)]
-        reports_ok = all(self._count_reports(k, now) >= FROZEN_MIN_REPORTS for k in _FROZEN_PAIR)
+        # Oba liczniki przy KAŻDYM wywołaniu (bez skrótu `all()`): inaczej raporty sieci nie byłyby zbierane,
+        # dopóki pobór nie dobije progu, i wykrycie zależałoby od kolejności kluczy.
+        counts = [self._count_reports(k, now) for k in _FROZEN_PAIR]
+        reports_ok = all(c >= FROZEN_MIN_REPORTS for c in counts)
         self._fz_frozen = (all(v is not None for v in pair) and any(v != 0 for v in pair) and reports_ok
                            and (now - self._fz_changed_at).total_seconds() >= FROZEN_AFTER_S)
         return self._fz_frozen

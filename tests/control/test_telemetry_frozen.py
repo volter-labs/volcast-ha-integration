@@ -325,3 +325,17 @@ def test_frozen_detection_works_on_the_profile_mapped_path():
         clock.advance(60)
     assert s.readings_report()["readings_frozen"] is True
     assert cloud.sent[0]["load_power_w"] == 400 and len(cloud.sent) == 30   # 31. tik (t = 1800) już zamrożony
+
+
+def test_both_report_counts_advance_on_every_tick():
+    # Źródło raportuje co 2 min, wysyłka co minutę: w oknie 1800 s obie encje mają po 16 raportów — zamrożony
+    # dokładnie po 1800 s, a nie dopiero gdy licznik poboru dobije progu i sieć zacznie być liczona.
+    h, s, cloud, clock = _setup(prices=True)
+    _rebroadcast(h, clock)
+    asyncio.run(s.async_flush())
+    for t in range(60, 1800 + 1, 60):
+        clock.advance(60)
+        if t % 120 == 0:
+            _rebroadcast(h, clock)
+        asyncio.run(s.async_flush())
+        assert _frozen(s) is (t >= 1800), t
