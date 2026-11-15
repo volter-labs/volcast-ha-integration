@@ -9,7 +9,7 @@ from custom_components.volcast.core.control.select import (InverterHint, Profile
 from custom_components.volcast.core.discovery.classify import classify, is_inverter
 from custom_components.volcast.core.discovery.models import ConfigEntrySnap, DeviceSnap, EntitySnap
 from custom_components.volcast.core.entity_map import EntityCandidate, resolve_entities
-from custom_components.volcast.core.profile import entities_only, profile_from_dict, writes_allowed
+from custom_components.volcast.core.profile import entities_only, load_builtin, profile_from_dict, writes_allowed
 
 SA = "solar_assistant"
 SCOPE = "local:10.0.0.10"
@@ -106,3 +106,20 @@ def test_recommendation_for_entities_only_choice_is_unsupported_no_write_path():
         assert (rec.path, rec.reason, rec.ladder_start) == (UNSUPPORTED, NO_WRITE_PATH, RUNG_IDENTIFY)
         assert rec.integration == {"domain": SA, "name": SA}
         assert rec.device == {"manufacturer": "SolarAssistant", "model": None}
+
+
+def test_home_with_packaged_read_only_inverter_and_entities_only_integration_gets_readings():
+    # Ten sam falownik widziany przez dwie integracje: profil z pakietu tylko do odczytu (bez odczytów) i profil
+    # „tylko encje” — wybór pada na ten, który niesie odczyty, a mapa encji nie jest pusta.
+    devices, entities, entries = _registry()
+    entries.append(ConfigEntrySnap("s1", "solarman", "Inverter", "10.0.0.10"))
+    devices.append(DeviceSnap(id="sofar", manufacturer="SOFAR", model=None, name=None, sw_version=None,
+                              hw_version=None, serial_number=None, identifiers=(), config_entry_ids=("s1",)))
+    profiles = [_profile(), load_builtin("sofar-hyd")]
+    cls = classify(devices, entities, entries, {}, profiles=profiles)
+    hints = [h for inv in cls.inverters for h in _hints(inv, profiles)]
+    choice = select_profile(hints, profiles)
+    assert (choice.profile.id, choice.integration_domain) == ("solarassistant-test", SA)
+    inv = next(i for i in cls.inverters if i.domain == SA)
+    cands = [EntityCandidate(e.entity_id, e.platform, e.unique_id, e.unit) for e in inv.entities]
+    assert resolve_entities(choice.profile, choice.integration_domain, cands).mapped

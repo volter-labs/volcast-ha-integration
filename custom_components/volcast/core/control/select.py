@@ -12,8 +12,8 @@ Gdy nadal zostaje więcej niż jeden — ta wskazówka nie wybiera nic (`ambiguo
 bo zły id profilu w chmurze jest gorszy niż brak profilu.
 
 Profil bez `identify.model_regex` (identyfikacja po rejestrze) trafia wyłącznie do gałęzi 2. Wyjątek: profil
-„tylko encje” dla urządzenia BEZ modelu — gałąź 1 przyjmuje jego wpis integracji z `model_regex` pasującym do
-„producent model” (`_entity_match`); profile rejestrowe dla takiego urządzenia zostają przy gałęzi 2.
+„tylko encje” — gałąź 1 przyjmuje jego wpis integracji z `model_regex` pasującym do „producent model”
+(`_entity_match`), z modelem urządzenia i bez; profile rejestrowe dla urządzenia bez modelu zostają przy gałęzi 2.
 """
 from __future__ import annotations
 
@@ -87,14 +87,14 @@ def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
 
 
 def _entity_match(p: Profile, hint: InverterHint) -> bool:
-    """Domena + model zgodny z `identify.model_regex`. Urządzenie BEZ modelu (integracja podaje tylko
-    producenta) — wyłącznie profil „tylko encje” i jego wzorzec `ha.integrations[].model_regex` na „producent
-    model”; profil rejestrowy (draft z niepotwierdzoną mapą encji) zostaje dla niego podglądem jak dotąd."""
+    """Profil „tylko encje” (bez `identify.model_regex`): domena + wzorzec `ha.integrations[].model_regex` na
+    „producent model”, z modelem i bez. Profil rejestrowy: domena + model zgodny z `identify.model_regex`;
+    urządzenie bez modelu zostaje dla niego podglądem (draft z niepotwierdzoną mapą encji)."""
     if hint.domain not in _domains(p):
         return False
-    if hint.model:
-        return _model_ok(p, hint.model)
-    return entities_only(p) and _ha_text_ok(p, hint)
+    if entities_only(p):
+        return _ha_text_ok(p, hint)
+    return _model_ok(p, hint.model)
 
 
 def declared_by_profile(hint: InverterHint, profiles: Sequence[Profile]) -> bool:
@@ -133,35 +133,36 @@ def _read_only_cands(hint: InverterHint, ordered: Sequence[Profile]) -> list[Pro
 def select_profile(hints: Sequence[InverterHint], profiles: Sequence[Profile]) -> ProfileChoice | None:
     """Najlepsze dopasowanie spośród WSZYSTKICH wskazówek (kilka falowników w domu).
 
-    Kolejność: profil i wpis integracji zweryfikowane (sterowanie encjami) → profil zweryfikowany
-    (także tylko do odczytu) → drafty. W obrębie jednego poziomu dopasowanie z integracją przed
-    dopasowaniem tylko do odczytu, a potem kolejność wskazówek — dom z samymi draftami dostaje
-    to samo co dotąd. Draft innej marki nie może przesłonić zweryfikowanego falownika. Wybór z profilu
-    „tylko encje” z feedu — po wszystkich innych (`_last`).
+    Kolejność (`_level`): 0) profil i wpis integracji zweryfikowane (sterowanie encjami) → 1) profil
+    zweryfikowany (także tylko do odczytu) → 2) draft z integracją → 3) profil „tylko encje” (z integracją, niesie
+    odczyty) → 4) wybór tylko do odczytu bez integracji. W obrębie poziomu dopasowanie z integracją przed
+    dopasowaniem tylko do odczytu, a potem kolejność wskazówek — dom bez profili „tylko encje” dostaje to samo co
+    dotąd. Draft innej marki nie może przesłonić zweryfikowanego falownika; profil „tylko encje” nie wyprzedza
+    wyboru z integracją ani profilu zweryfikowanego, ale wyprzedza podgląd bez odczytów.
     """
     ordered = sorted(profiles, key=lambda p: p.id)
-    found: list[tuple[tuple[int, int, int, int], ProfileChoice]] = []
+    found: list[tuple[tuple[int, int, int], ProfileChoice]] = []
     for idx, h in enumerate(hints):
         cands = _entity_cands(h, ordered)
         if len(cands) == 1:
-            found.append(((_last(cands[0]), _rank(cands[0], h.domain), 0, idx),
-                          ProfileChoice(cands[0], h.domain, h.model)))
+            found.append(((_level(cands[0], h.domain), 0, idx), ProfileChoice(cands[0], h.domain, h.model)))
         cands = _read_only_cands(h, ordered)
         if len(cands) == 1:
-            found.append(((_last(cands[0]), _rank(cands[0], None), 1, idx), ProfileChoice(cands[0], None, h.model)))
+            found.append(((_level(cands[0], None), 1, idx), ProfileChoice(cands[0], None, h.model)))
     return min(found, key=lambda f: f[0])[1] if found else None
 
 
-def _last(profile: Profile) -> int:
-    """Profil „tylko encje” z feedu na samym końcu: jego domena bywa uznana za falownik tylko dzięki niemu,
-    więc nie przesłoni wyboru dla innego urządzenia (zwłaszcza profilu z pakietu)."""
-    return int(entities_only(profile) and not is_packaged(profile))
-
-
-def _rank(profile: Profile, integration_domain: str | None) -> int:
+def _level(profile: Profile, integration_domain: str | None) -> int:
+    """Poziom wyboru (mniejszy wygrywa), patrz `select_profile`. Profil „tylko encje” nigdy nie jest
+    „zweryfikowany” w tym rankingu — jego status nie daje sterowania ani pierwszeństwa."""
+    eo = entities_only(profile)
     if control_verified(profile, integration_domain):
         return 0
-    return 1 if profile.status == "verified" else 2
+    if profile.status == "verified" and not eo:
+        return 1
+    if integration_domain:
+        return 3 if eo else 2
+    return 4
 
 
 def ambiguous_profiles(hints: Sequence[InverterHint], profiles: Sequence[Profile]) -> dict[str, tuple[str, ...]]:

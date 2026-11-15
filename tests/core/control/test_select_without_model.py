@@ -40,10 +40,14 @@ def test_modelless_device_with_other_manufacturer_is_not_an_entity_match():
     assert (c.profile.id, c.integration_domain) == ("solarassistant-generic", None)
 
 
-def test_device_with_model_still_needs_identify_regex():
-    # profil „tylko encje” nie ma `identify.model_regex` — urządzenie z modelem nie daje dopasowania encji
+def test_entities_only_device_with_model_matches_by_integration_pattern():
+    # Profil „tylko encje” nie ma `identify.model_regex`: dopasowanie przez wzorzec integracji na „producent
+    # model” także wtedy, gdy integracja zacznie podawać model.
     sa = _eo("solarassistant-generic")
-    c = select_profile([InverterHint(SA, "SolarAssistant", "X1")], [sa])
+    c = select_profile([InverterHint(SA, "SolarAssistant", "X")], [sa])
+    assert (c.profile.id, c.integration_domain, c.model) == ("solarassistant-generic", SA, "X")
+    # wzorzec nie pasuje do tekstu urządzenia → jak dotąd tylko podgląd po domenie
+    c = select_profile([InverterHint(SA, "Someone Else", "X")], [sa])
     assert (c.profile.id, c.integration_domain) == ("solarassistant-generic", None)
 
 
@@ -121,11 +125,45 @@ def test_manufacturer_over_the_input_cap_declares_nothing():
     assert select_profile([hint], [sa]) is None
 
 
-def test_feed_entities_only_choice_never_outranks_a_packaged_choice_on_another_device():
+def test_entities_only_choice_beats_a_packaged_read_only_choice_on_another_device():
+    # Wybór tylko do odczytu nie niesie odczytów; wybór „tylko encje” niesie — wygrywa z nim.
     sa = _eo("solarassistant-generic")
-    deye = load_builtin("deye-sg")
-    hints = [InverterHint(SA, "SolarAssistant", None), InverterHint("solarman", "Deye", "SUN-10K-SG04LP3-EU")]
-    c = select_profile(hints, [sa, deye])
-    assert (c.profile.id, c.integration_domain) == ("deye-sg", None)
-    # bez profilu z pakietu w domu — wybór „tylko encje” z feedu działa
-    assert select_profile(hints[:1], [sa, deye]).profile.id == "solarassistant-generic"
+    sofar = load_builtin("sofar-hyd")
+    hints = [InverterHint("solarman", "SOFAR", None), InverterHint(SA, "SolarAssistant", None)]
+    assert select_profile(hints[:1], [sa, sofar]).integration_domain is None
+    c = select_profile(hints, [sa, sofar])
+    assert (c.profile.id, c.integration_domain) == ("solarassistant-generic", SA)
+
+
+def test_packaged_entity_capable_draft_beats_entities_only_choice():
+    sa = _eo("solarassistant-generic")
+    sofar = load_builtin("sofar-hyd")
+    hints = [InverterHint(SA, "SolarAssistant", None), InverterHint("solarman", "Sofar", "SP1ES120N6")]
+    c = select_profile(hints, [sa, sofar])
+    assert (c.profile.id, c.integration_domain) == ("sofar-hyd", "solarman")
+
+
+def test_verified_packaged_profile_beats_entities_only_choice():
+    sa = _eo("solarassistant-generic")
+    gw = load_builtin("goodwe-et")
+    hints = [InverterHint(SA, "SolarAssistant", None), InverterHint("goodwe", "GoodWe", "GW10K-ET")]
+    c = select_profile(hints, [sa, gw])
+    assert (c.profile.id, c.integration_domain) == ("goodwe-et", "goodwe")
+
+
+@pytest.mark.parametrize("status", ["draft", "verified"])
+def test_entities_only_choice_never_outranks_a_choice_with_integration_or_verified(status):
+    # Profil „tylko encje” nawet ze statusem `verified` (z pakietu) nie wyprzedza wyboru z integracją
+    # ani profilu zweryfikowanego tylko do odczytu.
+    raw = eo_profile()
+    raw["id"], raw["status"] = "solarassistant-generic", status
+    raw["ha"]["integrations"][0].update(domain=SA, model_regex=["(?i)\\bsolar ?assistant\\b"], status=status)
+    sa = profile_from_dict(raw, origin=ORIGIN_PACKAGE)
+    sofar = load_builtin("sofar-hyd")
+    c = select_profile([InverterHint(SA, "SolarAssistant", None), InverterHint("solarman", "Sofar", "SP1ES120N6")],
+                       [sa, sofar])
+    assert c.profile.id == "sofar-hyd"
+    gw = load_builtin("goodwe-et")          # `verified`; model spoza `identify.model_regex` → tylko podgląd
+    c = select_profile([InverterHint(SA, "SolarAssistant", None), InverterHint("goodwe", "GoodWe", "GW5048D-ES")],
+                       [sa, gw])
+    assert (c.profile.id, c.integration_domain) == ("goodwe-et", None)
