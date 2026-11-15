@@ -24,7 +24,7 @@ ma `access: "direct"`, możliwości z sondy (poza próbą) i limity (`registers`
 `extra.volcast.direct` niesie nazwę transportu, stan łącza i liczniki. Nigdy adres, port, numer
 seryjny, odcisk urządzenia ani sól.
 
-Zamrożony odczyt (tryb encji): pobór i sieć bez zmiany przez `FROZEN_AFTER_S` = wartości nie idą do chmury
+Zamrożony odczyt (tryb encji): pobór i sieć bez zmiany przez `FROZEN_AFTER_S` przy powtarzanych raportach encji = wartości nie idą do chmury
 (zostają ceny, gdy są do wysłania), `extra.volcast.frozen` = true; pierwsza zmiana wznawia wysyłkę. Stan
 widać w `readings_report()` (diagnostyka). Tryb bezpośredni ma własną regułę świeżości.
 
@@ -108,8 +108,12 @@ COUNTER_KEYS = ("load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_
 # Sanity HA: 10 GWh to wiele żyć domowego falownika; powyżej = śmieci (np. 0xFFFFFFFF × 0,1 kWh).
 COUNTER_MAX_KWH = 1e7
 # Zamrożony odczyt (tylko tryb encji): część integracji źródłowych po utracie łącza z falownikiem powtarza ostatnie
-# wartości, więc stary odczyt wygląda jak żywy. Pobór i sieć bez zmiany tak długo = odczyt uznany za zamrożony.
-FROZEN_AFTER_S = 600
+# wartości, więc stary odczyt wygląda jak żywy. Zamrożony = pobór i sieć bez zmiany przez `FROZEN_AFTER_S` ORAZ w tym
+# oknie obie encje co najmniej `FROZEN_MIN_REPORTS` razy zgłosiły stan (`last_reported` rusza przy każdym zapisie, także
+# bez zmiany wartości) — to odróżnia powtarzanie od wolnego albo grubego, ale żywego źródła (odpytywanie co 5–15 min
+# nigdy nie da 10 raportów w 30 min).
+FROZEN_AFTER_S = 1800
+FROZEN_MIN_REPORTS = 10
 _FROZEN_PAIR = ("load_power_w", "grid_power_w")
 # Znaki życia: zmiana którejkolwiek z tych wartości też zeruje licznik (żywa instalacja z ustalonym poborem i siecią,
 # ale zmieniającą się mocą PV albo baterii, nie jest zamrożona).
@@ -325,6 +329,7 @@ class TelemetrySender:
         self._fz_sig: tuple | None = None
         self._fz_changed_at: datetime | None = None
         self._fz_frozen = False
+        self._fz_reports: dict[str, list[datetime]] = {}
         self._loads = LoadsReader(hass, entry, executor_report=self._loads_report)
         self._loads_warned = False
         # Runtime sterowania (`control_block()` + `async_persist_control_meta()`) — ustawiany po jego złożeniu.
@@ -712,6 +717,19 @@ class TelemetrySender:
             return {}, {k: None for k in manual}          # zamrożony: żadnych wartości (ceny i tak idą osobno)
         return prof, manual
 
+    def _count_reports(self, key: str, now: datetime) -> int:
+        """Ile razy encja klucza zgłosiła stan (`last_reported`) w oknie `FROZEN_AFTER_S`; bez `last_reported`
+        (starszy HA albo brak encji) 0, czyli nigdy zamrożony."""
+        eid = self._manual_map.get(key) or self._profile_map.get(key)
+        st = self._hass.states.get(eid) if eid else None
+        ts = getattr(st, "last_reported", None)
+        seen = self._fz_reports.setdefault(key, [])
+        if isinstance(ts, datetime) and (not seen or ts > seen[-1]):
+            seen.append(ts)
+        cutoff = now - timedelta(seconds=FROZEN_AFTER_S)
+        seen[:] = [t for t in seen if t >= cutoff]
+        return len(seen) if isinstance(ts, datetime) else 0
+
     def _update_frozen(self, prof: Mapping, manual: Mapping) -> bool:
         """Czy odczyt z encji jest zamrożony: pobór I sieć bez zmiany od `FROZEN_AFTER_S`.
 
@@ -724,7 +742,11 @@ class TelemetrySender:
           utraty łącza (np. sieć stała przy zerowym przepływie), a drugiego świadka brak;
         - pobór i sieć dokładnie 0 → nigdy zamrożony: wyspa nocą bez obciążenia jest legalnie stała, a zamrożone
           zero niczego użytkownikowi nie psuje;
-        - zmiana mocy PV, baterii albo SoC to znak życia (zamrożona integracja powtarza WSZYSTKIE wartości)."""
+        - zmiana mocy PV, baterii albo SoC to znak życia (zamrożona integracja powtarza WSZYSTKIE wartości);
+        - samo „bez zmiany” nie wystarcza: trzeba też `FROZEN_MIN_REPORTS` raportów obu encji w oknie (`_count_reports`).
+
+        Zamrożony odczyt traktujemy jak dziś niedostępne encje falownika: wartości i liczniki nie idą, a bez cen
+        (i bez innego powodu wysyłki) nie idzie nic — chmura widzi stare dane, jak przy HA offline. To zamierzone."""
         def value(key):
             return _number(manual.get(key) if key in manual else prof.get(key))
 
@@ -732,8 +754,10 @@ class TelemetrySender:
         now = self._utcnow()
         if sig != self._fz_sig:
             self._fz_sig, self._fz_changed_at = sig, now
+            self._fz_reports = {}
         pair = sig[:len(_FROZEN_PAIR)]
-        self._fz_frozen = (all(v is not None for v in pair) and any(v != 0 for v in pair)
+        reports_ok = all(self._count_reports(k, now) >= FROZEN_MIN_REPORTS for k in _FROZEN_PAIR)
+        self._fz_frozen = (all(v is not None for v in pair) and any(v != 0 for v in pair) and reports_ok
                            and (now - self._fz_changed_at).total_seconds() >= FROZEN_AFTER_S)
         return self._fz_frozen
 
