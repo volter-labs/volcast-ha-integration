@@ -58,7 +58,7 @@ from ..cloud import control_choice
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
 from ..cloud.signal_channel import SignalChannel
-from ..coordinator import async_get_profile_feed, async_profile_ready_issue
+from ..coordinator import async_get_profile_feed, async_profile_ready_issue, profile_ready_applies
 from ..const import (DEFAULT_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
@@ -719,8 +719,10 @@ def _choice_key(choice) -> tuple | None:
 def watch_profile_choice(hass, entry, rt: ControlRuntime, feed) -> None:
     """Wpis na ścieżce encji: po każdej przyjętej aktualizacji feedu wybór profilu liczony od nowa z bieżących
     rejestrów (`_choice_for`). Nowy wynik (brak → wybór, inny profil albo domena integracji) — ta sama naprawa
-    „profil gotowy” co dla nowych profili feedu; wybór działa po przeładowaniu wpisu. Raz na zmieniony wynik;
-    wycofanie profilu (nowy wynik: brak) naprawy nie daje. Tryb bezpośredni — profil z sondy, nie z rejestrów."""
+    „profil gotowy” co dla nowych profili feedu, i tylko gdy jej tekst jest prawdziwy (`profile_ready_applies`:
+    profil z feedu bez prawa zapisu, marka nie sterowana profilem zweryfikowanym); wybór działa po przeładowaniu
+    wpisu. Raz na zmieniony wynik; wycofanie profilu (nowy wynik: brak) naprawy nie daje. Tryb bezpośredni —
+    profil z sondy, nie z rejestrów."""
     add = getattr(feed, "add_update_listener", None)
     if add is None or rt.direct is not None or _direct_target(entry.options) is not None:
         return
@@ -734,7 +736,8 @@ def watch_profile_choice(hass, entry, rt: ControlRuntime, feed) -> None:
                             type(err).__name__)
             return
         key = _choice_key(new)
-        if new is None or key == _choice_key(rt.choice) or key == rt.announced_choice:
+        if new is None or key == _choice_key(rt.choice) or key == rt.announced_choice \
+                or not profile_ready_applies(hass, new.profile):
             return
         rt.announced_choice = key
         async_profile_ready_issue(hass, new.profile.id, new.profile.raw.get("label"))

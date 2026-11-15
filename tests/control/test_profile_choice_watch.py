@@ -142,3 +142,29 @@ async def test_recheck_failure_is_logged_not_raised(monkeypatch, issues, caplog)
     monkeypatch.setattr(runtime.ds, "load_profiles", boom)
     await _feed_updated(hass, feed)
     assert issues == [] and "profile choice check" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_no_notice_when_the_new_choice_is_a_packaged_profile(monkeypatch, issues):
+    # Tekst naprawy mówi o profilu testowym z feedu, który nigdy nie steruje — dla profilu z pakietu byłby
+    # nieprawdziwy (np. drugi falownik dodany po złożeniu wybiera profil zweryfikowany).
+    hass, feed, rt = _setup(monkeypatch, [_dev(1, "GoodWe", "GW10K-ET", "g")], {"g": "goodwe"},
+                            choice=None, profiles_now=[load_builtin("goodwe-et"), _sa_profile()])
+    await _feed_updated(hass, feed)
+    assert issues == []
+
+
+@pytest.mark.asyncio
+async def test_no_notice_for_a_brand_the_installation_already_controls_with_a_verified_profile(monkeypatch, issues):
+    # Ten sam warunek co naprawa dla nowych profili feedu: marka sterowana profilem zweryfikowanym — bez naprawy.
+    raw = eo_profile()
+    raw["id"], raw["label"] = "goodwe-cloud", "GoodWe cloud"
+    raw["ha"]["integrations"][0].update(domain="goodwe_cloud", model_regex=["(?i)\\bgoodwe\\b"])
+    hass, feed, rt = _setup(monkeypatch, [_dev(1, "GoodWe", None, "c")], {"c": "goodwe_cloud"},
+                            choice=None, profiles_now=[profile_from_dict(raw)])
+    hass.config_entries.async_entries = lambda domain=None: [SimpleNamespace(options={"profile_id": "goodwe-et"})]
+    await _feed_updated(hass, feed)
+    assert issues == []
+    hass.config_entries.async_entries = lambda domain=None: []
+    await _feed_updated(hass, feed)
+    assert [i for i, _ in issues] == [f"{ISSUE_BRAND_PROFILE_READY}_goodwe-cloud"]

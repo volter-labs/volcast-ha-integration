@@ -26,6 +26,7 @@ from .const import (
     PROFILE_FEED_STORAGE_KEY,
     PROFILE_FEED_STORAGE_VERSION,
 )
+from .core.profile import is_packaged, writes_allowed
 from .core.profile_feed import ProfileFeedUpdater, packaged_verified_ids
 from .http_retry import RETRIABLE_STATUSES, http_with_retry
 
@@ -117,6 +118,16 @@ def async_profile_ready_issues(hass: HomeAssistant, ids, profiles, *, verified_i
             continue
         created.append(async_profile_ready_issue(hass, pid, (profiles.get(pid) or {}).get("label")))
     return created
+
+
+def profile_ready_applies(hass: HomeAssistant, profile) -> bool:
+    """Czy tekst naprawy „profil gotowy” jest prawdziwy dla profilu: profil z feedu (nie z pakietu), który nie
+    steruje (`writes_allowed` False), marki, której instalacja nie steruje już profilem zweryfikowanym — te same
+    warunki co dla nowych profili feedu (`async_profile_ready_issues`)."""
+    if is_packaged(profile) or writes_allowed(profile):
+        return False
+    _, _, _, covered = _install_hints(hass, packaged_verified_ids())
+    return _brand(profile.id) not in covered
 
 
 def async_profile_ready_issue(hass: HomeAssistant, pid: str, label: Any) -> str:
