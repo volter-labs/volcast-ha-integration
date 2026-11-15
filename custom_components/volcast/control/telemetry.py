@@ -24,6 +24,10 @@ ma `access: "direct"`, możliwości z sondy (poza próbą) i limity (`registers`
 `extra.volcast.direct` niesie nazwę transportu, stan łącza i liczniki. Nigdy adres, port, numer
 seryjny, odcisk urządzenia ani sól.
 
+Zamrożony odczyt (tryb encji): pobór i sieć bez zmiany przez `FROZEN_AFTER_S` = wartości nie idą do chmury
+(zostają ceny, gdy są do wysłania), `extra.volcast.frozen` = true; pierwsza zmiana wznawia wysyłkę. Stan
+widać w `readings_report()` (diagnostyka). Tryb bezpośredni ma własną regułę świeżości.
+
 Sygnały: blok `driver` deklaruje cechy (`features`), `extra.volcast.signal_connected` mówi, czy
 kanał sygnałów jest dołączony, a blok `signals` z przyjętej odpowiedzi idzie do `on_signals`.
 `build_live_reading` to lekki odczyt na żywo (same wartości + `live: true`, bez cen, `driver`,
@@ -103,6 +107,13 @@ COUNTER_KEYS = ("load_energy_total_kwh", "load_energy_day_kwh", "battery_charge_
                 "battery_discharge_total_kwh")
 # Sanity HA: 10 GWh to wiele żyć domowego falownika; powyżej = śmieci (np. 0xFFFFFFFF × 0,1 kWh).
 COUNTER_MAX_KWH = 1e7
+# Zamrożony odczyt (tylko tryb encji): część integracji źródłowych po utracie łącza z falownikiem powtarza ostatnie
+# wartości, więc stary odczyt wygląda jak żywy. Pobór i sieć bez zmiany tak długo = odczyt uznany za zamrożony.
+FROZEN_AFTER_S = 600
+_FROZEN_PAIR = ("load_power_w", "grid_power_w")
+# Znaki życia: zmiana którejkolwiek z tych wartości też zeruje licznik (żywa instalacja z ustalonym poborem i siecią,
+# ale zmieniającą się mocą PV albo baterii, nie jest zamrożona).
+_FROZEN_LIFE = ("pv_power_w", "battery_power_w", "soc")
 # Cechy integracji deklarowane chmurze w bloku `driver` (zamknięty słownik kontraktu telemetrii;
 # chmura przyjmuje dowolny jego podzbiór). `signals` w kontrakcie znaczy także obsługę wznowienia
 # (`resume_requested_at`) — deklarujemy ją dopiero razem z tą obsługą, inaczej aplikacja pokazałaby
@@ -310,6 +321,10 @@ class TelemetrySender:
         self._price_tasks: dict[str, object] = {}
         self._unsub = None
         self._busy = False
+        # Wykrywanie zamrożenia (tylko w pamięci; po restarcie licznik rusza od pierwszego odczytu).
+        self._fz_sig: tuple | None = None
+        self._fz_changed_at: datetime | None = None
+        self._fz_frozen = False
         self._loads = LoadsReader(hass, entry, executor_report=self._loads_report)
         self._loads_warned = False
         # Runtime sterowania (`control_block()` + `async_persist_control_meta()`) — ustawiany po jego złożeniu.
@@ -540,6 +555,8 @@ class TelemetrySender:
                                  "status": self._direct_status(), "stray": int(stats.stray),
                                  "timeouts": int(stats.timeouts),
                                  "nvm_budget_hit": bool(getattr(self._executor, "nvm_budget_hit", False))}
+        if self._fz_frozen:
+            summary["frozen"] = True
         if self._signal_connected is not None:
             try:
                 summary["signal_connected"] = bool(self._signal_connected())
@@ -691,12 +708,41 @@ class TelemetrySender:
                                          register={k: v for k, v in register.items() if k not in manual},
                                          manual=typed, declared=self._declared)
         self._dropped = tuple(sorted(dropped))
+        if self._direct is None and self._update_frozen(prof, manual):
+            return {}, {k: None for k in manual}          # zamrożony: żadnych wartości (ceny i tak idą osobno)
         return prof, manual
+
+    def _update_frozen(self, prof: Mapping, manual: Mapping) -> bool:
+        """Czy odczyt z encji jest zamrożony: pobór I sieć bez zmiany od `FROZEN_AFTER_S`.
+
+        Porównujemy wartości kanoniczne (ręczna encja wygrywa z profilem, jak w `_values`). Niedostępna encja
+        to `None`, a przejście z `None` na wartość jest zmianą — niedostępność obsługuje reszta kodu i nie jest
+        „bez zmiany”. Zmiana któregokolwiek znaku życia wznawia wysyłkę od razu.
+
+        Decyzje przeciw fałszywemu „zamrożony” (cicho zabrałby dane użytkownika):
+        - zmapowany tylko jeden z klucza pary (albo żaden) → nigdy zamrożony: pojedynczy stały odczyt nie dowodzi
+          utraty łącza (np. sieć stała przy zerowym przepływie), a drugiego świadka brak;
+        - pobór i sieć dokładnie 0 → nigdy zamrożony: wyspa nocą bez obciążenia jest legalnie stała, a zamrożone
+          zero niczego użytkownikowi nie psuje;
+        - zmiana mocy PV, baterii albo SoC to znak życia (zamrożona integracja powtarza WSZYSTKIE wartości)."""
+        def value(key):
+            return _number(manual.get(key) if key in manual else prof.get(key))
+
+        sig = tuple(value(k) for k in _FROZEN_PAIR + _FROZEN_LIFE)
+        now = self._utcnow()
+        if sig != self._fz_sig:
+            self._fz_sig, self._fz_changed_at = sig, now
+        pair = sig[:len(_FROZEN_PAIR)]
+        self._fz_frozen = (all(v is not None for v in pair) and any(v != 0 for v in pair)
+                           and (now - self._fz_changed_at).total_seconds() >= FROZEN_AFTER_S)
+        return self._fz_frozen
 
     def readings_report(self) -> dict:
         """Diagnostyka: bieżące źródło każdego odczytu i klucze z encją bez odczytu (bez `entity_id`)."""
         self._current()
-        return {"readings_source": dict(self._sources), "readings_dropped": list(self._dropped)}
+        since = self._fz_changed_at.isoformat() if self._fz_frozen else None
+        return {"readings_source": dict(self._sources), "readings_dropped": list(self._dropped),
+                "readings_frozen": self._fz_frozen, "readings_frozen_since": since}
 
     def build_live_reading(self) -> dict | None:
         """Lekki odczyt na żywo (bez cen, `driver`, `extra`, ładowarek); None = nic do wysłania.
