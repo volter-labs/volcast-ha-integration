@@ -102,6 +102,23 @@ def test_realistic_subjects_fit_the_cap():
     assert ids and max(map(len, ids)) * 3 <= INPUT_CAP * 2, max(ids, key=len)
 
 
+def test_mapped_read_only_ids_keep_the_margin_with_long_scopes():
+    # Siedem unique_id, które profil integracji tylko do odczytu naprawdę mapuje (`total/*`), z realistycznie
+    # dłuższymi zakresami (IPv4 z puli dokumentacyjnej, nazwa hosta 33 znaki): zapas jak dla złożonych id
+    # (1,5x; najdłuższy zmierzony 69 z 128) i nadal dopasowanie do własnego wzorca przez `safe_search`.
+    from tests.test_readonly_registry_end_to_end import REGISTRY, profile_raw
+    path = Path(__file__).resolve().parents[1] / "discovery" / "fixtures" / f"{REGISTRY}.json"
+    topics = [e["unique_id"].split("_", 1)[1] for e in json.loads(path.read_text(encoding="utf-8"))["entities"]]
+    specs = next(iter(profile_raw()["ha"]["integrations"]))["entities"]
+    assert len(specs) == 7
+    for key, spec in specs.items():
+        (topic,) = [t for t in topics if t.startswith("total/") and safe_search(spec["unique_id_regex"], f"x_{t}")]
+        for scope in ("local:203.0.113.200", "local:energy-unit-hostname.example.test"):
+            uid = f"{scope}_{topic}"
+            assert len(uid) * 3 <= INPUT_CAP * 2, (key, len(uid), uid)
+            assert safe_search(spec["unique_id_regex"], uid), (key, uid)
+
+
 _FIXTURE = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "regex-safety.json").read_text(encoding="utf-8"))
 
 
