@@ -3,9 +3,12 @@
 Dopasowanie encji bez modelu idzie przez `ha.integrations[].model_regex` na tekście „producent model”;
 reszta reguł (pierwszeństwo pakietu, niejednoznaczność) bez zmian.
 """
+import pytest
+
 from custom_components.volcast.core.control.select import (InverterHint, ambiguous_profiles,
                                                            declared_by_profile, select_profile)
-from custom_components.volcast.core.profile import ORIGIN_FEED, ORIGIN_PACKAGE, load_builtin, profile_from_dict
+from custom_components.volcast.core.profile import (ORIGIN_FEED, ORIGIN_PACKAGE, load_builtin, packaged_ids,
+                                                    profile_from_dict)
 from tests.core.profile_fixtures import eo_profile
 
 SA = "solar_assistant"
@@ -72,3 +75,16 @@ def test_declared_by_profile_needs_integration_regex_match():
     # wpis ogólnej platformy bez `model_regex` (pakiet: `modbus`) nie deklaruje falownika
     sungrow = load_builtin("sungrow-sh")
     assert declared_by_profile(InverterHint("modbus", "Sungrow", "SH10RT"), [sungrow]) is False
+
+
+@pytest.mark.parametrize("hint,pid", [
+    (InverterHint("solax_modbus", "Sofar Solar", None), "sofar-hyd"),
+    (InverterHint("solax_modbus", "Ginlong Solis", None), "solis-hybrid"),
+    (InverterHint("solarman", "Solis", None), "solis-hybrid"),
+    (InverterHint("solarman", "SOFAR", None), "sofar-hyd"),
+])
+def test_modelless_device_on_packaged_register_profile_stays_read_only(hint, pid):
+    # Dopasowanie encji bez modelu tylko dla profili „tylko encje” — profile rejestrowe jak dotąd: podgląd.
+    all_profiles = [load_builtin(i) for i in packaged_ids()]
+    c = select_profile([hint], all_profiles)
+    assert (c.profile.id, c.integration_domain, c.model) == (pid, None, None)

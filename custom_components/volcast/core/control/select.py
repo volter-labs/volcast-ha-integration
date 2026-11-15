@@ -11,16 +11,16 @@ zawężamy po tekście urządzenia HA: marka z id profilu w producencie, potem
 Gdy nadal zostaje więcej niż jeden — ta wskazówka nie wybiera nic (`ambiguous_profiles`),
 bo zły id profilu w chmurze jest gorszy niż brak profilu.
 
-Profil bez `identify.model_regex` (identyfikacja po rejestrze) trafia wyłącznie do gałęzi 2 — chyba że
-urządzenie nie ma modelu: wtedy gałąź 1 przyjmuje wpis integracji z `model_regex` pasującym do „producent
-model” (`_entity_match`).
+Profil bez `identify.model_regex` (identyfikacja po rejestrze) trafia wyłącznie do gałęzi 2. Wyjątek: profil
+„tylko encje” dla urządzenia BEZ modelu — gałąź 1 przyjmuje jego wpis integracji z `model_regex` pasującym do
+„producent model” (`_entity_match`); profile rejestrowe dla takiego urządzenia zostają przy gałęzi 2.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Sequence
 
-from ..profile import Profile, is_packaged, writes_allowed
+from ..profile import Profile, entities_only, is_packaged, writes_allowed
 from ..regex_safety import fits, safe_search
 
 
@@ -86,11 +86,14 @@ def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
 
 
 def _entity_match(p: Profile, hint: InverterHint) -> bool:
-    """Domena + model zgodny z `identify.model_regex`; urządzenie BEZ modelu (integracja podaje tylko
-    producenta) dopasowuje się wzorcem `ha.integrations[].model_regex` na „producent model”."""
+    """Domena + model zgodny z `identify.model_regex`. Urządzenie BEZ modelu (integracja podaje tylko
+    producenta) — wyłącznie profil „tylko encje” i jego wzorzec `ha.integrations[].model_regex` na „producent
+    model”; profil rejestrowy (draft z niepotwierdzoną mapą encji) zostaje dla niego podglądem jak dotąd."""
     if hint.domain not in _domains(p):
         return False
-    return _model_ok(p, hint.model) if hint.model else _ha_text_ok(p, hint)
+    if hint.model:
+        return _model_ok(p, hint.model)
+    return entities_only(p) and _ha_text_ok(p, hint)
 
 
 def declared_by_profile(hint: InverterHint, profiles: Sequence[Profile]) -> bool:
