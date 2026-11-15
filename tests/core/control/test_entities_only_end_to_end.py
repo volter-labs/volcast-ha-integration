@@ -3,7 +3,9 @@
 Integracja pośrednicząca odczyt (`solar_assistant`): urządzenia z producentem, bez modelu; `unique_id`
 = `<zakres>_<urządzenie>/<metryka>`. Profil „tylko encje” deklaruje integrację i wzorzec producenta.
 """
-from custom_components.volcast.core.control.select import InverterHint, ambiguous_profiles, select_profile
+from custom_components.volcast.core.control.recommend import NO_WRITE_PATH, RUNG_IDENTIFY, UNSUPPORTED, recommend
+from custom_components.volcast.core.control.select import (InverterHint, ProfileChoice, ambiguous_profiles,
+                                                           select_profile)
 from custom_components.volcast.core.discovery.classify import classify, is_inverter
 from custom_components.volcast.core.discovery.models import ConfigEntrySnap, DeviceSnap, EntitySnap
 from custom_components.volcast.core.entity_map import EntityCandidate, resolve_entities
@@ -90,3 +92,17 @@ def test_same_registry_without_the_profile_yields_nothing():
     hint = InverterHint(SA, "SolarAssistant", None)
     assert is_inverter(hint, ()) is False
     assert select_profile([hint], []) is None
+
+
+def test_recommendation_for_entities_only_choice_is_unsupported_no_write_path():
+    # Profil „tylko encje” odczytuje, ale nie ma drogi zapisu: rekomendacja `unsupported`/`no_write_path`
+    # z dołączoną integracją; to samo z wyborem podanym i wyliczonym z raportu.
+    profile = _profile()
+    report = {"inverters": [{"domain": SA, "matched_by": "domain", "config_entry_title": "Solar Assistant",
+                             "devices": [{"manufacturer": "SolarAssistant", "model": None}], "entities": []}]}
+    mapped = {"pv_power_w": "sensor.total_pv_power", "soc": "sensor.total_battery_state_of_charge"}
+    for choice in (ProfileChoice(profile, SA, None), None):
+        rec = recommend(report, [profile], entity_map=mapped, choice=choice)
+        assert (rec.path, rec.reason, rec.ladder_start) == (UNSUPPORTED, NO_WRITE_PATH, RUNG_IDENTIFY)
+        assert rec.integration == {"domain": SA, "name": SA}
+        assert rec.device == {"manufacturer": "SolarAssistant", "model": None}
