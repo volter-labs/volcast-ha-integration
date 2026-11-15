@@ -84,20 +84,24 @@ _TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification", "work
 PROFILE_ENGINE = 3
 _MAX_MIN_ENGINE = 2 ** 53 - 1
 
-# Profil „tylko encje” (`access: entities_only`): wyłącznie odczyt z encji `sensor`/`binary_sensor`
-# integracji HA — bez dostępu do rejestrów, bez zapisu, bez trybu bezpośredniego. Sekcje rejestrowe
-# są w nim opcjonalne i — jeśli obecne — ignorowane (bez sprawdzania; reguła wzorców `*_regex` obejmuje
-# je jak każde pole). Profil ładowany do obiektu dostaje w ich miejsce puste wartości (`profile.py`).
+# Profil „tylko encje” (`access: entities_only`): wyłącznie odczyt z encji `sensor` integracji HA — bez
+# dostępu do rejestrów, bez zapisu, bez trybu bezpośredniego. Sekcje rejestrowe są w nim NIEDOZWOLONE
+# (błąd schematu, nie „ignorowane”): pozostawiony w pliku `identify` ze wzorcem spoza reguły odrzuciłby
+# w feedzie cały feed (`profile_feed._unsafe`), a niczego by nie dawał. Profil ładowany do obiektu dostaje
+# w ich miejsce puste wartości (`profile.py`).
 ACCESS_ENTITIES_ONLY = "entities_only"
 ENTITIES_ONLY_MIN_ENGINE = 3
 REGISTER_SECTIONS = ("transports", "identify", "read", "write", "intents", "baseline", "write_policy",
                      "limits", "unit_id", "control_model", "modbus", "tou")
 _EO_REQ = ("schema_version", "id", "label", "status", "sources", "ha", "capabilities", "access",
            "min_engine")
-# Konstrukcje wskazujące encję zapisu albo tryb pracy — w profilu „tylko encje” zawsze błąd.
-_EO_FORBIDDEN = ("modes", "neutral_mode", "work_mode")
-_EO_OPT = ("status_note", "verification", "endorsement") + REGISTER_SECTIONS + _EO_FORBIDDEN
-ENTITIES_ONLY_DOMAINS = ("sensor", "binary_sensor")
+# Sekcje rejestrowe i konstrukcje wskazujące encję zapisu albo tryb pracy — zawsze błąd (z własnym
+# komunikatem, dlatego na liście pól dozwolonych dla `v.obj`, a odrzucane w `_validate_entities_only`).
+_EO_FORBIDDEN = REGISTER_SECTIONS + ("modes", "neutral_mode", "work_mode")
+_EO_OPT = ("status_note", "verification", "endorsement") + _EO_FORBIDDEN
+# Tylko `sensor`: każdy dozwolony klucz to wartość liczbowa (moc, energia, SoC, limit), a `binary_sensor`
+# ma stan on/off — żaden klucz by go nie użył. Domena zapisu (number, select, switch…) — zawsze błąd.
+ENTITIES_ONLY_DOMAINS = ("sensor",)
 # Tylko odczyty pomiarowe, liczniki i limity (klucze źródeł chmury) — bez odczytu nastaw i trybu.
 ENTITIES_ONLY_KEYS = frozenset((*MEASURED_KEYS, *EXTRA_KEYS))
 # Nadpisania parametrów drabiny weryfikacji urządzenia (próbne godziny, okno próbne): pole → zakres.
@@ -597,12 +601,15 @@ def _ha_entity_domain(key: str) -> str:
 
 def _ha(v: _V, raw: Any, *, entities_only: bool = False) -> None:
     """`entities_only`: tylko klucze odczytów (`ENTITIES_ONLY_KEYS`) i tylko domeny `ENTITIES_ONLY_DOMAINS`
-    — profil nie może wskazać żadnej encji, przez którą dałoby się pisać do falownika."""
+    — profil nie może wskazać żadnej encji, przez którą dałoby się pisać do falownika. Taki profil to
+    WYŁĄCZNIE mapa encji, więc musi mieć co najmniej jedną integrację i każda co najmniej jedną encję."""
     h = v.obj(raw, "$.ha", ("integrations",))
     if h is None or not isinstance(h.get("integrations"), list):
         if h is not None:
             v.err("$.ha.integrations", "oczekiwano listy")
         return
+    if entities_only and not h["integrations"]:
+        v.err("$.ha.integrations", f"oczekiwano niepustej listy (profil {ACCESS_ENTITIES_ONLY})")
     for i, integ in enumerate(h["integrations"]):
         p = f"$.ha.integrations[{i}]"
         it = v.obj(integ, p, ("domain", "ems", "status", "entities"), ("model_regex",))
@@ -622,6 +629,8 @@ def _ha(v: _V, raw: Any, *, entities_only: bool = False) -> None:
         if not isinstance(ents, dict):
             v.err(f"{p}.entities", "oczekiwano obiektu")
             continue
+        if entities_only and not ents:
+            v.err(f"{p}.entities", f"oczekiwano co najmniej jednej encji (profil {ACCESS_ENTITIES_ONLY})")
         for key, e in ents.items():
             ep = f"{p}.entities.{key}"
             if key not in READ_KEYS and key not in WRITE_PARAMS and not _HA_TOU_KEY.match(key):
@@ -772,8 +781,8 @@ def _header(v: _V, top: dict) -> None:
 
 
 def _validate_entities_only(v: _V, top: dict) -> None:
-    """Profil „tylko encje”: sekcje rejestrowe pominięte (ignorowane), żadnej encji zapisu ani trybu,
-    wszystkie możliwości `false`, `min_engine` co najmniej silnik, który zna `access`."""
+    """Profil „tylko encje”: bez sekcji rejestrowych, żadnej encji zapisu ani trybu, wszystkie możliwości
+    `false`, `min_engine` co najmniej silnik, który zna `access`."""
     v.enum(top.get("access"), "$.access", (ACCESS_ENTITIES_ONLY,))
     engine = top.get("min_engine")
     # Brak pola zgłasza `v.obj`, zły typ — `_header`; tu tylko za niski silnik (niższy nie zna `access`).
@@ -781,7 +790,7 @@ def _validate_entities_only(v: _V, top: dict) -> None:
         v.err("$.min_engine", f"profil {ACCESS_ENTITIES_ONLY} wymaga min_engine >= {ENTITIES_ONLY_MIN_ENGINE}")
     for key in _EO_FORBIDDEN:
         if key in top:
-            v.err(f"$.{key}", f"niedozwolone w profilu {ACCESS_ENTITIES_ONLY} (tryb albo encja zapisu)")
+            v.err(f"$.{key}", f"niedozwolone w profilu {ACCESS_ENTITIES_ONLY} (rejestry, tryb albo encja zapisu)")
     _ha(v, top.get("ha"), entities_only=True)
     if "verification" in top:
         _verification(v, top["verification"])
@@ -790,7 +799,7 @@ def _validate_entities_only(v: _V, top: dict) -> None:
         for k in CAPABILITY_KEYS:
             if k in caps and caps[k] is not False:
                 v.err(f"$.capabilities.{k}", f"oczekiwano false (profil {ACCESS_ENTITIES_ONLY} bez sterowania)")
-        if "time_windows" in caps and (isinstance(caps["time_windows"], bool) or caps["time_windows"] != 0):
+        if "time_windows" in caps and (type(caps["time_windows"]) is not int or caps["time_windows"] != 0):
             v.err("$.capabilities.time_windows", "oczekiwano 0")
 
 
