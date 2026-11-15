@@ -42,7 +42,7 @@ import logging
 import time
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 import homeassistant.util.dt as dt_util
 from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STOP
@@ -69,7 +69,7 @@ from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
 from ..core.control.recommend import recommend
 from ..core.control.select import InverterHint, ProfileChoice, control_verified, select_profile
-from ..core.discovery.known import INVERTER_DOMAINS
+from ..core.discovery.classify import is_inverter
 from ..core.entity_map import EntityCandidate, _integration, resolve_entities, resolve_work_mode_entity
 from ..core.regex_safety import safe_search
 from ..core.modbus.views import UNCORRELATED_KINDS
@@ -740,20 +740,25 @@ def _entry_lock(hass, entry_id: str) -> asyncio.Lock:
     return lock
 
 
-def inverter_hints(hass) -> list[InverterHint]:
+def inverter_hints(hass, profiles: Sequence = ()) -> list[InverterHint]:
+    """Wskazówki falowników z rejestru urządzeń: domena wpisu znana albo zadeklarowana przez któryś
+    z `profiles` dla tego urządzenia (`is_inverter`)."""
     out: list[InverterHint] = []
     for dev in all_devices(dr.async_get(hass)):
         if getattr(dev, "disabled_by", None):
             continue
         for ce_id in sorted(device_config_entry_ids(dev)):
             ce = hass.config_entries.async_get_entry(ce_id)
-            if ce is not None and ce.domain in INVERTER_DOMAINS:
-                out.append(InverterHint(ce.domain, dev.manufacturer, dev.model))
+            if ce is None:
+                continue
+            hint = InverterHint(ce.domain, dev.manufacturer, dev.model)
+            if is_inverter(hint, profiles):
+                out.append(hint)
     return out
 
 
 def _choice_for(hass, entry, profiles) -> ProfileChoice | None:
-    hints = inverter_hints(hass)
+    hints = inverter_hints(hass, profiles)
     pid, domain = entry.options.get(OPT_PROFILE_ID), entry.options.get(OPT_INVERTER_DOMAIN)
     if pid and domain:
         prof = next((p for p in profiles if p.id == pid), None)
