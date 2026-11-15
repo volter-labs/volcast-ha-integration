@@ -26,16 +26,26 @@ def _is_inverter_manufacturer(m: str | None) -> bool:
 
 def is_inverter(hint: InverterHint, profiles: Sequence[Profile] = ()) -> bool:
     """Domena wpisu urządzenia wskazuje falownik: domena znana (`INVERTER_DOMAINS`) albo zadeklarowana przez
-    załadowany profil (pakiet + feed) wpisem `ha.integrations[]`, którego `model_regex` pasuje do „producent
-    model” TEGO urządzenia. Wpis profilu bez `model_regex` (ogólna platforma, np. `modbus`) domeny nie
-    rozszerza — taka platforma zostaje jak dotąd przy ścieżce producenta."""
+    załadowany profil „tylko encje” wpisem `ha.integrations[]`, którego `model_regex` pasuje do „producent
+    model” TEGO urządzenia (`declared_by_profile`; nigdy ogólna platforma HA, np. `modbus` — ta zostaje jak
+    dotąd przy ścieżce producenta)."""
     return hint.domain in INVERTER_DOMAINS or declared_by_profile(hint, profiles)
 
 
-def _declared_entry(c: ConfigEntrySnap, devices: list[DeviceSnap], profiles: Sequence[Profile]) -> bool:
-    return any(c.entry_id in d.config_entry_ids
-               and declared_by_profile(InverterHint(c.domain, d.manufacturer, d.model), profiles)
-               for d in devices)
+def _declared_entries(config_entries: list[ConfigEntrySnap], devices: list[DeviceSnap],
+                      profiles: Sequence[Profile]) -> set[str]:
+    """Id wpisów spoza znanych domen, które profil uznaje za falownik dla któregoś z ich urządzeń
+    (jeden przebieg po urządzeniach z indeksem wpisów, nie urządzenia × wpisy)."""
+    if not profiles:
+        return set()
+    domains = {c.entry_id: c.domain for c in config_entries if c.domain not in INVERTER_DOMAINS}
+    out: set[str] = set()
+    for d in devices:
+        for eid in d.config_entry_ids:
+            if eid in domains and eid not in out \
+                    and declared_by_profile(InverterHint(domains[eid], d.manufacturer, d.model), profiles):
+                out.add(eid)
+    return out
 
 
 def _energy_like(e: EntitySnap, states: dict[str, StateSnap]) -> bool:
@@ -77,8 +87,9 @@ def classify(
         return findings[key]
 
     # 1) po domenie wpisu konfiguracji (znanej albo zadeklarowanej przez profil dla urządzenia tego wpisu)
+    declared = _declared_entries(config_entries, devices, profiles)
     for c in config_entries:
-        if c.domain in INVERTER_DOMAINS or (profiles and _declared_entry(c, devices, profiles)):
+        if c.domain in INVERTER_DOMAINS or c.entry_id in declared:
             finding_for(c.entry_id, c.domain, c, "domain")
     # 2) urządzenia: przypisz do znalezisk; producent łapie nieznane domeny
     device_to_key: dict[str, str] = {}

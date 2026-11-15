@@ -3,13 +3,18 @@
 Dopasowanie encji bez modelu idzie przez `ha.integrations[].model_regex` na tekście „producent model”;
 reszta reguł (pierwszeństwo pakietu, niejednoznaczność) bez zmian.
 """
+import copy
+import dataclasses
+
 import pytest
 
 from custom_components.volcast.core.control.select import (InverterHint, ambiguous_profiles,
                                                            declared_by_profile, select_profile)
 from custom_components.volcast.core.profile import (ORIGIN_FEED, ORIGIN_PACKAGE, load_builtin, packaged_ids,
                                                     profile_from_dict)
-from tests.core.profile_fixtures import eo_profile
+from custom_components.volcast.core.profile_schema import GENERIC_HA_PLATFORMS
+from custom_components.volcast.core.regex_safety import INPUT_CAP
+from tests.core.profile_fixtures import eo_profile, ms_profile
 
 SA = "solar_assistant"
 
@@ -88,3 +93,39 @@ def test_modelless_device_on_packaged_register_profile_stays_read_only(hint, pid
     all_profiles = [load_builtin(i) for i in packaged_ids()]
     c = select_profile([hint], all_profiles)
     assert (c.profile.id, c.integration_domain, c.model) == (pid, None, None)
+
+
+def test_register_profile_never_declares_a_domain():
+    # Feed z profilem rejestrowym opisującym nieznaną domenę ze wzorcem: domena NIE staje się falownikiem.
+    raw = ms_profile()
+    raw["id"] = "acme-hybrid"
+    raw["ha"]["integrations"][0].update(domain="acme_cloud", model_regex=["(?i)\\bacme\\b"])
+    acme = profile_from_dict(raw)
+    assert declared_by_profile(InverterHint("acme_cloud", "ACME", None), [acme]) is False
+
+
+@pytest.mark.parametrize("domain", sorted(GENERIC_HA_PLATFORMS))
+def test_generic_platform_never_declared_even_by_an_entities_only_profile(domain):
+    # Schemat odrzuca taki profil; wybór i tak go nie uzna (obrona niezależna od walidacji).
+    sa = _eo("solarassistant-generic")
+    raw = copy.deepcopy(dict(sa.raw))
+    raw["ha"] = {"integrations": [{**sa.raw["ha"]["integrations"][0], "domain": domain}]}
+    forged = dataclasses.replace(sa, raw=raw)
+    assert declared_by_profile(InverterHint(domain, "SolarAssistant", None), [forged]) is False
+
+
+def test_manufacturer_over_the_input_cap_declares_nothing():
+    sa = _eo("solarassistant-generic")
+    hint = InverterHint(SA, "SolarAssistant " + "x" * INPUT_CAP, None)
+    assert declared_by_profile(hint, [sa]) is False
+    assert select_profile([hint], [sa]) is None
+
+
+def test_feed_entities_only_choice_never_outranks_a_packaged_choice_on_another_device():
+    sa = _eo("solarassistant-generic")
+    deye = load_builtin("deye-sg")
+    hints = [InverterHint(SA, "SolarAssistant", None), InverterHint("solarman", "Deye", "SUN-10K-SG04LP3-EU")]
+    c = select_profile(hints, [sa, deye])
+    assert (c.profile.id, c.integration_domain) == ("deye-sg", None)
+    # bez profilu z pakietu w domu — wybór „tylko encje” z feedu działa
+    assert select_profile(hints[:1], [sa, deye]).profile.id == "solarassistant-generic"

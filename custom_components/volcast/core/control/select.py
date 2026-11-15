@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from ..profile import Profile, entities_only, is_packaged, writes_allowed
+from ..profile_schema import GENERIC_HA_PLATFORMS
 from ..regex_safety import fits, safe_search
 
 
@@ -97,9 +98,12 @@ def _entity_match(p: Profile, hint: InverterHint) -> bool:
 
 
 def declared_by_profile(hint: InverterHint, profiles: Sequence[Profile]) -> bool:
-    """Domena wskazówki opisana przez któryś profil wpisem `ha.integrations[]`, którego `model_regex` pasuje
-    do „producent model” urządzenia. Wpis bez `model_regex` (ogólna platforma, np. `modbus`) nic nie daje."""
-    return any(_ha_text_ok(p, hint) for p in profiles)
+    """Domena wskazówki opisana przez profil „tylko encje” wpisem `ha.integrations[]`, którego `model_regex`
+    pasuje do „producent model” urządzenia. Profile rejestrowe nic tu nie dają (ich domeny są w znanych
+    domenach falowników), ogólna platforma HA (`GENERIC_HA_PLATFORMS`) — nigdy."""
+    if hint.domain in GENERIC_HA_PLATFORMS:
+        return False
+    return any(entities_only(p) and _ha_text_ok(p, hint) for p in profiles)
 
 
 def _eligible(hint: InverterHint, ordered: Sequence[Profile]) -> list[Profile]:
@@ -132,18 +136,26 @@ def select_profile(hints: Sequence[InverterHint], profiles: Sequence[Profile]) -
     Kolejność: profil i wpis integracji zweryfikowane (sterowanie encjami) → profil zweryfikowany
     (także tylko do odczytu) → drafty. W obrębie jednego poziomu dopasowanie z integracją przed
     dopasowaniem tylko do odczytu, a potem kolejność wskazówek — dom z samymi draftami dostaje
-    to samo co dotąd. Draft innej marki nie może przesłonić zweryfikowanego falownika.
+    to samo co dotąd. Draft innej marki nie może przesłonić zweryfikowanego falownika. Wybór z profilu
+    „tylko encje” z feedu — po wszystkich innych (`_last`).
     """
     ordered = sorted(profiles, key=lambda p: p.id)
-    found: list[tuple[tuple[int, int, int], ProfileChoice]] = []
+    found: list[tuple[tuple[int, int, int, int], ProfileChoice]] = []
     for idx, h in enumerate(hints):
         cands = _entity_cands(h, ordered)
         if len(cands) == 1:
-            found.append(((_rank(cands[0], h.domain), 0, idx), ProfileChoice(cands[0], h.domain, h.model)))
+            found.append(((_last(cands[0]), _rank(cands[0], h.domain), 0, idx),
+                          ProfileChoice(cands[0], h.domain, h.model)))
         cands = _read_only_cands(h, ordered)
         if len(cands) == 1:
-            found.append(((_rank(cands[0], None), 1, idx), ProfileChoice(cands[0], None, h.model)))
+            found.append(((_last(cands[0]), _rank(cands[0], None), 1, idx), ProfileChoice(cands[0], None, h.model)))
     return min(found, key=lambda f: f[0])[1] if found else None
+
+
+def _last(profile: Profile) -> int:
+    """Profil „tylko encje” z feedu na samym końcu: jego domena bywa uznana za falownik tylko dzięki niemu,
+    więc nie przesłoni wyboru dla innego urządzenia (zwłaszcza profilu z pakietu)."""
+    return int(entities_only(profile) and not is_packaged(profile))
 
 
 def _rank(profile: Profile, integration_domain: str | None) -> int:

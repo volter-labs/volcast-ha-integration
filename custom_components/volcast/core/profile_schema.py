@@ -102,6 +102,15 @@ _EO_OPT = ("status_note", "verification", "endorsement") + _EO_FORBIDDEN
 # Tylko `sensor`: każdy dozwolony klucz to wartość liczbowa (moc, energia, SoC, limit), a `binary_sensor`
 # ma stan on/off — żaden klucz by go nie użył. Domena zapisu (number, select, switch…) — zawsze błąd.
 ENTITIES_ONLY_DOMAINS = ("sensor",)
+# Ogólne platformy HA (protokoły, mosty, pomocniki): każda niesie urządzenia dowolnego rodzaju, więc profil
+# „tylko encje” nie może wskazać takiej domeny — wzorzec producenta uczyniłby falownikiem liczniki, ładowarki
+# i czujniki tej platformy (klasyfikacja, wybór profilu, wykluczenie z ładowarek). Ta sama lista w walidatorze
+# profili po stronie serwera; wybór profilu (`select.declared_by_profile`) też jej pilnuje.
+GENERIC_HA_PLATFORMS: frozenset[str] = frozenset({
+    "mqtt", "modbus", "template", "rest", "command_line", "sql", "snmp", "esphome", "tasmota", "zha",
+    "zwave_js", "homekit_controller", "shelly", "tuya", "integration", "utility_meter", "group", "min_max",
+    "derivative", "statistics", "input_number", "homeassistant",
+})
 # Tylko odczyty pomiarowe, liczniki i limity (klucze źródeł chmury) — bez odczytu nastaw i trybu.
 ENTITIES_ONLY_KEYS = frozenset((*MEASURED_KEYS, *EXTRA_KEYS))
 # Nadpisania parametrów drabiny weryfikacji urządzenia (próbne godziny, okno próbne): pole → zakres.
