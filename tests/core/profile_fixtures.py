@@ -79,8 +79,27 @@ _TW = {
 }
 
 
+# Profil „tylko encje”: odczyt z encji `sensor` jednej integracji HA, bez sekcji rejestrowych.
+_EO = {
+    "schema_version": 1, "id": "test-eo", "label": "Test EO", "status": "draft",
+    "sources": [{"what": "test", "ref": "test"}],
+    "access": "entities_only", "min_engine": 3,
+    "ha": {"integrations": [{"domain": "test_entities", "ems": False, "status": "draft",
+                             "model_regex": ["(?i)\\btest ?entities\\b"], "entities": {
+        "soc": {"domain": "sensor", "unique_id_regex": "_battery_state_of_charge$"},
+        "pv_power_w": {"domain": "sensor", "unique_id_regex": "_pv_power$"},
+        "load_power_w": {"domain": "sensor", "unique_id_regex": "_load_power$"},
+        "grid_power_w": {"domain": "sensor", "unique_id_regex": "_grid_power$", "transform": "negate"}}}]},
+    "capabilities": {**dict.fromkeys(_CAPS, False), "time_windows": 0},
+}
+
+
 def ms_profile() -> dict:
     return copy.deepcopy(_MS)
+
+
+def eo_profile() -> dict:
+    return copy.deepcopy(_EO)
 
 
 def tw_profile() -> dict:

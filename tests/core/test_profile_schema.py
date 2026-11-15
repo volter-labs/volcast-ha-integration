@@ -703,7 +703,7 @@ def test_unknown_top_level_field_still_an_error_next_to_min_engine():
 
 def test_engine_version_of_this_release():
     from custom_components.volcast.core import profile_schema
-    assert profile_schema.PROFILE_ENGINE == 2
+    assert profile_schema.PROFILE_ENGINE == 3
 
 
 def test_regex_issues_report_every_unsafe_pattern_with_its_path():

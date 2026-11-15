@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from . import endorsement, profile_feed
-from .profile_schema import validate_profile
+from .profile_schema import ACCESS_ENTITIES_ONLY, REGISTER_SECTIONS, validate_profile
 
 PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
 _BUILTIN_ID_RE = re.compile(r"[a-z0-9-]+")
@@ -116,6 +116,8 @@ class Profile:
     origin: str = ORIGIN_FEED
     # SHA-256 treści profilu wpływającej na zachowanie (`_fingerprint`) — wiąże wynik drabiny z treścią.
     fingerprint: str = ""
+    # `access` profilu: None = pełny profil, `entities_only` = tylko odczyt z encji (`entities_only`).
+    access: str | None = None
 
     def intent(self, name: str) -> Mapping[str, Any] | None:
         return self.raw["intents"][name]
@@ -158,6 +160,8 @@ def profile_from_dict(raw: dict, *, origin: str = ORIGIN_FEED) -> Profile:
     errors = validate_profile(raw)
     if errors:
         raise ProfileError(errors)
+    if raw.get("access") == ACCESS_ENTITIES_ONLY:
+        return _entities_only_profile(raw, origin)
     wp, lim, tou = raw["write_policy"], raw["limits"], raw.get("tou") or {}
     modes = {n: ModeDef(n, m["value"], m["direction"], m["ha_option"])
              for n, m in (raw.get("modes") or {}).items()}
@@ -184,6 +188,42 @@ def profile_from_dict(raw: dict, *, origin: str = ORIGIN_FEED) -> Profile:
         baseline_enable=raw["baseline"].get("enable"),
         origin=origin,
         fingerprint=_fingerprint(raw),
+    )
+
+
+# Model sterowania profilu „tylko encje”: żaden — nie równa się ani `mode_setpoint`, ani `time_window`,
+# więc każda gałąź silnika i cyklu sprawdzająca model zostaje pominięta (cykl: bezczynny, silnik: błąd).
+CONTROL_MODEL_NONE = "none"
+# Puste sekcje rejestrowe w `Profile.raw` profilu „tylko encje” — konsumenci czytający `raw["read"]`,
+# `raw["write"]`, `raw.get("identify", {})` itp. dostają pusty kontener zamiast KeyError/None.
+_EO_EMPTY_RAW: Mapping[str, Any] = MappingProxyType({
+    "transports": [], "identify": {}, "read": {}, "write": {}, "intents": {}, "baseline": {},
+    "write_policy": {}, "limits": {}})
+# Dostęp bezpośredni bez łączy, odczytów identyfikacji i sondy: sonda grupuje profile po
+# `transport_options`, więc taki profil nigdy nie trafia do wyszukiwania w sieci (`discovery/identify`).
+_EO_MODBUS = ModbusSpec(status="draft", write_function=6, max_read_registers=1,
+                        transport_options=MappingProxyType({}), identify_reads=(), probe_keys=())
+
+
+def _entities_only_profile(raw: dict, origin: str) -> Profile:
+    """Profil „tylko encje”. Sekcje rejestrowe z pliku są IGNOROWANE (nie sprawdza ich walidator): w `raw`
+    zastępują je puste kontenery (`_EO_EMPTY_RAW`), pola typowane dostają wartości zamknięte bezpiecznie
+    — bez trybów i zapisów, pusty zakres temperatury (strażnik nic nie przepuszcza), każdy odczyt
+    nieświeży dla toru zapisu, model sterowania `none`. Prawa zapisu i tak nie ma (`writes_allowed`)."""
+    norm = {k: val for k, val in raw.items() if k not in REGISTER_SECTIONS}
+    norm.update(json.loads(json.dumps(dict(_EO_EMPTY_RAW))))
+    return Profile(
+        raw=MappingProxyType(json.loads(json.dumps(norm))),   # własna, głęboka kopia
+        id=raw["id"], status=raw["status"], control_model=CONTROL_MODEL_NONE,
+        unit_id=0, modes=MappingProxyType({}), neutral_mode=None,
+        write_order=(), min_interval_s=0.0, max_direction_changes_per_hour=0, max_state_age_s=0.0,
+        temp_min_c=0.0, temp_max_c=0.0,
+        tou_programs=0, time_step_min=60, soc_tolerance_pp=0.0, power_tolerance_w=0.0, tou_field_order=(),
+        modbus=_EO_MODBUS, nvm_budget=None,
+        origin=origin,
+        # Odcisk z treści po normalizacji: zmiana ignorowanej sekcji nie zmienia zachowania ani odcisku.
+        fingerprint=_fingerprint(norm),
+        access=ACCESS_ENTITIES_ONLY,
     )
 
 
@@ -227,9 +267,18 @@ def writes_allowed(profile) -> bool:
     """Czy profil w ogóle może prowadzić do zapisu na falownik: profil z pakietu integracji albo z feedu
     z ważnym certyfikatem zapisu (`feed_endorsed`). Profil z feedu bez certyfikatu (i obiekt bez
     pochodzenia) — nigdy, niezależnie od statusu, zgody i drabiny. Lokalne bramki (zgoda, drabina,
-    budżet zapisów) obowiązują tak samo dla obu pochodzeń."""
+    budżet zapisów) obowiązują tak samo dla obu pochodzeń. Profil „tylko encje” — nigdy, niezależnie od
+    pochodzenia, certyfikatu i statusu (stąd też `control_verified` i `direct_verified` False)."""
+    if entities_only(profile):
+        return False
     origin = getattr(profile, "origin", None)
     return isinstance(origin, str) and origin in _WRITE_ORIGINS
+
+
+def entities_only(profile) -> bool:
+    """Profil „tylko encje” (`access: entities_only`): odczyt z encji HA, bez rejestrów, zapisu i trybu
+    bezpośredniego."""
+    return getattr(profile, "access", None) == ACCESS_ENTITIES_ONLY
 
 
 def is_packaged(profile) -> bool:

@@ -279,11 +279,11 @@ def test_profile_requiring_a_newer_engine_is_skipped_and_the_rest_accepted():
 
 
 def test_newer_engine_wins_over_a_schema_error_in_the_skip_code():
-    nxt = _acme("next-hybrid", min_engine=3, future_field=True)
+    nxt = _acme("next-hybrid", min_engine=pf.PROFILE_ENGINE + 1, future_field=True)
     assert _verify(_acme(), nxt).skipped == (("next-hybrid", "engine"),)
 
 
-@pytest.mark.parametrize("engine", [1, 2])
+@pytest.mark.parametrize("engine", [1, 2, 3])
 def test_profile_within_the_engine_version_is_accepted(engine):
     v = _verify(_acme(min_engine=engine))
     assert list(v.profiles) == ["acme-hybrid"] and v.skipped == ()
@@ -299,7 +299,7 @@ def test_malformed_min_engine_is_a_schema_skip(engine):
 
 def test_engine_version_constant():
     from custom_components.volcast import const
-    assert pf.PROFILE_ENGINE == const.PROFILE_ENGINE == 2
+    assert pf.PROFILE_ENGINE == const.PROFILE_ENGINE == 3
 
 
 def test_every_profile_skipped_still_accepts_an_empty_feed():

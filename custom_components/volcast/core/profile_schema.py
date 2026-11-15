@@ -80,8 +80,26 @@ _TOP_OPT = ("modes", "neutral_mode", "tou", "status_note", "verification", "work
 # Wersja silnika profili tej wersji integracji. Profil z `min_engine` wyższym niż ta wartość
 # wymaga konstrukcji, których ten silnik nie zna — feed go pomija (`profile_feed`).
 # Tu, nie w `const.py`: rdzeń importuje się bez reszty integracji (`const` ją reeksportuje).
-PROFILE_ENGINE = 2
+# 3: profile „tylko encje” (`access: entities_only`).
+PROFILE_ENGINE = 3
 _MAX_MIN_ENGINE = 2 ** 53 - 1
+
+# Profil „tylko encje” (`access: entities_only`): wyłącznie odczyt z encji `sensor`/`binary_sensor`
+# integracji HA — bez dostępu do rejestrów, bez zapisu, bez trybu bezpośredniego. Sekcje rejestrowe
+# są w nim opcjonalne i — jeśli obecne — ignorowane (bez sprawdzania; reguła wzorców `*_regex` obejmuje
+# je jak każde pole). Profil ładowany do obiektu dostaje w ich miejsce puste wartości (`profile.py`).
+ACCESS_ENTITIES_ONLY = "entities_only"
+ENTITIES_ONLY_MIN_ENGINE = 3
+REGISTER_SECTIONS = ("transports", "identify", "read", "write", "intents", "baseline", "write_policy",
+                     "limits", "unit_id", "control_model", "modbus", "tou")
+_EO_REQ = ("schema_version", "id", "label", "status", "sources", "ha", "capabilities", "access",
+           "min_engine")
+# Konstrukcje wskazujące encję zapisu albo tryb pracy — w profilu „tylko encje” zawsze błąd.
+_EO_FORBIDDEN = ("modes", "neutral_mode", "work_mode")
+_EO_OPT = ("status_note", "verification", "endorsement") + REGISTER_SECTIONS + _EO_FORBIDDEN
+ENTITIES_ONLY_DOMAINS = ("sensor", "binary_sensor")
+# Tylko odczyty pomiarowe, liczniki i limity (klucze źródeł chmury) — bez odczytu nastaw i trybu.
+ENTITIES_ONLY_KEYS = frozenset((*MEASURED_KEYS, *EXTRA_KEYS))
 # Nadpisania parametrów drabiny weryfikacji urządzenia (próbne godziny, okno próbne): pole → zakres.
 VERIFICATION_RANGES = {"trial_hours": (1, 72), "window_minutes": (5, 60), "window_power_w": (100, 3000)}
 
@@ -577,7 +595,9 @@ def _ha_entity_domain(key: str) -> str:
     return "sensor"
 
 
-def _ha(v: _V, raw: Any) -> None:
+def _ha(v: _V, raw: Any, *, entities_only: bool = False) -> None:
+    """`entities_only`: tylko klucze odczytów (`ENTITIES_ONLY_KEYS`) i tylko domeny `ENTITIES_ONLY_DOMAINS`
+    — profil nie może wskazać żadnej encji, przez którą dałoby się pisać do falownika."""
     h = v.obj(raw, "$.ha", ("integrations",))
     if h is None or not isinstance(h.get("integrations"), list):
         if h is not None:
@@ -607,10 +627,17 @@ def _ha(v: _V, raw: Any) -> None:
             if key not in READ_KEYS and key not in WRITE_PARAMS and not _HA_TOU_KEY.match(key):
                 v.err(ep, "nieznany klucz encji")
                 continue
+            if entities_only and key not in ENTITIES_ONLY_KEYS:
+                v.err(ep, f"klucz nastawy, trybu albo zapisu niedozwolony w profilu {ACCESS_ENTITIES_ONLY}")
+                continue
             s = v.obj(e, ep, ("domain", "unique_id_regex"), ("transform",))
             if s is None:
                 continue
-            if v.enum(s.get("domain"), f"{ep}.domain", ("sensor", "number", "select", "switch", "time")):
+            if entities_only:
+                if s.get("domain") not in ENTITIES_ONLY_DOMAINS:
+                    v.err(f"{ep}.domain", f"{s.get('domain')!r} spoza {list(ENTITIES_ONLY_DOMAINS)}"
+                                          f" (profil {ACCESS_ENTITIES_ONLY} tylko do odczytu)")
+            elif v.enum(s.get("domain"), f"{ep}.domain", ("sensor", "number", "select", "switch", "time")):
                 want = _ha_entity_domain(key)
                 if s["domain"] != want:
                     v.err(f"{ep}.domain", f"klucz {key!r} wymaga domeny {want!r}")
@@ -722,11 +749,8 @@ def regex_issues(raw: object, *, parse_tree: bool = True) -> list[tuple[str, str
             if (problem := regex_problem(rx, parse_tree=parse_tree))]
 
 
-def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
-    v = _V()
-    top = v.obj(raw, "$", _TOP_REQ, _TOP_OPT)
-    if top is None:
-        return v.errors
+def _header(v: _V, top: dict) -> None:
+    """Pola wspólne każdego profilu: wersja schematu, id, etykieta, `min_engine`, status, źródła."""
     sv = top.get("schema_version")
     if isinstance(sv, bool) or sv != 1:
         v.err("$.schema_version", "obsługiwana wyłącznie wersja 1")
@@ -736,8 +760,6 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
     if "min_engine" in top:
         v.int_(top["min_engine"], "$.min_engine", 1, _MAX_MIN_ENGINE)
     v.enum(top.get("status"), "$.status", ("draft", "verified"))
-    model = top.get("control_model")
-    v.enum(model, "$.control_model", ("mode_setpoint", "time_window"))
     src = top.get("sources")
     if not isinstance(src, list) or not src:
         v.err("$.sources", "oczekiwano niepustej listy")
@@ -747,6 +769,48 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
             if o is not None:
                 v.str_(o.get("what"), f"$.sources[{i}].what")
                 v.str_(o.get("ref"), f"$.sources[{i}].ref")
+
+
+def _validate_entities_only(v: _V, top: dict) -> None:
+    """Profil „tylko encje”: sekcje rejestrowe pominięte (ignorowane), żadnej encji zapisu ani trybu,
+    wszystkie możliwości `false`, `min_engine` co najmniej silnik, który zna `access`."""
+    v.enum(top.get("access"), "$.access", (ACCESS_ENTITIES_ONLY,))
+    engine = top.get("min_engine")
+    # Brak pola zgłasza `v.obj`, zły typ — `_header`; tu tylko za niski silnik (niższy nie zna `access`).
+    if isinstance(engine, int) and not isinstance(engine, bool) and engine < ENTITIES_ONLY_MIN_ENGINE:
+        v.err("$.min_engine", f"profil {ACCESS_ENTITIES_ONLY} wymaga min_engine >= {ENTITIES_ONLY_MIN_ENGINE}")
+    for key in _EO_FORBIDDEN:
+        if key in top:
+            v.err(f"$.{key}", f"niedozwolone w profilu {ACCESS_ENTITIES_ONLY} (tryb albo encja zapisu)")
+    _ha(v, top.get("ha"), entities_only=True)
+    if "verification" in top:
+        _verification(v, top["verification"])
+    caps = v.obj(top.get("capabilities"), "$.capabilities", CAPABILITY_KEYS + ("time_windows",))
+    if caps is not None:
+        for k in CAPABILITY_KEYS:
+            if k in caps and caps[k] is not False:
+                v.err(f"$.capabilities.{k}", f"oczekiwano false (profil {ACCESS_ENTITIES_ONLY} bez sterowania)")
+        if "time_windows" in caps and (isinstance(caps["time_windows"], bool) or caps["time_windows"] != 0):
+            v.err("$.capabilities.time_windows", "oczekiwano 0")
+
+
+def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
+    v = _V()
+    if isinstance(raw, dict) and "access" in raw:
+        # Samo pole `access` przełącza zestaw reguł — nieznana wartość to błąd, nie pełny profil.
+        top = v.obj(raw, "$", _EO_REQ, _EO_OPT)
+        if top is not None:
+            _header(v, top)
+            _validate_entities_only(v, top)
+            for path, problem in regex_issues(top, parse_tree=parse_tree):
+                v.err(path, f"niebezpieczny regex ({problem}): {REGEX_HINTS.get(problem, problem)}")
+        return v.errors
+    top = v.obj(raw, "$", _TOP_REQ, _TOP_OPT)
+    if top is None:
+        return v.errors
+    _header(v, top)
+    model = top.get("control_model")
+    v.enum(model, "$.control_model", ("mode_setpoint", "time_window"))
     v.int_(top.get("unit_id"), "$.unit_id", 0, 255)
     tr = top.get("transports")
     if not isinstance(tr, list) or not tr:
