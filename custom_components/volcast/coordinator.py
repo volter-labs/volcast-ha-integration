@@ -115,15 +115,20 @@ def async_profile_ready_issues(hass: HomeAssistant, ids, profiles, *, verified_i
         word = re.compile(rf"\b{re.escape(brand)}\b")
         if brand in covered or not (pid in candidates or brand in brands or any(word.search(m) for m in makers)):
             continue
-        issue_id = f"{ISSUE_BRAND_PROFILE_READY}_{pid}"
-        raw = profiles.get(pid) or {}
-        ir.async_create_issue(
-            hass, DOMAIN, issue_id, is_fixable=True, severity=_ISSUE_WARNING,
-            translation_key=ISSUE_BRAND_PROFILE_READY,
-            translation_placeholders={"profile": pid, "label": _safe_label(raw.get("label"), pid)},
-            data={"profile_id": pid})
-        created.append(issue_id)
+        created.append(async_profile_ready_issue(hass, pid, (profiles.get(pid) or {}).get("label")))
     return created
+
+
+def async_profile_ready_issue(hass: HomeAssistant, pid: str, label: Any) -> str:
+    """Naprawa „profil gotowy” dla jednego profilu (id naprawy stały dla profilu — ponowne utworzenie
+    tylko ją odświeża)."""
+    issue_id = f"{ISSUE_BRAND_PROFILE_READY}_{pid}"
+    ir.async_create_issue(
+        hass, DOMAIN, issue_id, is_fixable=True, severity=_ISSUE_WARNING,
+        translation_key=ISSUE_BRAND_PROFILE_READY,
+        translation_placeholders={"profile": pid, "label": _safe_label(label, pid)},
+        data={"profile_id": pid})
+    return issue_id
 
 
 @dataclass

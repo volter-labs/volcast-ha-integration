@@ -58,7 +58,7 @@ from ..cloud import control_choice
 from ..cloud.client import Backend, PairingClient, PairingSession, VolcastCloud
 from ..cloud.fetcher import SCHEDULE_FETCH_INTERVAL_S, ScheduleFetcher
 from ..cloud.signal_channel import SignalChannel
-from ..coordinator import async_get_profile_feed
+from ..coordinator import async_get_profile_feed, async_profile_ready_issue
 from ..const import (DEFAULT_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
@@ -295,6 +295,8 @@ class ControlRuntime:
     _meta_dirty: bool = False
     # ponowne sprawdzenie profilu z prawem zapisu po aktualizacji feedu (`watch_profile_withdrawal`)
     feed_recheck: bool = False
+    # wynik wyboru profilu (id, domena), dla którego zgłoszono już „profil gotowy” (`watch_profile_choice`)
+    announced_choice: tuple | None = None
     withdrawal_task: object | None = None
     # samoczynne odnajdywanie falownika pod nowym adresem (`start_relocator`); tylko tryb bezpośredni
     relocator: object | None = None
@@ -706,6 +708,40 @@ def watch_profile_withdrawal(hass, entry, rt: ControlRuntime, feed) -> None:
         if task is not None and not task.done():
             return
         rt.withdrawal_task = hass.async_create_background_task(_recheck(), "volcast_profile_withdrawal")
+
+    rt.unsubs.append(add(_updated))
+
+
+def _choice_key(choice) -> tuple | None:
+    return None if choice is None else (choice.profile.id, choice.integration_domain)
+
+
+def watch_profile_choice(hass, entry, rt: ControlRuntime, feed) -> None:
+    """Wpis na ścieżce encji: po każdej przyjętej aktualizacji feedu wybór profilu liczony od nowa z bieżących
+    rejestrów (`_choice_for`). Nowy wynik (brak → wybór, inny profil albo domena integracji) — ta sama naprawa
+    „profil gotowy” co dla nowych profili feedu; wybór działa po przeładowaniu wpisu. Raz na zmieniony wynik;
+    wycofanie profilu (nowy wynik: brak) naprawy nie daje. Tryb bezpośredni — profil z sondy, nie z rejestrów."""
+    add = getattr(feed, "add_update_listener", None)
+    if add is None or rt.direct is not None or _direct_target(entry.options) is not None:
+        return
+
+    async def _recheck() -> None:
+        try:
+            profiles = await hass.async_add_executor_job(ds.load_profiles)
+            new = _choice_for(hass, entry, profiles)
+        except Exception as err:  # noqa: BLE001 — zadanie w tle nie zostawia wyjątku
+            _LOGGER.warning("Volcast control: profile choice check after a feed update failed (%s)",
+                            type(err).__name__)
+            return
+        key = _choice_key(new)
+        if new is None or key == _choice_key(rt.choice) or key == rt.announced_choice:
+            return
+        rt.announced_choice = key
+        async_profile_ready_issue(hass, new.profile.id, new.profile.raw.get("label"))
+
+    @callback
+    def _updated() -> None:
+        hass.async_create_background_task(_recheck(), "volcast_profile_choice")
 
     rt.unsubs.append(add(_updated))
 
@@ -1328,6 +1364,7 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
 
         telemetry.control_runtime = rt
         watch_profile_withdrawal(hass, entry, rt, feed)
+        watch_profile_choice(hass, entry, rt, feed)
         executor.entity_gaps_source = rt.entity_gaps
         executor.request_reload = lambda: _schedule_reload(hass, entry.entry_id)
 
