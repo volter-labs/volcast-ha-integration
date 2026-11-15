@@ -6,6 +6,10 @@ Czyste funkcje, bez importów HA. Klasyfikator tylko wskazuje encje pełniące r
 Znane ograniczenie: status musi mieć listę stanów `options` (sensor enum). Ładowarka bez
 enumerowanego statusu — tylko tekstowy sensor albo czujnik wtyczki on/off (binary_sensor)
 — nie jest wykrywana automatycznie; on/off nie odróżnia podłączenia od ładowania.
+Ładowarka bez żadnej encji sterującej (status + moc i/lub energia) to klasa `monitor`: sesje
+są tylko odczytywane, nic nie jest sterowane. Sam status bez mocy i energii nadal nie jest ładowarką.
+Urządzenia należące do znaleziska falownika nie są kandydatami (liczby w A i przełączniki
+"charge" falownika wyglądają jak sterowanie ładowarką).
 Opcje statusu dzielimy na słowa tylko po znakach innych niż litery/cyfry, więc zbiór w
 CamelCase ("SuspendedEV", "Charging", "Available") bez osobnego stanu złącza w rodzaju
 "Preparing" też nie daje statusu ("SuspendedEV" to jedno słowo).
@@ -22,6 +26,7 @@ _TOKEN_RE = re.compile(r"[^a-z0-9]+")
 
 # role opcjonalne w kolejności raportowania braków (status jest zawsze wymagany)
 OPTIONAL_ROLES: tuple[str, ...] = ("setpoint", "start_stop", "power", "energy")
+MONITOR_OPTIONAL_ROLES: tuple[str, ...] = ("power", "energy")
 
 # opcje statusu: musi być stan ładowania ORAZ osobny stan złącza/auta — samo "charging"
 # ma też stan baterii falownika, a "charger_disconnected" to stacja dokująca odkurzacza
@@ -36,6 +41,7 @@ _SWITCH_HINTS = ("charg", "allow", "enable", "start", "stop", "pause", "resume")
 _START_HINTS = ("start", "resume")
 _STOP_HINTS = ("stop", "pause")
 _STATUS_HINTS = ("status", "state")
+_SESSION_HINTS = ("session",)
 
 
 def _tokens(text: str) -> list[str]:
@@ -177,22 +183,24 @@ def _start_stop(ents: list[EntitySnap], states: dict[str, StateSnap],
 
 
 def _measure(ents: list[EntitySnap], states: dict[str, StateSnap], prefix: str,
-             device_class: str, units: tuple[str, ...], prefer_total: bool) -> ChargerRole | None:
+             device_class: str, units: tuple[str, ...], prefer_total: bool,
+             avoid: tuple[str, ...] = ()) -> ChargerRole | None:
     cands = [e for e in ents if _kind(e) == "sensor"
              and (_device_class(e, states) == device_class or _unit(e, states) in units)]
     if not cands:
         return None
 
-    def key(e: EntitySnap) -> tuple[bool, bool, str]:
+    def key(e: EntitySnap) -> tuple[bool, bool, bool, str]:
         total = _attr(e, states, "state_class") in ("total", "total_increasing")
-        return (prefer_total and not total, not _has(e, _CHARGE_PREFIXES, prefix), e.entity_id)
+        return (prefer_total and not total, _has(e, avoid, prefix),
+                not _has(e, _CHARGE_PREFIXES, prefix), e.entity_id)
 
     best = sorted(cands, key=key)[0]
     return ChargerRole(best.entity_id, "sensor", unit=_unit(best, states))
 
 
 def _confidence(missing: tuple[str, ...]) -> str:
-    # bez licznika energii — niska
+    # bez licznika energii — niska (brak nastawy w klasie monitor nie jest brakiem: nie trafia do `missing`)
     if "energy" in missing:
         return "low"
     return "high" if not missing else "medium"
@@ -211,22 +219,28 @@ def _finding(dev: DeviceSnap, ents: list[EntitySnap],
         roles["setpoint"] = setpoint
     roles.update(_start_stop(ents, states, prefix))
     has_control = "setpoint" in roles or "start_stop" in roles or "start" in roles
-    if not has_control:
-        return None
     power = _measure(ents, states, prefix, "power", ("W", "kW"), prefer_total=False)
     if power is not None:
         roles["power"] = power
-    energy = _measure(ents, states, prefix, "energy", ("Wh", "kWh", "MWh"), prefer_total=True)
+    # licznik dożywotni przed licznikiem sesji: sesje liczy serwer z różnic rosnącego licznika, a licznik
+    # sesji zeruje się przy podłączeniu auta
+    energy = _measure(ents, states, prefix, "energy", ("Wh", "kWh", "MWh"), prefer_total=True,
+                      avoid=_SESSION_HINTS)
     if energy is not None:
         roles["energy"] = energy
+    if not has_control and power is None and energy is None:
+        return None                       # sam status nie czyni ładowarki
+    control_class = "regulated" if has_control else "monitor"
     present = set(roles) | ({"start_stop"} if "start" in roles else set())
-    missing = tuple(r for r in OPTIONAL_ROLES if r not in present)
+    # klasa monitor nie ma ról sterujących, więc ich brak nie jest brakiem
+    optional = OPTIONAL_ROLES if has_control else MONITOR_OPTIONAL_ROLES
+    missing = tuple(r for r in optional if r not in present)
     platform = next((e.platform for e in ents if e.entity_id == status.entity_id), None)
     return ChargerFinding(
         device_id=dev.id, name=dev.name, manufacturer=dev.manufacturer, model=dev.model,
         config_entry_id=dev.config_entry_ids[0] if dev.config_entry_ids else None,
         platform=platform, roles=roles, missing=missing,
-        confidence=_confidence(missing),
+        confidence=_confidence(missing), control_class=control_class,
     )
 
 
@@ -234,11 +248,14 @@ def classify_chargers(
     devices: list[DeviceSnap],
     entities: list[EntitySnap],
     states: dict[str, StateSnap],
+    exclude_device_ids: frozenset[str] = frozenset(),
 ) -> list[ChargerFinding]:
-    """Znaleziska ładowarek: urządzenie ze statusem i (nastawą lub start/stop)."""
+    """Znaleziska ładowarek: urządzenie ze statusem i (nastawą, start/stop albo mocą/energią — to ostatnie
+    daje klasę `monitor`). Urządzenia z `exclude_device_ids` (urządzenia znalezisk falownika) pomijamy."""
     by_device: dict[str, list[EntitySnap]] = {}
     for e in entities:
         if e.device_id and not e.disabled:
             by_device.setdefault(e.device_id, []).append(e)
-    found = (_finding(d, by_device.get(d.id, []), states) for d in devices)
+    found = (_finding(d, by_device.get(d.id, []), states) for d in devices
+             if d.id not in exclude_device_ids)
     return [f for f in found if f is not None]

@@ -105,14 +105,15 @@ def classify(
                     key=lambda e: (_load_score(e), e.entity_id))[:MAX_ENERGY_CANDIDATES]
     return Classification(inverters=list(findings.values()), price_entities=prices,
                           energy_candidates=energy,
-                          chargers=_chargers(devices, entities, states))
+                          chargers=_chargers(devices, entities, states,
+                                             frozenset(d.id for f in findings.values() for d in f.devices)))
 
 
 def _chargers(devices: list[DeviceSnap], entities: list[EntitySnap],
-              states: dict[str, StateSnap]) -> list[ChargerFinding]:
+              states: dict[str, StateSnap], inverter_device_ids: frozenset[str]) -> list[ChargerFinding]:
     # błąd wykrywania ładowarek nie może zabrać falowników, cen i energii z tej klasyfikacji
     try:
-        return classify_chargers(devices, entities, states)
+        return classify_chargers(devices, entities, states, inverter_device_ids)
     except Exception:  # noqa: BLE001 — izolacja kroku
         _LOGGER.warning("Volcast discovery: charger classification failed", exc_info=True)
         return []

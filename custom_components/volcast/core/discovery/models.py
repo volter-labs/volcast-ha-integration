@@ -86,6 +86,8 @@ class ChargerFinding:
     roles: dict[str, ChargerRole] = field(default_factory=dict)
     missing: tuple[str, ...] = ()
     confidence: str = "low"         # "high" | "medium" | "low"
+    # "regulated": ma encję sterującą; "monitor": tylko odczyt (status + moc i/lub energia), bez sterowania
+    control_class: str = "regulated"
 
 
 @dataclass

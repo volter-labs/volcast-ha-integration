@@ -310,3 +310,119 @@ def test_adapter_slug_strips_prefix_for_non_latin_device_name():
     assert "start_stop" not in classify_chargers([dev], [_STATUS, _SETPOINT, sw], {})[0].roles
     bare = DeviceSnap(**{**dev.__dict__, "slug": None})
     assert "start_stop" in classify_chargers([bare], [_STATUS, _SETPOINT, sw], {})[0].roles
+
+
+# ── ładowarka tylko do odczytu (klasa monitor) ────────────────────────────────
+
+_WB_OPTIONS = ["booting", "not_connected", "connected", "ready", "negotiating", "error",
+               "charging_finished", "waiting_car", "charging_reduced", "charging"]
+
+
+def _wb(device="d1", **extra):
+    """Wallbox bez encji sterujących: status enum, moc, energia sesji i dożywotnia (obie w Wh)."""
+    ents = [
+        _ent("sensor.wb_status", "enum", name="Status", device=device, caps={"options": _WB_OPTIONS}),
+        _ent("sensor.wb_power", "power", "W", name="Power", device=device),
+        _ent("sensor.wb_session_energy", "energy", "Wh", name="Session energy", device=device,
+             caps={"state_class": "total_increasing"}),
+        _ent("sensor.wb_energy", "energy", "Wh", name="Lifetime energy", device=device,
+             caps={"state_class": "total_increasing"}),
+        _ent("binary_sensor.wb_vehicle_connected", "plug", name="Vehicle connected", device=device),
+    ]
+    return ents
+
+
+def test_sensor_only_wallbox_is_a_monitor_charger():
+    (f,) = classify_chargers([_dev()], _wb(), {})
+    assert f.control_class == "monitor"
+    assert set(f.roles) == {"status", "power", "energy"}
+    assert f.missing == () and f.confidence == "high"
+
+
+def test_monitor_status_tokens_of_the_wallbox_are_accepted():
+    # charging_finished/charging_reduced/waiting_car: słowo ładowania + osobny stan złącza (connected)
+    (f,) = classify_chargers([_dev()], _wb(), {})
+    assert f.roles["status"].options == tuple(_WB_OPTIONS)
+
+
+def test_monitor_energy_prefers_lifetime_counter_over_session_counter():
+    # kontrakt: licznik rosnący; sesję liczy serwer z różnic. Licznik sesji zeruje się przy podłączeniu
+    (f,) = classify_chargers([_dev()], _wb(), {})
+    assert f.roles["energy"].entity_id == "sensor.wb_energy"
+    # wynik nie zależy od kolejności encji ani od porządku alfabetycznego entity_id
+    renamed = [_ent("sensor.wb_a_session_energy", "energy", "Wh", name="Session energy",
+                    caps={"state_class": "total_increasing"}),
+               _ent("sensor.wb_z_energy", "energy", "Wh", name="Lifetime energy",
+                    caps={"state_class": "total_increasing"}),
+               _STATUS]
+    for ents in (renamed, renamed[::-1]):
+        (g,) = classify_chargers([_dev()], ents, {})
+        assert g.roles["energy"].entity_id == "sensor.wb_z_energy"
+
+
+def test_monitor_with_only_energy_or_only_power_is_still_a_charger():
+    only_e = [e for e in _wb() if e.entity_id != "sensor.wb_power"]
+    (f,) = classify_chargers([_dev()], only_e, {})
+    assert f.control_class == "monitor" and f.missing == ("power",) and f.confidence == "medium"
+    only_p = [e for e in _wb() if "energy" not in e.entity_id]
+    (g,) = classify_chargers([_dev()], only_p, {})
+    assert g.control_class == "monitor" and g.missing == ("energy",) and g.confidence == "low"
+
+
+def test_status_alone_stays_a_non_charger_even_with_binary_sensors():
+    only_status = [e for e in _wb() if e.entity_id in ("sensor.wb_status",
+                                                       "binary_sensor.wb_vehicle_connected")]
+    assert classify_chargers([_dev()], only_status, {}) == []
+
+
+def test_charger_with_control_keeps_regulated_class():
+    f = classify_chargers([_dev()], [_STATUS, _SETPOINT, _ent("sensor.p", "power", "W")], {})[0]
+    assert f.control_class == "regulated"
+
+
+def _inverter_device_entities():
+    """Urządzenie falownika w stylu integracji z dziesiątkami encji sterujących (numbers/selects/switches)."""
+    d = "inv1"
+    return [
+        _ent("sensor.inverters_1_device_mode", "enum", name="Device mode", device=d,
+             caps={"options": ["Battery charging", "Grid connected", "Standby", "Fault"]}),
+        _ent("number.inverters_1_max_charge_current", None, "A", name="Max charge current", device=d,
+             caps={"min": 0, "max": 60, "step": 1}),
+        _ent("number.inverters_1_max_grid_charge_current", None, "A", name="Max grid charge current",
+             device=d, caps={"min": 0, "max": 60, "step": 1}),
+        _ent("number.inverters_1_max_sell_power", None, "W", name="Max sell power", device=d,
+             caps={"min": 0, "max": 10_000, "step": 100}),
+        _ent("switch.inverters_1_grid_charge", name="Grid charge", device=d),
+        _ent("switch.inverters_1_start_stop", name="Inverter start stop", device=d),
+        _ent("select.inverters_1_charge_mode", name="Charge mode", device=d,
+             caps={"options": ["Start charging", "Stop charging"]}),
+        _ent("sensor.inverters_1_pv_power", "power", "W", name="PV power", device=d),
+        _ent("sensor.inverters_1_battery_energy", "energy", "kWh", name="Battery energy", device=d),
+    ]
+
+
+def test_todays_classifier_flags_an_inverter_device_with_charging_mode_sensor():
+    # dokumentuje lukę: bez wykluczenia urządzenia falownika taki zestaw encji WYGLĄDA jak ładowarka
+    # (tryb "Battery charging" + stan "Grid connected" + nastawa w A + przełącznik start/stop)
+    (f,) = classify_chargers([_dev("inv1")], _inverter_device_entities(), {})
+    assert f.device_id == "inv1"
+    assert f.roles["setpoint"].entity_id.startswith("number.inverters_1_")
+
+
+def test_device_of_an_inverter_finding_is_never_a_charger():
+    ents = _inverter_device_entities()
+    assert classify_chargers([_dev("inv1")], ents, {}, exclude_device_ids=frozenset({"inv1"})) == []
+    # inne urządzenie tego samego wpisu nadal może być ładowarką
+    both = ents + _wb(device="d1")
+    found = classify_chargers([_dev("inv1"), _dev("d1")], both, {}, exclude_device_ids=frozenset({"inv1"}))
+    assert [f.device_id for f in found] == ["d1"]
+
+
+def test_classify_excludes_devices_of_inverter_findings():
+    inv_dev = DeviceSnap(id="inv1", manufacturer="X", model=None, name="Inverters 1", sw_version=None,
+                         hw_version=None, serial_number=None, identifiers=(), config_entry_ids=("einv",))
+    entry = ConfigEntrySnap(entry_id="einv", domain="goodwe", title="Inverter", host=None)
+    ents = [EntitySnap(**{**e.__dict__, "config_entry_id": "einv"}) for e in _inverter_device_entities()]
+    c = classify([inv_dev], ents, [entry], {})
+    assert [i.config_entry_id for i in c.inverters] == ["einv"]
+    assert c.chargers == []
