@@ -44,6 +44,17 @@ def _now_local(tz) -> datetime:
     return datetime.now(tz)
 
 
+class HourlyStats(dict):
+    """{hour: kwh} + metadane doby z statystyk HA.
+
+    `complete` — statystyki doby wyglądają na kompletne (baseline przed pierwszą
+    godziną i skompilowana ostatnia godzina); `total_kwh` — suma wszystkich delt.
+    """
+
+    complete: bool = False
+    total_kwh: float = 0.0
+
+
 @dataclass
 class ReconcileResult:
     """Wynik pojedynczego wywołania reconcile_day."""
@@ -198,13 +209,30 @@ class DailyReconciler:
                 "data_method": "energy_delta",
             })
 
-        if not missing:
+        # Suma doby zamkniętej z tych samych statystyk (suma delt godzinnych;
+        # godzina powrotu po przerwie księguje cały zaległy zapas, więc suma
+        # jest prawdą dnia). Wysyłamy TYLKO gdy doba jest zamknięta i statystyki
+        # są kompletne (baseline przed pierwszą godziną + skompilowana ostatnia
+        # godzina) — inaczej suma byłaby częściowa, a późniejszy przebieg mógłby
+        # wysłać dla tej doby wartość inną/niższą. Przy kompletnych danych
+        # ponowna wysyłka (startup / sync_now / przebieg 00:30) daje tę samą
+        # wartość, więc jest idempotentna.
+        day_totals: list[dict] | None = None
+        if target_date < today and getattr(hourly_stats, "complete", False):
+            day_totals = [{
+                "date": target_date.isoformat(),
+                "total_kwh": round(hourly_stats.total_kwh, 3),
+            }]
+
+        if not missing and day_totals is None:
             _LOGGER.debug("Reconcile %s — no gaps", target_date)
             return ReconcileResult(success=True, submitted=0)
 
-        return await self._post_reconciliation(missing)
+        return await self._post_reconciliation(missing, day_totals)
 
-    async def _post_reconciliation(self, readings: list[dict]) -> ReconcileResult:
+    async def _post_reconciliation(
+        self, readings: list[dict], day_totals: list[dict] | None = None,
+    ) -> ReconcileResult:
         """POST brakujących godzin z flagą is_reconciliation=true.
 
         Backend rozpoznaje tę flagę i pomija Kalman+nowcast (Phase 1 commits).
@@ -212,11 +240,15 @@ class DailyReconciler:
         zostają NIE oznaczone, żeby kolejny przebieg reconciler je powtórzył.
         """
         session = async_get_clientsession(self._hass)
+        payload: dict = {"readings": readings, "is_reconciliation": True}
+        if day_totals:
+            # Nieznane pole — starszy serwer je ignoruje.
+            payload["day_totals"] = day_totals
         result = await http_with_retry(
             session,
             method="POST",
             url=self._submit_url,
-            payload={"readings": readings, "is_reconciliation": True},
+            payload=payload,
             headers={
                 "X-API-Key": self._api_key,
                 "Content-Type": "application/json",
@@ -243,7 +275,9 @@ class DailyReconciler:
             rejected_count = data.get("rejected", len(rejected_keys))
             _LOGGER.info(
                 "Reconciliation: submitted %d hours for %s, accepted=%d rejected=%d",
-                len(readings), readings[0]["date"], accepted_count, rejected_count,
+                len(readings),
+                readings[0]["date"] if readings else day_totals[0]["date"],
+                accepted_count, rejected_count,
             )
             return ReconcileResult(
                 success=True,
@@ -290,8 +324,22 @@ class DailyReconciler:
         if not entries:
             return {}
 
-        hourly: dict[int, float] = {}
+        hourly = HourlyStats()
         prev_sum: float | None = None
+        # Kompletność doby (warunek wysyłki sumy dnia): jest wiersz-baseline
+        # tuż przed pierwszą godziną doby (pierwsza delta policzalna) ORAZ
+        # wiersz ostatniej godziny doby (skompilowany). Granice liczone w UTC,
+        # więc doby 23h/25h (zmiana czasu) działają bez wyjątków.
+        day_start_utc = datetime.combine(
+            target_date, time.min, tzinfo=self._tz
+        ).astimezone(timezone.utc)
+        day_end_utc = datetime.combine(
+            target_date + timedelta(days=1), time.min, tzinfo=self._tz
+        ).astimezone(timezone.utc)
+        baseline_start = day_start_utc - timedelta(hours=1)
+        last_start = day_end_utc - timedelta(hours=1)
+        have_baseline = False
+        have_last = False
         for entry in sorted(entries, key=lambda e: e["start"]):
             raw_start = entry["start"]
             if isinstance(raw_start, (int, float)):
@@ -303,7 +351,13 @@ class DailyReconciler:
                 local_start = raw_start
                 if local_start.tzinfo is None:
                     local_start = local_start.replace(tzinfo=timezone.utc)
+            start_utc = local_start.astimezone(timezone.utc)
             local_start = local_start.astimezone(self._tz)
+            if entry.get("sum") is not None:
+                if start_utc == baseline_start:
+                    have_baseline = True
+                elif start_utc == last_start:
+                    have_last = True
             if local_start.date() != target_date:
                 # Baseline-seed (poprzedni dzień) — zachowaj sum, nie raportuj.
                 prev_sum = entry.get("sum")
@@ -314,5 +368,9 @@ class DailyReconciler:
                 continue
             delta = max(cur - prev_sum, 0.0)
             hourly[local_start.hour] = delta
+            # Suma doby sumuje WSZYSTKIE delty (w dobie 25h godzina 01 występuje
+            # dwa razy, a klucz godziny jest wtedy nadpisywany).
+            hourly.total_kwh += delta
             prev_sum = cur
+        hourly.complete = have_baseline and have_last
         return hourly
