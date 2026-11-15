@@ -77,6 +77,19 @@ ACCEPTED_RETENTION_DAYS = 7
 BASELINE_STORAGE_KEY = "volcast_energy_baseline"
 BASELINE_STORAGE_VERSION = 1
 
+# Dlugosc przerwy w odczytach licznika, do ktorej odzyskujemy energie (godziny).
+# Dluzsza przerwa: bez `covers_from` — backend i tak odrzuca odczyty starsze niz
+# ta granica, wiec zaklamywanie ich zakresu nic by nie dalo.
+MAX_GAP_HOURS = 36
+
+# Rekord w Store baseline oprocz baseline'u poczatku godziny niesie tez:
+#   "last"        — ostatni znany stan licznika {value, ts, date, hour}; godzina
+#                   bez zdarzen go NIE kasuje, wiec po ciszy encji (albo restarcie
+#                   HA w ciszy) pierwszy odczyt liczy delte od niego;
+#   "flushed"     — {date, hour} ostatniej godziny, ktora wyslalismy do backendu;
+#   "covers_from" — {date, hour} gdy odczyt biezacej godziny obejmuje tez
+#                   wczesniejsze godziny bez zdarzen (przezywa restart).
+
 # Powody odrzucenia readinga przez backend, których NIE warto retry'ować:
 # semantycznie permanentne — kolejne wysyłanie zawsze da ten sam rezultat.
 # Reconciler powinien traktować je jak "już dostarczone" by nie spamować.
@@ -126,6 +139,15 @@ class HourBucket:
     charge_power_sum: float = 0.0
     charge_power_count: int = 0
     charge_power_max: float | None = None
+    # Odczyt po przerwie: pierwsza godzina (date, hour), ktorej energia siedzi w
+    # delcie tego bucketa, i liczba godzin objetych delta (od covers_from do hour).
+    covers_from: tuple[str, int] | None = None
+    covers_hours: int = 1
+
+
+def _hour_dt(date_str: str, hour: int) -> datetime:
+    """Naiwny datetime poczatku godziny (porownywanie i arytmetyka godzin)."""
+    return datetime.strptime(date_str, "%Y-%m-%d") + timedelta(hours=hour)
 
 
 class VolcastProductionTracker:
@@ -183,6 +205,10 @@ class VolcastProductionTracker:
         self._baseline_store = Store(hass, BASELINE_STORAGE_VERSION, BASELINE_STORAGE_KEY)
         self._baseline: dict[str, Any] | None = None
         self._baseline_loaded: bool = False
+        # Ostatni stan licznika {value, ts, date, hour} i ostatnia wyslana godzina
+        # {date, hour} — oba trwale w tym samym Store (patrz BASELINE_STORAGE_KEY).
+        self._last_state: dict[str, Any] | None = None
+        self._flushed: dict[str, Any] | None = None
 
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
         self.last_submission_time: datetime | None = None
@@ -268,33 +294,47 @@ class VolcastProductionTracker:
             return self._baseline
         try:
             data = await self._baseline_store.async_load()
-            if isinstance(data, dict) and "value" in data:
+            if isinstance(data, dict) and ("value" in data or "last" in data):
                 self._baseline = data
+                last = data.get("last")
+                if isinstance(last, dict):
+                    self._last_state = dict(last)
+                flushed = data.get("flushed")
+                if isinstance(flushed, dict):
+                    self._flushed = dict(flushed)
         except Exception:
             _LOGGER.warning("Failed to load energy baseline from storage", exc_info=True)
         self._baseline_loaded = True
         return self._baseline
 
     async def _persist_baseline(self, now: datetime) -> None:
-        """Utrwal stan licznika z poczatku biezacej godziny.
+        """Utrwal stan licznika: baseline poczatku godziny + ostatni stan licznika.
 
         Wolane z kazdego ticku (co 5 min), wiec okno ekspozycji na restart to
         maksymalnie 5 minut zamiast pelnej godziny. Zapis tylko gdy rekord sie
         zmienil — bez tego pisalibysmy na dysk 12 razy na godzine bez powodu.
+        Godzina bez zdarzen nie kasuje rekordu (ostatni stan licznika zostaje).
         """
+        record: dict[str, Any] = dict(self._baseline) if isinstance(self._baseline, dict) else {}
         bucket = self._current_bucket
-        if bucket is None or bucket.energy_start is None:
-            return
         # Kubelek nieaktualny (brak state changow przez ponad godzine) — jego
         # energy_start nie jest baseline'em biezacej godziny. Nie zapisujemy.
-        if bucket.hour != now.hour:
-            return
-        record = {
-            "date": now.strftime("%Y-%m-%d"),
-            "hour": bucket.hour,
-            "value": bucket.energy_start,
-        }
-        if record == self._baseline:
+        if bucket is not None and bucket.energy_start is not None and bucket.hour == now.hour:
+            record["date"] = now.strftime("%Y-%m-%d")
+            record["hour"] = bucket.hour
+            record["value"] = bucket.energy_start
+            if bucket.covers_from is not None:
+                record["covers_from"] = {
+                    "date": bucket.covers_from[0],
+                    "hour": bucket.covers_from[1],
+                }
+            else:
+                record.pop("covers_from", None)
+        if self._last_state is not None:
+            record["last"] = dict(self._last_state)
+        if self._flushed is not None:
+            record["flushed"] = dict(self._flushed)
+        if not record or record == self._baseline:
             return
         self._baseline = record
         try:
@@ -317,6 +357,63 @@ class VolcastProductionTracker:
             return None
         value = b.get("value")
         return float(value) if isinstance(value, (int, float)) else None
+
+    @staticmethod
+    def _set_covers(bucket: HourBucket, first: datetime, cur: datetime) -> None:
+        """Oznacz bucket jako obejmujacy godziny od `first` do `cur` wlacznie."""
+        bucket.covers_from = (first.strftime("%Y-%m-%d"), first.hour)
+        bucket.covers_hours = int((cur - first).total_seconds() // 3600) + 1
+
+    def _recover_energy_start(self, bucket: HourBucket, value: float, now: datetime) -> None:
+        """Ustaw energy_start pierwszego odczytu godziny z ostatniego stanu licznika.
+
+        Encja milczy (albo HA jest wylaczone) godzinami, a licznik wraca ze
+        skokiem: energia z przerwy jest w roznicy miedzy ostatnim znanym stanem
+        a pierwszym odczytem. Bez tego energy_start = pierwszy odczyt i cala
+        energia z przerwy przepada. Zostawia energy_start puste, gdy odzysk nie
+        ma sensu (brak stanu, reset licznika, przerwa ponad MAX_GAP_HOURS).
+        """
+        last = self._last_state
+        if not isinstance(last, dict):
+            return
+        try:
+            last_value = float(last["value"])
+            last_ts = float(last["ts"])
+            last_dt = _hour_dt(last["date"], int(last["hour"]))
+        except (KeyError, TypeError, ValueError):
+            return
+        # Reset licznika: wartosc spadla — bez odzysku, zachowanie jak dotad.
+        if value < last_value:
+            return
+        age_h = (now.timestamp() - last_ts) / 3600.0
+        if age_h < 0 or age_h > MAX_GAP_HOURS:
+            return
+        cur = _hour_dt(now.strftime("%Y-%m-%d"), now.hour)
+        if last_dt > cur:
+            return
+        if last_dt == cur:
+            bucket.energy_start = last_value
+            return
+
+        # Czy godzina ostatniego stanu zostala juz wyslana? Brak znacznika =
+        # tracker nie wyslal jeszcze zadnej godziny (swieza instalacja), wiec nie.
+        flushed_dt: datetime | None = None
+        if isinstance(self._flushed, dict):
+            try:
+                flushed_dt = _hour_dt(self._flushed["date"], int(self._flushed["hour"]))
+            except (KeyError, TypeError, ValueError):
+                flushed_dt = None
+        if flushed_dt is not None and flushed_dt >= last_dt:
+            first = last_dt + timedelta(hours=1)
+            bucket.energy_start = last_value
+        else:
+            # Ostatnia godzina z odczytami nie zostala wyslana (HA wylaczone w
+            # chwili flushu): obejmij rowniez ja, od jej baseline'u, jesli znany.
+            first = last_dt
+            baseline_start = self._baseline_for_hour(last_dt.hour, last_dt)
+            bucket.energy_start = baseline_start if baseline_start is not None else last_value
+        if first < cur:
+            self._set_covers(bucket, first, cur)
 
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""
@@ -464,6 +561,16 @@ class VolcastProductionTracker:
                 recovered = self._baseline_for_hour(current_hour, now)
                 if recovered is not None:
                     self._current_bucket.energy_start = recovered
+                    cf = (self._baseline or {}).get("covers_from")
+                    if isinstance(cf, dict):
+                        try:
+                            self._set_covers(
+                                self._current_bucket,
+                                _hour_dt(cf["date"], int(cf["hour"])),
+                                _hour_dt(now.strftime("%Y-%m-%d"), current_hour),
+                            )
+                        except (KeyError, TypeError, ValueError):
+                            pass
                     _LOGGER.debug(
                         "Odzyskano baseline licznika dla godziny %s po restarcie: %s",
                         current_hour, recovered,
@@ -473,8 +580,17 @@ class VolcastProductionTracker:
 
         if entity_id == self._energy_entity:
             if bucket.energy_start is None:
-                bucket.energy_start = value
+                self._recover_energy_start(bucket, value, now)
+                if bucket.energy_start is None:
+                    bucket.energy_start = value
             bucket.energy_latest = value
+            # Ostatni znany stan licznika — przezywa godziny bez zdarzen.
+            self._last_state = {
+                "value": value,
+                "ts": now.timestamp(),
+                "date": now.strftime("%Y-%m-%d"),
+                "hour": current_hour,
+            }
 
         if entity_id == self._power_entity:
             bucket.power_readings.append((now.timestamp(), value))
@@ -552,6 +668,11 @@ class VolcastProductionTracker:
             "actual_kwh": round(actual_kwh, 4),
             "data_method": data_method,
         }
+        if bucket.covers_from is not None:
+            reading["covers_from"] = {
+                "date": bucket.covers_from[0],
+                "hour": bucket.covers_from[1],
+            }
 
         if bucket.peak_power_w > 0:
             reading["peak_power_w"] = round(bucket.peak_power_w, 1)
@@ -575,6 +696,11 @@ class VolcastProductionTracker:
         elif bucket.charge_power_count == 0 and self._last_known_charge_power is not None:
             reading["battery_charge_power_max"] = round(self._last_known_charge_power, 1)
 
+        # Godzina wyslana (albo zakolejkowana) — zapamietaj, zeby po ciszy i
+        # restarcie wiedziec, od ktorej godziny energia jest jeszcze niezaraportowana.
+        self._flushed = {"date": production_date, "hour": prev_hour}
+        await self._persist_baseline(now)
+
         await self._async_submit([reading])
 
     def _compute_energy(self, bucket: HourBucket) -> tuple[float | None, str]:
@@ -588,10 +714,10 @@ class VolcastProductionTracker:
                 _LOGGER.debug("Energy counter reset detected (delta=%s), fallback to power", delta)
             else:
                 # Capacity glitch detection
-                if self._capacity_kwp and delta > self._capacity_kwp * 1.2:
+                if self._capacity_kwp and delta > self._capacity_kwp * 1.2 * bucket.covers_hours:
                     _LOGGER.warning(
-                        "Energy delta %s kWh exceeds capacity %s kWp × 1.2, skipping",
-                        delta, self._capacity_kwp,
+                        "Energy delta %s kWh exceeds capacity %s kWp × 1.2 × %d h, skipping",
+                        delta, self._capacity_kwp, bucket.covers_hours,
                     )
                     return None, "energy_delta"
                 return delta, "energy_delta"
