@@ -6,12 +6,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -138,11 +138,7 @@ class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
 
     def _prune_history(self) -> None:
         """Drop history entries older than the retention window."""
-        try:
-            tz = ZoneInfo(self.hass.config.time_zone)
-        except Exception:  # noqa: BLE001
-            tz = timezone.utc
-        cutoff = datetime.now(tz) - timedelta(days=FORECAST_HISTORY_RETENTION_DAYS)
+        cutoff = dt_util.now() - timedelta(days=FORECAST_HISTORY_RETENTION_DAYS)
         for ts in list(self._forecast_history):
             try:
                 if datetime.fromisoformat(ts) < cutoff:
@@ -273,12 +269,7 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         ]
 
     # Build wh_hours for HA Energy Dashboard
-    ha_tz = hass.config.time_zone
-    try:
-        from zoneinfo import ZoneInfo
-        tz = ZoneInfo(ha_tz)
-    except Exception:
-        tz = timezone.utc
+    tz = dt_util.get_default_time_zone()
 
     wh_hours = _build_wh_hours(hourly, detailed, tz)
 

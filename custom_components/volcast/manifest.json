@@ -10,5 +10,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/volter-labs/volcast-ha-integration/issues",
   "requirements": [],
-  "version": "1.7.3"
+  "version": "1.7.4"
 }
