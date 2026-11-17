@@ -14,6 +14,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD, DOMAIN
 from .coordinator import VolcastCoordinator
@@ -75,16 +76,7 @@ class VolcastPeakProductionSensor(
         if data is None:
             return None
 
-        try:
-            from zoneinfo import ZoneInfo
-
-            tz = ZoneInfo(self.hass.config.time_zone)
-        except Exception:
-            from datetime import timezone
-
-            tz = timezone.utc
-
-        now = datetime.now(tz)
+        now = dt_util.now()
         today_str = now.strftime("%Y-%m-%d")
         today_forecast = next(
             (d for d in data.forecast if d.date == today_str), None

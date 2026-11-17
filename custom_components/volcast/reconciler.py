@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt as dt_util
 
 from .http_retry import http_with_retry
 from .production import VolcastProductionTracker
@@ -81,12 +81,9 @@ class DailyReconciler:
         self._last_target_date: str | None = None
 
     @property
-    def _tz(self) -> ZoneInfo:
+    def _tz(self) -> tzinfo:
         """Strefa czasowa HA — używana do określenia granic dnia 00:00→24:00."""
-        try:
-            return ZoneInfo(self._hass.config.time_zone)
-        except Exception:
-            return ZoneInfo("UTC")
+        return dt_util.get_default_time_zone()
 
     async def reconcile_day(self, target_date: date) -> ReconcileResult:
         """Uzgodnij produkcję dla pojedynczego dnia. Idempotentne.
