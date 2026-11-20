@@ -258,6 +258,30 @@ async def test_reconcile_day_no_gaps_no_submit(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reconcile_day_covered_hours_not_resubmitted(monkeypatch):
+    """Godziny objete odczytem z `covers_from` (10-13) sa w _accepted; czastkowa
+    statystyka HA dla pierwszej z nich (przerwa) nie moze byc wyslana ponownie."""
+    from custom_components.volcast import reconciler as reconciler_mod
+
+    tracker = _make_real_tracker()
+    reconciler = _make_reconciler(tracker=tracker)
+    fixed_now = datetime(2026, 7, 24, 20, 40, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(reconciler_mod, "_now_local", lambda tz: fixed_now)
+    target = fixed_now.date()
+    tracker._accepted = {target.isoformat(): [10, 11, 12, 13]}
+
+    # godzina 10: tylko minuty sprzed przerwy; 11-12: brak statystyk; 13: pelna
+    stats = {10: 0.2, 13: 1.0}
+
+    with patch.object(DailyReconciler, "_fetch_ha_statistics", return_value=stats), \
+         patch("custom_components.volcast.reconciler.http_with_retry") as mock_http:
+        result = await reconciler.reconcile_day(target)
+
+    assert result.submitted == 0
+    assert mock_http.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_reconcile_day_one_gap_filled():
     """13 stat hours, 12 already accepted → POST 1 reading with is_reconciliation=true."""
     from custom_components.volcast.http_retry import RetryResult
