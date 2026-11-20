@@ -806,6 +806,15 @@ class VolcastProductionTracker:
                 reason = rejected_keys.get(key)
                 if reason is None or reason in PERMANENT_SKIP_REASONS:
                     await self._mark_accepted(r["date"], r["hour"])
+                    # Odczyt z `covers_from` rozlozyl energie na cala rozpietosc —
+                    # reconciler nie moze wyslac czastkowych statystyk tych godzin.
+                    cf = r.get("covers_from")
+                    if cf:
+                        cur = _hour_dt(cf["date"], cf["hour"])
+                        end = _hour_dt(r["date"], r["hour"])
+                        while cur < end:
+                            await self._mark_accepted(cur.strftime("%Y-%m-%d"), cur.hour)
+                            cur += timedelta(hours=1)
 
             # Sukces czysci tylko to, co faktycznie poszlo. Nadmiar ponad limit
             # paczki czeka na kolejny flush — wyczyszczenie calej kolejki gubiloby
