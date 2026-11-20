@@ -24,6 +24,7 @@ from typing import Awaitable, Callable
 from homeassistant.helpers import issue_registry as ir
 
 from ..const import DOMAIN
+from ..core.account_prices import AccountPrices, parse_prices
 from ..core.profile_feed import async_check_bounded
 from ..core.slot import InvalidSchedule, Schedule, parse_schedule
 from ..version import async_integration_version
@@ -42,7 +43,7 @@ UPDATE_ISSUE_ID = "update_available"
 _ISSUE_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
 # Pola odpowiedzi poza treścią planu: ich zmiana nie wywołuje ponownej akceptacji planu.
 _NOT_IN_SIGNATURE = ("control_enabled", "signals", "control", "latest_version", "plan_meta",
-                     "discovery_request", "profile_feed")
+                     "discovery_request", "profile_feed", "prices")
 
 
 def _is_newer(latest: str, current: str) -> bool:
@@ -62,7 +63,7 @@ class ScheduleFetcher:
                  on_control: Callable[[dict | None], Awaitable[None]] | None = None,
                  on_consent_mirror: Callable[[bool], None] | None = None,
                  hass=None, discovery_report: Callable[[], dict | None] | None = None,
-                 profile_feed=None) -> None:
+                 profile_feed=None, on_prices: Callable[[AccountPrices | None], None] | None = None) -> None:
         self._hass = hass   # tylko do zgłoszenia „dostępna aktualizacja"
         self._cloud = cloud
         self._on_plan = on_plan
@@ -85,6 +86,10 @@ class ScheduleFetcher:
         # Feed profili (`ProfileFeedUpdater`, wspólny dla wpisów) — sprawdzenie w tle, gdy należne.
         self._feed = profile_feed
         self._feed_task: asyncio.Task | None = None
+        # Ceny konta z ostatniej UDANEJ odpowiedzi (blok `prices`); brak bloku = None. Odpowiedź, której nie
+        # udało się pobrać, niczego nie zmienia — encje trzymają poprzednie dane, aż same wygasną.
+        self.prices: AccountPrices | None = None
+        self._on_prices = on_prices
 
     async def async_refresh(self) -> str:
         try:
@@ -114,6 +119,7 @@ class ScheduleFetcher:
         self._auth_failures = 0
         await self._async_signals(raw)
         await self._async_control(raw)
+        self._apply_prices(raw)
         self._apply_consent_mirror(raw)          # PRZED zgodą: zgoda z tej odpowiedzi idzie już pod lustrem
         await self._async_update_issue(raw.get("latest_version"))
         consent = raw.get("control_enabled")
@@ -140,7 +146,7 @@ class ScheduleFetcher:
             return "rejected"
         # Bloki `signals` i `control` zostają przy swoich odbiorcach — nie trafiają do planu w magazynie.
         await self._on_plan({k: v for k, v in raw.items()
-                             if k not in ("signals", "control", "discovery_request", "profile_feed")},
+                             if k not in ("signals", "control", "discovery_request", "profile_feed", "prices")},
                             schedule)
         self._last_signature = signature
         self._last_rejected = None
@@ -214,6 +220,21 @@ class ScheduleFetcher:
             task.cancel()
         if tasks:
             await asyncio.wait(tasks)
+
+    def _apply_prices(self, raw: dict) -> None:
+        """Blok `prices` PRZED deduplikacją (nowe ceny nie są nowym planem); brak albo wadliwy blok w udanej
+        odpowiedzi = brak cen (encje niedostępne). Błąd odbiorcy nie wywraca odświeżenia."""
+        try:
+            self.prices = parse_prices(raw.get("prices"))
+        except Exception as err:  # noqa: BLE001 — wadliwy blok cen nie może zatrzymać planu
+            self.prices = None
+            _LOGGER.debug("Volcast prices block failed (%s)", type(err).__name__)
+        if self._on_prices is None:
+            return
+        try:
+            self._on_prices(self.prices)
+        except Exception as err:  # noqa: BLE001 — odbiorca cen nie może zatrzymać planu
+            _LOGGER.debug("Volcast prices callback failed (%s)", type(err).__name__)
 
     def _apply_consent_mirror(self, raw: dict) -> None:
         """Lustro zgody tylko przy jawnym `control.consent_mirror: true`; błąd odbiorcy nie wywraca odświeżenia."""
