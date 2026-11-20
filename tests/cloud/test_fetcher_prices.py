@@ -47,19 +47,45 @@ def test_block_is_parsed_and_published():
     assert f.prices.slots[0].buy == 2.0 and len(got["prices"]) == 2
 
 
-def test_missing_block_on_successful_poll_clears():
-    f, got = make(doc() | {"prices": PRICES}, doc())
+def test_explicit_null_clears():
+    f, got = make(doc() | {"prices": PRICES}, doc() | {"prices": None})
     asyncio.run(f.async_refresh())
     assert f.prices is not None
-    asyncio.run(f.async_refresh())
+    assert asyncio.run(f.async_refresh()) == "unchanged"
     assert f.prices is None and got["prices"][-1] is None
 
 
-def test_malformed_block_clears_and_never_raises():
-    f, _ = make(doc() | {"prices": PRICES}, doc() | {"prices": "junk"}, doc() | {"prices": {"today": 5}})
+def test_absent_key_keeps_last_good_block():
+    f, got = make(doc() | {"prices": PRICES}, doc(), doc() | {"prices": OTHER})
     asyncio.run(f.async_refresh())
-    assert asyncio.run(f.async_refresh()) == "unchanged" and f.prices is None
-    assert asyncio.run(f.async_refresh()) == "unchanged" and f.prices is None
+    first = f.prices
+    asyncio.run(f.async_refresh())
+    assert f.prices is first and len(got["prices"]) == 1       # bez zmiany i bez powiadomienia
+    asyncio.run(f.async_refresh())
+    assert f.prices.slots[0].buy == 2.0
+
+
+def test_absent_key_without_previous_block_stays_none():
+    f, _ = make(doc())
+    asyncio.run(f.async_refresh())
+    assert f.prices is None
+
+
+def test_malformed_block_keeps_previous_and_logs_once(caplog):
+    import logging
+    f, got = make(doc() | {"prices": PRICES}, doc() | {"prices": "junk"}, doc() | {"prices": {"today": 5}},
+                  doc() | {"prices": OTHER}, doc() | {"prices": 5})
+    asyncio.run(f.async_refresh())
+    first = f.prices
+    with caplog.at_level(logging.DEBUG):
+        assert asyncio.run(f.async_refresh()) == "unchanged" and f.prices is first
+        assert asyncio.run(f.async_refresh()) == "unchanged" and f.prices is first
+    assert sum("malformed" in r.message for r in caplog.records) == 1
+    asyncio.run(f.async_refresh())                              # poprawny blok kasuje serię
+    assert f.prices.slots[0].buy == 2.0
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(f.async_refresh())
+    assert sum("malformed" in r.message for r in caplog.records) == 2
 
 
 def test_failed_poll_keeps_previous_data():

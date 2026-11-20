@@ -86,9 +86,10 @@ class ScheduleFetcher:
         # Feed profili (`ProfileFeedUpdater`, wspólny dla wpisów) — sprawdzenie w tle, gdy należne.
         self._feed = profile_feed
         self._feed_task: asyncio.Task | None = None
-        # Ceny konta z ostatniej UDANEJ odpowiedzi (blok `prices`); brak bloku = None. Odpowiedź, której nie
-        # udało się pobrać, niczego nie zmienia — encje trzymają poprzednie dane, aż same wygasną.
+        # Ostatni dobry blok `prices`; czyści go tylko jawne `"prices": null` w udanej odpowiedzi.
+        # Nieudane pobranie, brak klucza i blok wadliwy niczego nie zmieniają (encje wygasają same).
         self.prices: AccountPrices | None = None
+        self._prices_malformed = False
         self._on_prices = on_prices
 
     async def async_refresh(self) -> str:
@@ -222,13 +223,26 @@ class ScheduleFetcher:
             await asyncio.wait(tasks)
 
     def _apply_prices(self, raw: dict) -> None:
-        """Blok `prices` PRZED deduplikacją (nowe ceny nie są nowym planem); brak albo wadliwy blok w udanej
-        odpowiedzi = brak cen (encje niedostępne). Błąd odbiorcy nie wywraca odświeżenia."""
+        """Blok `prices` PRZED deduplikacją (nowe ceny nie są nowym planem). Reguły dla udanej odpowiedzi:
+        `"prices": null` = serwer jednoznacznie nie ma cen dla konta (niższy poziom, dostawca `ha`, nic
+        wycenionego) → czyścimy; brak klucza = przejściowa awaria po stronie serwera → zostaje ostatni dobry
+        blok (encje gasną same, gdy żaden slot nie obejmuje „teraz"); poprawny blok → podmiana; blok obecny, ale
+        wadliwy → jak brak klucza (jedno wpis w debugu na serię). Błąd odbiorcy nie wywraca odświeżenia."""
+        if "prices" not in raw:
+            return
+        block = raw["prices"]
         try:
-            self.prices = parse_prices(raw.get("prices"))
+            parsed = parse_prices(block) if block is not None else None
         except Exception as err:  # noqa: BLE001 — wadliwy blok cen nie może zatrzymać planu
-            self.prices = None
+            parsed = None
             _LOGGER.debug("Volcast prices block failed (%s)", type(err).__name__)
+        if block is not None and parsed is None:
+            if not self._prices_malformed:
+                _LOGGER.debug("Volcast prices block malformed — keeping the previous prices")
+            self._prices_malformed = True
+            return
+        self._prices_malformed = False
+        self.prices = parsed
         if self._on_prices is None:
             return
         try:

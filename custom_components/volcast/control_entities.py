@@ -233,7 +233,8 @@ class VolcastPriceSensor(SensorEntity):
 
     Stan = cena slotu, który obejmuje „teraz" (`start <= now < start + interval_min`), w `<waluta>/kWh`;
     bez `device_class` MONETARY (ta wymaga samej waluty w jednostce). Stan przechodzi na kolejny slot
-    o jego początku (zegar), nie dopiero przy odpytaniu. Niedostępna tylko bez bloku albo bez slotu na „teraz";
+    o jego początku (zegar), nie dopiero przy odpytaniu. Blok czyści wyłącznie jawne `"prices": null` z udanego odpytania (brak cen dla konta); chwilowa awaria
+    chmury go nie czyści. Niedostępna tylko bez bloku albo bez slotu na „teraz";
     slot bez ceny (sprzedaż bez ceny eksportu) daje stan „unknown" i zachowuje atrybuty (HA nie publikuje
     atrybutów encji niedostępnej). Atrybuty `today` / `tomorrow` (`{start, price}` tej
     strony) idą poza historię.
