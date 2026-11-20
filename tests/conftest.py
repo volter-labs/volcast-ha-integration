@@ -39,7 +39,8 @@ class _FakeHomeAssistant:
 
 
 def _fake_callback(func):
-    """Stub for @callback decorator."""
+    """Stub for @callback decorator — jak prawdziwe HA znakuje funkcję (`is_callback`)."""
+    func._hass_callback = True
     return func
 
 
