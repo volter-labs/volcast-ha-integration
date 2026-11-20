@@ -175,6 +175,16 @@ def test_generic_platform_domain_is_rejected(domain):
     _only(p, f"{INT}.domain: ogólna platforma HA {domain!r} niedozwolona w profilu entities_only")
 
 
+@pytest.mark.parametrize("domain", ["matter", "knx", "deconz", "zwave_me", "enocean", "rfxtrx",
+                                    "homematicip_cloud", "nut"])
+def test_protocol_platforms_stay_on_the_generic_list(domain):
+    # Wprost, żeby usunięcie z listy nie przeszło niezauważone (test powyżej iteruje po samej liście).
+    assert domain in GENERIC_HA_PLATFORMS
+    p = eo_profile()
+    p["ha"]["integrations"][0]["domain"] = domain
+    _only(p, f"{INT}.domain: ogólna platforma HA {domain!r} niedozwolona w profilu entities_only")
+
+
 def test_register_profile_integration_rules_unchanged():
     # Profil rejestrowy: `model_regex` integracji opcjonalny, bez reguły szerokości i listy platform.
     p = ms_profile()

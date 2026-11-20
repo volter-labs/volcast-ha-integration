@@ -42,10 +42,12 @@ def test_state_hourly_and_quarter(monkeypatch):
     assert q.native_value == pytest.approx(10.45)             # 10:47 lokalnie → slot 10:45
 
 
-def test_sell_null_slot_is_unavailable_but_attrs_keep_null(monkeypatch):
+def test_null_price_slot_stays_available_with_unknown_state_and_attributes(monkeypatch):
+    # HA nie publikuje atrybutów encji niedostępnej — slot bez ceny to „unknown", nie „unavailable"
     s, _ = make(block(today=hourly(sell=None)), "sell", monkeypatch=monkeypatch)
-    assert s.native_value is None and not s.available
-    assert all(x["price"] is None for x in s.extra_state_attributes["today"])
+    assert s.available and s.native_value is None
+    a = s.extra_state_attributes
+    assert len(a["today"]) == 24 and all(x["price"] is None for x in a["today"])
 
 
 def test_unavailable_without_block_or_slot(monkeypatch):

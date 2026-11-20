@@ -233,8 +233,9 @@ class VolcastPriceSensor(SensorEntity):
 
     Stan = cena slotu, który obejmuje „teraz" (`start <= now < start + interval_min`), w `<waluta>/kWh`;
     bez `device_class` MONETARY (ta wymaga samej waluty w jednostce). Stan przechodzi na kolejny slot
-    o jego początku (zegar), nie dopiero przy odpytaniu. Niedostępna: brak bloku, brak slotu na „teraz"
-    albo — dla sprzedaży — slot bez ceny sprzedaży. Atrybuty `today` / `tomorrow` (`{start, price}` tej
+    o jego początku (zegar), nie dopiero przy odpytaniu. Niedostępna tylko bez bloku albo bez slotu na „teraz";
+    slot bez ceny (sprzedaż bez ceny eksportu) daje stan „unknown" i zachowuje atrybuty (HA nie publikuje
+    atrybutów encji niedostępnej). Atrybuty `today` / `tomorrow` (`{start, price}` tej
     strony) idą poza historię.
     """
 
@@ -266,8 +267,7 @@ class VolcastPriceSensor(SensorEntity):
 
     @property
     def available(self) -> bool:
-        slot = self._slot
-        return slot is not None and (self._side == "buy" or slot.sell is not None)
+        return self._slot is not None
 
     @property
     def native_value(self) -> float | None:

@@ -731,13 +731,13 @@ def watch_profile_choice(hass, entry, rt: ControlRuntime, feed) -> None:
         try:
             profiles = await hass.async_add_executor_job(ds.load_profiles)
             new = _choice_for(hass, entry, profiles)
+            key = _choice_key(new)
+            if new is None or key == _choice_key(rt.choice) or key == rt.announced_choice \
+                    or not profile_ready_applies(hass, new.profile):
+                return
         except Exception as err:  # noqa: BLE001 — zadanie w tle nie zostawia wyjątku
             _LOGGER.warning("Volcast control: profile choice check after a feed update failed (%s)",
                             type(err).__name__)
-            return
-        key = _choice_key(new)
-        if new is None or key == _choice_key(rt.choice) or key == rt.announced_choice \
-                or not profile_ready_applies(hass, new.profile):
             return
         rt.announced_choice = key
         async_profile_ready_issue(hass, new.profile.id, new.profile.raw.get("label"))
