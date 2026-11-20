@@ -44,12 +44,12 @@ class AccountPrices:
         return None
 
     def next_boundary(self, now: datetime) -> datetime | None:
-        """Najbliższy początek slotu po `now`; gdy dane się kończą — koniec slotu bieżącego; inaczej None."""
-        for s in self.slots:
-            if s.start > now:
-                return s.start
+        """Najbliższa chwila zmiany stanu po `now`: koniec slotu bieżącego (gdy następny nie zaczyna się
+        dokładnie tam — luka w danych) albo początek następnego slotu; brak obu = None."""
         cur = self.slot_at(now)
-        return cur.start + timedelta(minutes=self.interval_min) if cur else None
+        found = [cur.start + timedelta(minutes=self.interval_min)] if cur else []
+        found += [s.start for s in self.slots if s.start > now][:1]
+        return min(found) if found else None
 
     def days(self, now: datetime, side: str) -> tuple[list[dict], list[dict]]:
         """Listy `{start, price}` strony `side` (`buy`/`sell`) dla „dziś" i „jutro" — dzień „dziś" to dzień

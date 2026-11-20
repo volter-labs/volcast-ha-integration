@@ -95,3 +95,12 @@ def test_sell_side_keeps_none():
     p = parse_prices(block(today=hourly(sell=None)))
     today, _ = p.days(utc(2026, 11, 20, 12, 0), "sell")
     assert all(x["price"] is None for x in today)
+
+
+def test_gap_between_slots_ends_the_current_slot():
+    two = [{"start": "2026-11-20T10:00:00+01:00", "buy": 1.0, "sell": 0.1},
+           {"start": "2026-11-20T12:00:00+01:00", "buy": 2.0, "sell": 0.2}]
+    p = parse_prices(block(today=two))
+    assert p.next_boundary(utc(2026, 11, 20, 9, 30)) == utc(2026, 11, 20, 10, 0)    # 10:30 lokalnie → koniec slotu
+    assert p.slot_at(utc(2026, 11, 20, 10, 0)) is None                              # 11:00 — luka
+    assert p.next_boundary(utc(2026, 11, 20, 10, 0)) == utc(2026, 11, 20, 11, 0)    # do początku 12:00

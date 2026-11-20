@@ -225,7 +225,7 @@ class ScheduleFetcher:
     def _apply_prices(self, raw: dict) -> None:
         """Blok `prices` PRZED deduplikacją (nowe ceny nie są nowym planem). Reguły dla udanej odpowiedzi:
         `"prices": null` = serwer jednoznacznie nie ma cen dla konta (niższy poziom, dostawca `ha`, nic
-        wycenionego) → czyścimy; brak klucza = przejściowa awaria po stronie serwera → zostaje ostatni dobry
+        wycenionego, nieznany rynek / brak waluty) → czyścimy; brak klucza = przejściowa awaria po stronie serwera → zostaje ostatni dobry
         blok (encje gasną same, gdy żaden slot nie obejmuje „teraz"); poprawny blok → podmiana; blok obecny, ale
         wadliwy → jak brak klucza (jedno wpis w debugu na serię). Błąd odbiorcy nie wywraca odświeżenia."""
         if "prices" not in raw:
