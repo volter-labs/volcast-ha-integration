@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -486,6 +487,103 @@ class TestSubmitWithHttpRetry:
         assert 22 in tracker._accepted.get("2026-05-10", []), (
             "permanent-skip rejections must be marked to prevent reconciler retries"
         )
+
+
+class TestGapCoveredHours:
+    """Odczyt z `covers_from` oznacza jako dostarczone cala objeta rozpietosc godzin."""
+
+    @staticmethod
+    def _span_reading(date: str, hour: int, from_date: str, from_hour: int) -> dict:
+        return {
+            "date": date,
+            "hour": hour,
+            "actual_kwh": 4.0,
+            "covers_from": {"date": from_date, "hour": from_hour},
+        }
+
+    @pytest.mark.asyncio
+    async def test_accepted_span_marks_every_covered_hour(self):
+        from custom_components.volcast.http_retry import RetryResult
+        from custom_components.volcast.production import _utcnow_date
+
+        today = _utcnow_date().isoformat()
+        tracker = _make_tracker(store=_FakeStore(), accepted_store=_FakeStore())
+        result = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 1, "rejected": 0, "rejections": []},
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit([self._span_reading(today, 13, today, 10)])
+
+        assert tracker._accepted[today] == [10, 11, 12, 13]
+        # przetrwa restart (ten sam Store)
+        tracker2 = _make_tracker(accepted_store=tracker._accepted_store)
+        assert (await tracker2._load_accepted_store())[today] == [10, 11, 12, 13]
+
+    @pytest.mark.asyncio
+    async def test_span_crossing_midnight_uses_right_date_per_hour(self):
+        from custom_components.volcast.http_retry import RetryResult
+        from custom_components.volcast.production import _utcnow_date
+
+        today = _utcnow_date()
+        yesterday = (today - timedelta(days=1)).isoformat()
+        today = today.isoformat()
+        tracker = _make_tracker(store=_FakeStore(), accepted_store=_FakeStore())
+        result = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 1, "rejected": 0, "rejections": []},
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit([self._span_reading(today, 1, yesterday, 22)])
+
+        assert tracker._accepted[yesterday] == [22, 23]
+        assert tracker._accepted[today] == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_rejected_span_marks_nothing(self):
+        from custom_components.volcast.http_retry import RetryResult
+        from custom_components.volcast.production import _utcnow_date
+
+        today = _utcnow_date().isoformat()
+        tracker = _make_tracker(store=_FakeStore(), accepted_store=_FakeStore())
+        result = RetryResult(
+            success=True, status=200, attempts=1,
+            data={
+                "accepted": 0,
+                "rejected": 1,
+                "rejections": [{"date": today, "hour": 13, "reason": "invalid_value"}],
+            },
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit([self._span_reading(today, 13, today, 10)])
+
+        assert tracker._accepted.get(today, []) == []
+
+    @pytest.mark.asyncio
+    async def test_failed_send_marks_nothing(self):
+        from custom_components.volcast.http_retry import RetryResult
+        from custom_components.volcast.production import _utcnow_date
+
+        today = _utcnow_date().isoformat()
+        tracker = _make_tracker(store=_FakeStore(), accepted_store=_FakeStore())
+        result = RetryResult(success=False, status=500, attempts=3, data=None)
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            ok = await tracker._async_submit([self._span_reading(today, 13, today, 10)])
+
+        assert ok is False
+        assert tracker._accepted.get(today, []) == []
 
 
 class TestBatchCap:
