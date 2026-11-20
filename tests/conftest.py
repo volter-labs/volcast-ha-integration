@@ -141,6 +141,7 @@ _make_module("homeassistant.helpers.event", {
     "async_track_state_change_event": MagicMock(return_value=MagicMock()),
     "async_track_time_interval": MagicMock(return_value=MagicMock()),
     "async_track_time_change": MagicMock(return_value=MagicMock()),
+    "async_track_point_in_utc_time": MagicMock(return_value=MagicMock()),
 })
 _make_module("homeassistant.helpers.aiohttp_client", {
     "async_get_clientsession": MagicMock(),

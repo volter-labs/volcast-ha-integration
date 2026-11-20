@@ -75,6 +75,8 @@ OPT_PRICE_CURRENCY = "price_currency"
 OPT_PRICE_BUY_ACTION = "price_buy_action"
 OPT_PRICE_SELL_ACTION = "price_sell_action"
 SIGNAL_CONTROL_UPDATED = "volcast_control_updated_{entry_id}"
+# Nowy (albo zniknięty) blok cen konta z planu — encje ceny zakupu i sprzedaży.
+SIGNAL_PRICES_UPDATED = "volcast_prices_updated_{entry_id}"
 # Zmiana stanu onboardingu sterowania (rekomendacja ścieżki, weryfikacja, konflikty) — blok `driver.control`.
 SIGNAL_CONTROL_STATE_UPDATED = "volcast_control_state_updated_{entry_id}"
 EXECUTOR_INTERVAL_S = 60

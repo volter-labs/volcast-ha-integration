@@ -612,6 +612,12 @@
       "control_plan": {
         "name": "Plan"
       },
+      "price_buy": {
+        "name": "Inkoopprijs"
+      },
+      "price_sell": {
+        "name": "Verkoopprijs"
+      },
       "control_plan_summary": {
         "name": "Planoverzicht"
       },

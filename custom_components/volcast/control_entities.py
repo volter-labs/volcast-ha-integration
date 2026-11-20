@@ -18,12 +18,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 import homeassistant.util.dt as dt_util
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.event import async_track_point_in_utc_time
 
 from .const import (DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_TELEMETRY_MAP,
-                    SIGNAL_CONTROL_UPDATED)
+                    SIGNAL_CONTROL_UPDATED, SIGNAL_PRICES_UPDATED)
 from .core.slot import InvalidSchedule, effective_action, parse_schedule
 
 _LOGGER = logging.getLogger(__name__)
@@ -224,6 +225,90 @@ class VolcastControlStatusSensor(_ControlEntity, SensorEntity):
         ex = self._rt.executor
         d = ex.last_decision
         return {**(d.summary() if d else {}), "foreign_changes": list(getattr(ex, "foreign_changes", []))}
+
+
+class VolcastPriceSensor(SensorEntity):
+    """Cena zakupu / sprzedaży konta za kWh z bloku `prices` planu (te same liczby co zakładka Plan w aplikacji).
+
+    Stan = cena slotu, który obejmuje „teraz" (`start <= now < start + interval_min`), w `<waluta>/kWh`;
+    bez `device_class` MONETARY (ta wymaga samej waluty w jednostce). Stan przechodzi na kolejny slot
+    o jego początku (zegar), nie dopiero przy odpytaniu. Niedostępna: brak bloku, brak slotu na „teraz"
+    albo — dla sprzedaży — slot bez ceny sprzedaży. Atrybuty `today` / `tomorrow` (`{start, price}` tej
+    strony) idą poza historię.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 4
+    _attr_icon = "mdi:cash"
+    _unrecorded_attributes = frozenset({"today", "tomorrow"})
+
+    def __init__(self, entry, rt, side: str) -> None:
+        self._entry, self._rt, self._side = entry, rt, side
+        self._attr_unique_id = f"{entry.entry_id}_price_{side}"
+        self._attr_translation_key = f"price_{side}"
+        self._attr_device_info = {"identifiers": {(DOMAIN, f"{entry.entry_id}_control")},
+                                  "name": "Volcast control", "manufacturer": "Volcast", "model": "EMS"}
+        self._unsub_boundary = None
+
+    @property
+    def _prices(self):
+        return self._rt.fetcher.prices
+
+    @property
+    def _slot(self):
+        prices = self._prices
+        return prices.slot_at(dt_util.utcnow()) if prices is not None else None
+
+    @property
+    def available(self) -> bool:
+        slot = self._slot
+        return slot is not None and (self._side == "buy" or slot.sell is not None)
+
+    @property
+    def native_value(self) -> float | None:
+        slot = self._slot
+        return getattr(slot, self._side) if slot is not None else None
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        prices = self._prices
+        return f"{prices.currency}/kWh" if prices is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        prices = self._prices
+        if prices is None or self._slot is None:
+            return {}
+        today, tomorrow = prices.days(dt_util.utcnow(), self._side)
+        return {"today": today, "tomorrow": tomorrow, "currency": prices.currency,
+                "interval_min": prices.interval_min, "updated_at": prices.generated_at}
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass, SIGNAL_PRICES_UPDATED.format(entry_id=self._entry.entry_id), self._refresh))
+        self._schedule_boundary()
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._cancel_boundary()
+
+    def _refresh(self, _now=None) -> None:
+        """Zapis stanu (nowe dane z odpytania albo początek kolejnego slotu) i zegar na następną granicę."""
+        self.async_write_ha_state()
+        self._schedule_boundary()
+
+    def _schedule_boundary(self) -> None:
+        self._cancel_boundary()
+        prices = self._prices
+        when = prices.next_boundary(dt_util.utcnow()) if prices is not None else None
+        if when is not None:
+            self._unsub_boundary = async_track_point_in_utc_time(self.hass, self._refresh, when)
+
+    def _cancel_boundary(self) -> None:
+        if self._unsub_boundary is not None:
+            self._unsub_boundary()
+            self._unsub_boundary = None
 
 
 class VolcastControlSwitch(_ControlEntity, SwitchEntity):

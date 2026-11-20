@@ -612,6 +612,12 @@
       "control_plan": {
         "name": "Piano"
       },
+      "price_buy": {
+        "name": "Prezzo di acquisto"
+      },
+      "price_sell": {
+        "name": "Prezzo di vendita"
+      },
       "control_plan_summary": {
         "name": "Riepilogo del piano"
       },

@@ -612,6 +612,12 @@
       "control_plan": {
         "name": "Plán"
       },
+      "price_buy": {
+        "name": "Nákupní cena"
+      },
+      "price_sell": {
+        "name": "Prodejní cena"
+      },
       "control_plan_summary": {
         "name": "Shrnutí plánu"
       },

@@ -612,6 +612,12 @@
       "control_plan": {
         "name": "Plan"
       },
+      "price_buy": {
+        "name": "Prix d'achat"
+      },
+      "price_sell": {
+        "name": "Prix de vente"
+      },
       "control_plan_summary": {
         "name": "Résumé du plan"
       },

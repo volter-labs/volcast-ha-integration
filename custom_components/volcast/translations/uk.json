@@ -612,6 +612,12 @@
       "control_plan": {
         "name": "План"
       },
+      "price_buy": {
+        "name": "Ціна купівлі"
+      },
+      "price_sell": {
+        "name": "Ціна продажу"
+      },
       "control_plan_summary": {
         "name": "Опис плану"
       },

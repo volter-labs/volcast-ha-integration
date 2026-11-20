@@ -23,7 +23,7 @@ from .const import DOMAIN
 from .coordinator import VolcastCoordinator, VolcastData
 from .control.direct_sensors import direct_sensors
 from .control_entities import (VolcastControlStatusSensor, VolcastPlanSensor,
-                               VolcastPlanSummarySensor)
+                               VolcastPlanSummarySensor, VolcastPriceSensor)
 from .discovery_entities import VolcastDiscoverySensor
 from .verification_entities import VolcastVerificationSensor
 
@@ -74,6 +74,8 @@ async def async_setup_entry(
         entities.extend([VolcastPlanSensor(entry, control), VolcastPlanSummarySensor(entry, control),
                          VolcastControlStatusSensor(entry, control)])
         entities.append(VolcastVerificationSensor(entry, control))
+        # Ceny konta z planu (blok `prices`): niedostępne, gdy serwer ich nie wysyła.
+        entities.extend(VolcastPriceSensor(entry, control, side) for side in ("buy", "sell"))
         # Tryb bezpośredni (albo próba): odczyty rejestrów falownika jako encje.
         direct = getattr(control, "direct", None)
         if direct is not None:

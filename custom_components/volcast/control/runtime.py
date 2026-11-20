@@ -63,7 +63,7 @@ from ..const import (DEFAULT_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_EN
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
-                     SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED)
+                     SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED, SIGNAL_PRICES_UPDATED)
 from ..core.control.caps import direct_capabilities, entity_mode_options, entity_mode_ready, required_write_keys
 from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
@@ -1350,7 +1350,9 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                                   on_consent=executor.async_set_consent,
                                   on_auth_failure=executor.async_on_auth_failure, on_signals=hub.apply,
                                   on_control=_control, on_consent_mirror=executor.set_consent_mirror, hass=hass,
-                                  discovery_report=report, profile_feed=feed)
+                                  discovery_report=report, profile_feed=feed,
+                                  on_prices=lambda _prices: async_dispatcher_send(
+                                      hass, SIGNAL_PRICES_UPDATED.format(entry_id=entry.entry_id)))
         await telemetry.async_start()
         if choice is not None and not composed.returning:
             # Przed pierwszym cyklem: w trybie bezpośrednim plan czeka na zweryfikowane urządzenie.
