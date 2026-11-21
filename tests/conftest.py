@@ -116,6 +116,19 @@ _make_module("homeassistant.config_entries", {"ConfigEntry": _FakeConfigEntry})
 
 # --- homeassistant.helpers ---
 _make_module("homeassistant.helpers")
+
+# --- homeassistant.util.dt --- (strefa HA: w testach zawsze Europe/Warsaw)
+_TEST_TZ = ZoneInfo("Europe/Warsaw")
+
+
+def _fake_get_default_time_zone():
+    return _TEST_TZ
+
+
+def _fake_dt_now(time_zone=None):
+    return datetime.now(time_zone or _TEST_TZ)
+
+
 _make_module("homeassistant.helpers.entity_platform", {"AddEntitiesCallback": Any})
 
 
@@ -198,6 +211,8 @@ _util_mod.dt = _make_module("homeassistant.util.dt", {
     "utcnow": lambda: FAKE_UTCNOW,
     "parse_datetime": _fake_parse_datetime,
     "as_local": lambda moment: moment,
+    "get_default_time_zone": _fake_get_default_time_zone,
+    "now": _fake_dt_now,
 })
 
 

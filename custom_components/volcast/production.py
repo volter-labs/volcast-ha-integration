@@ -26,6 +26,7 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 from .const import DEFAULT_SUBMIT_URL
 from .http_retry import http_with_retry
@@ -417,12 +418,7 @@ class VolcastProductionTracker:
 
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""
-        try:
-            from zoneinfo import ZoneInfo
-            tz = ZoneInfo(self._hass.config.time_zone)
-        except Exception:
-            tz = timezone.utc
-        return datetime.now(tz)
+        return dt_util.now()
 
     async def async_start(self) -> None:
         """Uruchom nasłuchiwanie na state changes i timer godzinowy."""

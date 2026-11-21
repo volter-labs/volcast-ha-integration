@@ -18,6 +18,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import VolcastCoordinator, VolcastData
@@ -136,12 +137,7 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
 
     def _get_tz(self):
         """Return HA configured timezone."""
-        try:
-            from zoneinfo import ZoneInfo
-            return ZoneInfo(self.hass.config.time_zone)
-        except Exception:
-            from datetime import timezone
-            return timezone.utc
+        return dt_util.get_default_time_zone()
 
     def _date_str(self, days_ahead: int = 0) -> str:
         """Return date string for today + N days."""
