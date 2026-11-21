@@ -37,8 +37,8 @@ BASIS_HISTORY = "history"     # statystyki 5-minutowe z doby
 BASIS_CURRENT = "current"     # jedna próbka z bieżących stanów (zapas)
 BASIS_NONE = "none"           # nie ma czego oceniać (brak czujnika sieci i baterii) albo awaria
 
-# okno i rozdzielczość historii: doba statystyk 5-minutowych (288 próbek) — dzień i noc, ładowanie
-# i rozładowanie; krótsze okno często nie ma nocy z baterią w spoczynku
+# okno i rozdzielczość historii: doba statystyk 5-minutowych (288 próbek) — obejmuje dzień i noc
+# oraz ładowanie i rozładowanie baterii; ocena znaku liczy się tylko z przypisanym czujnikiem
 HISTORY_WINDOW = timedelta(hours=24)
 STATISTICS_PERIOD = "5minute"
 # jawna jednostka: rejestrator przelicza każdą statystykę mocy na W, niezależnie od jednostki zapisanej

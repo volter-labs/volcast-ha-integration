@@ -562,6 +562,57 @@ def assignment_placeholders(result: AssignmentResult | None, saved: dict[str, An
     return {"candidates": "\n".join(cands) or "-", "sign_check": "\n".join(signs)}
 
 
+def merge_options(options: Any, patch: dict[str, Any]) -> dict[str, Any]:
+    """Opcje wpisu z naniesioną poprawką; wartość pusta (`_EMPTY`) usuwa klucz."""
+    out = dict(options)
+    for key, value in patch.items():
+        if any(value is e or value == e for e in _EMPTY):
+            out.pop(key, None)
+        else:
+            out[key] = value
+    return out
+
+
+async def async_load_assignment(hass, entry) -> tuple[AssignmentResult | None, dict[str, str] | None]:
+    """Propozycja przypisania czujników i opis do formularza mapy (krok opcji i naprawa); błąd = brak propozycji."""
+    result = placeholders = None
+    try:
+        result = await async_propose(hass, entry)
+        texts = _Texts(await _async_translations(hass, "exceptions"),
+                       await _async_translations(hass, "options"))
+        placeholders = assignment_placeholders(result, entry.options.get(OPT_TELEMETRY_MAP) or {}, texts)
+    except Exception:  # noqa: BLE001 — opis to dodatek, formularz ma się pokazać zawsze
+        placeholders = None
+    return result, placeholders
+
+
+def sensor_map_fields(options: Any, assignment: AssignmentResult | None) -> dict:
+    """Pola mapy czujników (8 pól telemetrii i dwa znaki mocy) — wspólne dla kroku opcji i naprawy."""
+    tmap = options.get(OPT_TELEMETRY_MAP) or {}
+    # Puste pola dostają podpowiedź z propozycji (tylko kandydaci pewni); zapisana wartość ma pierwszeństwo.
+    try:
+        proposed = assignment.proposal.chosen() if assignment is not None else {}
+    except Exception:  # noqa: BLE001
+        proposed = {}
+    fields: dict = {
+        _entity_field(key, tmap.get(key) or proposed.get(key)):
+            selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+        for key in TELEMETRY_FIELDS
+    }
+    # Zalecenie oceny znaku jest tylko tekstem — zaznaczenie zostaje wartością z opcji.
+    fields[vol.Optional(OPT_GRID_NEGATE, default=bool(options.get(OPT_GRID_NEGATE)))] = bool
+    fields[vol.Optional(OPT_BATTERY_NEGATE, default=bool(options.get(OPT_BATTERY_NEGATE)))] = bool
+    return fields
+
+
+def sensor_map_patch(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Poprawka opcji z wypełnionej mapy: puste pole = brak wpisu, puste flagi znaku = brak klucza."""
+    return {
+        OPT_TELEMETRY_MAP: {k: v for k in TELEMETRY_FIELDS if (v := (user_input.get(k) or "").strip())},
+        OPT_GRID_NEGATE: bool(user_input.get(OPT_GRID_NEGATE)) or None,
+        OPT_BATTERY_NEGATE: bool(user_input.get(OPT_BATTERY_NEGATE)) or None}
+
+
 _NO_PLACEHOLDERS = {"hours": "0", "source_currency": "", "option_currency": "", "currency": ""}
 
 
@@ -584,13 +635,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     _shown_sources: dict[str, tuple[str, Any]] | None = None
 
     def _merged(self, patch: dict[str, Any]) -> dict[str, Any]:
-        out = dict(self.config_entry.options)
-        for key, value in patch.items():
-            if any(value is e or value == e for e in _EMPTY):
-                out.pop(key, None)
-            else:
-                out[key] = value
-        return out
+        return merge_options(self.config_entry.options, patch)
 
     def _runtime(self):
         data = getattr(self.hass, "data", None) or {}
@@ -813,15 +858,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     async def _async_load_assignment(self) -> None:
         """Propozycja i opis liczone raz na wejście do kroku; błąd nie blokuje formularza (bez propozycji)."""
-        self._assignment, self._assignment_placeholders = None, None
-        try:
-            self._assignment = await async_propose(self.hass, self.config_entry)
-            texts = _Texts(await _async_translations(self.hass, "exceptions"),
-                           await _async_translations(self.hass, "options"))
-            self._assignment_placeholders = assignment_placeholders(
-                self._assignment, self.config_entry.options.get(OPT_TELEMETRY_MAP) or {}, texts)
-        except Exception:  # noqa: BLE001 — opis kroku to dodatek, formularz ma się pokazać zawsze
-            self._assignment_placeholders = None
+        self._assignment, self._assignment_placeholders = await async_load_assignment(self.hass, self.config_entry)
 
     def _show_details(self, errors: dict[str, str] | None = None) -> ConfigFlowResult:
         return self.async_show_form(
@@ -834,11 +871,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             errors = self._direct_errors(user_input)
             if errors:
                 return self._show_details(errors)
-            tmap = {k: v for k in TELEMETRY_FIELDS if (v := (user_input.get(k) or "").strip())}
             patch = {
-                OPT_TELEMETRY_MAP: tmap,
-                OPT_GRID_NEGATE: bool(user_input.get(OPT_GRID_NEGATE)) or None,
-                OPT_BATTERY_NEGATE: bool(user_input.get(OPT_BATTERY_NEGATE)) or None,
+                **sensor_map_patch(user_input),
                 OPT_RATED_POWER_W: user_input.get(OPT_RATED_POWER_W),
                 OPT_BATTERY_CAPACITY_KWH: user_input.get(OPT_BATTERY_CAPACITY_KWH),
                 OPT_LOAD_ENERGY: user_input.get(OPT_LOAD_ENERGY)}
@@ -1454,20 +1488,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     def _details_schema(self) -> vol.Schema:
         o = self.config_entry.options
-        tmap = o.get(OPT_TELEMETRY_MAP) or {}
-        # Puste pola dostają podpowiedź z propozycji (tylko kandydaci pewni); zapisana wartość ma pierwszeństwo.
-        try:
-            proposed = self._assignment.proposal.chosen() if self._assignment is not None else {}
-        except Exception:  # noqa: BLE001
-            proposed = {}
-        fields: dict = {
-            _entity_field(key, tmap.get(key) or proposed.get(key)):
-                selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
-            for key in TELEMETRY_FIELDS
-        }
-        # Zalecenie oceny znaku jest tylko tekstem — zaznaczenie zostaje wartością z opcji.
-        fields[vol.Optional(OPT_GRID_NEGATE, default=bool(o.get(OPT_GRID_NEGATE)))] = bool
-        fields[vol.Optional(OPT_BATTERY_NEGATE, default=bool(o.get(OPT_BATTERY_NEGATE)))] = bool
+        fields: dict = sensor_map_fields(o, self._assignment)
         rated = vol.Optional(OPT_RATED_POWER_W, description={"suggested_value": o.get(OPT_RATED_POWER_W)})
         fields[rated] = vol.All(vol.Coerce(int), vol.Range(min=int(RATED_POWER_RANGE_W[0]),
                                                                  max=int(RATED_POWER_RANGE_W[1])))

@@ -519,6 +519,36 @@
       "title": "Volcast could not start the direct inverter connection",
       "description": "The direct connection to the inverter failed to start because of an unexpected error. Volcast retries a few times; until it connects, it cannot change or return the inverter settings. If this stays, reload Volcast and check the Home Assistant logs."
     },
+    "sensor_assignment_missing": {
+      "title": "Volcast needs to know which sensors to use",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Choose your inverter sensors",
+            "description": "Volcast did not recognise an inverter integration, so live data does not flow until you pick the sensors. Below is a proposal based on your Home Assistant sensors - check every sensor first. Nothing is saved until you submit, and the inverter settings are not changed. Volcast expects battery power to be positive while discharging and grid power to be positive while importing.\n\nSeveral sensors fit these fields, pick one:\n{candidates}\n\nPower sign check (from the last 24 hours of recorded data, or from current readings):\n{sign_check}",
+            "data": {
+              "soc": "Battery state of charge",
+              "pv_power_w": "PV power",
+              "battery_power_w": "Battery power",
+              "grid_power_w": "Grid power",
+              "load_power_w": "House load power",
+              "pv_energy_total_kwh": "PV energy total",
+              "grid_import_total_kwh": "Grid import total",
+              "grid_export_total_kwh": "Grid export total",
+              "grid_power_negate": "Grid sensor shows export as positive",
+              "battery_power_negate": "Battery sensor shows discharging as negative"
+            },
+            "data_description": {
+              "grid_power_negate": "Turn on when your grid sensor is negative while importing.",
+              "battery_power_negate": "Turn on when your battery sensor is negative while discharging. Applies only to the battery sensor chosen here."
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "Volcast is not running for this entry. Reload the integration and try again."
+        }
+      }
+    },
     "controller_conflict": {
       "title": "Another controller is controlling your inverter",
       "fix_flow": {
