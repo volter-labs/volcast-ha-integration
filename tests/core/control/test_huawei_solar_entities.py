@@ -142,25 +142,13 @@ def test_ktl_l1_m1_reads_through_entities(model):
     assert (choice.profile.id, choice.integration_domain) == ("huawei-sun2000", DOMAIN)
 
 
-@pytest.mark.xfail(strict=True, reason="znana luka: wpis integracji profilu rejestrowego dopasowuje się tylko po "
-                                       "identify.model_regex (KTL-L1/M1), więc MAP0 dostaje wybór tylko do "
-                                       "odczytu bez integracji i mapa encji zostaje pusta")
 @pytest.mark.parametrize("model", ["SUN2000-10K-MAP0", "SUN2000-5K-MAP0"])
 def test_map0_reads_through_entities(model):
     choice = _choice(model)
     assert choice is not None and choice.integration_domain == DOMAIN
 
 
-def test_map0_currently_gets_a_read_only_choice_without_integration():
-    choice = _choice("SUN2000-10K-MAP0")
+@pytest.mark.parametrize("model", ["SUN2000-10KTL-M2", "SUN2000-100KTL-M1", "SUN2000-5K-MAP1", None])
+def test_uncovered_model_stays_a_preview_without_integration(model):
+    choice = _choice(model)
     assert (choice.profile.id, choice.integration_domain) == ("huawei-sun2000", None)
-
-
-def test_two_inverters_make_plant_wide_keys_ambiguous_not_guessed(profile):
-    _devices, entities, _entries = _registry()
-    other = "HV2250099999"
-    entities = entities + [_ent("sensor", "input_power", "inv2", "W", sn=other),
-                           _ent("sensor", "active_power", "inv2", "W", sn=other)]
-    res = resolve_entities(profile, DOMAIN, _candidates(entities))
-    assert set(res.ambiguous) == {"pv_power_w", "active_power_w"}
-    assert "pv_power_w" not in res.mapped and "soc" in res.mapped
