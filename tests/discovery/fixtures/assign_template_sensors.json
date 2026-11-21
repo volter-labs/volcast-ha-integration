@@ -1,0 +1,350 @@
+{
+  "_note": "Template sensors without a device (registry entries with unique_id), plus noise: a disabled entity, an entity of this integration, a solar forecast entity and a phone battery level. Synthetic.",
+  "config_entries": [
+    {
+      "entry_id": "entry-phone",
+      "domain": "mobile_app",
+      "title": "Phone",
+      "host": null
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-phone",
+      "manufacturer": "Google",
+      "model": "Pixel 8",
+      "name": "Pixel 8",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "mobile_app",
+          "DEVICE-PHONE"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-phone"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "sensor.solar_power",
+      "platform": "template",
+      "unique_id": "SN0001_solar_power",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Solar power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_power",
+      "platform": "template",
+      "unique_id": "SN0001_battery_power",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "power",
+      "unit": "kW",
+      "translation_key": null,
+      "original_name": "Battery power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_power",
+      "platform": "template",
+      "unique_id": "SN0001_grid_power",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Grid power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.house_load",
+      "platform": "template",
+      "unique_id": "SN0001_house_load",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "House load",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_soc",
+      "platform": "template",
+      "unique_id": "SN0001_battery_soc",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "battery",
+      "unit": "%",
+      "translation_key": null,
+      "original_name": "Battery SoC",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.solar_energy_total",
+      "platform": "template",
+      "unique_id": "SN0001_solar_energy_total",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Solar energy total",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.solar_energy_today",
+      "platform": "template",
+      "unique_id": "SN0001_solar_energy_today",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Solar energy today",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_import_energy",
+      "platform": "template",
+      "unique_id": "SN0001_grid_import_energy",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Grid import energy",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_export_energy",
+      "platform": "template",
+      "unique_id": "SN0001_grid_export_energy",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Grid export energy",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.solar_power_old",
+      "platform": "template",
+      "unique_id": "SN0001_solar_power_old",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Solar power old",
+      "disabled": true,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.volcast_pv_power",
+      "platform": "volcast",
+      "unique_id": "SN0001_volcast_pv_power",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Volcast PV power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.power_production_now",
+      "platform": "forecast_solar",
+      "unique_id": "SN0001_estimated_power_production_now",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Estimated power production - now",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.pixel_8_battery_level",
+      "platform": "mobile_app",
+      "unique_id": "SN0001_pixel_8_battery_level",
+      "device_id": "device-phone",
+      "config_entry_id": "entry-phone",
+      "device_class": "battery",
+      "unit": "%",
+      "translation_key": null,
+      "original_name": "Pixel 8 Battery level",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    }
+  ],
+  "states": [
+    {
+      "entity_id": "sensor.solar_power",
+      "state": "3120",
+      "attributes": {
+        "friendly_name": "Solar power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_power",
+      "state": "-1.4",
+      "attributes": {
+        "friendly_name": "Battery power",
+        "device_class": "power",
+        "unit_of_measurement": "kW",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_power",
+      "state": "250",
+      "attributes": {
+        "friendly_name": "Grid power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.house_load",
+      "state": "1970",
+      "attributes": {
+        "friendly_name": "House load",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_soc",
+      "state": "64",
+      "attributes": {
+        "friendly_name": "Battery SoC",
+        "device_class": "battery",
+        "unit_of_measurement": "%",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.solar_energy_total",
+      "state": "10234.5",
+      "attributes": {
+        "friendly_name": "Solar energy total",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.solar_energy_today",
+      "state": "12.4",
+      "attributes": {
+        "friendly_name": "Solar energy today",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_import_energy",
+      "state": "4410.2",
+      "attributes": {
+        "friendly_name": "Grid import energy",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_export_energy",
+      "state": "6120.9",
+      "attributes": {
+        "friendly_name": "Grid export energy",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.volcast_pv_power",
+      "state": "3100",
+      "attributes": {
+        "friendly_name": "Volcast PV power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.power_production_now",
+      "state": "2900",
+      "attributes": {
+        "friendly_name": "Estimated power production - now",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.pixel_8_battery_level",
+      "state": "81",
+      "attributes": {
+        "friendly_name": "Pixel 8 Battery level",
+        "device_class": "battery",
+        "unit_of_measurement": "%",
+        "state_class": "measurement"
+      }
+    }
+  ]
+}
