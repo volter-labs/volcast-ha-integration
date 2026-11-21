@@ -2,6 +2,7 @@
 karta i panel."""
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
@@ -161,6 +162,11 @@ async def test_setup_runs_discovery_and_reports_no_deprecated_ha_usage(
     _store(hass_storage, "paired01", {"consent": True, "local_switch": True})
     entry = _entry(hass, options=ENTITY_OPTIONS)
     await _setup(hass, entry)
+    # Wykrywanie to zadanie w tle (profile wczytuje w wątku), więc `async_block_till_done` na nie nie czeka.
+    for _ in range(100):
+        if no_udp_probe.await_count:
+            break
+        await asyncio.sleep(0.05)
     assert no_udp_probe.await_count >= 1
     reg = er.async_get(hass)
     disc = hass.states.get(reg.async_get_entity_id("sensor", DOMAIN, "paired01_discovery"))
