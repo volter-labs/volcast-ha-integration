@@ -61,6 +61,7 @@ from ..cloud.signal_channel import SignalChannel
 from ..coordinator import async_get_profile_feed, async_profile_ready_issue, profile_ready_applies
 from ..const import (DEFAULT_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
+                     OPT_BATTERY_NEGATE,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
                      SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED, SIGNAL_PRICES_UPDATED)
@@ -1326,7 +1327,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                                      source="user" if manual_rated else "entities")
         telemetry = TelemetrySender(hass, entry, cloud, executor, choice=choice, profile_map=mapped,
                                     manual_map=opts.get(OPT_TELEMETRY_MAP) or {},
-                                    grid_negate=bool(opts.get(OPT_GRID_NEGATE)), limits=limits, direct=conn,
+                                    grid_negate=bool(opts.get(OPT_GRID_NEGATE)),
+                                    battery_negate=bool(opts.get(OPT_BATTERY_NEGATE)), limits=limits, direct=conn,
                                     direct_capabilities=direct_caps_for(opts, choice.profile) if conn else None,
                                     on_signals=_apply, signal_connected=lambda: channel.connected)
         _flush = telemetry.async_flush
