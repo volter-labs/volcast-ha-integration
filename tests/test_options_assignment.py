@@ -28,7 +28,25 @@ def _result(*, chosen=None, ambiguous=None, grid=OFF, battery=OFF, grid_negate=F
         source_origin={}, excluded=excluded or {}, notes=notes)
 
 
-def _flow(monkeypatch, result, calls=None, **kw):
+def _strings():
+    return json.loads((ROOT / "strings.json").read_text(encoding="utf-8"))
+
+
+def _flat(overrides=None):
+    """Spłaszczone tłumaczenia jak z `async_get_translations` (kategorie `exceptions` i `options`)."""
+    st = _strings()
+    exc = {f"component.volcast.exceptions.{k}.message": v["message"] for k, v in st["exceptions"].items()}
+    opt = {f"component.volcast.options.step.details.data.{k}": v for k, v in st["options"]["step"]["details"]["data"].items()}
+    exc.update(overrides or {})
+    return {"exceptions": exc, "options": opt}
+
+
+def _flow(monkeypatch, result, calls=None, translations=None, **kw):
+    async def tr(hass, category):
+        if isinstance(translations, Exception):
+            raise translations
+        return (translations or _flat())[category]
+    monkeypatch.setattr(cf, "_async_translations", tr)
     async def fake(hass, entry):
         if calls is not None:
             calls.append(1)
@@ -109,14 +127,39 @@ def test_proposal_failure_does_not_block_the_form(monkeypatch):
     assert _suggested(shown["data_schema"], "pv_power_w") is None
 
 
-def test_description_build_failure_does_not_block_the_form(monkeypatch):
-    f, shown = _flow(monkeypatch, _result())
-
-    def broken(*a):
-        raise ValueError("x")
-    monkeypatch.setattr(cf, "assignment_placeholders", lambda r, s: broken() if r is not None else {"c": "-"})
+def test_translation_failure_does_not_block_the_form(monkeypatch):
+    f, shown = _flow(monkeypatch, _result(chosen={"soc": "sensor.soc"}), translations=RuntimeError("x"))
     r = asyncio.run(f.async_step_details())
     assert r["type"] == "form" and shown["step_id"] == "details"
+    assert shown["description_placeholders"] == {"candidates": "-", "sign_check": "-"}
+
+
+def test_lines_use_translated_texts_for_the_ha_language(monkeypatch):
+    pl = _flat({"component.volcast.exceptions.assignment_quantity_grid.message": "Siec",
+                "component.volcast.exceptions.assignment_sign_recommend_on.message": "{quantity}: zalecane wlaczenie"})
+    pl["options"]["component.volcast.options.step.details.data.grid_power_w"] = "Moc sieci"
+    res = _result(ambiguous={"grid_power_w": ["sensor.g1"]}, grid=ON)
+    f, shown = _flow(monkeypatch, res, translations=pl)
+    asyncio.run(f.async_step_details())
+    ph = shown["description_placeholders"]
+    assert "- Siec: zalecane wlaczenie" in ph["sign_check"]
+    assert "- Moc sieci: sensor.g1" in ph["candidates"]
+
+
+def test_translations_are_fetched_in_the_ha_language_for_this_integration(monkeypatch):
+    import sys
+    import types
+    calls = []
+
+    async def fake(hass, language, category, integrations=None, config_flow=None):
+        calls.append((language, category, integrations))
+        return {}
+    mod = types.ModuleType("homeassistant.helpers.translation")
+    mod.async_get_translations = fake
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.translation", mod)
+    hass = types.SimpleNamespace(config=types.SimpleNamespace(language="pl"))
+    asyncio.run(cf._async_translations(hass, "exceptions"))
+    assert calls == [("pl", "exceptions", ["volcast"])]
 
 
 def test_description_lists_candidates_and_sign_results(monkeypatch):
@@ -126,10 +169,10 @@ def test_description_lists_candidates_and_sign_results(monkeypatch):
     f, shown = _flow(monkeypatch, res)
     asyncio.run(f.async_step_details())
     ph = shown["description_placeholders"]
-    assert "grid_power_w: sensor.g1, sensor.g2" in ph["candidates"]
-    assert "Grid: recommended - turn the option on" in ph["sign_check"]
-    assert "Battery: could not be assessed" in ph["sign_check"] and "idle" in ph["sign_check"]
-    assert "calculated" in ph["sign_check"]
+    assert "- Grid power: sensor.g1, sensor.g2" in ph["candidates"]
+    assert "- Grid: recommended - turn the option on" in ph["sign_check"]
+    assert "- Battery: could not be assessed - the battery was idle" in ph["sign_check"]
+    assert "- Note: the house load sensor is calculated" in ph["sign_check"]
 
 
 def test_match_is_reported_for_a_saved_map(monkeypatch):
@@ -140,14 +183,19 @@ def test_match_is_reported_for_a_saved_map(monkeypatch):
     assert "Grid: matches the current setting" in text and "Battery: matches the current setting" in text
 
 
-def test_every_reason_code_has_a_text():
+def test_every_code_has_a_translation_key():
+    keys = set(_strings()["exceptions"])
     reasons = {getattr(sc, n) for n in ("NO_SENSOR", "TOO_FEW_SAMPLES", "GRID_IDLE", "BATTERY_IDLE",
                                         "NO_LOAD_SENSOR", "AMBIGUOUS")}
-    assert reasons <= set(cf.SIGN_REASON_TEXTS)
     excluded = {v for k, v in vars(sa).items() if k.startswith("EXCLUDED_")}
-    assert len(excluded) == 3 and excluded <= set(cf.EXCLUDED_TEXTS)
     notes = {v for k, v in vars(sa).items() if k.startswith("NOTE_")}
-    assert notes and notes <= set(cf.NOTE_TEXTS)
+    assert len(excluded) == 3 and notes
+    expected = ({f"assignment_reason_{c}" for c in reasons} | {f"assignment_excluded_{c}" for c in excluded}
+                | {f"assignment_note_{c}" for c in notes})
+    assert expected <= keys
+    assert {"assignment_quantity_grid", "assignment_quantity_battery", "assignment_sign_recommend_on",
+            "assignment_sign_recommend_off", "assignment_sign_match", "assignment_sign_unknown",
+            "assignment_note", "assignment_reason_unknown"} <= keys
 
 
 def test_unpaired_form_mentions_the_account_connection():

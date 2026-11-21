@@ -81,6 +81,30 @@
       "converted_existing": "Your discovery-only entry now uses your Volcast account."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": { "message": "Grid" },
+    "assignment_quantity_battery": { "message": "Battery" },
+    "assignment_sign_recommend_on": { "message": "{quantity}: recommended - turn the option on" },
+    "assignment_sign_recommend_off": { "message": "{quantity}: recommended - turn the option off" },
+    "assignment_sign_match": { "message": "{quantity}: matches the current setting" },
+    "assignment_sign_unknown": { "message": "{quantity}: could not be assessed - {reason}" },
+    "assignment_note": { "message": "Note: {text}" },
+    "assignment_reason_unknown": { "message": "it could not be assessed" },
+    "assignment_reason_no_sensor": { "message": "no sensor is selected for it" },
+    "assignment_reason_too_few_samples": { "message": "there are too few recorded readings (needs a couple of hours of data)" },
+    "assignment_reason_grid_idle": { "message": "there was no clear grid import or export in the recorded period" },
+    "assignment_reason_battery_idle": { "message": "the battery was idle in the recorded period (no clear charging or discharging)" },
+    "assignment_reason_no_load_sensor": { "message": "a house load power sensor is needed to compare the readings" },
+    "assignment_reason_ambiguous": { "message": "the readings do not clearly point to one sign" },
+    "assignment_excluded_load_derived": { "message": "the house load sensor is calculated from other sensors, so it cannot confirm the sign" },
+    "assignment_excluded_load_state_only": { "message": "the house load sensor has no unique ID in Home Assistant, so it cannot be verified" },
+    "assignment_excluded_load_unverified": { "message": "the house load sensor could not be verified now" },
+    "assignment_note_recorder_unavailable": { "message": "history is not available, current readings were used" },
+    "assignment_note_no_statistics": { "message": "no recorded history found, current readings were used" },
+    "assignment_note_recorder_error": { "message": "history could not be read, current readings were used" },
+    "assignment_note_registry_unavailable": { "message": "the entity registry is not available" },
+    "assignment_note_failed": { "message": "the proposal could not be prepared" }
+  },
   "options": {
     "step": {
       "init": {

@@ -47,11 +47,8 @@ from .core.price_setup import (ActionCandidate, SeriesCheck, action_candidates, 
                                pair_entities, platform_currency, sell_lacks_tomorrow)
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
-from .core.discovery.sign_check import (AMBIGUOUS, BATTERY_IDLE, GRID_IDLE, NO_LOAD_SENSOR, NO_SENSOR, TOO_FEW_SAMPLES)
 from .pairing import PairingPoller
-from .sensor_assignment import (EXCLUDED_LOAD_DERIVED, EXCLUDED_LOAD_STATE_ONLY, EXCLUDED_LOAD_UNVERIFIED,
-                                NOTE_FAILED, NOTE_NO_STATISTICS, NOTE_RECORDER_ERROR, NOTE_RECORDER_UNAVAILABLE,
-                                NOTE_REGISTRY_UNAVAILABLE, AssignmentResult, async_propose)
+from .sensor_assignment import AssignmentResult, async_propose
 from .version import async_integration_version
 from .const import (
     DEFAULT_PAIRING_URL,
@@ -505,53 +502,65 @@ def _clean(values: dict[str, Any]) -> dict[str, Any]:
 #: Limit jednego próbnego wywołania akcji (przepływ czeka na użytkownika; runtime ma własne 30 s).
 PROBE_TIMEOUT_S = 10.0
 
-# Teksty wyniku propozycji w opisie kroku „Installation details”. Placeholdery HA nie są tłumaczone, więc
-# stałe zdania opisu żyją w strings.json (13 języków), a tu są tylko krótkie dane: powód braku oceny
-# (po angielsku, jak etykiety pól). Każdy kod powodu / wyłączenia / notatki MUSI mieć tu tekst (pilnuje test).
-SIGN_REASON_TEXTS = {
-    NO_SENSOR: "no sensor is selected for it",
-    TOO_FEW_SAMPLES: "there are too few recorded readings (needs a couple of hours of data)",
-    GRID_IDLE: "there was no clear grid import or export in the recorded period",
-    BATTERY_IDLE: "the battery was idle in the recorded period (no clear charging or discharging)",
-    NO_LOAD_SENSOR: "a house load power sensor is needed to compare the readings",
-    AMBIGUOUS: "the readings do not clearly point to one sign",
-}
-EXCLUDED_TEXTS = {
-    EXCLUDED_LOAD_DERIVED: "the house load sensor is calculated from other sensors, so it cannot confirm the sign",
-    EXCLUDED_LOAD_STATE_ONLY: "the house load sensor has no unique ID in Home Assistant, so it cannot be verified",
-    EXCLUDED_LOAD_UNVERIFIED: "the house load sensor could not be verified now",
-}
-NOTE_TEXTS = {
-    NOTE_RECORDER_UNAVAILABLE: "history is not available, current readings were used",
-    NOTE_NO_STATISTICS: "no recorded history found, current readings were used",
-    NOTE_RECORDER_ERROR: "history could not be read, current readings were used",
-    NOTE_REGISTRY_UNAVAILABLE: "the entity registry is not available",
-    NOTE_FAILED: "the proposal could not be prepared",
-}
+# Opis kroku „Installation details”: linie wyniku propozycji (kandydaci, ocena znaku) składamy z tłumaczeń
+# kategorii `exceptions` (klucze `assignment_*` w strings.json; 13 języków, zapas: angielski — robi to HA).
+# Klucz powodu / wyłączenia / notatki = prefiks + kod z `sign_check` / `sensor_assignment` (pilnuje test).
+_TR_REASON = "assignment_reason_"
+_TR_EXCLUDED = "assignment_excluded_"
+_TR_NOTE = "assignment_note_"
 _MAX_CANDIDATES = 3
 
 
-def _sign_line(label: str, verdict, current: bool) -> str:
+async def _async_translations(hass, category: str) -> dict[str, str]:
+    """Spłaszczone tłumaczenia integracji (`component.<domena>.<kategoria>.…`) w języku HA."""
+    from homeassistant.helpers.translation import async_get_translations  # import na żądanie: tylko ten krok
+    return await async_get_translations(hass, getattr(hass.config, "language", "en"), category,
+                                        integrations=[DOMAIN])
+
+
+class _Texts:
+    """Teksty z tłumaczeń; brak klucza = sam klucz (nie blokuje opisu)."""
+
+    def __init__(self, exceptions: dict[str, str], options: dict[str, str]) -> None:
+        self._exc, self._opt = exceptions, options
+
+    def exc(self, key: str, **values: str) -> str:
+        text = self._exc.get(f"component.{DOMAIN}.exceptions.{key}.message", key)
+        try:
+            return text.format(**values)
+        except (KeyError, IndexError, ValueError):
+            return text
+
+    def field(self, name: str) -> str:
+        return self._opt.get(f"component.{DOMAIN}.options.step.details.data.{name}", name)
+
+
+def _sign_line(texts: _Texts, quantity: str, verdict, current: bool) -> str:
     """Jedna linia oceny znaku: zalecenie zmiany, zgodność albo brak oceny z powodem."""
     if verdict.negate is None:
-        reason = SIGN_REASON_TEXTS.get(verdict.reason or "", "it could not be assessed")
-        return f"- {label}: could not be assessed - {reason}"
+        reason = texts.exc(f"{_TR_REASON}{verdict.reason}") if verdict.reason else texts.exc(f"{_TR_REASON}unknown")
+        return "- " + texts.exc("assignment_sign_unknown", quantity=quantity, reason=reason)
     if verdict.negate == current:
-        return f"- {label}: matches the current setting"
-    return f"- {label}: recommended - turn the option {'on' if verdict.negate else 'off'}"
+        return "- " + texts.exc("assignment_sign_match", quantity=quantity)
+    return "- " + texts.exc("assignment_sign_recommend_on" if verdict.negate else "assignment_sign_recommend_off",
+                            quantity=quantity)
 
 
-def assignment_placeholders(result: AssignmentResult | None, saved: dict[str, Any]) -> dict[str, str]:
-    """Dane do opisu kroku: kandydaci dla pól niejednoznacznych i wynik oceny znaku (czysty tekst)."""
-    if result is None:
+def assignment_placeholders(result: AssignmentResult | None, saved: dict[str, Any],
+                            texts: _Texts | None = None) -> dict[str, str]:
+    """Dane do opisu kroku: kandydaci dla pól niejednoznacznych i wynik oceny znaku (tekst z tłumaczeń)."""
+    if result is None or texts is None:
         return {"candidates": "-", "sign_check": "-"}
-    cands = [f"- {fp.field}: " + ", ".join(c.entity_id for c in fp.candidates[:_MAX_CANDIDATES])
+    cands = [f"- {texts.field(fp.field)}: " + ", ".join(c.entity_id for c in fp.candidates[:_MAX_CANDIDATES])
              for fp in result.proposal.fields if fp.candidates and not fp.chosen and not saved.get(fp.field)]
-    signs = [_sign_line("Grid", result.sign_check.grid, result.grid_negate),
-             _sign_line("Battery", result.sign_check.battery, result.battery_negate)]
-    signs += [f"- note: {EXCLUDED_TEXTS.get(code, code)}" for code in result.excluded.values()]
-    signs += [f"- note: {NOTE_TEXTS.get(n, n)}" for n in result.notes]
+    signs = [_sign_line(texts, texts.exc("assignment_quantity_grid"), result.sign_check.grid, result.grid_negate),
+             _sign_line(texts, texts.exc("assignment_quantity_battery"), result.sign_check.battery,
+                        result.battery_negate)]
+    signs += ["- " + texts.exc("assignment_note", text=texts.exc(f"{_TR_EXCLUDED}{code}"))
+              for code in result.excluded.values()]
+    signs += ["- " + texts.exc("assignment_note", text=texts.exc(f"{_TR_NOTE}{n}")) for n in result.notes]
     return {"candidates": "\n".join(cands) or "-", "sign_check": "\n".join(signs)}
+
 
 _NO_PLACEHOLDERS = {"hours": "0", "source_currency": "", "option_currency": "", "currency": ""}
 
@@ -800,21 +809,24 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     _assignment: AssignmentResult | None = None
 
+    _assignment_placeholders: dict[str, str] | None = None
+
     async def _async_load_assignment(self) -> None:
-        """Propozycja liczona raz na wejście do kroku; błąd nie blokuje formularza (bez propozycji)."""
+        """Propozycja i opis liczone raz na wejście do kroku; błąd nie blokuje formularza (bez propozycji)."""
+        self._assignment, self._assignment_placeholders = None, None
         try:
             self._assignment = await async_propose(self.hass, self.config_entry)
+            texts = _Texts(await _async_translations(self.hass, "exceptions"),
+                           await _async_translations(self.hass, "options"))
+            self._assignment_placeholders = assignment_placeholders(
+                self._assignment, self.config_entry.options.get(OPT_TELEMETRY_MAP) or {}, texts)
         except Exception:  # noqa: BLE001 — opis kroku to dodatek, formularz ma się pokazać zawsze
-            self._assignment = None
+            self._assignment_placeholders = None
 
     def _show_details(self, errors: dict[str, str] | None = None) -> ConfigFlowResult:
-        try:
-            placeholders = assignment_placeholders(
-                self._assignment, self.config_entry.options.get(OPT_TELEMETRY_MAP) or {})
-        except Exception:  # noqa: BLE001
-            placeholders = assignment_placeholders(None, {})
-        return self.async_show_form(step_id="details", data_schema=self._details_schema(), errors=errors,
-                                    description_placeholders=placeholders)
+        return self.async_show_form(
+            step_id="details", data_schema=self._details_schema(), errors=errors,
+            description_placeholders=self._assignment_placeholders or assignment_placeholders(None, {}))
 
     async def async_step_details(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         await self._async_profiles()
