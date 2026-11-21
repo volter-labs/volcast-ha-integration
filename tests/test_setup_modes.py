@@ -488,7 +488,9 @@ async def _run_production(monkeypatch, *, options, data=None, control=None):
         monkeypatch.setattr(obj, name, value)
 
     issues: list[str] = []
-    monkeypatch.setattr(integ.ir, "async_create_issue", lambda *a, **k: issues.append(a[2]))
+    # Zgłoszenie mapy czujników ma własne testy (`test_setup_issues.py`); tu liczą się tylko zgłoszenia produkcji.
+    monkeypatch.setattr(integ.ir, "async_create_issue",
+                        lambda *a, **k: None if a[2].startswith("sensor_assignment_") else issues.append(a[2]))
     hass, entry, ok = await sh.run_setup(setattr_, options=options, data=data)
     assert ok is True
     tracker = _RecTracker.instances[0] if _RecTracker.instances else None
