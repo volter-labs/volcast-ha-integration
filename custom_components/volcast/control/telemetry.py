@@ -340,6 +340,10 @@ class TelemetrySender:
         self.on_first_success: Callable[[], None] | None = None
         self._first_success_done = False
 
+    def set_battery_negate(self, on: bool) -> None:
+        """Nowa wartość opcji znaku baterii bez przeładowania wpisu — działa od następnego odczytu."""
+        self._negated = (self._negated | {"battery_power_w"}) if on else (self._negated - {"battery_power_w"})
+
     @property
     def reports_pv_production(self) -> bool:
         """Czy ścieżka odczytu ma źródło mocy PV (wiadomo od złożenia) — reguła `telemetry_carries_pv_power`."""

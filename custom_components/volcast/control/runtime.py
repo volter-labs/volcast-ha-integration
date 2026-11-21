@@ -111,8 +111,10 @@ _LOCKS_KEY = "volcast_control_locks"
 CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL,
                        OPT_ENTITY_MAP)
 _POLL_RANGE_S = (5.0, 60.0)
-# Opcje, których zmiana nie wymaga przeładowania wpisu (wystarczy import historii).
-RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY})
+# Opcje, których zmiana nie wymaga przeładowania wpisu: czujnik zużycia (wystarczy import historii) i znak
+# baterii z czujnika ręcznego (tylko telemetria — podmiana w działającym nadawcy). Przeładowanie zapisałoby
+# tryb neutralny przy rozładunku, a nowy wykonawca stosowałby plan od nowa.
+RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY, OPT_BATTERY_NEGATE})
 # Wybór sterownika z chmury (`control_choice.controller`).
 CONTROLLER_VOLCAST, CONTROLLER_OWN_EMS = "volcast", "own_ems"
 

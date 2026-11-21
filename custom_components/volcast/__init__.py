@@ -33,6 +33,7 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     MODE_DISCOVERY_ONLY,
+    OPT_BATTERY_NEGATE,
     OPT_LOAD_ENERGY,
     SERVICE_RESUME_CONTROL,
     SERVICE_SYNC_PRODUCTION,
@@ -597,7 +598,8 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
     Zmiana sterowania (sposób, profil, integracja falownika) najpierw oddaje falownik
     przez OBECNEGO wykonawcę. Zmiana samego czujnika zużycia domu nie przeładowuje
-    wpisu — uruchamia tylko jednorazowy import historii.
+    wpisu — uruchamia tylko jednorazowy import historii. Zmiana samego znaku baterii
+    też nie — działający nadawca telemetrii przejmuje ją od następnego odczytu.
     """
     pairing_only = hass.data.get(PAIRING_ONLY_UPDATE_KEY)
     if pairing_only and entry.entry_id in pairing_only:
@@ -609,7 +611,10 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
         changed = changed_option_keys(old, new)
         if changed and changed <= RELOAD_FREE_KEYS:
             control.options_at_setup = new
-            if new.get(OPT_LOAD_ENERGY):
+            telemetry = getattr(control, "telemetry", None)
+            if OPT_BATTERY_NEGATE in changed and telemetry is not None:
+                telemetry.set_battery_negate(bool(new.get(OPT_BATTERY_NEGATE)))
+            if OPT_LOAD_ENERGY in changed and new.get(OPT_LOAD_ENERGY):
                 entry.async_create_background_task(
                     hass, async_import_history_once(
                         hass, control.cloud, control.executor, load_entity=new[OPT_LOAD_ENERGY],

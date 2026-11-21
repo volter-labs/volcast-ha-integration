@@ -415,6 +415,76 @@ async def test_update_listener_without_control_just_reloads():
     assert order == ["reload"]
 
 
+class SignTelemetry:
+    def __init__(self, order):
+        self.order = order
+
+    def set_battery_negate(self, on):
+        self.order.append(("battery_negate", on))
+
+
+@pytest.mark.asyncio
+async def test_update_listener_battery_sign_with_reloading_key_still_reloads():
+    import custom_components.volcast as integ
+    rt = fake_runtime()
+    rt.options_at_setup = {"control_mode": "entities", "update_interval": 60}
+    hass, entry, order = _listener_hass(rt, {"control_mode": "entities", "update_interval": 30,
+                                             "battery_power_negate": True})
+    rt.telemetry = SignTelemetry(order)
+    await integ._async_update_listener(hass, entry)
+    assert order == ["reload"]                                 # przeładowanie jak dotąd; nowy nadawca czyta opcję
+
+
+@pytest.mark.asyncio
+async def test_update_listener_battery_sign_and_load_sensor_apply_live(monkeypatch):
+    import custom_components.volcast as integ
+    rt = fake_runtime()
+    rt.options_at_setup = {"control_mode": "entities", "battery_power_negate": True}
+    hass, entry, order = _listener_hass(rt, {"control_mode": "entities", "load_energy_entity": "sensor.house"})
+    rt.telemetry = SignTelemetry(order)
+    seen = {}
+
+    async def import_once(h, cloud, executor, *, load_entity, pv_entity=None, now_utc):
+        seen["load"] = load_entity
+    monkeypatch.setattr(integ, "async_import_history_once", import_once)
+    await integ._async_update_listener(hass, entry)
+    await asyncio.gather(*hass.tasks)
+    assert order == [("battery_negate", False)] and seen == {"load": "sensor.house"}
+
+
+@pytest.mark.asyncio
+async def test_update_listener_battery_sign_only_skips_history_import(monkeypatch):
+    import custom_components.volcast as integ
+    rt = fake_runtime()
+    rt.options_at_setup = {"control_mode": "entities", "load_energy_entity": "sensor.house"}
+    hass, entry, order = _listener_hass(rt, {"control_mode": "entities", "load_energy_entity": "sensor.house",
+                                             "battery_power_negate": True})
+    rt.telemetry = SignTelemetry(order)
+    imported = []
+
+    async def import_once(*a, **k):
+        imported.append(True)
+    monkeypatch.setattr(integ, "async_import_history_once", import_once)
+    await integ._async_update_listener(hass, entry)
+    await asyncio.gather(*hass.tasks)
+    assert order == [("battery_negate", True)] and imported == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_control", [False, True], ids=["no_control", "control_without_telemetry"])
+async def test_update_listener_battery_sign_without_sender_never_raises(with_control):
+    import custom_components.volcast as integ
+    rt = None
+    if with_control:
+        rt = fake_runtime()                                    # sterowanie bez nadawcy telemetrii
+        rt.options_at_setup = {"control_mode": "entities"}
+    hass, entry, order = _listener_hass(rt, {"control_mode": "entities", "battery_power_negate": True})
+    await integ._async_update_listener(hass, entry)
+    # Bez sterowania: przeładowanie jak dotąd (nie ma wykonawcy, więc nie ma zapisu); przy następnym starcie
+    # nadawca czyta opcję z wpisu. Ze sterowaniem bez nadawcy: nic do podmiany, bez przeładowania.
+    assert order == ([] if with_control else ["reload"])
+
+
 @pytest.mark.asyncio
 async def test_remove_entry_never_raises(monkeypatch):
     import custom_components.volcast as integ
