@@ -47,7 +47,11 @@ from .core.price_setup import (ActionCandidate, SeriesCheck, action_candidates, 
                                pair_entities, platform_currency, sell_lacks_tomorrow)
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
+from .core.discovery.sign_check import (AMBIGUOUS, BATTERY_IDLE, GRID_IDLE, NO_LOAD_SENSOR, NO_SENSOR, TOO_FEW_SAMPLES)
 from .pairing import PairingPoller
+from .sensor_assignment import (EXCLUDED_LOAD_DERIVED, EXCLUDED_LOAD_STATE_ONLY, EXCLUDED_LOAD_UNVERIFIED,
+                                NOTE_FAILED, NOTE_NO_STATISTICS, NOTE_RECORDER_ERROR, NOTE_RECORDER_UNAVAILABLE,
+                                NOTE_REGISTRY_UNAVAILABLE, AssignmentResult, async_propose)
 from .version import async_integration_version
 from .const import (
     DEFAULT_PAIRING_URL,
@@ -73,6 +77,7 @@ from .const import (
     MODE_DISCOVERY_ONLY,
     OPT_BATTERY_CAPACITY_KWH,
     OPT_CONTROL_MODE,
+    OPT_BATTERY_NEGATE,
     OPT_GRID_NEGATE,
     OPT_INVERTER_DOMAIN,
     OPT_LOAD_ENERGY,
@@ -499,6 +504,55 @@ def _clean(values: dict[str, Any]) -> dict[str, Any]:
 # Wszystkie zmienne tekstów kroku źródła cen — HA wstawia je do opisu i błędów.
 #: Limit jednego próbnego wywołania akcji (przepływ czeka na użytkownika; runtime ma własne 30 s).
 PROBE_TIMEOUT_S = 10.0
+
+# Teksty wyniku propozycji w opisie kroku „Installation details”. Placeholdery HA nie są tłumaczone, więc
+# stałe zdania opisu żyją w strings.json (13 języków), a tu są tylko krótkie dane: powód braku oceny
+# (po angielsku, jak etykiety pól). Każdy kod powodu / wyłączenia / notatki MUSI mieć tu tekst (pilnuje test).
+SIGN_REASON_TEXTS = {
+    NO_SENSOR: "no sensor is selected for it",
+    TOO_FEW_SAMPLES: "there are too few recorded readings (needs a couple of hours of data)",
+    GRID_IDLE: "there was no clear grid import or export in the recorded period",
+    BATTERY_IDLE: "the battery was idle in the recorded period (no clear charging or discharging)",
+    NO_LOAD_SENSOR: "a house load power sensor is needed to compare the readings",
+    AMBIGUOUS: "the readings do not clearly point to one sign",
+}
+EXCLUDED_TEXTS = {
+    EXCLUDED_LOAD_DERIVED: "the house load sensor is calculated from other sensors, so it cannot confirm the sign",
+    EXCLUDED_LOAD_STATE_ONLY: "the house load sensor has no unique ID in Home Assistant, so it cannot be verified",
+    EXCLUDED_LOAD_UNVERIFIED: "the house load sensor could not be verified now",
+}
+NOTE_TEXTS = {
+    NOTE_RECORDER_UNAVAILABLE: "history is not available, current readings were used",
+    NOTE_NO_STATISTICS: "no recorded history found, current readings were used",
+    NOTE_RECORDER_ERROR: "history could not be read, current readings were used",
+    NOTE_REGISTRY_UNAVAILABLE: "the entity registry is not available",
+    NOTE_FAILED: "the proposal could not be prepared",
+}
+_MAX_CANDIDATES = 3
+
+
+def _sign_line(label: str, verdict, current: bool) -> str:
+    """Jedna linia oceny znaku: zalecenie zmiany, zgodność albo brak oceny z powodem."""
+    if verdict.negate is None:
+        reason = SIGN_REASON_TEXTS.get(verdict.reason or "", "it could not be assessed")
+        return f"- {label}: could not be assessed - {reason}"
+    if verdict.negate == current:
+        return f"- {label}: matches the current setting"
+    return f"- {label}: recommended - turn the option {'on' if verdict.negate else 'off'}"
+
+
+def assignment_placeholders(result: AssignmentResult | None, saved: dict[str, Any]) -> dict[str, str]:
+    """Dane do opisu kroku: kandydaci dla pól niejednoznacznych i wynik oceny znaku (czysty tekst)."""
+    if result is None:
+        return {"candidates": "-", "sign_check": "-"}
+    cands = [f"- {fp.field}: " + ", ".join(c.entity_id for c in fp.candidates[:_MAX_CANDIDATES])
+             for fp in result.proposal.fields if fp.candidates and not fp.chosen and not saved.get(fp.field)]
+    signs = [_sign_line("Grid", result.sign_check.grid, result.grid_negate),
+             _sign_line("Battery", result.sign_check.battery, result.battery_negate)]
+    signs += [f"- note: {EXCLUDED_TEXTS.get(code, code)}" for code in result.excluded.values()]
+    signs += [f"- note: {NOTE_TEXTS.get(n, n)}" for n in result.notes]
+    return {"candidates": "\n".join(cands) or "-", "sign_check": "\n".join(signs)}
+
 _NO_PLACEHOLDERS = {"hours": "0", "source_currency": "", "option_currency": "", "currency": ""}
 
 
@@ -744,16 +798,35 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._finish(self._merged({OPT_CONTROL_MODE: None}))
 
+    _assignment: AssignmentResult | None = None
+
+    async def _async_load_assignment(self) -> None:
+        """Propozycja liczona raz na wejście do kroku; błąd nie blokuje formularza (bez propozycji)."""
+        try:
+            self._assignment = await async_propose(self.hass, self.config_entry)
+        except Exception:  # noqa: BLE001 — opis kroku to dodatek, formularz ma się pokazać zawsze
+            self._assignment = None
+
+    def _show_details(self, errors: dict[str, str] | None = None) -> ConfigFlowResult:
+        try:
+            placeholders = assignment_placeholders(
+                self._assignment, self.config_entry.options.get(OPT_TELEMETRY_MAP) or {})
+        except Exception:  # noqa: BLE001
+            placeholders = assignment_placeholders(None, {})
+        return self.async_show_form(step_id="details", data_schema=self._details_schema(), errors=errors,
+                                    description_placeholders=placeholders)
+
     async def async_step_details(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         await self._async_profiles()
         if user_input is not None:
             errors = self._direct_errors(user_input)
             if errors:
-                return self.async_show_form(step_id="details", data_schema=self._details_schema(), errors=errors)
+                return self._show_details(errors)
             tmap = {k: v for k in TELEMETRY_FIELDS if (v := (user_input.get(k) or "").strip())}
             patch = {
                 OPT_TELEMETRY_MAP: tmap,
                 OPT_GRID_NEGATE: bool(user_input.get(OPT_GRID_NEGATE)) or None,
+                OPT_BATTERY_NEGATE: bool(user_input.get(OPT_BATTERY_NEGATE)) or None,
                 OPT_RATED_POWER_W: user_input.get(OPT_RATED_POWER_W),
                 OPT_BATTERY_CAPACITY_KWH: user_input.get(OPT_BATTERY_CAPACITY_KWH),
                 OPT_LOAD_ENERGY: user_input.get(OPT_LOAD_ENERGY)}
@@ -764,9 +837,9 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             if user_input.get(_SEARCH):
                 self._pending = self._merged(patch)
                 return await self.async_step_direct_search()
-            return await self._finish(self._merged(patch), retry_form=lambda errors: self.async_show_form(
-                step_id="details", data_schema=self._details_schema(), errors=errors))
-        return self.async_show_form(step_id="details", data_schema=self._details_schema())
+            return await self._finish(self._merged(patch), retry_form=lambda errors: self._show_details(errors))
+        await self._async_load_assignment()
+        return self._show_details()
 
     # ── ładowarka EV: potwierdzenie znalezisk z wykrywania ─────────────────
     def _ev_findings(self) -> list:
@@ -1370,11 +1443,19 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _details_schema(self) -> vol.Schema:
         o = self.config_entry.options
         tmap = o.get(OPT_TELEMETRY_MAP) or {}
+        # Puste pola dostają podpowiedź z propozycji (tylko kandydaci pewni); zapisana wartość ma pierwszeństwo.
+        try:
+            proposed = self._assignment.proposal.chosen() if self._assignment is not None else {}
+        except Exception:  # noqa: BLE001
+            proposed = {}
         fields: dict = {
-            _entity_field(key, tmap.get(key)): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+            _entity_field(key, tmap.get(key) or proposed.get(key)):
+                selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
             for key in TELEMETRY_FIELDS
         }
+        # Zalecenie oceny znaku jest tylko tekstem — zaznaczenie zostaje wartością z opcji.
         fields[vol.Optional(OPT_GRID_NEGATE, default=bool(o.get(OPT_GRID_NEGATE)))] = bool
+        fields[vol.Optional(OPT_BATTERY_NEGATE, default=bool(o.get(OPT_BATTERY_NEGATE)))] = bool
         rated = vol.Optional(OPT_RATED_POWER_W, description={"suggested_value": o.get(OPT_RATED_POWER_W)})
         fields[rated] = vol.All(vol.Coerce(int), vol.Range(min=int(RATED_POWER_RANGE_W[0]),
                                                                  max=int(RATED_POWER_RANGE_W[1])))
