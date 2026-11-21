@@ -113,7 +113,7 @@ def _assignment_world(monkeypatch, *, options=None, loaded=True, entry_exists=Tr
     monkeypatch.setattr(cf, "_async_translations", tr)
     monkeypatch.setattr(cf, "async_propose", propose)
     hass = FakeHass()
-    hass.data["volcast"] = {"e1": {"control": None}} if loaded else {}
+    hass.data["volcast"] = {"e1": {"control": SimpleNamespace(choice=None, direct=None)}} if loaded else {}
     hass.config_entries = SimpleNamespace(async_get_entry=lambda eid: entry if entry_exists and eid == "e1" else None,
                                           async_update_entry=update)
     return hass, entry, updates, repairs
@@ -191,7 +191,7 @@ async def test_assignment_fix_survives_a_failing_proposal(monkeypatch):
     monkeypatch.setattr(cf, "async_propose", boom)
     flow, shown, first = await _open(hass, repairs)
     assert first["type"] == "form" and updates == []
-    assert shown["description_placeholders"] == {"candidates": "-", "sign_check": "-"}
+    assert shown["description_placeholders"] == {"candidates": "", "sign_check": ""}
 
 
 @pytest.mark.parametrize("name", ["strings.json", "translations/en.json"])
@@ -275,3 +275,14 @@ def test_gaps_only_cover_required_keys(monkeypatch):
     rt_mod, hass, choice = _gap_world([MODE, SWITCH], monkeypatch)
     gaps = rt_mod.control_entity_gaps(hass, choice, {"mode": "select.x_ems", "enable": "switch.x_remote"})
     assert not gaps
+
+
+@pytest.mark.asyncio
+async def test_assignment_fix_opened_after_the_inverter_got_recognised_proposes_nothing(monkeypatch):
+    hass, entry, updates, repairs = _assignment_world(monkeypatch, options={})
+    hass.data["volcast"]["e1"]["control"] = SimpleNamespace(choice=SimpleNamespace(integration_domain="goodwe"), direct=None)
+    flow, shown, first = await _open(hass, repairs)
+    assert first["type"] == "form"
+    assert all(v is None for v in _suggested(shown).values())
+    assert shown["description_placeholders"] == {"candidates": "", "sign_check": ""}
+    assert updates == []

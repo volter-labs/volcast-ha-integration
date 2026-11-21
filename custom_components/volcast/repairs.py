@@ -108,7 +108,7 @@ class SensorAssignmentFlow(RepairsFlow):
         assignment, placeholders = await async_load_assignment(self.hass, entry)
         return self.async_show_form(
             step_id="assign", data_schema=vol.Schema(sensor_map_fields(entry.options, assignment)),
-            description_placeholders=placeholders or {"candidates": "-", "sign_check": "-"})
+            description_placeholders=placeholders or {"candidates": "", "sign_check": ""})
 
 
 async def async_create_fix_flow(hass, issue_id: str, data: dict | None) -> RepairsFlow:

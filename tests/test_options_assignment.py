@@ -2,6 +2,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -41,7 +42,10 @@ def _flat(overrides=None):
     return {"exceptions": exc, "options": opt}
 
 
-def _flow(monkeypatch, result, calls=None, translations=None, **kw):
+NO_INVERTER = SimpleNamespace(choice=None, direct=None)
+
+
+def _flow(monkeypatch, result, calls=None, translations=None, runtime=NO_INVERTER, **kw):
     async def tr(hass, category):
         if isinstance(translations, Exception):
             raise translations
@@ -54,7 +58,7 @@ def _flow(monkeypatch, result, calls=None, translations=None, **kw):
             raise result
         return result
     monkeypatch.setattr(cf, "async_propose", fake)
-    f = base.flow(**kw)
+    f = base.flow(runtime=runtime, **kw)
     shown = {}
     f.async_show_form = lambda **k: shown.update(k) or {"type": "form", "step_id": k["step_id"]}
     return f, shown
@@ -123,7 +127,7 @@ def test_proposal_failure_does_not_block_the_form(monkeypatch):
     f, shown = _flow(monkeypatch, RuntimeError("boom"))
     r = asyncio.run(f.async_step_details())
     assert r["type"] == "form" and shown["step_id"] == "details"
-    assert shown["description_placeholders"] == {"candidates": "-", "sign_check": "-"}
+    assert shown["description_placeholders"] == {"candidates": "", "sign_check": ""}
     assert _suggested(shown["data_schema"], "pv_power_w") is None
 
 
@@ -131,18 +135,19 @@ def test_translation_failure_does_not_block_the_form(monkeypatch):
     f, shown = _flow(monkeypatch, _result(chosen={"soc": "sensor.soc"}), translations=RuntimeError("x"))
     r = asyncio.run(f.async_step_details())
     assert r["type"] == "form" and shown["step_id"] == "details"
-    assert shown["description_placeholders"] == {"candidates": "-", "sign_check": "-"}
+    assert shown["description_placeholders"] == {"candidates": "", "sign_check": ""}
+    assert _suggested(shown["data_schema"], "soc") == "sensor.soc"
 
 
 def test_lines_use_translated_texts_for_the_ha_language(monkeypatch):
     pl = _flat({"component.volcast.exceptions.assignment_quantity_grid.message": "Siec",
-                "component.volcast.exceptions.assignment_sign_recommend_on.message": "{quantity}: zalecane wlaczenie"})
+                "component.volcast.exceptions.assignment_sign_recommend_on.message": "{quantity}: zalecane wlaczenie ({option})"})
     pl["options"]["component.volcast.options.step.details.data.grid_power_w"] = "Moc sieci"
     res = _result(ambiguous={"grid_power_w": ["sensor.g1"]}, grid=ON)
     f, shown = _flow(monkeypatch, res, translations=pl)
     asyncio.run(f.async_step_details())
     ph = shown["description_placeholders"]
-    assert "- Siec: zalecane wlaczenie" in ph["sign_check"]
+    assert "- Siec: zalecane wlaczenie (Grid sensor shows export as positive)" in ph["sign_check"]
     assert "- Moc sieci: sensor.g1" in ph["candidates"]
 
 
@@ -170,7 +175,7 @@ def test_description_lists_candidates_and_sign_results(monkeypatch):
     asyncio.run(f.async_step_details())
     ph = shown["description_placeholders"]
     assert "- Grid power: sensor.g1, sensor.g2" in ph["candidates"]
-    assert "- Grid: recommended - turn the option on" in ph["sign_check"]
+    assert "- Grid: recommended - turn on \"Grid sensor shows export as positive\"" in ph["sign_check"]
     assert "- Battery: could not be assessed - the battery was idle" in ph["sign_check"]
     assert "- Note: the house load sensor is calculated" in ph["sign_check"]
 
@@ -185,8 +190,8 @@ def test_match_is_reported_for_a_saved_map(monkeypatch):
 
 def test_every_code_has_a_translation_key():
     keys = set(_strings()["exceptions"])
-    reasons = {getattr(sc, n) for n in ("NO_SENSOR", "TOO_FEW_SAMPLES", "GRID_IDLE", "BATTERY_IDLE",
-                                        "NO_LOAD_SENSOR", "AMBIGUOUS")}
+    reasons = {v for k, v in vars(sc).items() if k.isupper() and isinstance(v, str) and v not in sc.QUANTITIES}
+    assert len(reasons) >= 6
     excluded = {v for k, v in vars(sa).items() if k.startswith("EXCLUDED_")}
     notes = {v for k, v in vars(sa).items() if k.startswith("NOTE_")}
     assert len(excluded) == 3 and notes
@@ -198,15 +203,98 @@ def test_every_code_has_a_translation_key():
             "assignment_note", "assignment_reason_unknown"} <= keys
 
 
-def test_unpaired_form_mentions_the_account_connection():
-    for name in ("strings.json", "translations/en.json"):
-        text = json.loads((ROOT / name).read_text(encoding="utf-8"))["options"]["step"]["init"]["description"]
-        assert "connection to your Volcast account" in text
-    r = asyncio.run(base.flow(paired=False).async_step_init())
+def _shown_init(monkeypatch, **kw):
+    async def tr(hass, category):
+        return _flat()[category]
+    monkeypatch.setattr(cf, "_async_translations", tr)
+    f = base.flow(**kw)
+    shown = {}
+    f.async_show_form = lambda **k: shown.update(k) or {"type": "form", "step_id": k["step_id"]}
+    f.async_show_menu = lambda **k: shown.update(k) or {"type": "menu", "step_id": k["step_id"]}
+    return f, shown
+
+
+def test_unpaired_form_mentions_the_account_connection(monkeypatch):
+    f, shown = _shown_init(monkeypatch, paired=False)
+    r = asyncio.run(f.async_step_init())
     assert (r["type"], r["step_id"]) == ("form", "init")
+    assert "connection to your Volcast account" in shown["description_placeholders"]["account_hint"]
+    for name in ("strings.json", "translations/en.json"):
+        data = json.loads((ROOT / name).read_text(encoding="utf-8"))
+        assert data["options"]["step"]["init"]["description"] == "{account_hint}"
+        assert "connection to your Volcast account" in data["exceptions"]["account_connection_hint"]["message"]
+
+
+def test_unpaired_form_survives_a_translation_failure(monkeypatch):
+    async def boom(hass, category):
+        raise RuntimeError("x")
+    monkeypatch.setattr(cf, "_async_translations", boom)
+    f = base.flow(paired=False)
+    shown = {}
+    f.async_show_form = lambda **k: shown.update(k) or {"type": "form", "step_id": k["step_id"]}
+    assert asyncio.run(f.async_step_init())["type"] == "form"
+    assert shown["description_placeholders"] == {"account_hint": ""}
+
+
+def test_paired_menu_has_no_account_sentence(monkeypatch):
+    f, shown = _shown_init(monkeypatch)
+    r = asyncio.run(f.async_step_init())
+    assert r["type"] == "menu"
+    assert shown["description_placeholders"] == {"account_hint": ""}
+
+
+# ── twarde ograniczenie: rozpoznany falownik nie dostaje ręcznej mapy z podpowiedzi ─────────────────────
+
+def _recognised():
+    return SimpleNamespace(choice=SimpleNamespace(integration_domain="goodwe"), direct=None)
+
+
+def _no_hint_for_every_field(shown):
+    return all(_suggested(shown["data_schema"], f) is None for f in cf.TELEMETRY_FIELDS)
+
+
+@pytest.mark.parametrize("runtime,options", [
+    (_recognised(), {}),                                                         # profil rozpoznany
+    (SimpleNamespace(choice=None, direct=object()), {}),                         # połączenie bezpośrednie (runtime)
+    (SimpleNamespace(choice=None, direct=None), {"direct_target": {"host": "1.2.3.4"}}),   # cel zapisany w opcjach
+    (None, {}),                                                                  # brak runtime: nie wiadomo
+])
+def test_no_suggestions_when_the_plugin_already_recognises_the_inverter(monkeypatch, runtime, options):
+    f, shown = _flow(monkeypatch, _result(chosen={"pv_power_w": "sensor.pv", "battery_power_w": "sensor.b"},
+                                         ambiguous={"grid_power_w": ["sensor.g1", "sensor.g2"]}, grid=ON),
+                     runtime=runtime, options=dict(options))
+    asyncio.run(f.async_step_details())
+    assert _no_hint_for_every_field(shown)
+    assert shown["description_placeholders"] == {"candidates": "", "sign_check": ""}   # bez zapisanej mapy: cisza
+
+
+def test_recognised_profile_capacity_change_saves_no_telemetry_map(monkeypatch):
+    f, shown = _flow(monkeypatch, _result(chosen={"pv_power_w": "sensor.pv"}), runtime=_recognised(),
+                     options={"battery_capacity_kwh": 10})
+    asyncio.run(f.async_step_details())
+    # formularz pokazuje pola bez podpowiedzi, więc zatwierdzenie samej pojemności nie niesie czujników
+    r = asyncio.run(f.async_step_details({"battery_capacity_kwh": 12}))
+    assert r["data"] == {"battery_capacity_kwh": 12}
+
+
+def test_recognised_inverter_with_saved_manual_map_still_shows_sign_check_but_no_candidates(monkeypatch):
+    res = _result(ambiguous={"grid_power_w": ["sensor.g1", "sensor.g2"]}, grid=ON)
+    f, shown = _flow(monkeypatch, res, runtime=_recognised(), options={"telemetry_map": {"soc": "sensor.soc"}})
+    asyncio.run(f.async_step_details())
+    ph = shown["description_placeholders"]
+    assert ph["candidates"] == "" and "Grid: recommended" in ph["sign_check"]
+    assert _suggested(shown["data_schema"], "soc") == "sensor.soc"          # zapisana wartość zostaje
+
+
+def test_headings_are_empty_without_candidates(monkeypatch):
+    f, shown = _flow(monkeypatch, _result(chosen={"soc": "sensor.soc"}))
+    asyncio.run(f.async_step_details())
+    ph = shown["description_placeholders"]
+    assert ph["candidates"] == "" and ph["sign_check"].startswith("Power sign check")
 
 
 def test_details_texts_have_the_placeholders_the_code_provides():
     d = json.loads((ROOT / "strings.json").read_text(encoding="utf-8"))["options"]["step"]["details"]
     assert "{candidates}" in d["description"] and "{sign_check}" in d["description"]
+    assert "already filled in" not in d["description"]
     assert "battery_power_negate" in d["data"] and "battery_power_negate" in d["data_description"]

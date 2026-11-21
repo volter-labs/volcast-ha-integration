@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta
 import logging
 
@@ -34,14 +34,13 @@ from .const import (
     DOMAIN,
     MODE_DISCOVERY_ONLY,
     OPT_BATTERY_NEGATE,
-    OPT_DIRECT_TARGET,
     OPT_LOAD_ENERGY,
     OPT_TELEMETRY_MAP,
     SERVICE_RESUME_CONTROL,
     SERVICE_SYNC_PRODUCTION,
 )
 from .control.history_import import async_import_history_once
-from .control.runtime import (RELOAD_FREE_KEYS, ControlRuntime, async_remove_control, async_restore_if_control_changed,
+from .control.runtime import (RELOAD_FREE_KEYS, ControlRuntime, no_inverter_integration, async_remove_control, async_restore_if_control_changed,
                               async_resume_control,
                               async_setup_control, async_unload_control, changed_option_keys,
                               control_identity_changed, freeze_control)
@@ -430,10 +429,7 @@ def _assignment_missing(entry: ConfigEntry, control: ControlRuntime | None) -> b
     """
     if control is None or not entry.data.get(CONF_BACKEND):
         return False
-    choice = getattr(control, "choice", None)
-    if choice is not None and getattr(choice, "integration_domain", None):
-        return False
-    if getattr(control, "direct", None) is not None or isinstance(entry.options.get(OPT_DIRECT_TARGET), Mapping):
+    if not no_inverter_integration(entry.options, control):
         return False
     return not (entry.options.get(OPT_TELEMETRY_MAP) or {}).get("pv_power_w")
 

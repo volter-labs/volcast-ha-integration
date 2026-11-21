@@ -646,6 +646,20 @@ def _binding(options: Mapping, profile=None) -> tuple:
     return CONTROL_MODE_ENTITIES, options.get(OPT_PROFILE_ID), options.get(OPT_INVERTER_DOMAIN)
 
 
+def no_inverter_integration(options: Mapping, control) -> bool:
+    """Wtyczka nie rozpoznała integracji falownika i nie ma połączenia bezpośredniego.
+
+    Wspólny warunek zgłoszenia naprawy mapy czujników i podpowiedzi czujników w opcjach: tylko wtedy ręczna
+    mapa nie zasłania profilu. Bez składania sterowania (`control` None) nie wiadomo, co rozpoznano — fałsz.
+    """
+    if control is None:
+        return False
+    choice = getattr(control, "choice", None)
+    if choice is not None and getattr(choice, "integration_domain", None):
+        return False
+    return getattr(control, "direct", None) is None and not isinstance(options.get(OPT_DIRECT_TARGET), Mapping)
+
+
 async def async_control_change_allowed(runtime, old: Mapping, new: Mapping) -> bool:
     """Czy zmianę opcji wolno zapisać: najpierw powrót przez obecnego wykonawcę (`async_restore_if_control_changed`).
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -33,12 +34,13 @@ except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w for
 
 from .cloud.client import Backend, ClientOutdated, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control import direct_search as ds
-from .control.runtime import async_control_change_allowed, async_direct_search, map_entities, mapped_with_overrides
+from .control.runtime import async_control_change_allowed, no_inverter_integration, async_direct_search, map_entities, mapped_with_overrides
 from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_pv_power
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.select import ProfileChoice
 from .core.entity_map import KEY_DESCRIPTORS, field_group, preview_entity
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
+from .core.discovery.assign import Proposal
 from .core.discovery.identify import Candidate
 from .core.price_actions import InvalidPriceSource, attributes_from_responses, build_calls, parse_source
 from .core.price_integrations import ACTION_DOMAINS, ENTITY_DOMAINS, OFFERED_PLATFORMS, FieldKind
@@ -509,6 +511,8 @@ _TR_REASON = "assignment_reason_"
 _TR_EXCLUDED = "assignment_excluded_"
 _TR_NOTE = "assignment_note_"
 _MAX_CANDIDATES = 3
+#: Opis kroku bez propozycji i bez oceny znaku.
+NO_ASSIGNMENT_TEXT = {"candidates": "", "sign_check": ""}
 
 
 async def _async_translations(hass, category: str) -> dict[str, str]:
@@ -535,7 +539,7 @@ class _Texts:
         return self._opt.get(f"component.{DOMAIN}.options.step.details.data.{name}", name)
 
 
-def _sign_line(texts: _Texts, quantity: str, verdict, current: bool) -> str:
+def _sign_line(texts: _Texts, quantity: str, option: str, verdict, current: bool) -> str:
     """Jedna linia oceny znaku: zalecenie zmiany, zgodność albo brak oceny z powodem."""
     if verdict.negate is None:
         reason = texts.exc(f"{_TR_REASON}{verdict.reason}") if verdict.reason else texts.exc(f"{_TR_REASON}unknown")
@@ -543,23 +547,26 @@ def _sign_line(texts: _Texts, quantity: str, verdict, current: bool) -> str:
     if verdict.negate == current:
         return "- " + texts.exc("assignment_sign_match", quantity=quantity)
     return "- " + texts.exc("assignment_sign_recommend_on" if verdict.negate else "assignment_sign_recommend_off",
-                            quantity=quantity)
+                            quantity=quantity, option=texts.field(option))
 
 
 def assignment_placeholders(result: AssignmentResult | None, saved: dict[str, Any],
                             texts: _Texts | None = None) -> dict[str, str]:
     """Dane do opisu kroku: kandydaci dla pól niejednoznacznych i wynik oceny znaku (tekst z tłumaczeń)."""
     if result is None or texts is None:
-        return {"candidates": "-", "sign_check": "-"}
+        return dict(NO_ASSIGNMENT_TEXT)
     cands = [f"- {texts.field(fp.field)}: " + ", ".join(c.entity_id for c in fp.candidates[:_MAX_CANDIDATES])
              for fp in result.proposal.fields if fp.candidates and not fp.chosen and not saved.get(fp.field)]
-    signs = [_sign_line(texts, texts.exc("assignment_quantity_grid"), result.sign_check.grid, result.grid_negate),
-             _sign_line(texts, texts.exc("assignment_quantity_battery"), result.sign_check.battery,
-                        result.battery_negate)]
+    signs = [_sign_line(texts, texts.exc("assignment_quantity_grid"), OPT_GRID_NEGATE, result.sign_check.grid,
+                        result.grid_negate),
+             _sign_line(texts, texts.exc("assignment_quantity_battery"), OPT_BATTERY_NEGATE,
+                        result.sign_check.battery, result.battery_negate)]
     signs += ["- " + texts.exc("assignment_note", text=texts.exc(f"{_TR_EXCLUDED}{code}"))
               for code in result.excluded.values()]
     signs += ["- " + texts.exc("assignment_note", text=texts.exc(f"{_TR_NOTE}{n}")) for n in result.notes]
-    return {"candidates": "\n".join(cands) or "-", "sign_check": "\n".join(signs)}
+    # Nagłówki należą do placeholderów (puste, gdy nie ma czego pokazać) — opis kroku jest wtedy zawsze prawdziwy.
+    return {"candidates": "\n".join([texts.exc("assignment_candidates_heading"), *cands]) if cands else "",
+            "sign_check": "\n".join([texts.exc("assignment_sign_heading"), *signs])}
 
 
 def merge_options(options: Any, patch: dict[str, Any]) -> dict[str, Any]:
@@ -578,9 +585,18 @@ async def async_load_assignment(hass, entry) -> tuple[AssignmentResult | None, d
     result = placeholders = None
     try:
         result = await async_propose(hass, entry)
+        saved = entry.options.get(OPT_TELEMETRY_MAP) or {}
+        control = ((getattr(hass, "data", None) or {}).get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
+        suggest = no_inverter_integration(entry.options, control)
+        if not suggest:
+            # Falownik rozpoznany (albo nie wiadomo): ręczna mapa zasłoniłaby profil, więc bez podpowiedzi
+            # i bez kandydatów; ocena znaku tylko dla czujników, które użytkownik już zapisał.
+            result = replace(result, proposal=Proposal(()))
         texts = _Texts(await _async_translations(hass, "exceptions"),
                        await _async_translations(hass, "options"))
-        placeholders = assignment_placeholders(result, entry.options.get(OPT_TELEMETRY_MAP) or {}, texts)
+        placeholders = assignment_placeholders(result, saved, texts)
+        if not suggest and not saved:
+            placeholders = dict(NO_ASSIGNMENT_TEXT)
     except Exception:  # noqa: BLE001 — opis to dodatek, formularz ma się pokazać zawsze
         placeholders = None
     return result, placeholders
@@ -590,10 +606,7 @@ def sensor_map_fields(options: Any, assignment: AssignmentResult | None) -> dict
     """Pola mapy czujników (8 pól telemetrii i dwa znaki mocy) — wspólne dla kroku opcji i naprawy."""
     tmap = options.get(OPT_TELEMETRY_MAP) or {}
     # Puste pola dostają podpowiedź z propozycji (tylko kandydaci pewni); zapisana wartość ma pierwszeństwo.
-    try:
-        proposed = assignment.proposal.chosen() if assignment is not None else {}
-    except Exception:  # noqa: BLE001
-        proposed = {}
+    proposed = assignment.proposal.chosen() if assignment is not None else {}
     fields: dict = {
         _entity_field(key, tmap.get(key) or proposed.get(key)):
             selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
@@ -684,9 +697,16 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         if not self._paired():
             if user_input is not None:
                 return await self._finish(self._forecast_options(user_input))
-            return self.async_show_form(step_id="init", data_schema=self._forecast_schema())
+            try:
+                hint = _Texts(await _async_translations(self.hass, "exceptions"), {}).exc("account_connection_hint")
+            except Exception:  # noqa: BLE001 — zdanie to dodatek, formularz ma się pokazać zawsze
+                hint = ""
+            return self.async_show_form(step_id="init", data_schema=self._forecast_schema(),
+                                        description_placeholders={"account_hint": hint})
+        # Opis kroku `init` dotyczy tylko formularza wpisu z kluczem API; menu sparowanego wpisu go nie ma.
         return self.async_show_menu(
-            step_id="init", menu_options=["forecast", "control", "details", "prices", "price_source", "ev_charger"])
+            step_id="init", menu_options=["forecast", "control", "details", "prices", "price_source", "ev_charger"],
+            description_placeholders={"account_hint": ""})
 
     async def async_step_forecast(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -863,7 +883,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _show_details(self, errors: dict[str, str] | None = None) -> ConfigFlowResult:
         return self.async_show_form(
             step_id="details", data_schema=self._details_schema(), errors=errors,
-            description_placeholders=self._assignment_placeholders or assignment_placeholders(None, {}))
+            description_placeholders=self._assignment_placeholders or dict(NO_ASSIGNMENT_TEXT))
 
     async def async_step_details(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         await self._async_profiles()
