@@ -10,7 +10,6 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-import homeassistant.util.dt as dt_util
 
 _MAX_INTERVAL_MIN = 1440
 
@@ -67,7 +66,10 @@ class AccountPrices:
 def _slot(raw) -> PriceSlot | None:
     if not isinstance(raw, dict) or not isinstance(raw.get("start"), str):
         return None
-    start = dt_util.parse_datetime(raw["start"])
+    try:
+        start = datetime.fromisoformat(raw["start"])
+    except ValueError:
+        start = None
     buy = _price(raw.get("buy"))
     sell = raw.get("sell")
     if start is None or start.tzinfo is None or buy is None:
