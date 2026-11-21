@@ -312,16 +312,18 @@ def test_no_load_sensor_without_import_cannot_judge_the_grid(grid_negate):
 
 
 def test_no_load_sensor_brief_import_is_not_enough():
-    """Granica: kilka próbek poboru (< godziny) nie wystarcza do zalecenia."""
+    """Granica: kilka próbek nocnego poboru przy baterii w spoczynku (< godziny) nie wystarcza."""
     day = make_day(10, seed=6, battery_kwh_per_kwp=4, battery_kw_per_kwp=3, soc0=0.9)
-    for i in range(100, 108):            # 8 próbek nocnego poboru 1 kW
-        day["grid"][i] += 1000
-        day["load"][i] += 1000
+
+    def idle_import(indices: range) -> None:
+        for i in indices:                # bateria stoi (np. rezerwa), dom pobiera z sieci
+            day["battery"][i] = 0.0
+            day["grid"][i] = day["load"][i]
+
+    idle_import(range(24, 32))           # 8 próbek, 2:00–2:40
     res = check_signs(raw_samples(day, grid_negate=True, seed=6, load=False))
     assert res.grid.negate is None and res.grid.reason == "no_load_sensor"
-    for i in range(108, 116):            # razem 16 próbek — już wystarcza
-        day["grid"][i] += 1000
-        day["load"][i] += 1000
+    idle_import(range(32, 40))           # razem 16 próbek — już wystarcza
     res = check_signs(raw_samples(day, grid_negate=True, seed=6, load=False))
     assert res.grid.negate is True
 
@@ -383,6 +385,72 @@ def test_pv_sensor_reading_inverter_output_never_gives_a_wrong_recommendation(lo
                 assert res.grid.negate in (gn, None), (kwp, seed, gn, bn, res.as_dict())
 
 
+EXPORT_WINDOWS = {"peak": range(204, 216), "night": range(12, 24)}   # 17:00–18:00, 1:00–2:00
+
+
+def _battery_export(day: dict, window: range, watts: float) -> None:
+    """Bateria sprzedaje do sieci przez godzinę (rozładowanie ponad zużycie)."""
+    for i in window:
+        day["battery"][i] = watts
+        day["grid"][i] = day["load"][i] - max(day["pv"][i], 0.0) - watts
+
+
+# „PV” mierzy coś innego niż całą produkcję: f(produkcja, bateria) albo None = czujnik nieprzypisany
+PV_KINDS = {
+    "production": lambda p, b: p,
+    "inverter_output": lambda p, b: p + b,
+    "half_of_strings": lambda p, b: 0.5 * p,
+    "microinverters_unseen": lambda p, b: 0.6 * p,
+    "kw_reported_as_w": lambda p, b: p / 1000,
+    "w_reported_as_kw": lambda p, b: p * 1000,
+    "reversed": lambda p, b: -p,
+    "unassigned": None,
+}
+NO_LOAD_DAYS = {
+    "self_consumption": {},
+    "night_import": {"battery_kwh_per_kwp": 0.5, "soc0": 0.1},
+    "battery_first": {"battery_first": True},
+    "export_peak": {"battery_kwh_per_kwp": 3, "battery_kw_per_kwp": 1, "soc0": 0.8, "export": "peak"},
+    "export_night": {"battery_kwh_per_kwp": 3, "battery_kw_per_kwp": 1, "soc0": 0.8, "export": "night"},
+    "no_battery": {"battery": False},
+}
+
+
+@pytest.mark.parametrize("day_kind", sorted(NO_LOAD_DAYS))
+@pytest.mark.parametrize("pv_kind", sorted(PV_KINDS))
+def test_no_load_sensor_never_gives_a_wrong_recommendation_whatever_pv_measures(day_kind, pv_kind):
+    """Kontrprzykład z recenzji (moc wyjściowa falownika jako PV, duża bateria pokrywa noc i przez godzinę
+    sprzedaje do sieci → pewny zły znak sieci) i pokrewne: czujnik PV widzi tylko część produkcji, złe
+    jednostki, odwrócony, nieprzypisany. Przypisany czujnik baterii (albo brak baterii), bez czujnika
+    zużycia; 3/10/50 kW × 3 seedy × 4 kombinacje: sieć trafna albo bez zalecenia, bateria bez zalecenia."""
+    kw = dict(NO_LOAD_DAYS[day_kind])
+    export = kw.pop("export", None)
+    pv_of = PV_KINDS[pv_kind]
+    for kwp in SIZES:
+        for seed in range(3):
+            day = make_day(kwp, seed=seed, **kw)
+            if export:
+                _battery_export(day, EXPORT_WINDOWS[export], 500.0 * kwp)
+            for gn, bn in COMBOS:
+                rows = raw_samples(day, grid_negate=gn, battery_negate=bn, seed=seed, load=False)
+                for i, row in enumerate(rows):
+                    if pv_of is None:
+                        del row[PV]
+                    else:
+                        row[PV] = pv_of(max(day["pv"][i], 0.0), day["battery"][i])
+                res = check_signs(rows)
+                assert res.grid.negate in (gn, None), (kwp, seed, gn, bn, res.as_dict())
+                assert res.battery.negate is None
+
+
+def test_reviewer_reproduction_inverter_output_with_night_battery_export():
+    day = make_day(3, seed=0, battery_kwh_per_kwp=3, battery_kw_per_kwp=1, soc0=0.8)
+    _battery_export(day, range(204, 216), 1500.0)
+    rows = raw_samples(day, seed=0, load=False)
+    _inverter_output_as_pv(day, rows)
+    assert check_signs(rows).grid.negate in (False, None)
+
+
 def test_inverter_output_as_pv_with_load_sensor_is_ambiguous_for_the_battery():
     """Z czujnikiem zużycia reszta bilansu to ±bateria dla obu znaków — `ambiguous`."""
     day = make_day(10, seed=12)
@@ -423,6 +491,18 @@ def test_no_load_sensor_with_impossible_samples_under_every_sign_is_ambiguous():
     assert res.basis == "load_bound"
     assert res.grid.negate is None and res.grid.reason == "ambiguous"
     assert res.grid.margin >= 0.9       # sama przewaga liczby próbek by wystarczyła
+
+
+def test_no_load_sensor_needs_a_tenfold_advantage():
+    """Noc: 60 próbek poboru odczytanego jako oddawanie (dowód odwrócenia), ale i 9 próbek oddawania
+    odczytanego wprost (3 % — w granicy udziału). Przewaga 1 − 9/60 = 0,85 < 0,9: brak zalecenia."""
+    rows = [{PV: 2000.0, GRID: 1500.0} for _ in range(24)]       # dzień: oddawanie (sieć odwrócona)
+    rows += [{PV: 0.0, GRID: -500.0} for _ in range(60)]        # noc: pobór
+    rows += [{PV: 0.0, GRID: 500.0} for _ in range(9)]
+    rows += [{PV: 0.0, GRID: 0.0} for _ in range(231)]
+    res = check_signs(rows)
+    assert res.grid.negate is None and res.grid.reason == "ambiguous"
+    assert 0.8 < res.grid.margin < 0.9
 
 
 def test_battery_charged_only_from_grid_is_ambiguous():
