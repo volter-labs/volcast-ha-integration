@@ -18,9 +18,12 @@ wtedy dom może tylko pobierać, a pobór odczytany jako oddawanie zdradza odwr�
 by czujnik PV widocznie produkował (godzina próbek), inaczej „noc” jest nieokreślona. Dom, który nocą
 przy stojącej baterii nie pobiera (bateria pokrywa noc), zostaje bez oceny sieci (`no_load_sensor`).
 
-Ograniczenie: tryb zakłada, że bateria — jeśli jest — ma przypisany czujnik. Bateria fizycznie obecna,
-ale nieprzypisana, która nocą oddaje do sieci (arbitraż), wygląda jak odwrócony znak sieci; moduł nie
-ma jak tego odróżnić od instalacji bez baterii.
+Bateria fizycznie obecna, ale bez przypisanego czujnika mocy, która nocą oddaje do sieci (arbitraż),
+wygląda jak odwrócony znak sieci — z samych próbek nieodróżnialne od instalacji bez baterii. Dlatego
+bez czujnika zużycia i bez czujnika baterii sieć oceniamy tylko, gdy warstwa HA potwierdzi brak baterii
+(`battery_present=False`); `True` i `None` (nie wiadomo, domyślnie) dają `no_load_sensor`.
+Z czujnikiem zużycia taka bateria psuje bilans (brakuje jej przepływu): wynik `ambiguous` albo trafny,
+gdy „PV” to moc wyjściowa falownika (zawiera baterię) — `battery_present` nie ma tam wpływu.
 
 Baterii w tym trybie NIE oceniamy (zawsze `no_load_sensor`): gdy jako „PV” przypisano moc wyjściową
 falownika hybrydowego (PV + bateria) — częsty kandydat — prawdziwy znak daje „ujemne zużycie” przy
@@ -172,13 +175,19 @@ def _marginal(cost: Mapping[tuple[int, int], float], axis: int) -> tuple[tuple[i
 
 # ── ocena ───────────────────────────────────────────────────────────────────
 
-def check_signs(samples: Iterable[Mapping[str, Any]]) -> SignCheck:
+def check_signs(samples: Iterable[Mapping[str, Any]], *,
+                battery_present: bool | None = None) -> SignCheck:
     """Zalecenie odwrócenia znaku czujnika sieci i baterii na podstawie bilansu (patrz opis modułu).
 
     Kontrakt wejścia: każda próbka to mapa `{PV|GRID|BATTERY|LOAD: moc w W}`. Czujnik przypisany przez
     użytkownika MUSI mieć klucz w próbkach także wtedy, gdy wartości brak (`None`) — obecność klucza
     w którejkolwiek próbce oznacza „czujnik przypisany”, jego brak „czujnika nie ma” (`no_sensor`, a dla
     zużycia — tryb `load_bound`). Przypisany czujnik bez wartości w danej próbce wyklucza tę próbkę.
+
+    `battery_present` — czy instalacja ma baterię (wie to warstwa HA, nie próbki): `True`, `False` albo
+    `None` = nie wiadomo. Liczy się wyłącznie bez czujnika zużycia i bez przypisanego czujnika mocy
+    baterii: wtedy sieć jest oceniana tylko przy `False`; `True` i `None` dają `no_load_sensor`, bo
+    niewidoczna bateria oddająca nocą wygląda jak odwrócony znak sieci. W pozostałych trybach bez wpływu.
     """
     rows = list(samples)
     assigned = {q for row in rows for q in QUANTITIES if q in row}
@@ -230,7 +239,9 @@ def check_signs(samples: Iterable[Mapping[str, Any]]) -> SignCheck:
 
     if basis == BASIS_BALANCE:
         return _by_balance(data, active, pre, n)
-    return _by_load_bound(data, active, pre, n, tol)
+    # bez czujnika mocy baterii niewidoczna bateria jest możliwa, dopóki warstwa HA nie potwierdzi jej braku
+    hidden_battery = not has[BATTERY] and battery_present is not False
+    return _by_load_bound(data, active, pre, n, tol, hidden_battery)
 
 
 def _by_balance(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n: int) -> SignCheck:
@@ -258,12 +269,15 @@ def _by_balance(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n:
 
 
 def _by_load_bound(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n: int,
-                   tol: float) -> SignCheck:
+                   tol: float, hidden_battery: bool) -> SignCheck:
     def judge_grid() -> SignVerdict:
         known = pre(GRID)
         if known is not None:
             return known
         samples = len(active[GRID])
+        # niewidoczna bateria oddająca nocą jest nieodróżnialna od odwróconego znaku sieci
+        if hidden_battery:
+            return _verdict(NO_LOAD_SENSOR, samples=samples)
         # „noc” ma sens tylko przy czujniku PV, który widać produkuje (nie pusty, nie kW podane jako W)
         if sum(1 for p, _g, _b, _l in data if p >= tol) < MIN_ACTIVE_SAMPLES:
             return _verdict(NO_LOAD_SENSOR, samples=samples)
