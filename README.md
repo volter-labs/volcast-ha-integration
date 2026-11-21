@@ -21,18 +21,18 @@ Home Assistant integration for [Volcast](https://volcast.app) — solar PV produ
 
 ### Resilience & Reconciliation
 
-The integration now ships three layered resilience mechanisms:
+The integration has three layered resilience mechanisms:
 
 - **Forecast retry** — short network blips no longer flap entities to `unavailable`. The integration retries failed forecast fetches with 5/15/45s backoff inside one update cycle.
 - **Submit retry** — hourly production submits use the same 5/15/45 retry pattern before queuing. Persistent retry queue still kicks in for longer outages.
 - **Daily reconciliation** — the integration reads hourly statistics from HA Recorder and fills any gaps in your Volcast cloud history. The scheduled run at 00:30 local each day backfills the **previous day**. Additionally, on **HA startup** it reconciles **both yesterday and today**, so a gap left by an HA restart or update during the day self-heals immediately instead of waiting for 00:30. Requires `energy_entity` configured with `state_class: total_increasing`.
 
-New diagnostic entities (under integration → Diagnostic):
+Diagnostic entities (under integration → Diagnostic):
 - `sensor.volcast_submit_queue_depth` — readings waiting to be retried (0 = healthy).
 - `sensor.volcast_last_reconciliation` — timestamp + status of last daily backfill.
 - `binary_sensor.volcast_integration_healthy` — single signal you can wire into automations.
 
-Power-only users (no `energy_entity` configured): retry mechanisms apply, but daily reconciliation is **not** active. Planned for a future release.
+Power-only users (no `energy_entity` configured): retry mechanisms apply, but daily reconciliation is **not** active.
 
 ### Manual sync (force sync)
 
@@ -48,9 +48,16 @@ at 00:30. To force it immediately without waiting:
 Both are safe to repeat: hours already delivered (and the current in-progress
 hour) are skipped, so nothing is double-counted.
 
-**Limitation:** if HA was fully down during an hour, HA Recorder may have no
-statistics row for that hour. The energy is not lost — it lands in the next
-hour's delta — but no sync can split it back out. Daily totals stay correct.
+**After a data gap:** if Home Assistant or the inverter integration was
+unavailable for a while (a restart, an update, an offline inverter), the
+integration remembers the last known counter value. When readings return, it
+reports the whole period the reading covers (up to 36 hours) and Volcast
+spreads that energy over the hours of the gap, instead of attributing it to a
+single hour. Hours already covered by such a report are not re-sent by the
+nightly reconciliation. Once a day is closed, the integration also sends that
+day's total calculated from Home Assistant statistics — only when the
+statistics for the day are complete — so the day can be corrected after a gap.
+Sending it again gives the same value.
 
 _(The button and service require an energy sensor configured — power-only
 users have nothing to reconcile.)_
@@ -59,17 +66,21 @@ users have nothing to reconcile.)_
 
 ### Forecast Model
 
-Volcast uses a physics-based PV simulation model fed by a multi-model weather ensemble (ECMWF IFS, GFS, and regional models like ICON, UKMO, JMA depending on your location). The models are blended with horizon-dependent weighting — regional models dominate for short-range forecasts, global models take over for longer horizons.
+Volcast uses a physics-based PV simulation model fed by a multi-model weather ensemble. The models depend on your location:
 
-The integration polls the Volcast cloud API at a configurable interval (default: 60 minutes). Data is served from a server-side cache that refreshes every 2 hours, so values match exactly what you see in the Volcast mobile app.
+- **Most regions**: a regional model (for example ICON, AROME, UKMO, JMA, HRRR for the contiguous USA) blended with ECMWF IFS. The regional model dominates the first 48 hours; later, ECMWF IFS takes over, and beyond the regional model's range it is used alone.
+- **No regional model available**: ECMWF IFS blended with GFS.
+- **Netherlands / Benelux**: five models (KNMI, DMI, ICON-D2, AROME France, ECMWF IFS) averaged with equal weights over the hours each one covers.
+
+The integration polls the Volcast cloud API at a configurable interval (default: 60 minutes). Data is served from a server-side cache that is refreshed about once an hour, the same cache the Volcast mobile app reads.
 
 ### Production Tracking & Calibration
 
 When you connect your inverter's energy or power sensor, the integration sends **hourly production summaries** to Volcast. This data drives two mechanisms:
 
-**Kalman filter calibration** — Volcast maintains a per-user bias estimate that adjusts forecasts based on how your actual production compares to predictions. The filter uses hourly cloud cover to apply different corrections for clear vs. cloudy conditions. This means the forecast learns your system's real-world characteristics (shading, soiling, inverter efficiency) over time. Calibration requires at least 5 days of data to activate and is applied to future days only — today's forecast stays unbiased.
+**Kalman filter calibration** — Volcast maintains a per-user bias estimate that adjusts forecasts based on how your actual production compares to predictions. The filter uses hourly cloud cover to apply different corrections for clear vs. cloudy conditions. This means the forecast learns your system's real-world characteristics (shading, soiling, inverter efficiency) over time. The correction is applied to future days and to the remaining hours of today (hours after the current one); hours that have already passed keep the forecast issued earlier.
 
-**Nowcasting** — After receiving at least 2 hourly readings for today, Volcast computes an actual-to-forecast ratio and adjusts the remaining hours of today's forecast. The adjustment decays exponentially for hours further from the last reading, so it has the strongest effect on the next few hours. This helps when conditions differ from the morning forecast — for example, unexpected cloud cover or clearer skies than predicted. Nowcast resets daily.
+**Nowcasting** — Once at least one recent hourly reading for today shows production (above 0.01 kWh) in an hour with a forecast above 0.5 kWh, Volcast computes an actual-to-forecast ratio from up to the last two such hours and adjusts the remaining hours of today's forecast. The adjustment halves with every hour after the last reading, so it has the strongest effect on the next few hours. This helps when conditions differ from the morning forecast — for example, unexpected cloud cover or clearer skies than predicted. Nowcast resets daily.
 
 **Curtailment detection** — When you connect a battery state-of-charge sensor, the integration detects hours when the inverter caps production (battery full + clear sky + low output vs. forecast). Curtailed hours are marked so calibration ignores them — otherwise the Kalman filter would learn a downward bias from artificially low production. Battery sensors are optional; without them, curtailment is not detected but calibration still works.
 
@@ -97,19 +108,24 @@ Data is submitted to Volcast once per hour (at ~5 minutes past each hour). A qua
 
 ## Prerequisites
 
-1. **Volcast app** — download from [App Store](https://apps.apple.com/app/volcast/id6740044441) or [Google Play](https://play.google.com/store/apps/details?id=pl.volcast.app)
+1. **Volcast app** — download from [App Store](https://apps.apple.com/app/id6758962799) or [Google Play](https://play.google.com/store/apps/details?id=com.volcast.app)
 2. **Premium subscription** — required for API access
-3. **API key** — generate in the app: Settings > API Access
+3. **API key** — generate it in the app: Settings > **API Key** card (shown as "Premium required" without a subscription)
+
+Requires Home Assistant 2024.1.0 or newer.
 
 ## Installation
 
 ### HACS (recommended)
 
 1. Open HACS in your Home Assistant
-2. Click the 3 dots menu > **Custom repositories**
-3. Add `https://github.com/volter-labs/volcast-ha-integration` as an **Integration**
-4. Click **Install**
-5. Restart Home Assistant
+2. Search for **Volcast Solar Forecast** and open it
+3. Click **Download**
+4. Restart Home Assistant
+
+### Beta line (2.0)
+
+A newer 2.0 line is in beta. It is installed as a pre-release: in HACS enable pre-releases for this repository, and in Home Assistant 2026.11 and newer use the Marketplace. See the [GitHub Releases](https://github.com/volter-labs/volcast-ha-integration/releases) page for the available versions and release notes. This README describes the stable line.
 
 ### Manual
 
@@ -165,10 +181,10 @@ Each daily energy sensor (`energy_today`, `energy_tomorrow`, days 3–7) exposes
 |-----------|--------|-------------|
 | `hours` | `[{"hour": 10, "power_kw": 3.5, "energy_kwh": 3.2}, ...]` | Hourly breakdown (24 entries) |
 | `detailedHourly` | `[{"period_start": "ISO8601", "power_kw": 3.5, "energy_kwh": 3.2}, ...]` | Hourly with ISO timestamps (Solcast-compatible) |
-| `detailedForecast` | `[{"period_start": "ISO8601", "power_w": 3500, "energy_wh": 292}, ...]` | 5-minute granularity |
+| `detailedForecast` | `[{"period_start": "ISO8601", "power_w": 3500, "energy_wh": 292}, ...]` | 5-minute granularity, today and tomorrow only |
 | `peak_power_kw` | `float` | Day's peak power |
 | `confidence` | `high` / `medium` / `low` | Forecast confidence level |
-| `sunshine_hours` | `float` | Expected sunshine hours |
+| `sunshine_hours` | `int` | Number of forecast hours with non-zero power |
 | `cloud_cover_pct` | `float` | Average cloud cover percentage |
 
 The `energy_today` sensor additionally includes a `forecast` attribute with a 7-day daily summary.
@@ -194,17 +210,19 @@ for entry in state:
 
 ## Automation Examples
 
+The examples use the automation syntax of Home Assistant 2024.10 and newer.
+
 ### Notify when tomorrow's forecast is high
 
 ```yaml
 automation:
   - alias: "High solar forecast tomorrow"
-    trigger:
-      - platform: numeric_state
+    triggers:
+      - trigger: numeric_state
         entity_id: sensor.volcast_energy_forecast_tomorrow
         above: 20
-    action:
-      - service: notify.mobile_app
+    actions:
+      - action: notify.mobile_app
         data:
           title: "Solar forecast"
           message: "Tomorrow: {{ states('sensor.volcast_energy_forecast_tomorrow') }} kWh expected"
@@ -215,12 +233,12 @@ automation:
 ```yaml
 automation:
   - alias: "Charge EV during peak solar"
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: binary_sensor.volcast_peak_production
         to: "on"
-    action:
-      - service: switch.turn_on
+    actions:
+      - action: switch.turn_on
         target:
           entity_id: switch.ev_charger
 ```
@@ -230,13 +248,13 @@ automation:
 ```yaml
 automation:
   - alias: "Run washing machine during high production"
-    trigger:
-      - platform: numeric_state
+    triggers:
+      - trigger: numeric_state
         entity_id: sensor.volcast_power_now
         above: 3000
         for: "00:10:00"
-    action:
-      - service: switch.turn_on
+    actions:
+      - action: switch.turn_on
         target:
           entity_id: switch.washing_machine
 ```
@@ -244,9 +262,9 @@ automation:
 ## Accuracy & Limitations
 
 - **Forecast horizon**: Accuracy is highest for today and tomorrow. Days 5–7 are less reliable, especially in variable weather.
-- **Calibration ramp-up**: The Kalman filter needs ~5 days of production data before calibration activates. During this period, forecasts use the uncalibrated model.
-- **Nowcast availability**: Requires at least 2 hourly readings with meaningful production (>0.01 kWh) and forecast (>0.5 kWh). Early morning hours or heavily overcast days may not produce enough data.
-- **Sensor compatibility**: Works with any inverter that exposes an energy or power entity in HA. Tested with GoodWe, Fronius, SolarEdge, Huawei, SMA, and Enphase.
+- **Calibration ramp-up**: Calibration learns from your production data, so forecasts start uncalibrated and improve as data accumulates.
+- **Nowcast availability**: Requires a recent hourly reading with meaningful production (>0.01 kWh) in an hour with a forecast above 0.5 kWh. Early morning hours or heavily overcast days may not produce enough data.
+- **Sensor compatibility**: Works with any inverter that exposes an energy or power entity in HA.
 
 ## Support
 
