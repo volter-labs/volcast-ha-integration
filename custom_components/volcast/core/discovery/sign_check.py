@@ -42,9 +42,6 @@ BATTERY = "battery_power_w"
 LOAD = "load_power_w"
 QUANTITIES: tuple[str, ...] = (PV, GRID, BATTERY, LOAD)
 
-# podstawa oceny (jedyna: pełny bilans z czujnikiem zużycia)
-BASIS_BALANCE = "balance"
-
 # kody powodów braku zalecenia
 NO_SENSOR = "no_sensor"              # wielkość nieprzypisana — nie ma czego oceniać
 TOO_FEW_SAMPLES = "too_few_samples"
@@ -106,16 +103,14 @@ class SignVerdict:
 @dataclass(frozen=True)
 class SignCheck:
     """Wynik oceny: sieć i bateria osobno; `samples` — użyteczne próbki; `residual_share` — domknięcie
-    bilansu najlepszej kombinacji (gdy bilans był liczony); `basis` — zawsze `balance`."""
+    bilansu najlepszej kombinacji (gdy bilans był liczony)."""
     grid: SignVerdict
     battery: SignVerdict
     samples: int
-    basis: str
     residual_share: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {"grid": self.grid.as_dict(), "battery": self.battery.as_dict(), "samples": self.samples,
-                "basis": self.basis,
                 "residual_share": None if self.residual_share is None else round(self.residual_share, 3)}
 
 
@@ -180,7 +175,7 @@ def check_signs(samples: Iterable[Mapping[str, Any]]) -> SignCheck:
     def undecided(reason: str) -> SignCheck:
         return SignCheck(grid=_verdict(reason if has[GRID] else NO_SENSOR),
                          battery=_verdict(reason if has[BATTERY] else NO_SENSOR),
-                         samples=n, basis=BASIS_BALANCE)
+                         samples=n)
 
     if n < MIN_SAMPLES:
         return undecided(TOO_FEW_SAMPLES)
@@ -234,4 +229,4 @@ def _by_balance(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n:
         return _verdict(None, negate=win[axis] == -1, samples=len(idx), margin=separation)
 
     return SignCheck(grid=judge(GRID, 0), battery=judge(BATTERY, 1), samples=n,
-                     basis=BASIS_BALANCE, residual_share=share)
+                     residual_share=share)

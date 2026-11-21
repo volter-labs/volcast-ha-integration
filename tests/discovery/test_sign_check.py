@@ -105,7 +105,6 @@ def test_four_sign_combinations_across_installation_sizes(kwp, grid_negate, batt
     day = make_day(kwp, seed=7)
     res = check_signs(raw_samples(day, grid_negate=grid_negate, battery_negate=battery_negate, seed=7))
     _expect(res, grid_negate, battery_negate)
-    assert res.basis == "balance"
     assert res.grid.reason is None and res.battery.reason is None
     assert res.grid.margin > 0.8 and res.battery.margin > 0.8
     assert res.samples == STEPS
@@ -411,7 +410,7 @@ def test_no_load_sensor_keeps_the_more_specific_reasons():
         del row[BATTERY]
     res = check_signs(rows)
     assert (res.grid.reason, res.battery.reason) == ("no_load_sensor", "no_sensor")
-    assert res.basis == "balance" and res.residual_share is None
+    assert res.residual_share is None
 
 
 @pytest.mark.parametrize("day_kind", ["self_consumption", "night_import", "export_peak", "export_night"])
@@ -432,7 +431,6 @@ def test_unassigned_battery_with_load_sensor_never_gives_a_wrong_grid_recommenda
                     else:
                         row[PV] = pv_of(max(day["pv"][i], 0.0), day["battery"][i])
                 res = check_signs(rows)
-                assert res.basis == "balance"
                 assert res.grid.negate in (gn, None), (kwp, seed, gn, res.as_dict())
 
 
@@ -507,7 +505,7 @@ def test_as_dict_is_json_serialisable():
     res = check_signs(raw_samples(make_day(3, seed=7), grid_negate=True, seed=7))
     d = res.as_dict()
     json.dumps(d)
-    assert set(d) == {"grid", "battery", "samples", "basis", "residual_share"}
+    assert set(d) == {"grid", "battery", "samples", "residual_share"}
     assert set(d["grid"]) == {"negate", "reason", "samples", "margin"}
     assert d["grid"]["negate"] is True and d["battery"]["negate"] is False
     assert 0.0 <= d["grid"]["margin"] <= 1.0

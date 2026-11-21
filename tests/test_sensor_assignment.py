@@ -140,7 +140,6 @@ async def test_history_mixed_units_gives_recommendation_from_raw_sensors(make_ha
 
     assert res.basis == sa.BASIS_HISTORY
     assert res.samples == N
-    assert res.sign_check.basis == sc_mod.BASIS_BALANCE
     assert res.sign_check.samples == N - 1                   # próbka bez PV odpada
     assert res.sign_check.grid.negate is True
     assert res.sign_check.battery.negate is False
