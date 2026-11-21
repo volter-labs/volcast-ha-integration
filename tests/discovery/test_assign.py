@@ -76,8 +76,8 @@ def test_template_sensors_without_device_are_all_certain():
         "grid_power_w": "sensor.grid_power",
         "load_power_w": "sensor.house_load",
         "pv_energy_total_kwh": "sensor.solar_energy_total",
-        "grid_import_total_kwh": "sensor.grid_import_energy",
-        "grid_export_total_kwh": "sensor.grid_export_energy",
+        "grid_import_total_kwh": "sensor.grid_import_total",
+        "grid_export_total_kwh": "sensor.grid_export_total",
     }
 
 
@@ -181,7 +181,8 @@ def test_device_name_prefix_of_entity_id_is_not_read_as_name_words():
                      hw_version=None, serial_number=None, identifiers=(), config_entry_ids=())
     ent = EntitySnap(entity_id="sensor.solar_inverter_grid_power", platform="acme", unique_id="u1",
                      device_id="d1", config_entry_id=None, device_class="power", unit="W",
-                     translation_key=None, original_name="Grid power", disabled=False)
+                     translation_key=None, original_name="Grid power", disabled=False,
+                     capabilities={"state_class": "measurement"})
     p = propose([ent], {}, [dev], ())
     assert _conf(p.field("pv_power_w"), "sensor.solar_inverter_grid_power") == "low"
     assert p.field("grid_power_w").chosen == "sensor.solar_inverter_grid_power"
@@ -200,10 +201,10 @@ def test_separate_grid_meter_is_certain_for_grid_power_by_device_name():
 
 def test_separate_grid_meter_export_certain_import_left_to_user():
     p = _propose("assign_grid_meter")
-    assert p.field("grid_export_total_kwh").chosen == "sensor.grid_meter_energy_returned"
+    assert p.field("grid_export_total_kwh").chosen == "sensor.grid_meter_total_active_returned_energy"
     imp = p.field("grid_import_total_kwh")
     assert imp.chosen is None
-    assert imp.candidates[0].entity_id == "sensor.grid_meter_energy"
+    assert imp.candidates[0].entity_id == "sensor.grid_meter_total_active_energy"
     assert imp.candidates[0].confidence == "medium"
 
 
@@ -215,7 +216,7 @@ def test_separate_grid_meter_other_fields_from_inverter_and_template():
         "grid_power_w": "sensor.grid_meter_power",
         "load_power_w": "sensor.house_load",
         "pv_energy_total_kwh": "sensor.inverter_total_yield",
-        "grid_export_total_kwh": "sensor.grid_meter_energy_returned",
+        "grid_export_total_kwh": "sensor.grid_meter_total_active_returned_energy",
     }
 
 
@@ -326,3 +327,97 @@ def test_candidate_and_field_are_plain_dataclasses():
     assert c.as_dict()["reasons"] == ["unit:W"]
     fp = FieldProposal(field="pv_power_w", candidates=(c,), chosen="sensor.x")
     assert fp.as_dict() == {"field": "pv_power_w", "chosen": "sensor.x", "candidates": [c.as_dict()]}
+
+
+# ── bez zgadywania: przypadki, które najwyżej „medium” ──────────────────────
+
+def _one(field, entity_id, device_class, unit, *, state_class="measurement", attributes=None, name=None):
+    """Ocena pojedynczej encji dla pola (encja jedyna na liście)."""
+    ent = _ent(entity_id, device_class, unit, name, state_class=state_class)
+    st = {entity_id: StateSnap(entity_id, "1", attributes)} if attributes is not None else {}
+    fp = propose([ent], st, fields=(field,)).field(field)
+    assert _ids(fp) == [entity_id]
+    return fp.candidates[0].confidence, fp.chosen
+
+
+@pytest.mark.parametrize("entity_id", [
+    "sensor.house_ev_charger_power", "sensor.home_heat_pump_power", "sensor.house_socket_power",
+    "sensor.plug_consumption", "sensor.wallbox_load_power", "sensor.boiler_load_power",
+])
+def test_single_loads_are_not_certain_house_load(entity_id):
+    conf, chosen = _one("load_power_w", entity_id, "power", "W")
+    assert conf != "high" and chosen is None
+
+
+def test_place_word_alone_is_not_certain_house_load():
+    assert _one("load_power_w", "sensor.home_power", "power", "W") == ("medium", None)
+    assert _one("load_power_w", "sensor.house_load_power", "power", "W")[0] == "high"
+
+
+@pytest.mark.parametrize("entity_id", ["sensor.water_meter_power", "sensor.gas_meter_power"])
+def test_other_media_meters_are_not_certain_grid(entity_id):
+    conf, chosen = _one("grid_power_w", entity_id, "power", "W")
+    assert conf != "high" and chosen is None
+
+
+@pytest.mark.parametrize("field,entity_id,dc,unit", [
+    ("battery_power_w", "sensor.ev_battery_power", "power", "W"),
+    ("battery_power_w", "sensor.car_battery_power", "power", "W"),
+    ("soc", "sensor.car_soc", "battery", "%"),
+    ("soc", "sensor.vehicle_battery_soc", "battery", "%"),
+])
+def test_vehicle_batteries_are_not_the_home_battery(field, entity_id, dc, unit):
+    conf, chosen = _one(field, entity_id, dc, unit)
+    assert conf != "high" and chosen is None
+
+
+@pytest.mark.parametrize("field,entity_id", [
+    ("pv_power_w", "sensor.pv_a_power"), ("pv_power_w", "sensor.pv_power_a"),
+    ("pv_power_w", "sensor.pv_input_1_power"), ("pv_power_w", "sensor.pv_string_b_power"),
+    ("grid_power_w", "sensor.grid_l1_power"), ("grid_power_w", "sensor.grid_phase_a_power"),
+    ("grid_power_w", "sensor.grid_power_c"),
+])
+def test_partial_sensors_are_not_certain_totals(field, entity_id):
+    conf, chosen = _one(field, entity_id, "power", "W")
+    assert conf == "medium" and chosen is None
+
+
+def test_power_without_measurement_state_class_is_medium():
+    assert _one("pv_power_w", "sensor.pv_power", "power", "W", state_class=None) == ("medium", None)
+    assert _one("pv_power_w", "sensor.pv_power", "power", "W", state_class="total")[0] == "medium"
+
+
+def test_energy_total_without_counter_state_class_is_medium():
+    for sc in ("measurement", None):
+        assert _one("pv_energy_total_kwh", "sensor.pv_energy_total", "energy", "kWh",
+                    state_class=sc) == ("medium", None), sc
+
+
+def test_counter_without_lifetime_signal_is_medium():
+    # total_increasing bez słowa „total” — nie odróżnia licznika dobowego od całkowitego
+    assert _one("pv_energy_total_kwh", "sensor.solar_energy", "energy", "kWh",
+                state_class="total_increasing") == ("medium", None)
+    assert _one("grid_import_total_kwh", "sensor.grid_import_energy", "energy", "kWh",
+                state_class="total_increasing") == ("medium", None)
+
+
+def test_state_class_total_without_reset_is_a_lifetime_signal():
+    conf, chosen = _one("pv_energy_total_kwh", "sensor.solar_energy", "energy", "kWh", state_class="total",
+                        attributes={"state_class": "total"})
+    assert conf == "high" and chosen == "sensor.solar_energy"
+    conf, _ = _one("pv_energy_total_kwh", "sensor.solar_energy", "energy", "kWh", state_class="total",
+                   attributes={"state_class": "total", "last_reset": "2026-11-21T00:00:00+00:00"})
+    assert conf == "medium"
+
+
+@pytest.mark.parametrize("entity_id", ["sensor.solar_power_next_hour", "sensor.pv_power_tomorrow",
+                                       "sensor.solar_power_remaining_today"])
+def test_forecast_like_names_are_not_pv_power(entity_id):
+    conf, chosen = _one("pv_power_w", entity_id, "power", "W")
+    assert conf != "high" and chosen is None
+
+
+@pytest.mark.parametrize("entity_id", ["sensor.grid_import_power", "sensor.grid_export_power"])
+def test_one_way_grid_power_is_not_the_signed_grid_power(entity_id):
+    conf, chosen = _one("grid_power_w", entity_id, "power", "W")
+    assert conf != "high" and chosen is None

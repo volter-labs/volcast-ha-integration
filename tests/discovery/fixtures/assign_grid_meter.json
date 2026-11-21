@@ -162,30 +162,30 @@
       }
     },
     {
-      "entity_id": "sensor.grid_meter_energy",
+      "entity_id": "sensor.grid_meter_total_active_energy",
       "platform": "shelly",
-      "unique_id": "SN0001_energy",
+      "unique_id": "SN0001_total_active_energy",
       "device_id": "device-meter",
       "config_entry_id": "entry-meter",
       "device_class": "energy",
       "unit": "kWh",
       "translation_key": null,
-      "original_name": "Energy",
+      "original_name": "Total active energy",
       "disabled": false,
       "capabilities": {
         "state_class": "total_increasing"
       }
     },
     {
-      "entity_id": "sensor.grid_meter_energy_returned",
+      "entity_id": "sensor.grid_meter_total_active_returned_energy",
       "platform": "shelly",
-      "unique_id": "SN0001_energy_returned",
+      "unique_id": "SN0001_total_active_returned_energy",
       "device_id": "device-meter",
       "config_entry_id": "entry-meter",
       "device_class": "energy",
       "unit": "kWh",
       "translation_key": null,
-      "original_name": "Energy returned",
+      "original_name": "Total active returned energy",
       "disabled": false,
       "capabilities": {
         "state_class": "total_increasing"
@@ -269,20 +269,20 @@
       }
     },
     {
-      "entity_id": "sensor.grid_meter_energy",
+      "entity_id": "sensor.grid_meter_total_active_energy",
       "state": "0",
       "attributes": {
-        "friendly_name": "Energy",
+        "friendly_name": "Total active energy",
         "device_class": "energy",
         "unit_of_measurement": "kWh",
         "state_class": "total_increasing"
       }
     },
     {
-      "entity_id": "sensor.grid_meter_energy_returned",
+      "entity_id": "sensor.grid_meter_total_active_returned_energy",
       "state": "0",
       "attributes": {
-        "friendly_name": "Energy returned",
+        "friendly_name": "Total active returned energy",
         "device_class": "energy",
         "unit_of_measurement": "kWh",
         "state_class": "total_increasing"

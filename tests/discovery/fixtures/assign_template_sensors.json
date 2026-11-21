@@ -135,30 +135,30 @@
       }
     },
     {
-      "entity_id": "sensor.grid_import_energy",
+      "entity_id": "sensor.grid_import_total",
       "platform": "template",
-      "unique_id": "SN0001_grid_import_energy",
+      "unique_id": "SN0001_grid_import_total",
       "device_id": null,
       "config_entry_id": null,
       "device_class": "energy",
       "unit": "kWh",
       "translation_key": null,
-      "original_name": "Grid import energy",
+      "original_name": "Grid import total",
       "disabled": false,
       "capabilities": {
         "state_class": "total_increasing"
       }
     },
     {
-      "entity_id": "sensor.grid_export_energy",
+      "entity_id": "sensor.grid_export_total",
       "platform": "template",
-      "unique_id": "SN0001_grid_export_energy",
+      "unique_id": "SN0001_grid_export_total",
       "device_id": null,
       "config_entry_id": null,
       "device_class": "energy",
       "unit": "kWh",
       "translation_key": null,
-      "original_name": "Grid export energy",
+      "original_name": "Grid export total",
       "disabled": false,
       "capabilities": {
         "state_class": "total_increasing"
@@ -297,20 +297,20 @@
       }
     },
     {
-      "entity_id": "sensor.grid_import_energy",
+      "entity_id": "sensor.grid_import_total",
       "state": "4410.2",
       "attributes": {
-        "friendly_name": "Grid import energy",
+        "friendly_name": "Grid import total",
         "device_class": "energy",
         "unit_of_measurement": "kWh",
         "state_class": "total_increasing"
       }
     },
     {
-      "entity_id": "sensor.grid_export_energy",
+      "entity_id": "sensor.grid_export_total",
       "state": "6120.9",
       "attributes": {
-        "friendly_name": "Grid export energy",
+        "friendly_name": "Grid export total",
         "device_class": "energy",
         "unit_of_measurement": "kWh",
         "state_class": "total_increasing"

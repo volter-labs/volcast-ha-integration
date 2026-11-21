@@ -6,7 +6,10 @@ kandydacie `high`; przy kilku albo żadnym zostaje sama lista.
 
 Punktacja (stałe `_PTS_*`): zgodna klasa urządzenia, jednostka i klasa stanu; słowo pola w nazwie encji
 (`entity_id` bez slugu urządzenia, nazwa, `unique_id`, `translation_key`) albo w nazwie urządzenia; kary
-za słowa innego pola, okres licznika (dzień, miesiąc), część instalacji (string, faza) i nastawy/prognozy.
+za słowa innego pola, pojedynczy odbiornik, pojazd albo inne medium (ładowarka, pompa, gniazdko, woda),
+okres licznika (dzień, miesiąc), część instalacji (string, faza) i nastawy/prognozy.
+Przy wątpliwości nie zgadujemy: `high` wymaga słowa pola, zgodnej klasy stanu, bez kar i bez „ograniczeń”
+(`_cap_reasons`: samo słowo-miejsce „home/house”, brak sygnału licznika całkowitego) — inaczej `medium`.
 Ocenę liczymy z punktów encji; bonusy za urządzenie falownika i wspólne urządzenie z polami już pewnymi
 tylko porządkują listę (nie podnoszą oceny), więc nie rozstrzygają za użytkownika między dwoma falownikami.
 Znak mocy nie jest tu oceniany (osobny moduł z historii odczytów).
@@ -39,11 +42,11 @@ _PTS_UNIT = 2
 _PTS_STATE_CLASS = 1
 _PTS_SUBJECT = 3       # słowo pola (np. „pv”, „grid”, „import”)
 _PTS_HINT = 1          # słowo wspierające (np. „total”), raz na encję
-_PTS_PENALTY = 3       # słowo innego pola, okres licznika, nastawa/prognoza
+_PTS_PENALTY = 3       # słowo innego pola, odbiornik/pojazd/inne medium, okres licznika, nastawa/prognoza
 _PTS_PART = 2          # część instalacji (pv1, string, l1) — suma całości jest lepsza
 _PTS_BONUS = 1         # porządek listy: urządzenie falownika, wspólne urządzenie z polem pewnym
 # progi oceny (z punktów encji, bez bonusów porządku):
-# high = słowo pola + co najmniej jedna zgodna cecha wielkości + klasa stanu, bez żadnej kary
+# high = słowo pola + co najmniej jedna zgodna cecha wielkości + zgodna klasa stanu, bez kar i ograniczeń
 _HIGH_MIN = 6
 # medium bez słowa pola = pełna zgodność wielkości (klasa, jednostka, klasa stanu) + słowo wspierające
 _MEDIUM_MIN = 6
@@ -70,7 +73,14 @@ _PV = ("pv", "solar", "photovoltaic", "photovoltaics", "production", "generation
        "input_power", "dc_power")
 _BATTERY = ("battery", "batt", "bat")
 _GRID = ("grid", "meter", "utility")
-_LOAD = ("load", "consumption", "house", "home", "household")
+_LOAD_WORDS = ("load", "consumption")
+# słowo-miejsce: daje punkty pola zużycia, ale samo nie daje pewności („home_power” bywa czymkolwiek w domu)
+_PLACE = ("house", "home", "household")
+_LOAD = _LOAD_WORDS + _PLACE
+# pojedynczy odbiornik, pojazd albo inne medium — nigdy całość domu, bateria domowa ani sieć elektryczna
+_OTHER_DEVICE = ("ev", "charger", "wallbox", "car", "vehicle", "pump", "boiler", "heater", "socket", "plug",
+                 "outlet", "appliance", "washer", "dryer", "dishwasher", "oven", "fridge", "freezer", "phone",
+                 "scooter", "bike", "water", "gas")
 _SOC_WORDS = ("soc", "state_of_charge", "state_of_capacity")
 _IMPORT = ("import", "imported", "purchase", "purchased", "bought", "buy", "from_grid")
 _EXPORT = ("export", "exported", "returned", "feed", "sold", "sell", "injection", "injected", "to_grid")
@@ -79,8 +89,11 @@ _TOTAL = ("total", "lifetime", "accumulated")
 _PERIOD = ("today", "daily", "day", "yesterday", "week", "weekly", "month", "monthly", "year", "yearly",
            "hour", "hourly")
 _AUX = ("min", "max", "limit", "target", "reserve", "cutoff", "setpoint", "forecast", "estimated",
-        "predicted", "expected", "average", "avg", "peak", "soh", "health")
-_PART_RE = re.compile(r"(?:^|_)((?:pv|string|mppt|l|phase)\d+|string|mppt|phase)(?=_|$)")
+        "predicted", "expected", "average", "avg", "peak", "soh", "health", "next", "tomorrow", "remaining")
+# część instalacji: pv1, string_2, input_1, l1, ch1, phase/string/mppt/channel,
+# pojedyncza litera a–d („pv_a”, „phase_a”)
+_PART_RE = re.compile(
+    r"(?:^|_)((?:pv|string|mppt|l|phase|input|channel|ch)_?\d+|string|mppt|phase|channel|[a-d])(?=_|$)")
 
 
 @dataclass(frozen=True)
@@ -89,15 +102,18 @@ class _Spec:
     subject: tuple[str, ...]
     hints: tuple[str, ...] = ()
     foreign: tuple[str, ...] = ()
-    lifetime: bool = False      # licznik narastający: kara za okres (dzień, miesiąc)
+    lifetime: bool = False      # licznik całkowity: kara za okres (dzień, miesiąc), high tylko z sygnałem całości
+    weak: tuple[str, ...] = ()  # słowa pola, które same nie dają pewności (najwyżej medium)
 
 
 _SPECS: dict[str, _Spec] = {
     "soc": _Spec(_SOC, _SOC_WORDS),
     "pv_power_w": _Spec(_POWER, _PV, foreign=_BATTERY + _GRID + _LOAD + _CHARGE + _IMPORT + _EXPORT),
     "battery_power_w": _Spec(_POWER, _BATTERY, foreign=_PV + _GRID + _LOAD),
-    "grid_power_w": _Spec(_POWER, _GRID, foreign=_PV + _BATTERY + _LOAD + _CHARGE),
-    "load_power_w": _Spec(_POWER, _LOAD, foreign=_PV + _BATTERY + _GRID + _CHARGE + _IMPORT + _EXPORT),
+    # moc sieci ze znakiem: sam pobór albo samo oddawanie („grid_import_power”) to nie to pole
+    "grid_power_w": _Spec(_POWER, _GRID, foreign=_PV + _BATTERY + _LOAD + _CHARGE + _IMPORT + _EXPORT),
+    "load_power_w": _Spec(_POWER, _LOAD_WORDS, foreign=_PV + _BATTERY + _GRID + _CHARGE + _IMPORT + _EXPORT,
+                          weak=_PLACE),
     "pv_energy_total_kwh": _Spec(_ENERGY, _PV, hints=_TOTAL,
                                  foreign=_BATTERY + _GRID + _LOAD + _CHARGE + _IMPORT + _EXPORT, lifetime=True),
     "grid_import_total_kwh": _Spec(_ENERGY, _IMPORT, hints=_TOTAL + _GRID,
@@ -193,7 +209,7 @@ def _texts(e: EntitySnap, states: Mapping[str, StateSnap], dev: DeviceSnap | Non
 
 
 def _quantity_points(q: _Quantity, e: EntitySnap,
-                     states: Mapping[str, StateSnap]) -> tuple[int, list[str], str | None] | None:
+                     states: Mapping[str, StateSnap]) -> tuple[int, list[str], str | None, Any] | None:
     """Zgodność wielkości: None = encja nie nadaje się do pola (inna klasa albo jednostka, albo brak obu)."""
     dc = _device_class(e, states)
     unit = _unit(e, states) or None
@@ -212,11 +228,24 @@ def _quantity_points(q: _Quantity, e: EntitySnap,
     if sc in q.state_classes:
         pts += _PTS_STATE_CLASS
         reasons.append(f"state_class:{sc}")
-    return pts, reasons, unit
+    return pts, reasons, unit, sc
 
 
 def _subjects(text: str) -> set[str]:
-    return {f for f, s in _SPECS.items() if _find(s.subject, text)}
+    return {f for f, s in _SPECS.items() if _find(s.subject + s.weak, text)}
+
+
+def _cap_reasons(spec: _Spec, sc: Any, e: EntitySnap, states: Mapping[str, StateSnap], own: str) -> list[str]:
+    """Powody, dla których kandydat może być najwyżej `medium` (bez zmiany punktów)."""
+    out = []
+    if sc not in spec.quantity.state_classes:
+        # moc bez `measurement`, licznik bez `total`/`total_increasing` (np. szablon bez klasy stanu)
+        out.append("state_class_mismatch")
+    # `total_increasing` bez słowa „total” nie odróżnia licznika dobowego od całkowitego; `total` bez
+    # `last_reset` to licznik bez okresu
+    if spec.lifetime and not _find(_TOTAL, own) and not (sc == "total" and _attr(e, states, "last_reset") is None):
+        out.append("no_lifetime_signal")
+    return out
 
 
 def _score(field: str, spec: _Spec, t: _Texts, own_subjects: set[str]) -> tuple[int, list[str], bool, bool]:
@@ -227,6 +256,10 @@ def _score(field: str, spec: _Spec, t: _Texts, own_subjects: set[str]) -> tuple[
     if subject:
         pts += _PTS_SUBJECT
         reasons.append(f"name:{word}")
+    elif weak := _find(spec.weak, t.own):
+        subject = True
+        pts += _PTS_SUBJECT
+        reasons.append(f"place_word:{weak}")
     elif not (own_subjects - {field}) and (word := _find(spec.subject, t.device)):
         # nazwa urządzenia („Battery”, „Grid meter”) liczy się tylko dla encji o nazwie ogólnej
         # („Power”, „Charge/Discharge power”), nie gdy encja sama wskazuje inne pole
@@ -238,7 +271,8 @@ def _score(field: str, spec: _Spec, t: _Texts, own_subjects: set[str]) -> tuple[
         reasons.append(f"hint:{word}")
     penalties = [("other_field", _find(spec.foreign, t.own), _PTS_PENALTY),
                  ("period", _find(_PERIOD, t.own) if spec.lifetime else None, _PTS_PENALTY),
-                 ("aux", _find(_AUX, t.own), _PTS_PENALTY)]
+                 ("aux", _find(_AUX, t.own), _PTS_PENALTY),
+                 ("other_device", _find(_OTHER_DEVICE, t.own), _PTS_PENALTY)]
     part = _PART_RE.search(t.own)
     penalties.append(("part", part.group(1) if part else None, _PTS_PART))
     for kind, hit, cost in penalties:
@@ -249,9 +283,9 @@ def _score(field: str, spec: _Spec, t: _Texts, own_subjects: set[str]) -> tuple[
     return pts, reasons, subject, penalized
 
 
-def _confidence(points: int, subject: bool, penalized: bool) -> str:
+def _confidence(points: int, subject: bool, penalized: bool, capped: bool) -> str:
     if subject:
-        return HIGH if not penalized and points >= _HIGH_MIN else MEDIUM
+        return HIGH if not (penalized or capped) and points >= _HIGH_MIN else MEDIUM
     return MEDIUM if not penalized and points >= _MEDIUM_MIN else LOW
 
 
@@ -291,11 +325,14 @@ def propose(
             q = _quantity_points(spec.quantity, e, states)
             if q is None:
                 continue
-            q_pts, q_reasons, unit = q
+            q_pts, q_reasons, unit, sc = q
             w_pts, w_reasons, subject, penalized = _score(field, spec, t, own_subjects)
+            caps = _cap_reasons(spec, sc, e, states, t.own)
+            if any(r.startswith("place_word:") for r in w_reasons):
+                caps.append("place_word_only")
             points = q_pts + w_pts
-            cand = Candidate(entity_id=e.entity_id, confidence=_confidence(points, subject, penalized),
-                             score=points, reasons=tuple(q_reasons + w_reasons), device_id=e.device_id,
+            cand = Candidate(entity_id=e.entity_id, confidence=_confidence(points, subject, penalized, bool(caps)),
+                             score=points, reasons=tuple(q_reasons + w_reasons + caps), device_id=e.device_id,
                              name=t.name, unit=unit)
             scored[field].append(cand)
 
