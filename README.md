@@ -210,7 +210,7 @@ for entry in state:
 
 ## Automation Examples
 
-The examples use the automation syntax of Home Assistant 2024.10 and newer.
+The examples use the automation syntax of Home Assistant 2024.10 and newer. On older versions, rename `triggers:` to `trigger:`, `- trigger: <type>` to `- platform: <type>`, `actions:` to `action:` and `- action: <service>` to `- service: <service>`.
 
 ### Notify when tomorrow's forecast is high
 
