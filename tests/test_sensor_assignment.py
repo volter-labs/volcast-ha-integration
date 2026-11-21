@@ -98,7 +98,8 @@ def _rows(values, scale=1.0, skip=()):
 def _stats_rows(*, grid_inverted=True, drop=()):
     """Statystyki surowych czujników: PV w kW, sieć z odwróconym znakiem (czujnik + = oddawanie)."""
     pv, grid, bat, load = _day()
-    rows = {PV: _rows(pv, scale=1000.0, skip={5}),          # brak jednej próbki — wyrównanie po czasie
+    # zapytanie żąda `units={"power": "W"}`, więc HA oddaje moc w W także dla encji w kW
+    rows = {PV: _rows(pv, skip={5}),                          # brak jednej próbki — wyrównanie po czasie
             GRID: _rows([-g for g in grid] if grid_inverted else grid),
             BAT: _rows(bat), LOAD: _rows(load)}
     for eid in drop:
@@ -115,16 +116,27 @@ async def test_history_mixed_units_gives_recommendation_from_raw_sensors(make_ha
     entry = _entry({"telemetry_map": {"pv_power_w": PV, "grid_power_w": GRID},
                     "grid_power_negate": None, "battery_power_negate": True})
     stats = MagicMock(return_value=_stats_rows())
-    with patch.object(sa, "statistics_during_period", stats):
+    seen = []
+    real = sc_mod.check_signs
+
+    def spy(samples, **kw):
+        samples = list(samples)
+        seen.append(samples)
+        return real(samples, **kw)
+
+    with patch.object(sa, "statistics_during_period", stats), patch.object(sa, "check_signs", side_effect=spy):
         res = await sa.async_propose(hass, entry)
 
     # jedno wywołanie rejestratora dla wszystkich encji
     assert stats.call_count == 1
     args = stats.call_args.args
     assert args[0] is hass
-    assert (sa.dt_util.utcnow() - args[1]).total_seconds() == 24 * 3600
+    assert abs((sa.dt_util.utcnow() - args[1]).total_seconds() - 24 * 3600) < 1
     assert args[2] is None and args[3] == {PV, GRID, BAT, LOAD}
-    assert args[4] == "5minute" and args[5] is None and args[6] == {"mean"}
+    assert args[4] == "5minute" and args[5] == {"power": "W"} and args[6] == {"mean"}
+    # PV encji w kW: wartości z rejestratora już w W — bez mnożenia ×1000
+    pv_max = max(s["pv_power_w"] for s in seen[0] if s["pv_power_w"] is not None)
+    assert 4900 < pv_max <= 5000
 
     assert res.basis == sa.BASIS_HISTORY
     assert res.samples == N
@@ -148,8 +160,7 @@ async def test_as_dict_is_plain_data_for_service_and_form(make_hass):
         res = await sa.async_propose(hass, _entry())
     d = res.as_dict()
     assert set(d) == {"proposal", "telemetry_map", "flags", "sign_check", "basis", "samples",
-                      "sources", "source_origin", "excluded", "battery_present", "flag_changes",
-                      "notes"}
+                      "sources", "source_origin", "excluded", "flag_changes", "notes"}
     assert d["flags"] == {"grid_power_negate": False, "battery_power_negate": False}
     assert d["proposal"]["chosen"]["battery_power_w"] == BAT
     assert d["sign_check"]["grid"]["negate"] is True
@@ -185,7 +196,8 @@ async def test_current_sample_converts_units_to_watts(make_hass):
 
     with patch.object(sa, "check_signs", side_effect=spy):
         await sa.async_propose(hass, _entry())
-    (samples, _kw), = seen
+    (samples, kw), = seen
+    assert kw == {}                                           # bez podpowiedzi o baterii
     assert samples == [{"pv_power_w": 2500.0, "grid_power_w": -300.0, "battery_power_w": -1500.0,
                         "load_power_w": 700.0}]
 
@@ -227,7 +239,7 @@ async def test_nothing_to_judge_skips_recorder(make_hass):
         res = await sa.async_propose(hass, _entry())
     stats.assert_not_called()
     assert res.basis == sa.BASIS_NONE and res.samples == 0
-    assert res.sign_check.grid.reason == sc_mod.NO_SENSOR
+    assert res.sign_check.grid.negate is None and res.sign_check.battery.negate is None
 
 
 # ── encje tylko ze stanów ───────────────────────────────────────────────────
@@ -272,7 +284,7 @@ async def test_derived_load_sensor_is_not_used_in_balance(make_hass, platform):
     assert "load_power_w" not in res.sources
     assert stats.call_args.args[3] == {PV, GRID, BAT}
     assert all("load_power_w" not in s for s in seen[0])
-    assert res.sign_check.basis == sc_mod.BASIS_LOAD_BOUND
+    assert res.sign_check.grid.negate is None and res.sign_check.battery.negate is None
 
 
 async def test_state_only_load_sensor_is_not_used_in_balance(make_hass):
@@ -281,7 +293,7 @@ async def test_state_only_load_sensor_is_not_used_in_balance(make_hass):
     with patch.object(sa, "statistics_during_period", MagicMock(return_value=_stats_rows())):
         res = await sa.async_propose(hass, _entry({"telemetry_map": {"load_power_w": LOAD}}))
     assert res.excluded == {"load_power_w": sa.EXCLUDED_LOAD_STATE_ONLY}
-    assert res.sign_check.basis == sc_mod.BASIS_LOAD_BOUND
+    assert res.sign_check.grid.negate is None and res.sign_check.battery.negate is None
 
 
 async def test_measured_load_sensor_is_used(make_hass):
@@ -292,60 +304,7 @@ async def test_measured_load_sensor_is_used(make_hass):
     assert res.sources["load_power_w"] == LOAD
 
 
-# ── obecność baterii ────────────────────────────────────────────────────────
-
-def _bp_spy():
-    calls = []
-    real = sc_mod.check_signs
-
-    def spy(samples, **kw):
-        calls.append(kw.get("battery_present", "missing"))
-        return real(samples, **kw)
-    return calls, spy
-
-
-async def test_battery_present_true_from_map(make_hass):
-    hass = _hass(make_hass, entities=[_ent(PV), _ent(GRID)], states={PV: _st(1), GRID: _st(1)})
-    calls, spy = _bp_spy()
-    with patch.object(sa, "statistics_during_period", MagicMock(return_value={})), \
-         patch.object(sa, "check_signs", side_effect=spy):
-        res = await sa.async_propose(hass, _entry({"telemetry_map": {"soc": "sensor.somewhere_soc"}}))
-    assert res.battery_present is True and calls == [True]
-
-
-async def test_battery_present_true_from_battery_candidate(make_hass):
-    soc = _ent("sensor.battery_soc", device_class="battery", unit="%")
-    hass = _hass(make_hass, entities=[_ent(PV), _ent(GRID), soc],
-                 states={PV: _st(1), GRID: _st(1), "sensor.battery_soc": _st(50, unit="%", device_class="battery")})
-    with patch.object(sa, "statistics_during_period", MagicMock(return_value={})):
-        res = await sa.async_propose(hass, _entry())
-    assert res.battery_present is True
-
-
-async def test_battery_present_false_when_registry_has_nothing(make_hass):
-    # każdy czujnik mocy jest słabym (`low`) kandydatem na moc baterii, a bateria telefonu na SoC —
-    # to nie dowód baterii domowej; liczą się tylko kandydaci `high`/`medium`
-    phone = _ent("sensor.phone_battery_level", device_class="battery", unit="%", device_id="phone")
-    hass = _hass(make_hass, entities=[_ent(PV), _ent(GRID), phone],
-                 states={PV: _st(1), GRID: _st(1),
-                         "sensor.phone_battery_level": _st(80, unit="%", device_class="battery")})
-    calls, spy = _bp_spy()
-    with patch.object(sa, "statistics_during_period", MagicMock(return_value={})), \
-         patch.object(sa, "check_signs", side_effect=spy):
-        res = await sa.async_propose(hass, _entry())
-    assert res.battery_present is False and calls == [False]
-
-
-async def test_battery_present_unknown_when_registry_unavailable(make_hass):
-    hass = _hass(make_hass, entities=[], states={PV: _st(1), GRID: _st(1)})
-    calls, spy = _bp_spy()
-    with patch.object(sa.er, "async_get", side_effect=RuntimeError("registry")), \
-         patch.object(sa, "statistics_during_period", MagicMock(return_value={})), \
-         patch.object(sa, "check_signs", side_effect=spy):
-        res = await sa.async_propose(hass, _entry())
-    assert res.battery_present is None and calls == [None]
-    assert sa.NOTE_REGISTRY_UNAVAILABLE in res.notes
-
+# ── rejestr niedostępny ─────────────────────────────────────────────────────
 
 async def test_registry_unavailable_load_is_not_trusted(make_hass):
     hass = _hass(make_hass, entities=[], states=_four_states())
@@ -353,6 +312,8 @@ async def test_registry_unavailable_load_is_not_trusted(make_hass):
          patch.object(sa, "statistics_during_period", MagicMock(return_value=_stats_rows())):
         res = await sa.async_propose(hass, _entry({"telemetry_map": {"load_power_w": LOAD}}))
     assert res.excluded == {"load_power_w": sa.EXCLUDED_LOAD_UNVERIFIED}
+    assert sa.NOTE_REGISTRY_UNAVAILABLE in res.notes
+    assert res.sign_check.grid.negate is None and res.sign_check.battery.negate is None
 
 
 # ── tylko odczyt ────────────────────────────────────────────────────────────

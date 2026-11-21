@@ -25,7 +25,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import OPT_BATTERY_NEGATE, OPT_GRID_NEGATE, OPT_TELEMETRY_MAP
 from .core.discovery import EntitySnap, StateSnap, classify
-from .core.discovery.assign import FIELDS, HIGH, MEDIUM, FieldProposal, Proposal, propose
+from .core.discovery.assign import FIELDS, FieldProposal, Proposal, propose
 from .core.discovery.sign_check import BATTERY, GRID, LOAD, QUANTITIES, SignCheck, check_signs
 from .core.entity_map import canonical_value
 from .discovery_runner import snap_devices, snap_entities, snap_entries
@@ -41,6 +41,9 @@ BASIS_NONE = "none"           # nie ma czego oceniać (brak czujnika sieci i bat
 # i rozładowanie; krótsze okno często nie ma nocy z baterią w spoczynku
 HISTORY_WINDOW = timedelta(hours=24)
 STATISTICS_PERIOD = "5minute"
+# jawna jednostka: rejestrator przelicza każdą statystykę mocy na W, niezależnie od jednostki zapisanej
+# i bieżącej jednostki stanu (bez tego skala zależałaby od niejawnej konwersji i mogła wyjść ×1000)
+STATISTICS_UNITS = {"power": "W"}
 # górna granica czekania na rejestrator — formularz opcji nie może wisieć na zajętej bazie
 HISTORY_TIMEOUT_S = 15.0
 
@@ -67,12 +70,6 @@ EXCLUDED_LOAD_UNVERIFIED = "load_unverified"    # rejestr niedostępny — platf
 # (pochodna jednego licznika), statistics/filter/compensation (wygładzanie lub korekta jednego czujnika).
 DERIVED_PLATFORMS: frozenset[str] = frozenset({"template", "min_max", "group"})
 
-# pola świadczące o baterii domowej
-_BATTERY_FIELDS = ("soc", "battery_power_w")
-# ocena kandydata wystarczająca jako dowód baterii: `low` dostaje każdy czujnik mocy (dla mocy
-# baterii) i każda bateria telefonu (dla SoC) — to nie jest dowód baterii domowej
-_BATTERY_EVIDENCE = frozenset({HIGH, MEDIUM})
-
 ORIGIN_MAP = "map"            # encja z bieżącej mapy wpisu
 ORIGIN_PROPOSAL = "proposal"  # kandydat pewny z propozycji (pole mapy puste)
 
@@ -85,8 +82,7 @@ class AssignmentResult:
 
     `sources` — encje użyte w ocenie znaku (pole → entity_id), `source_origin` — skąd (`map` |
     `proposal`); `excluded` — pola pominięte w bilansie z kodem powodu; `samples` — liczba próbek
-    podanych do oceny (znaczniki czasu historii albo 1), użyteczne próbki są w `sign_check.samples`;
-    `battery_present` — `None` = nie wiadomo (rejestr niedostępny)."""
+    podanych do oceny (znaczniki czasu historii albo 1), użyteczne próbki są w `sign_check.samples`."""
     proposal: Proposal
     telemetry_map: dict[str, str]
     grid_negate: bool
@@ -97,7 +93,6 @@ class AssignmentResult:
     sources: dict[str, str]
     source_origin: dict[str, str]
     excluded: dict[str, str]
-    battery_present: bool | None
     notes: tuple[str, ...] = ()
 
     def flag_changes(self) -> dict[str, bool]:
@@ -121,7 +116,6 @@ class AssignmentResult:
             "sources": dict(self.sources),
             "source_origin": dict(self.source_origin),
             "excluded": dict(self.excluded),
-            "battery_present": self.battery_present,
             "flag_changes": self.flag_changes(),
             "notes": list(self.notes),
         }
@@ -154,7 +148,7 @@ def _state_only(st: StateSnap) -> EntitySnap:
     """Encja znana tylko z maszyny stanów (szablon YAML bez unique_id): platforma nieznana."""
     a = st.attributes
     return EntitySnap(
-        entity_id=st.entity_id, platform=None, unique_id="", device_id=None, config_entry_id=None,  # type: ignore[arg-type]
+        entity_id=st.entity_id, platform=None, unique_id="", device_id=None, config_entry_id=None,
         device_class=a.get("device_class"), unit=a.get("unit_of_measurement"), translation_key=None,
         original_name=None, disabled=False)
 
@@ -222,28 +216,12 @@ def _sources(tmap: Mapping[str, str], proposal: Proposal,
     return sources, origin, excluded
 
 
-def _battery_present(tmap: Mapping[str, str], proposal: Proposal, registry_ok: bool) -> bool | None:
-    if any(tmap.get(f) for f in _BATTERY_FIELDS):
-        return True
-    if any(c.confidence in _BATTERY_EVIDENCE for f in _BATTERY_FIELDS for c in proposal.field(f).candidates):
-        return True
-    # brak dowodów znaczy „brak baterii” tylko przy pełnym rejestrze; inaczej nie zgadujemy
-    return False if registry_ok else None
-
-
 def _unit(eid: str, snap: _Snapshot) -> str | None:
-    """Jednostka czujnika: bieżący stan, potem rejestr. Rejestrator bez żądanych jednostek zwraca
-    statystyki w jednostce stanu, więc ta sama jednostka służy historii i próbce bieżącej."""
+    """Jednostka bieżącego odczytu czujnika: stan, potem rejestr (historia przychodzi już w W)."""
     st = snap.states.get(eid)
     if st is not None and st.attributes.get("unit_of_measurement"):
         return st.attributes["unit_of_measurement"]
     return next((e.unit for e in snap.entities if e.entity_id == eid and e.unit), None)
-
-
-def _to_w(field: str, value: Any, unit: str | None) -> float | None:
-    if value is None:
-        return None
-    return canonical_value(field, str(value), unit)
 
 
 def _ts(start: Any) -> float | None:
@@ -265,8 +243,7 @@ def _current_sample(sources: Mapping[str, str], units: Mapping[str, str | None],
     return [sample]
 
 
-async def _history(hass, sources: Mapping[str, str],
-                   units: Mapping[str, str | None]) -> tuple[list[dict[str, float | None]] | None, str | None]:
+async def _history(hass, sources: Mapping[str, str]) -> tuple[list[dict[str, float | None]] | None, str | None]:
     """Próbki wyrównane po znaczniku czasu albo (None, kod notatki) — wtedy zapas z bieżących stanów."""
     if "recorder" not in getattr(hass.config, "components", ()):
         return None, NOTE_RECORDER_UNAVAILABLE
@@ -276,7 +253,7 @@ async def _history(hass, sources: Mapping[str, str],
         rows = await asyncio.wait_for(
             get_instance(hass).async_add_executor_job(
                 statistics_during_period, hass, start, None, set(sources.values()),
-                STATISTICS_PERIOD, None, {"mean"}),
+                STATISTICS_PERIOD, STATISTICS_UNITS, {"mean"}),
             HISTORY_TIMEOUT_S)
     except Exception as err:  # noqa: BLE001 — także TimeoutError; bez treści wyjątku (ścieżki, dane)
         _LOGGER.debug("Volcast sensor assignment: recorder query failed (%s)", type(err).__name__)
@@ -287,7 +264,8 @@ async def _history(hass, sources: Mapping[str, str],
         for row in (rows or {}).get(eid) or ():
             ts = _ts(row.get("start")) if isinstance(row, Mapping) else None
             if ts is not None:
-                points[ts] = _to_w(q, row.get("mean"), units[q])
+                mean = row.get("mean")
+                points[ts] = None if mean is None else canonical_value(q, str(mean), "W")
         if not any(v is not None for v in points.values()):
             return None, NOTE_NO_STATISTICS
         series[q] = points
@@ -314,7 +292,7 @@ async def async_propose(hass, entry) -> AssignmentResult:
     return AssignmentResult(
         proposal=_empty_proposal(), telemetry_map=tmap, grid_negate=grid_negate,
         battery_negate=battery_negate, sign_check=check_signs([]), basis=BASIS_NONE, samples=0,
-        sources={}, source_origin={}, excluded={}, battery_present=None, notes=(NOTE_FAILED,))
+        sources={}, source_origin={}, excluded={}, notes=(NOTE_FAILED,))
 
 
 async def _async_propose(hass, entry) -> AssignmentResult:
@@ -322,7 +300,6 @@ async def _async_propose(hass, entry) -> AssignmentResult:
     snap = _snapshot(hass)
     proposal = propose(snap.entities, snap.states, snap.devices, snap.inverters)
     sources, origin, excluded = _sources(tmap, proposal, snap.platforms)
-    battery_present = _battery_present(tmap, proposal, snap.platforms is not None)
     notes = list(snap.notes)
 
     samples: list[dict[str, float | None]]
@@ -331,7 +308,7 @@ async def _async_propose(hass, entry) -> AssignmentResult:
         samples, basis = [], BASIS_NONE
     else:
         units = {q: _unit(eid, snap) for q, eid in sources.items()}
-        history, note = await _history(hass, sources, units)
+        history, note = await _history(hass, sources)
         if history is not None:
             samples, basis = history, BASIS_HISTORY
         else:
@@ -340,6 +317,6 @@ async def _async_propose(hass, entry) -> AssignmentResult:
 
     return AssignmentResult(
         proposal=proposal, telemetry_map=tmap, grid_negate=grid_negate, battery_negate=battery_negate,
-        sign_check=check_signs(samples, battery_present=battery_present), basis=basis,
+        sign_check=check_signs(samples), basis=basis,
         samples=len(samples), sources=sources, source_origin=origin, excluded=excluded,
-        battery_present=battery_present, notes=tuple(notes))
+        notes=tuple(notes))
