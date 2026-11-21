@@ -23,10 +23,12 @@ STEPS = 288                              # doba statystyk 5-minutowych
 
 def make_day(kwp: float, *, seed: int, battery: bool = True, battery_idle: bool = False,
              zero_grid: bool = False, battery_kwh_per_kwp: float = 1.0,
-             battery_kw_per_kwp: float = 0.5, soc0: float = 0.3, cloudy: float = 0.3) -> dict:
+             battery_kw_per_kwp: float = 0.5, soc0: float = 0.3, cloudy: float = 0.3,
+             battery_first: bool = False) -> dict:
     """Doba: PV (sinus dnia z chmurami), zużycie (baza, rano, wieczór, skoki czajnika), bateria
     autokonsumpcyjna (ładuje nadwyżkę w południe, rozładowuje wieczorem), sieć = reszta bilansu.
-    `zero_grid` — falownik z ograniczeniem eksportu: nadwyżki PV obcinane, sieć ≈ 0."""
+    `zero_grid` — falownik z ograniczeniem eksportu: nadwyżki PV obcinane, sieć ≈ 0.
+    `battery_first` — tryb „najpierw bateria”: PV ładuje baterię przed zasileniem domu (dom z sieci)."""
     rng = random.Random(seed)
     cap = kwp * 1000 * battery_kwh_per_kwp
     pmax = kwp * 1000 * battery_kw_per_kwp
@@ -45,7 +47,9 @@ def make_day(kwp: float, *, seed: int, battery: bool = True, battery_idle: bool 
         b = 0.0
         if battery and not battery_idle:
             surplus = p - l_
-            if surplus > 0:
+            if battery_first and p > 0 and soc < cap:
+                b = -min(p, pmax, (cap - soc) * 12)
+            elif surplus > 0:
                 b = -min(surplus, pmax, (cap - soc) * 12)
             else:
                 b = min(-surplus, pmax, soc * 12)
@@ -214,6 +218,54 @@ def test_short_history_is_too_few():
     assert res.grid.reason == "too_few_samples" and res.battery.reason == "too_few_samples"
 
 
+def _two_phase_rows(n: int, *, import_w: float = 500.0) -> list[dict]:
+    """Połowa próbek: noc z poborem; połowa: dzień z oddawaniem. Sieć „eksport dodatni”."""
+    rows = []
+    for i in range(n):
+        if i % 2:
+            rows.append({PV: 0.0, GRID: -import_w, LOAD: import_w})
+        else:
+            rows.append({PV: 2000.0, GRID: 1500.0, LOAD: 500.0})
+    return rows
+
+
+def test_exactly_min_samples_is_enough():
+    """Granica: 2 h statystyk 5-minutowych (24 próbki) wystarcza, 23 nie."""
+    assert check_signs(_two_phase_rows(23)).grid.reason == "too_few_samples"
+    res = check_signs(_two_phase_rows(24))
+    assert res.grid.negate is True and res.samples == 24
+
+
+@pytest.mark.parametrize("active,expected", [(11, None), (12, False)])
+def test_an_hour_of_battery_flow_is_needed(active, expected):
+    """Granica: bateria z przepływem w 11 próbkach to spoczynek, w 12 (godzina) już oceniana."""
+    rows = [{**row, BATTERY: 0.0} for row in _two_phase_rows(40)]
+    for i in range(active):
+        rows[i] = {PV: 0.0, GRID: -200.0, BATTERY: 1000.0, LOAD: 1200.0}
+    res = check_signs(rows)
+    assert res.battery.negate is expected
+    assert res.battery.reason == ("battery_idle" if expected is None else None)
+
+
+def test_flow_below_the_absolute_floor_is_idle():
+    """Mała instalacja: przepływ 90 W to jeszcze szum (próg 100 W), 110 W już przepływ."""
+    rows = [{PV: 0.0, GRID: -90.0, LOAD: 90.0} for _ in range(30)]
+    assert check_signs(rows).grid.reason == "grid_idle"
+    rows = [{PV: 0.0, GRID: -110.0, LOAD: 110.0} for _ in range(30)]
+    assert check_signs(rows).grid.negate is True
+
+
+def test_flow_threshold_scales_with_the_installation_and_ignores_spikes():
+    """Duża instalacja (skala 50 kW → próg 1,5 kW): bateria 1 kW to spoczynek. Jedna zepsuta próbka
+    10 MW nie podnosi skali (95. percentyl), więc sieć nadal jest oceniana."""
+    rows = [{PV: 50000.0, GRID: 47000.0, BATTERY: -1000.0, LOAD: 2000.0} for _ in range(20)]
+    rows += [{PV: 0.0, GRID: -1000.0, BATTERY: 1000.0, LOAD: 2000.0} for _ in range(20)]
+    rows.append({PV: 0.0, GRID: -1e7, BATTERY: 0.0, LOAD: 1e7})
+    res = check_signs(rows)
+    assert res.battery.negate is None and res.battery.reason == "battery_idle"
+    assert res.grid.negate is True
+
+
 def test_empty_input():
     res = check_signs([])
     assert res.samples == 0
@@ -234,14 +286,17 @@ def test_assigned_sensor_without_any_value_makes_samples_unusable():
 @pytest.mark.parametrize("kwp", SIZES)
 @pytest.mark.parametrize("grid_negate,battery_negate", COMBOS)
 def test_no_load_sensor_uses_non_negative_load_bound(kwp, grid_negate, battery_negate):
-    """Bez zużycia: zły znak daje ujemne zużycie (pobór nocą przy pustej baterii, rozładowanie
-    wieczorem) — fizycznie niemożliwe, więc to wiarygodny sygnał. Mniejsza bateria, by noc kończyła
-    się poborem także w dużej instalacji."""
+    """Bez zużycia: zły znak sieci daje ujemne zużycie (pobór nocą przy pustej baterii) — fizycznie
+    niemożliwe, więc to wiarygodny sygnał. Baterii w tym trybie nie oceniamy (moc wyjściowa falownika
+    przypisana jako PV odwraca ten sygnał). Mniejsza bateria, by noc kończyła się poborem także
+    w dużej instalacji."""
     day = make_day(kwp, seed=9, battery_kwh_per_kwp=0.5, soc0=0.1)
     res = check_signs(raw_samples(day, grid_negate=grid_negate, battery_negate=battery_negate,
                                   seed=9, load=False))
     assert res.basis == "load_bound"
-    _expect(res, grid_negate, battery_negate)
+    _expect(res, grid_negate, None)
+    assert res.battery.reason == "no_load_sensor"
+    assert res.battery.samples >= 12
 
 
 @pytest.mark.parametrize("grid_negate", [False, True])
@@ -253,7 +308,7 @@ def test_no_load_sensor_without_import_cannot_judge_the_grid(grid_negate):
     res = check_signs(raw_samples(day, grid_negate=grid_negate, seed=6, load=False))
     assert res.grid.negate is None
     assert res.grid.reason == "no_load_sensor"
-    assert res.battery.negate is False
+    assert res.battery.negate is None and res.battery.reason == "no_load_sensor"
 
 
 def test_no_load_sensor_brief_import_is_not_enough():
@@ -300,22 +355,41 @@ def test_load_computed_with_the_wrong_sign_is_rejected():
     assert res.grid.reason == res.battery.reason == "ambiguous"
 
 
-@pytest.mark.parametrize("grid_charging", [False, True])
-@pytest.mark.parametrize("battery_negate", [False, True])
-def test_pv_sensor_reading_inverter_output_gives_no_battery_recommendation(grid_charging, battery_negate):
-    """Jako PV wybrano moc wyjściową falownika (PV + bateria): bateria liczona podwójnie, reszta = ±bateria
-    dla obu znaków — brak zalecenia (z nocnym ładowaniem z sieci „PV” jest do tego głęboko ujemne)."""
-    day = make_day(10, seed=12)
-    if grid_charging:
-        for i in range(0, 36):           # 0:00–3:00 ładowanie z sieci 3 kW
-            day["battery"][i] = -3000.0
-            day["grid"][i] = day["load"][i] + 3000.0
-    rows = raw_samples(day, battery_negate=battery_negate, seed=12)
+def _inverter_output_as_pv(day: dict, rows: list[dict]) -> None:
+    """Jako PV przypisano moc wyjściową falownika hybrydowego (PV + bateria) — wielkość fizyczna,
+    niezależna od konwencji znaku czujnika baterii."""
     for i, row in enumerate(rows):
         row[PV] = max(day["pv"][i], 0.0) + day["battery"][i]
+
+
+@pytest.mark.parametrize("load", [True, False])
+@pytest.mark.parametrize("mode", ["self_consumption", "battery_first", "grid_charging"])
+def test_pv_sensor_reading_inverter_output_never_gives_a_wrong_recommendation(load, mode):
+    """Kontrprzykład z recenzji: moc wyjściowa falownika jako PV. Bez czujnika zużycia zły znak baterii
+    wyglądał na jedyny fizycznie możliwy (prawdziwy dawał „ujemne zużycie” przy ładowaniu w południe).
+    Macierz 3/10/50 kW × 6 seedów × 4 kombinacje: bateria nigdy z zaleceniem, sieć trafna albo bez."""
+    for kwp in SIZES:
+        for seed in range(6):
+            day = make_day(kwp, seed=seed, battery_first=mode == "battery_first")
+            if mode == "grid_charging":
+                for i in range(0, 36):   # 0:00–3:00 ładowanie z sieci 0,3 kW/kWp
+                    day["battery"][i] = -300.0 * kwp
+                    day["grid"][i] = day["load"][i] + 300.0 * kwp
+            for gn, bn in COMBOS:
+                rows = raw_samples(day, grid_negate=gn, battery_negate=bn, seed=seed, load=load)
+                _inverter_output_as_pv(day, rows)
+                res = check_signs(rows)
+                assert res.battery.negate is None, (kwp, seed, gn, bn, res.as_dict())
+                assert res.grid.negate in (gn, None), (kwp, seed, gn, bn, res.as_dict())
+
+
+def test_inverter_output_as_pv_with_load_sensor_is_ambiguous_for_the_battery():
+    """Z czujnikiem zużycia reszta bilansu to ±bateria dla obu znaków — `ambiguous`."""
+    day = make_day(10, seed=12)
+    rows = raw_samples(day, battery_negate=True, seed=12)
+    _inverter_output_as_pv(day, rows)
     res = check_signs(rows)
-    assert res.battery.negate is None
-    assert res.battery.reason == "ambiguous"
+    assert res.battery.negate is None and res.battery.reason == "ambiguous"
 
 
 def test_reversed_pv_sensor_is_ambiguous():

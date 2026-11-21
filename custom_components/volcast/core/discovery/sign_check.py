@@ -11,13 +11,22 @@ wielkości przy dowolnym znaku drugiej) — bateria w spoczynku nie blokuje ocen
 
 Bez czujnika zużycia bilans z trzech wielkości nie rozstrzyga. Jedyny niezawodny sygnał: zużycie
 nie może być ujemne, więc `PV + sieć + bateria ≥ 0` w poprawnej konwencji. Zły znak sieci daje ujemne
-„zużycie” przy poborze większym niż PV + rozładowanie (noc, pusta bateria), zły znak baterii — przy
-rozładowaniu większym niż połowa zużycia (wieczór). Tylko takie fizycznie niemożliwe próbki są dowodem;
-dom, który nigdy nie pobiera, zostaje bez oceny sieci (`no_load_sensor`).
+„zużycie” przy poborze większym niż PV + rozładowanie (noc, pusta bateria). Tylko takie fizycznie
+niemożliwe próbki są dowodem; dom, który nigdy nie pobiera, zostaje bez oceny sieci (`no_load_sensor`).
+Baterii w tym trybie NIE oceniamy (zawsze `no_load_sensor`): gdy jako „PV” przypisano moc wyjściową
+falownika hybrydowego (PV + bateria) — częsty kandydat — prawdziwy znak daje „ujemne zużycie” przy
+ładowaniu większym niż zużycie, a odwrócony żadnego, więc granica wskazałaby pewnie ZŁY znak. Zawężenie
+do próbek z PV ≈ 0 nie pomaga: w trybie „najpierw bateria” cała produkcja idzie do baterii, moc wyjściowa
+falownika jest ≈ 0, a dowód nadal przemawia za złym znakiem. Ocena sieci bierze najlepszy znak baterii
+dla każdego znaku sieci, więc nie zależy od tego, co mierzy czujnik „PV” po stronie baterii.
 
-Czujnik „PV”, który jest mocą wyjściową falownika hybrydowego (PV + bateria), liczy baterię podwójnie:
-reszta to ±bateria dla obu znaków, więc ocena baterii kończy się `ambiguous`, a nie złym zaleceniem.
-PV albo zużycie wyraźnie ujemne w wielu próbkach oznacza czujnik mierzący coś innego — też `ambiguous`.
+Z czujnikiem zużycia moc wyjściowa falownika jako „PV” liczy baterię podwójnie: reszta to ±bateria dla
+obu znaków, więc ocena baterii kończy się `ambiguous`. PV albo zużycie wyraźnie ujemne w wielu próbkach
+oznacza czujnik mierzący coś innego — też `ambiguous`.
+
+Wynik jest zgodny z czujnikiem zużycia: zużycie wyliczane z tych samych surowych odczytów (np. szablonem
+`PV + sieć + bateria`) domyka bilans dla konwencji, w której je policzono, poprawnej czy nie — takiego
+czujnika nie należy podawać jako zużycia (rozstrzyga warstwa HA).
 
 Wejście: sekwencja map `{pole: wartość w W}` z kluczami pól telemetrii (`PV`, `GRID`, `BATTERY`, `LOAD`).
 Klucz obecny w którejkolwiek próbce (nawet z `None`) = czujnik przypisany; próbka jest użyteczna tylko
@@ -28,7 +37,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 # klucze próbek — nazwy pól telemetrii („Installation details”)
 PV = "pv_power_w"
@@ -82,6 +91,8 @@ MAX_IMPLAUSIBLE_SHARE = 0.02
 NO_LOAD_MAX_BEST_SHARE = 0.03
 # … a zły znak musi mieć co najmniej 10× więcej takich próbek niż dobry (przewaga 1 − dobry/zły ≥ 0,9)
 NO_LOAD_MIN_ADVANTAGE = 0.9
+# … i co najmniej 12 takich próbek (godzina) — pojedyncze przełączenia nie są dowodem
+NO_LOAD_MIN_EVIDENCE = 12
 
 _SIGNS = (1, -1)
 _COMBOS: tuple[tuple[int, int], ...] = tuple((sg, sb) for sg in _SIGNS for sb in _SIGNS)
@@ -122,6 +133,11 @@ class SignCheck:
 
 # ── pomocnicze ──────────────────────────────────────────────────────────────
 
+# próbka użyteczna: (pv, sieć, bateria, zużycie | None przy braku czujnika zużycia)
+_Row = tuple[float, float, float, float | None]
+# powód rozstrzygnięty przed porównaniem kombinacji (albo None)
+_Pre = Callable[[str], SignVerdict | None]
+
 def _num(v: Any) -> float | None:
     """Liczba skończona albo None (None, NaN, inf, tekst stanu typu „unavailable”, bool)."""
     if v is None or isinstance(v, bool):
@@ -149,14 +165,19 @@ def _marginal(cost: Mapping[tuple[int, int], float], axis: int) -> tuple[tuple[i
 # ── ocena ───────────────────────────────────────────────────────────────────
 
 def check_signs(samples: Iterable[Mapping[str, Any]]) -> SignCheck:
-    """Zalecenie odwrócenia znaku czujnika sieci i baterii na podstawie bilansu (patrz opis modułu)."""
+    """Zalecenie odwrócenia znaku czujnika sieci i baterii na podstawie bilansu (patrz opis modułu).
+
+    Kontrakt wejścia: każda próbka to mapa `{PV|GRID|BATTERY|LOAD: moc w W}`. Czujnik przypisany przez
+    użytkownika MUSI mieć klucz w próbkach także wtedy, gdy wartości brak (`None`) — obecność klucza
+    w którejkolwiek próbce oznacza „czujnik przypisany”, jego brak „czujnika nie ma” (`no_sensor`, a dla
+    zużycia — tryb `load_bound`). Przypisany czujnik bez wartości w danej próbce wyklucza tę próbkę.
+    """
     rows = list(samples)
     assigned = {q for row in rows for q in QUANTITIES if q in row}
     has = {GRID: GRID in assigned, BATTERY: BATTERY in assigned}
     basis = BASIS_BALANCE if LOAD in assigned else BASIS_LOAD_BOUND
 
-    # próbki użyteczne: (pv, sieć, bateria, zużycie | None)
-    data: list[tuple[float, float, float, float | None]] = []
+    data: list[_Row] = []
     for row in rows:
         vals: dict[str, float] = {}
         for q in assigned:
@@ -204,7 +225,7 @@ def check_signs(samples: Iterable[Mapping[str, Any]]) -> SignCheck:
     return _by_load_bound(data, active, pre, n, tol)
 
 
-def _by_balance(data, active, pre, n: int) -> SignCheck:
+def _by_balance(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n: int) -> SignCheck:
     res = {c: [p + c[0] * g + c[1] * b - l for p, g, b, l in data] for c in _COMBOS}
     err = {c: sum(abs(r) for r in rs) for c, rs in res.items()}
     throughput = sum(abs(p) + abs(g) + abs(b) + abs(l) for p, g, b, l in data) / 2
@@ -212,9 +233,9 @@ def _by_balance(data, active, pre, n: int) -> SignCheck:
     share = err[best] / throughput if throughput > 0 else 0.0
 
     def judge(q: str, axis: int) -> SignVerdict:
-        early = pre(q)
-        if early is not None:
-            return early
+        known = pre(q)
+        if known is not None:
+            return known
         idx = active[q]
         win, alt = _marginal(err, axis)
         flow = sum(abs(d[axis + 1]) for d in data)
@@ -228,22 +249,28 @@ def _by_balance(data, active, pre, n: int) -> SignCheck:
                      basis=BASIS_BALANCE, residual_share=share)
 
 
-def _by_load_bound(data, active, pre, n: int, tol: float) -> SignCheck:
+def _by_load_bound(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n: int,
+                   tol: float) -> SignCheck:
     # liczba próbek z fizycznie niemożliwym („ujemnym”) zużyciem dla każdej kombinacji
     bad = {c: sum(1 for p, g, b, _l in data if p + c[0] * g + c[1] * b < -tol) for c in _COMBOS}
     best = min(_COMBOS, key=lambda c: bad[c])
 
-    def judge(q: str, axis: int) -> SignVerdict:
-        early = pre(q)
-        if early is not None:
-            return early
-        samples = len(active[q])
-        win, alt = _marginal(bad, axis)
+    def judge_grid() -> SignVerdict:
+        known = pre(GRID)
+        if known is not None:
+            return known
+        samples = len(active[GRID])
+        win, alt = _marginal(bad, 0)
         advantage = 1 - bad[win] / bad[alt] if bad[alt] else 0.0
-        if bad[alt] < MIN_ACTIVE_SAMPLES:
+        if bad[alt] < NO_LOAD_MIN_EVIDENCE:
             return _verdict(NO_LOAD_SENSOR, samples=samples, margin=advantage)
         if bad[best] > NO_LOAD_MAX_BEST_SHARE * n or advantage < NO_LOAD_MIN_ADVANTAGE:
             return _verdict(AMBIGUOUS, samples=samples, margin=advantage)
-        return _verdict(None, negate=win[axis] == -1, samples=samples, margin=advantage)
+        return _verdict(None, negate=win[0] == -1, samples=samples, margin=advantage)
 
-    return SignCheck(grid=judge(GRID, 0), battery=judge(BATTERY, 1), samples=n, basis=BASIS_LOAD_BOUND)
+    def judge_battery() -> SignVerdict:
+        # bez zużycia baterii nie oceniamy wcale (opis modułu: moc wyjściowa falownika jako „PV”)
+        known = pre(BATTERY)
+        return known if known is not None else _verdict(NO_LOAD_SENSOR, samples=len(active[BATTERY]))
+
+    return SignCheck(grid=judge_grid(), battery=judge_battery(), samples=n, basis=BASIS_LOAD_BOUND)
