@@ -283,49 +283,35 @@ def test_assigned_sensor_without_any_value_makes_samples_unusable():
 
 # ── brak czujnika zużycia: granica „zużycie nie może być ujemne” ───────────────
 
+@pytest.mark.parametrize("battery_present", [True, None, False])
 @pytest.mark.parametrize("kwp", SIZES)
 @pytest.mark.parametrize("grid_negate,battery_negate", COMBOS)
-def test_no_load_sensor_uses_non_negative_load_bound(kwp, grid_negate, battery_negate):
-    """Bez zużycia: zły znak sieci daje ujemne zużycie (pobór nocą przy pustej baterii) — fizycznie
-    niemożliwe, więc to wiarygodny sygnał. Baterii w tym trybie nie oceniamy (moc wyjściowa falownika
-    przypisana jako PV odwraca ten sygnał). Mniejsza bateria, by noc kończyła się poborem także
-    w dużej instalacji."""
+def test_no_load_sensor_with_battery_gives_no_recommendation(kwp, grid_negate, battery_negate,
+                                                             battery_present):
+    """Bez czujnika zużycia instalacja z baterią nie dostaje zaleceń: niewidoczna (nieprzypisana, zablokowana
+    na 0, druga) bateria oddająca do sieci wygląda jak odwrócony znak. `False` przy przypisanym czujniku
+    baterii to sprzeczne wejście — też brak zalecenia."""
     day = make_day(kwp, seed=9, battery_kwh_per_kwp=0.5, soc0=0.1)
     res = check_signs(raw_samples(day, grid_negate=grid_negate, battery_negate=battery_negate,
-                                  seed=9, load=False))
+                                  seed=9, load=False), battery_present=battery_present)
     assert res.basis == "load_bound"
-    _expect(res, grid_negate, None)
-    assert res.battery.reason == "no_load_sensor"
-    assert res.battery.samples >= 12
-
-
-@pytest.mark.parametrize("grid_negate", [False, True])
-def test_no_load_sensor_without_import_cannot_judge_the_grid(grid_negate):
-    """Dom nigdy nie pobiera (bateria pokrywa noc), tylko oddaje: oba znaki sieci dają nieujemne
-    zużycie — brak rozstrzygnięcia, a nie zgadywanie."""
-    day = make_day(10, seed=6, battery_kwh_per_kwp=4, battery_kw_per_kwp=3, soc0=0.9)
-    assert max(day["grid"]) < 100 and min(day["grid"]) < -1000
-    res = check_signs(raw_samples(day, grid_negate=grid_negate, seed=6, load=False))
-    assert res.grid.negate is None
-    assert res.grid.reason == "no_load_sensor"
-    assert res.battery.negate is None and res.battery.reason == "no_load_sensor"
+    _expect(res, None, None)
+    assert res.grid.reason == res.battery.reason == "no_load_sensor"
+    assert res.grid.samples >= 12 and res.battery.samples >= 12
 
 
 def test_no_load_sensor_brief_import_is_not_enough():
-    """Granica: kilka próbek nocnego poboru przy baterii w spoczynku (< godziny) nie wystarcza."""
-    day = make_day(10, seed=6, battery_kwh_per_kwp=4, battery_kw_per_kwp=3, soc0=0.9)
+    """Granica (instalacja bez baterii): godzina nocnego poboru odczytanego jako oddawanie wystarcza,
+    8 próbek nie."""
+    day_rows = [{PV: 2000.0, GRID: 1500.0} for _ in range(24)]     # dzień: oddawanie (sieć odwrócona)
 
-    def idle_import(indices: range) -> None:
-        for i in indices:                # bateria stoi (np. rezerwa), dom pobiera z sieci
-            day["battery"][i] = 0.0
-            day["grid"][i] = day["load"][i]
+    def rows(imports: int) -> list[dict]:
+        night = [{PV: 0.0, GRID: -500.0} for _ in range(imports)]
+        return day_rows + night + [{PV: 0.0, GRID: -50.0} for _ in range(60)]   # 50 W = szum
 
-    idle_import(range(24, 32))           # 8 próbek, 2:00–2:40
-    res = check_signs(raw_samples(day, grid_negate=True, seed=6, load=False))
+    res = check_signs(rows(8), battery_present=False)
     assert res.grid.negate is None and res.grid.reason == "no_load_sensor"
-    idle_import(range(32, 40))           # razem 16 próbek — już wystarcza
-    res = check_signs(raw_samples(day, grid_negate=True, seed=6, load=False))
-    assert res.grid.negate is True
+    assert check_signs(rows(12), battery_present=False).grid.negate is True
 
 
 # ── przypadki zwodnicze ────────────────────────────────────────────────────────
@@ -444,6 +430,40 @@ def test_no_load_sensor_never_gives_a_wrong_recommendation_whatever_pv_measures(
 
 
 HIDDEN_BATTERY_PV = ("production", "half_of_strings", "microinverters_unseen")
+BIG_BATTERY = {"battery_kwh_per_kwp": 3, "battery_kw_per_kwp": 1, "soc0": 0.8}
+
+
+@pytest.mark.parametrize("battery_present", [True, None])
+@pytest.mark.parametrize("big", [False, True])
+@pytest.mark.parametrize("blind", ["stuck_at_zero", "second_battery"])
+def test_battery_sensor_that_misses_part_of_the_battery_gives_no_grid_recommendation(
+        blind, big, battery_present):
+    """Kontrprzykład z recenzji: czujnik baterii przypisany, ale nie widzi całej baterii (stale 0 albo
+    druga bateria poza pomiarem), a niewidoczna część po zachodzie przez 2 h sprzedaje do sieci. Bez
+    czujnika zużycia wygląda to jak odwrócony znak sieci — instalacja z baterią nie dostaje zalecenia."""
+    for kwp in SIZES:
+        for seed in range(6):
+            day = make_day(kwp, seed=seed, **(BIG_BATTERY if big else {}))
+            _battery_export(day, range(252, 276), 500.0 * kwp)      # 21:00–23:00
+            for gn, bn in COMBOS:
+                rows = raw_samples(day, grid_negate=gn, battery_negate=bn, seed=seed, load=False)
+                for i, row in enumerate(rows):
+                    if blind == "stuck_at_zero" or 252 <= i < 276:
+                        row[BATTERY] = 0.0
+                res = check_signs(rows, battery_present=battery_present)
+                assert res.grid.negate is None, (kwp, seed, gn, bn, res.as_dict())
+                assert res.grid.reason == "no_load_sensor"
+
+
+def test_battery_sensor_contradicting_battery_present_false_gives_no_grid_recommendation():
+    """Sprzeczne wejście: warstwa HA twierdzi, że baterii nie ma, a czujnik mocy baterii jest przypisany."""
+    day = make_day(10, seed=4, battery=False)
+    rows = raw_samples(day, grid_negate=True, seed=4, load=False)
+    assert check_signs(rows, battery_present=False).grid.negate is True
+    for row in rows:
+        row[BATTERY] = 0.0
+    res = check_signs(rows, battery_present=False)
+    assert res.grid.negate is None and res.grid.reason == "no_load_sensor"
 
 
 @pytest.mark.parametrize("battery_present", [True, None])
@@ -486,14 +506,36 @@ def test_installation_without_battery_and_load_sensor_is_judged_only_when_declar
         assert res.grid.negate is None and res.grid.reason == "no_load_sensor"
 
 
+@pytest.mark.parametrize("profile", ["sleeping_house", "cabin"])
+@pytest.mark.parametrize("pv_kind", ["unassigned", "kw_reported_as_w", "half_of_strings"])
+@pytest.mark.parametrize("grid_negate", [False, True])
+def test_battery_free_house_with_tiny_night_load_and_blind_pv_gets_no_recommendation(
+        pv_kind, grid_negate, profile):
+    """Bez baterii, nocne zużycie 60 W (poniżej tolerancji — brak nocnych dowodów), czujnik PV nie widzi
+    (całej) produkcji: w dzień oddawanie ponad widoczne PV przy poprawnym znaku wyglądałoby na „ujemne
+    zużycie”. Chronią przed tym dowody tylko z nocy i wymóg widocznej produkcji PV."""
+    rows = []
+    for i in range(STEPS):
+        h = i / 12
+        p = 3000 * max(math.sin(math.pi * (h - 6) / 14), 0.0) if 6 < h < 20 else 0.0
+        # dom „śpi”, gdy nie ma słońca; domek letniskowy zużywa stale 60 W (brak poboru o zmierzchu)
+        load = 400.0 if p > 0 and profile == "sleeping_house" else 60.0
+        g = (load - p) * (-1 if grid_negate else 1)
+        row = {GRID: g}
+        if PV_KINDS[pv_kind] is not None:
+            row[PV] = PV_KINDS[pv_kind](p, 0.0)
+        rows.append(row)
+    res = check_signs(rows, battery_present=False)
+    assert res.grid.negate in (grid_negate, None), res.as_dict()
+
+
 @pytest.mark.parametrize("battery_present", [True, False, None])
-def test_battery_present_does_not_change_other_modes(battery_present):
-    """Argument dotyczy wyłącznie trybu bez czujnika zużycia i bez czujnika baterii."""
+def test_battery_present_does_not_change_the_balance_mode(battery_present):
+    """Argument dotyczy wyłącznie trybu bez czujnika zużycia."""
     with_load = raw_samples(make_day(10, seed=7), grid_negate=True, battery_negate=True, seed=7)
+    assert (check_signs(with_load, battery_present=battery_present).as_dict()
+            == check_signs(with_load).as_dict())
     _expect(check_signs(with_load, battery_present=battery_present), True, True)
-    day = make_day(10, seed=9, battery_kwh_per_kwp=0.5, soc0=0.1)
-    with_battery = raw_samples(day, grid_negate=True, seed=9, load=False)
-    _expect(check_signs(with_battery, battery_present=battery_present), True, None)
 
 
 @pytest.mark.parametrize("day_kind", ["self_consumption", "night_import", "export_peak", "export_night"])

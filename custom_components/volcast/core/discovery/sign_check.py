@@ -10,26 +10,23 @@ Z czujnikiem zużycia sieć i bateria oceniane są niezależnie (marginalnie: na
 wielkości przy dowolnym znaku drugiej) — bateria w spoczynku nie blokuje oceny sieci i odwrotnie.
 
 Bez czujnika zużycia bilans z trzech wielkości nie rozstrzyga. Jedyny niezawodny sygnał: zużycie nie
-może być ujemne. Granica jest jednak wiarygodna tylko wtedy, gdy żadne źródło nie umyka czujnikom —
-czujnik „PV” bywa mocą wyjściową falownika (PV + bateria), częścią stringów, mikroinwerterami poza
-pomiarem albo ma złe jednostki, a niewidoczne źródło pozwala „oddawać” przy poprawnym znaku. Dlatego
-dowodem dla sieci są wyłącznie próbki nocne z baterią w spoczynku (|PV| i |bateria| < tolerancji):
-wtedy dom może tylko pobierać, a pobór odczytany jako oddawanie zdradza odwrócony znak. Wymagamy też,
-by czujnik PV widocznie produkował (godzina próbek), inaczej „noc” jest nieokreślona. Dom, który nocą
-przy stojącej baterii nie pobiera (bateria pokrywa noc), zostaje bez oceny sieci (`no_load_sensor`).
+może być ujemne — ale tylko wtedy, gdy żadne źródło nie umyka czujnikom. Bateria umyka łatwo: czujnik
+nieprzypisany, zablokowany na 0, druga bateria poza pomiarem, „PV” = moc wyjściowa falownika
+(PV + bateria); bateria oddająca do sieci wygląda wtedy jak odwrócony znak sieci, a znak samej baterii
+— jak odwrócony przy ładowaniu. Dlatego bez czujnika zużycia:
+- baterii NIE oceniamy nigdy (`no_load_sensor`);
+- sieć oceniamy wyłącznie w instalacji NA PEWNO bez baterii (`battery_present=False` od warstwy HA i brak
+  przypisanego czujnika mocy baterii — przypisany czujnik przy `False` to sprzeczne wejście). Każda
+  instalacja z baterią albo o nieznanym stanie (`True`, `None` — domyślnie) dostaje `no_load_sensor`.
+W instalacji bez baterii dowodem są wyłącznie próbki nocne (|PV| < tolerancji): dom może wtedy tylko
+pobierać, a pobór odczytany jako oddawanie zdradza odwrócony znak. W dzień niewidoczna część produkcji
+(część stringów, mikroinwertery poza pomiarem) pozwala „oddawać” ponad widoczne PV przy poprawnym znaku.
+Wymagamy też, by czujnik PV widocznie produkował (godzina próbek) — nieprzypisane PV albo kW podane jako W
+czyniłyby „nocą” cały dzień. Dom bez nocnego poboru ponad tolerancję zostaje bez oceny (`no_load_sensor`).
 
-Bateria fizycznie obecna, ale bez przypisanego czujnika mocy, która nocą oddaje do sieci (arbitraż),
-wygląda jak odwrócony znak sieci — z samych próbek nieodróżnialne od instalacji bez baterii. Dlatego
-bez czujnika zużycia i bez czujnika baterii sieć oceniamy tylko, gdy warstwa HA potwierdzi brak baterii
-(`battery_present=False`); `True` i `None` (nie wiadomo, domyślnie) dają `no_load_sensor`.
-Z czujnikiem zużycia taka bateria psuje bilans (brakuje jej przepływu): wynik `ambiguous` albo trafny,
-gdy „PV” to moc wyjściowa falownika (zawiera baterię) — `battery_present` nie ma tam wpływu.
-
-Baterii w tym trybie NIE oceniamy (zawsze `no_load_sensor`): gdy jako „PV” przypisano moc wyjściową
-falownika hybrydowego (PV + bateria) — częsty kandydat — prawdziwy znak daje „ujemne zużycie” przy
-ładowaniu większym niż zużycie, a odwrócony żadnego, więc granica wskazałaby pewnie ZŁY znak. Zawężenie
-do próbek z PV ≈ 0 nie pomaga: w trybie „najpierw bateria” cała produkcja idzie do baterii, moc wyjściowa
-falownika jest ≈ 0, a dowód nadal przemawia za złym znakiem.
+Z czujnikiem zużycia `battery_present` nie ma wpływu. Bateria obecna, ale nieprzypisana, psuje tam
+bilans (brakuje jej przepływu): wynik `ambiguous` albo trafny, gdy „PV” to moc wyjściowa falownika
+(zawiera baterię).
 
 Z czujnikiem zużycia moc wyjściowa falownika jako „PV” liczy baterię podwójnie: reszta to ±bateria dla
 obu znaków, więc ocena baterii kończy się `ambiguous`. PV albo zużycie wyraźnie ujemne w wielu próbkach
@@ -97,8 +94,8 @@ MAX_RESIDUAL_SHARE = 0.2
 # PV albo zużycie wyraźnie ujemne (poniżej −tolerancji) w więcej niż 2 % próbek = czujnik mierzy coś
 # innego (moc wyjściowa falownika, zużycie liczone złym znakiem) — wynik `ambiguous`
 MAX_IMPLAUSIBLE_SHARE = 0.02
-# bez zużycia: wygrywający znak sieci może mieć „ujemne zużycie” w najwyżej 3 % próbek nocnych
-# z baterią w spoczynku (przełączenia przy przesuniętych uśrednieniach, rozruch baterii) …
+# bez zużycia (instalacja bez baterii): wygrywający znak sieci może mieć „ujemne zużycie” w najwyżej 3 %
+# próbek nocnych (zmierzch przy przesuniętych uśrednieniach, szum) …
 NO_LOAD_MAX_BEST_SHARE = 0.03
 # … a zły znak musi mieć co najmniej 10× więcej takich próbek niż dobry (przewaga 1 − dobry/zły ≥ 0,9)
 NO_LOAD_MIN_ADVANTAGE = 0.9
@@ -184,10 +181,12 @@ def check_signs(samples: Iterable[Mapping[str, Any]], *,
     w którejkolwiek próbce oznacza „czujnik przypisany”, jego brak „czujnika nie ma” (`no_sensor`, a dla
     zużycia — tryb `load_bound`). Przypisany czujnik bez wartości w danej próbce wyklucza tę próbkę.
 
-    `battery_present` — czy instalacja ma baterię (wie to warstwa HA, nie próbki): `True`, `False` albo
-    `None` = nie wiadomo. Liczy się wyłącznie bez czujnika zużycia i bez przypisanego czujnika mocy
-    baterii: wtedy sieć jest oceniana tylko przy `False`; `True` i `None` dają `no_load_sensor`, bo
-    niewidoczna bateria oddająca nocą wygląda jak odwrócony znak sieci. W pozostałych trybach bez wpływu.
+    `battery_present` — czy instalacja ma baterię (wie to warstwa HA, nie próbki): `True`, `None` = nie
+    wiadomo (domyślnie), `False` — WYŁĄCZNIE gdy instalacja na pewno nie ma żadnej baterii. Liczy się tylko
+    bez czujnika zużycia: sieć jest wtedy oceniana jedynie przy `False` i bez przypisanego czujnika mocy
+    baterii (przypisany czujnik przy `False` = sprzeczne wejście); inaczej `no_load_sensor`, bo bateria
+    oddająca do sieci — niewidoczna albo widoczna tylko częściowo — wygląda jak odwrócony znak sieci.
+    Z czujnikiem zużycia bez wpływu.
     """
     rows = list(samples)
     assigned = {q for row in rows for q in QUANTITIES if q in row}
@@ -239,9 +238,10 @@ def check_signs(samples: Iterable[Mapping[str, Any]], *,
 
     if basis == BASIS_BALANCE:
         return _by_balance(data, active, pre, n)
-    # bez czujnika mocy baterii niewidoczna bateria jest możliwa, dopóki warstwa HA nie potwierdzi jej braku
-    hidden_battery = not has[BATTERY] and battery_present is not False
-    return _by_load_bound(data, active, pre, n, tol, hidden_battery)
+    # bez zużycia sieć tylko w instalacji na pewno bez baterii; przypisany czujnik baterii przy
+    # `battery_present=False` to sprzeczne wejście — też bez oceny
+    battery_free = battery_present is False and not has[BATTERY]
+    return _by_load_bound(data, active, pre, n, tol, battery_free)
 
 
 def _by_balance(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n: int) -> SignCheck:
@@ -269,22 +269,23 @@ def _by_balance(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n:
 
 
 def _by_load_bound(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre, n: int,
-                   tol: float, hidden_battery: bool) -> SignCheck:
+                   tol: float, battery_free: bool) -> SignCheck:
     def judge_grid() -> SignVerdict:
         known = pre(GRID)
         if known is not None:
             return known
         samples = len(active[GRID])
-        # niewidoczna bateria oddająca nocą jest nieodróżnialna od odwróconego znaku sieci
-        if hidden_battery:
+        # bateria — przypisana czy nie, cała czy częściowo widoczna — oddająca do sieci jest
+        # nieodróżnialna od odwróconego znaku sieci
+        if not battery_free:
             return _verdict(NO_LOAD_SENSOR, samples=samples)
         # „noc” ma sens tylko przy czujniku PV, który widać produkuje (nie pusty, nie kW podane jako W)
         if sum(1 for p, _g, _b, _l in data if p >= tol) < MIN_ACTIVE_SAMPLES:
             return _verdict(NO_LOAD_SENSOR, samples=samples)
-        # dowody tylko z nocy z baterią w spoczynku (|PV| i |bateria| < tolerancji): żadne źródło nie
-        # pracuje, więc dom może wyłącznie pobierać. Niewidoczna część produkcji (jeden string,
-        # mikroinwertery poza czujnikiem) jest wtedy też ≈ 0, a moc wyjściowa falownika jako „PV” = 0.
-        rows = [g for p, g, b, _l in data if p < tol and abs(b) < tol]
+        # dowody tylko z nocy (|PV| < tolerancji): bez baterii żadne źródło nie pracuje, więc dom może
+        # wyłącznie pobierać. Niewidoczna część produkcji (jeden string, mikroinwertery poza czujnikiem)
+        # jest wtedy też ≈ 0, a w dzień pozwalałaby „oddawać” ponad widoczne PV przy poprawnym znaku.
+        rows = [g for p, g, _b, _l in data if p < tol]
         # liczba próbek z fizycznie niemożliwym („ujemnym”) zużyciem dla każdego znaku sieci
         bad = {s: sum(1 for g in rows if s * g < -tol) for s in _SIGNS}
         win, alt = (1, -1) if bad[1] <= bad[-1] else (-1, 1)
@@ -296,7 +297,7 @@ def _by_load_bound(data: list[_Row], active: Mapping[str, list[int]], pre: _Pre,
         return _verdict(None, negate=win == -1, samples=samples, margin=advantage)
 
     def judge_battery() -> SignVerdict:
-        # bez zużycia baterii nie oceniamy wcale (opis modułu: moc wyjściowa falownika jako „PV”)
+        # bez zużycia baterii nie oceniamy wcale (opis modułu: bateria widoczna tylko częściowo)
         known = pre(BATTERY)
         return known if known is not None else _verdict(NO_LOAD_SENSOR, samples=len(active[BATTERY]))
 
