@@ -670,7 +670,10 @@ def test_repair_texts_present_in_every_language(path):
     if path.name in ("strings.json", "en.json"):
         # Profil z feedu jest tylko do odczytu — tekst nie może obiecywać sterowania po wyborze.
         assert "until you choose" not in confirm["description"]
-        assert "never controls" in confirm["description"]
+        # Zapis możliwy jest dla profilu z ważnym certyfikatem i statusem verified (po zgodzie) — tekst
+        # mówi tylko, że profil testowy służy do rozpoznania i odczytu, a sterowanie wymaga więcej.
+        assert "never controls" not in confirm["description"]
+        assert "verified profile and your consent" in confirm["description"]
 
 
 # --- złożenie sterowania: feed z magazynu przed odczytem profili, sprawdzenie w fetcherze ----------
