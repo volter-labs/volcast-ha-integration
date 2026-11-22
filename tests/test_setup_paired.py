@@ -551,7 +551,7 @@ def _control_hass():
             registered = self.services.registered
             services.registered = registered
             services.has_service = lambda d, s: (d, s) in registered or d != "volcast"
-            services.async_register = lambda d, s, h, schema=None: registered.__setitem__((d, s), h)
+            services.async_register = lambda d, s, h, schema=None, supports_response=None: registered.__setitem__((d, s), h)
             services.async_remove = lambda d, s: registered.pop((d, s), None)
             self.services = services
     return Hass()

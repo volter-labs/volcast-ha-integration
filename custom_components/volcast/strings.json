@@ -672,6 +672,16 @@
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Propose sensor assignment",
+      "description": "Returns a proposal of which sensors to use for your installation, and the result of the sign check. It changes nothing; applying it needs your approval in the integration options.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Entry",
+          "description": "The Volcast entry to check. Leave empty when only one entry is paired with your account."
+        }
+      }
+    },
     "resume_control": {
       "name": "Resume control",
       "description": "Ends the pause after an inverter setting was changed outside Volcast and applies the Volcast plan right away, without reloading the integration."

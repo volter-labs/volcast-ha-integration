@@ -580,18 +580,26 @@ def merge_options(options: Any, patch: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+async def async_assignment_result(hass, entry) -> tuple[AssignmentResult, bool]:
+    """Propozycja dla wpisu i to, czy wolno ją pokazać (`suggest`); wspólne dla formularza i usługi.
+
+    Falownik rozpoznany (albo nie wiadomo): ręczna mapa zasłoniłaby profil, więc bez podpowiedzi i bez
+    kandydatów; ocena znaku tylko dla czujników, które użytkownik już zapisał.
+    """
+    result = await async_propose(hass, entry)
+    control = ((getattr(hass, "data", None) or {}).get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
+    suggest = no_inverter_integration(entry.options, control)
+    if not suggest:
+        result = replace(result, proposal=Proposal(()))
+    return result, suggest
+
+
 async def async_load_assignment(hass, entry) -> tuple[AssignmentResult | None, dict[str, str] | None]:
     """Propozycja przypisania czujników i opis do formularza mapy (krok opcji i naprawa); błąd = brak propozycji."""
     result = placeholders = None
     try:
-        result = await async_propose(hass, entry)
+        result, suggest = await async_assignment_result(hass, entry)
         saved = entry.options.get(OPT_TELEMETRY_MAP) or {}
-        control = ((getattr(hass, "data", None) or {}).get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
-        suggest = no_inverter_integration(entry.options, control)
-        if not suggest:
-            # Falownik rozpoznany (albo nie wiadomo): ręczna mapa zasłoniłaby profil, więc bez podpowiedzi
-            # i bez kandydatów; ocena znaku tylko dla czujników, które użytkownik już zapisał.
-            result = replace(result, proposal=Proposal(()))
         texts = _Texts(await _async_translations(hass, "exceptions"),
                        await _async_translations(hass, "options"))
         placeholders = assignment_placeholders(result, saved, texts)

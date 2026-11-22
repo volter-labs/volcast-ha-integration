@@ -50,8 +50,16 @@ class _FakeEvent:
         self.data = data or {}
 
 
+class _SupportsResponse(str, __import__("enum").Enum):
+    """Atrapa homeassistant.core.SupportsResponse."""
+    NONE = "none"
+    OPTIONAL = "optional"
+    ONLY = "only"
+
+
 _make_module("homeassistant")
 _make_module("homeassistant.core", {
+    "SupportsResponse": _SupportsResponse,
     "HomeAssistant": _FakeHomeAssistant,
     "Event": _FakeEvent,
     "callback": _fake_callback,
@@ -597,12 +605,16 @@ class _FakeServices:
 
     def __init__(self):
         self.registered: dict[tuple[str, str], Any] = {}
+        self.schemas: dict[tuple[str, str], Any] = {}
+        self.responses: dict[tuple[str, str], Any] = {}
 
     def has_service(self, domain: str, service: str) -> bool:
         return (domain, service) in self.registered
 
-    def async_register(self, domain: str, service: str, handler, schema=None):
+    def async_register(self, domain: str, service: str, handler, schema=None, supports_response=None):
         self.registered[(domain, service)] = handler
+        self.schemas[(domain, service)] = schema
+        self.responses[(domain, service)] = supports_response
 
     def async_remove(self, domain: str, service: str) -> None:
         self.registered.pop((domain, service), None)

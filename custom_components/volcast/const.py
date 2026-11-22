@@ -41,6 +41,8 @@ MODE_DISCOVERY_ONLY = "discovery_only"
 
 SERVICE_SYNC_PRODUCTION = "sync_production"
 SERVICE_RESUME_CONTROL = "resume_control"
+SERVICE_PROPOSE_SENSOR_ASSIGNMENT = "propose_sensor_assignment"
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_DATE = "date"
 
 # Wykrywanie instalacji (tylko odczyt) — sygnał po nowym raporcie i limit czasu przebiegu
