@@ -17,7 +17,7 @@ from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 import voluptuous as vol
 
 from .const import DOMAIN, OPT_TELEMETRY_MAP
-from .control.runtime import async_resume_control, no_inverter_integration
+from .control.runtime import async_no_inverter_integration_now, async_resume_control
 
 _FOREIGN_PREFIX = "foreign_control_"
 _CONFLICT_PREFIX = "controller_conflict_"
@@ -104,10 +104,11 @@ class SensorAssignmentFlow(RepairsFlow):
         errors: dict[str, str] = {}
         shown_options = entry.options
         if user_input is not None:
-            # Naprawa mogła zostać otwarta przed rozpoznaniem falownika (np. profil dostarczony po starcie) —
-            # ręczna mapa zasłoniłaby po przeładowaniu profil, więc przy zatwierdzeniu sprawdzamy to samo co przy podpowiedzi.
+            # Naprawa mogła zostać otwarta przed rozpoznaniem falownika (profil dostarczony po starcie albo
+            # integracja falownika dodana po setupie) — ręczna mapa zasłoniłaby po przeładowaniu profil, więc przy
+            # zatwierdzeniu sprawdzamy to samo co przy podpowiedzi, z wyborem profilu liczonym na żywo.
             control = ((getattr(self.hass, "data", None) or {}).get(DOMAIN, {}).get(self._entry_id) or {}).get("control")
-            if not no_inverter_integration(entry.options, control):
+            if not await async_no_inverter_integration_now(self.hass, entry, control):
                 return self.async_abort(reason="inverter_recognised")
             patch = sensor_map_patch(user_input)
             options = merge_options(entry.options, patch)

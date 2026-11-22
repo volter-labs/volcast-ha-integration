@@ -118,6 +118,7 @@ def _assignment_world(monkeypatch, *, options=None, loaded=True, entry_exists=Tr
     hass.data["volcast"] = {"e1": {"control": SimpleNamespace(choice=None, direct=None)}} if loaded else {}
     hass.config_entries = SimpleNamespace(async_get_entry=lambda eid: entry if entry_exists and eid == "e1" else None,
                                           async_update_entry=update)
+    hass.registry = oa.live_registry(monkeypatch, hass)     # domyślnie: w rejestrach nie ma falownika
     return hass, entry, updates, repairs
 
 
@@ -316,5 +317,49 @@ async def test_assignment_fix_saves_nothing_once_an_inverter_is_recognised(monke
     flow, shown, first = await _open(hass, repairs)
     assert first["type"] == "form"
     hass.data["volcast"]["e1"]["control"] = control        # rozpoznanie pojawiło się po otwarciu naprawy
+    done = await flow.async_step_assign({"pv_power_w": "sensor.pv_now"})
+    assert done == {"type": "abort", "reason": "inverter_recognised"} and updates == []
+
+
+# ── integracja falownika doinstalowana po setupie (bez przeładowania wpisu) ────
+
+@pytest.mark.asyncio
+async def test_assignment_fix_opened_before_the_inverter_integration_saves_nothing(monkeypatch):
+    import tests.test_options_assignment as oa
+
+    hass, entry, updates, repairs = _assignment_world(monkeypatch, options={"x": 1})
+    flow, shown, first = await _open(hass, repairs)
+    assert _suggested(shown)["pv_power_w"] == "sensor.pv_now"            # jeszcze bez falownika: podpowiedź
+    hass.registry.devices["gw"] = oa.GW_DEVICE                           # użytkownik doinstalował integrację
+    done = await flow.async_step_assign({"pv_power_w": "sensor.pv_now"})
+    assert done == {"type": "abort", "reason": "inverter_recognised"}
+    assert updates == [] and entry.options == {"x": 1}
+    # sterowanie dalej widzi wybór z chwili setupu
+    assert hass.data["volcast"]["e1"]["control"].choice is None
+
+
+@pytest.mark.asyncio
+async def test_assignment_fix_opened_after_the_inverter_integration_proposes_nothing(monkeypatch):
+    import tests.test_options_assignment as oa
+
+    hass, entry, updates, repairs = _assignment_world(monkeypatch, options={})
+    hass.registry.devices["gw"] = oa.GW_DEVICE
+    flow, shown, first = await _open(hass, repairs)
+    assert first["type"] == "form"
+    assert all(v is None for v in _suggested(shown).values())
+    assert shown["description_placeholders"] == {"candidates": "", "sign_check": ""}
+    assert updates == []
+
+
+@pytest.mark.asyncio
+async def test_assignment_fix_saves_nothing_when_the_live_choice_fails(monkeypatch):
+    from custom_components.volcast.control import runtime as rt_mod
+
+    hass, entry, updates, repairs = _assignment_world(monkeypatch)
+    flow, shown, first = await _open(hass, repairs)
+
+    def boom():
+        raise RuntimeError("profiles unreadable")
+    monkeypatch.setattr(rt_mod.ds, "load_profiles", boom)
     done = await flow.async_step_assign({"pv_power_w": "sensor.pv_now"})
     assert done == {"type": "abort", "reason": "inverter_recognised"} and updates == []

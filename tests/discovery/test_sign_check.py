@@ -209,6 +209,13 @@ def test_single_current_sample_is_too_few():
     assert res.samples == 1
 
 
+def test_single_sample_without_load_sensor_names_the_missing_load_sensor():
+    res = check_signs([{PV: 2000.0, GRID: -1500.0, BATTERY: 0.0}])
+    _expect(res, None, None)
+    assert res.grid.reason == res.battery.reason == "no_load_sensor"
+    assert res.samples == 1
+
+
 def test_short_history_is_too_few():
     rows = raw_samples(make_day(10, seed=1), seed=1)[: MIN_SAMPLES - 1]
     res = check_signs(rows)
@@ -402,10 +409,11 @@ def test_no_load_sensor_never_gives_a_recommendation(day_kind, pv_kind):
 
 
 def test_no_load_sensor_keeps_the_more_specific_reasons():
-    """`too_few_samples` i `no_sensor` mają pierwszeństwo przed `no_load_sensor`."""
+    """`no_sensor` ma pierwszeństwo przed `no_load_sensor`, a brak czujnika zużycia — przed liczbą próbek
+    (powód nie zmienia się, gdy po dobie przybędzie historii)."""
     rows = raw_samples(make_day(10, seed=1), seed=1, load=False)
     res = check_signs(rows[: MIN_SAMPLES - 1])
-    assert res.grid.reason == res.battery.reason == "too_few_samples"
+    assert res.grid.reason == res.battery.reason == "no_load_sensor"
     for row in rows:
         del row[BATTERY]
     res = check_signs(rows)
