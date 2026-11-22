@@ -148,3 +148,13 @@ def test_malformed_verification_record_is_dropped_with_a_warning(caplog):
         loaded = asyncio.run(st.async_load())
         assert loaded.verification == {} and loaded.plan_only is False
         assert "verification" in caplog.text
+
+
+def test_saved_empty_verification_loads_without_a_warning(caplog):
+    # Pusty rekord (brak weryfikacji) zapisywany przy każdym zapisie nie jest „uszkodzony".
+    st = ControlStore(object(), "e1")
+    asyncio.run(st.async_save(ControlState(consent=True)))
+    caplog.clear()
+    loaded = asyncio.run(st.async_load())
+    assert loaded.verification == {}
+    assert "malformed" not in caplog.text
