@@ -328,3 +328,17 @@ async def test_not_applicable_result_covers_only_manually_saved_sensors(make_has
     assert set(result.source_origin.values()) <= {"map"}
     if not saved:
         assert result.basis == sa.BASIS_NONE and result.samples == 0
+
+
+# --- profil dostarczony po starcie: podpowiedź czujników ustępuje ogłoszonemu wyborowi ----------------
+
+@pytest.mark.parametrize("announced, expected", [
+    (None, True),                              # nic nie ogłoszono — podpowiedź dozwolona
+    (("acme-hybrid", None), True),             # profil bez integracji (tylko odczyt) — nic nie zasłania
+    (("acme-hybrid", "acme"), False),          # nowy profil z integracją czeka na przeładowanie
+])
+def test_pending_profile_choice_suppresses_sensor_suggestion(announced, expected):
+    from custom_components.volcast.control.runtime import no_inverter_integration
+
+    control = SimpleNamespace(choice=None, direct=None, announced_choice=announced)
+    assert no_inverter_integration({}, control) is expected

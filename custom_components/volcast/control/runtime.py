@@ -657,6 +657,11 @@ def no_inverter_integration(options: Mapping, control) -> bool:
     choice = getattr(control, "choice", None)
     if choice is not None and getattr(choice, "integration_domain", None):
         return False
+    # Profil z feedu dostarczony po starcie: wybór `choice` jest stały do przeładowania, a naprawa „profil gotowy”
+    # już czeka (`watch_profile_choice`) — do przeładowania nie podpowiadamy czujników, które potem zasłoniłyby profil.
+    announced = getattr(control, "announced_choice", None)
+    if isinstance(announced, tuple) and len(announced) == 2 and announced[1]:
+        return False
     return getattr(control, "direct", None) is None and not isinstance(options.get(OPT_DIRECT_TARGET), Mapping)
 
 
