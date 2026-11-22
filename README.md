@@ -5,167 +5,205 @@
 
 Home Assistant integration for [Volcast](https://volcast.app) — solar PV production forecasts powered by multi-model weather ensemble, Kalman filter calibration, and real-time nowcasting.
 
-## Beta: Installation Discovery (v2.0.0b1)
+## Two lines: stable and 2.0
 
-This version adds read-only installation discovery. Existing forecast setups keep working exactly as in 1.7.2; after updating, they also get the 'Installation discovery' sensor and 'Run discovery' button, and discovery runs automatically after each Home Assistant start.
+The integration comes in two lines. They share the forecast; the 2.0 line adds the rest.
 
-### What Discovery Does
+| | Stable (1.7.x) | 2.0 (beta) |
+|---|---|---|
+| For | Solar forecast in Home Assistant | Everything in the stable line, plus the full Volcast app: live home energy, a price-aware battery plan, EV charger, and optional inverter control |
+| Connects with | API key | Your Volcast account (pairing), or an API key |
+| Install | Default HACS catalog | Pre-release (see [Install the 2.0 beta](#install-the-20-beta-and-go-back-to-stable)) |
 
-Discovery runs automatically once after Home Assistant starts and again after each integration reload. It scans:
+**Who 2.0 is for.** Volcast account holders who want live data and the battery plan from their Home Assistant, and who are ready to try beta software. The stable line is the safe default; stay on it unless you want these features. This README describes the 2.0 line as it is today; the forecast sections apply to both lines.
 
-- Your installed inverter and price integrations (device and entity registries)
-- Entity names, units, and options from those integrations
-- The inverter's host address from its settings (no passwords, nothing else)
-- How many days of long-term statistics your energy sensors have
-- Sends one UDP broadcast on port 48899 to find Wi-Fi data loggers on your local network
+## Requirements
 
-Discovery adds two entities to the Volcast device:
-- **Installation discovery** sensor — a summary of what was found
-- **Run discovery** button — manually re-scan anytime
+- Home Assistant 2024.4.0 or newer.
+- The Volcast app: [App Store](https://apps.apple.com/app/id6758962799) or [Google Play](https://play.google.com/store/apps/details?id=com.volcast.app).
+- A subscription tier that matches what you use:
 
-### Privacy & Data
+| Tier | What it covers |
+|---|---|
+| Forecast | 7-day forecast, calibration, alerts, and the API key for Home Assistant (the **API Key** card in the app, on the Home Assistant screen in Settings) |
+| Plan | Everything in Forecast, plus live energy, prices and the daily battery plan |
+| Automate | Everything in Plan, plus inverter control |
 
-For an entry that is not connected to a Volcast account, the full discovery result stays in Home Assistant only. It is visible in your diagnostics file, where serial numbers, MAC addresses and e-mails are masked (IP addresses are kept). **Nothing is sent to Volcast.** (A paired entry does send some of this data to your account — see "Connect your account (beta)" below.)
+The app shows what your tier includes. Control also needs your consent in the app (see [Inverter control](#inverter-control)).
 
-The diagnostics file still lists entity names and local IP addresses, so review it before sharing it with anyone.
+## Install the 2.0 beta and go back to stable
 
-### New: Discovery-Only Setup
+2.0 versions are pre-releases, so they are not offered by default. Below, "the latest 2.0.0 beta" is the newest pre-release and "the stable version (1.7.x)" is the newest non-beta release. All versions and release notes are on the [GitHub Releases](https://github.com/volter-labs/volcast-ha-integration/releases) page.
 
-A new setup option "**Discovery only (no account)**" is for people without a Volcast account. It enables discovery in Home Assistant with no forecast, no cloud connection, and no Volcast API key required. It is available only when Volcast is not set up yet, because forecast setups already include discovery.
+**Make a Home Assistant backup first.** Both HACS and the Marketplace advise restoring a backup instead of downgrading.
 
-### Sharing Your Setup
+### Home Assistant Marketplace (Home Assistant 2026.11 and newer)
 
-To share your installation details with support:
+1. **Settings → Marketplace**, open **Volcast Solar Forecast** (add the repository link `https://github.com/volter-labs/volcast-ha-integration` with **Add from link** if it is not listed).
+2. Menu **⋮ → Include pre-releases**, confirm.
+3. An update to the latest 2.0.0 beta appears (also under **Settings → Updates**). Update it.
+4. **Restart Home Assistant yourself.** Home Assistant does not ask for a restart here.
 
-1. Go to **Settings** → **Devices & Services**
-2. Click **Volcast**
-3. Tap the **⋮** (three dots) menu → **Download diagnostics**
+To go back: menu **⋮ → Install another version**, pick the stable version (1.7.x), update, then restart Home Assistant. To stop being offered betas, use **⋮ → Exclude pre-releases**.
 
-### Going Back to v1.7.2
+### HACS
 
-If you'd prefer to skip this beta:
+1. Open **Volcast Solar Forecast** in HACS, menu **⋮ → Redownload**.
+2. Expand **Need a different version?** and pick the release: the latest 2.0.0 beta (marked pre-release), or the stable version (1.7.x) to go back. Click **Download**.
+3. Restart Home Assistant (HACS raises a "Restart required" repair you can confirm).
 
-1. **If you enabled inverter control:** turn off the Volcast control switch (or set **Options → Inverter control → Off**) and confirm the inverter is back in its normal mode. Do this first — 1.7.2 has no control logic and a Home Assistant restart never undoes a write on its own, so a value Volcast wrote would otherwise stay until you change it by hand.
-2. **Delete** any "Discovery only (no account)" Volcast entry — v1.7.2 cannot load it
-3. In HACS, click **Volcast Solar Forecast** → **⋮** → **Redownload**
-4. Select version **1.7.2**
-5. Restart Home Assistant
+### Before going back to stable
 
-## Beta: Account Pairing & Inverter Control (v2.0.0b2)
+1. If you enabled inverter control, turn off the Volcast control switch (or set **Options → Inverter control → Off**) and confirm the inverter is back in its normal mode. The stable version has no control logic, and a Home Assistant restart never undoes a write on its own.
+2. Delete any "Discovery only (no account)" Volcast entry; the stable version cannot load it.
 
-### Connect your account (beta)
+After going back with a paired account, the connection to your account stays, but the 2.0 entities (plan, status, control, discovery) are unavailable and live data in the app stops. Updating to the beta again needs no new pairing; live data returns within a few minutes. Turning off the control switch also withdraws your control consent on the account.
 
-Choose "**Connect to your Volcast account**" during setup, or convert an existing discovery-only or API-key entry to it later. Home Assistant opens a pairing window; confirm it in the Volcast app or on the Volcast website, and the setup finishes by itself — no code to copy.
+## Connect your account (pairing)
 
-During pairing, Home Assistant shares with Volcast: the inverter's make and model, its rated power, and the list of settings Volcast can control on it (no serial number and no local address — those stay in Home Assistant), and the price entity id if a usable price sensor was found. Once paired, the integration also sends:
+1. **Settings → Devices & services → Add integration**, search for **Volcast**.
+2. In **Set up Volcast** choose **Connect to your Volcast account (recommended)**. Leave **Advanced** closed and submit.
+3. When Home Assistant shows an external-site step, click **Open website**. The link opens the Volcast app (on a computer, open it on your phone).
+4. In the app, check the Home Assistant name and **Connect**, then confirm a second time with Face ID or fingerprint (on a device without biometrics, **Confirm once more**).
+5. The Home Assistant window finishes by itself, usually within a minute, and ends on **Name and assign** (choose areas for the two devices or **Skip and finish**).
 
-- Live readings roughly once a minute
-- Up to 60 days of past consumption history, once
-- A control summary — what Volcast is doing or would do, any pause, and how many times a setting was changed outside Volcast (never entity ids or serial numbers)
-- The inverter profile id, battery capacity (if known), which settings Volcast can control, and whether the local control switch is on
+The pairing request expires after 10 minutes; start again if it runs out. The **Control** switch starts off, and nothing controls your inverter until you also agree in the app.
 
-It also adds a plan card and a "Volcast" panel with the current and upcoming plan slots, and lets you pick a price sensor of your own in **Options → Energy prices**.
+Other setup modes: **Connect with API key** is the forecast-only setup of the stable line (needs the Forecast tier); **Discovery only (no account)** runs a read-only scan of your installation without any account (see [Privacy and diagnostics](#privacy-and-diagnostics)). An API-key or discovery-only entry can be converted to a paired one later.
 
-### Inverter control (beta)
+During pairing, Home Assistant shares the inverter's make and model, rated power, the list of settings Volcast could control, and the price entity id if a usable price sensor was found. Serial numbers and local addresses stay in Home Assistant. Once paired, the integration also sends:
 
-Volcast can write plan-driven mode and power settings to your inverter **through your existing inverter integration's entities** (for example a select for mode and a number for power). A direct local connection to the inverter is described in "Direct connection (beta)" below.
+- live readings roughly once a minute,
+- up to 60 days of past consumption history, once,
+- a control summary: what Volcast is doing or would do, any pause, and how many times a setting was changed outside Volcast (never entity ids or serial numbers),
+- the inverter profile id, battery capacity (if known), which settings Volcast can control, and whether the control switch is on.
 
-**In this pre-release, control is enabled per inverter brand.** Writing is enabled only once a brand's profile has been verified against real hardware. Control through the **GoodWe** integration (the HACS "GoodWe Inverter (experimental)" integration) is verified; other brands are not yet. Until a brand is verified, the status sensor always shows what Volcast *would* write, and nothing actually reaches the inverter.
+It adds a plan card and a "Volcast" panel with the current and upcoming plan slots.
 
-Once a brand is verified, nothing is written unless all of these are also true at once:
+## Live data and sensors
 
-1. "**Through the inverter integration (entities)**" is selected in **Options → Inverter control**
-2. You've given consent in the Volcast app
-3. The Volcast **control switch** entity is turned on in Home Assistant
+Live data means the app's Home, Energy and Plan screens fill with readings from your inverter.
 
-Entity-mode control and account pairing are both beta features.
+**Recognised inverter integrations work by themselves.** Volcast matches your installed integration to an inverter profile and reads state of charge and PV, battery, grid and house-load power from its entities.
 
-**Verification ladder and plan-only mode.** Before the first write to an inverter, Volcast verifies the device step by step: a read-only trial that only counts the writes it would make, a control write confirmed by read-back, and, where the profile allows it, a short test window. A profile already marked verified starts at the control write and skips the trial. A stop returns the inverter to the settings it had before Volcast took control, and the verification sensor shows the current step. If another controller writes the same settings, Volcast asks you to choose who controls the inverter; choosing your own controller keeps Volcast in plan-only mode, where it computes the plan but does not write.
+**If Volcast does not recognise an integration**, discovery reports "No inverter integration found" and the app shows "Waiting for data from the installation…". Then:
+
+- A repair appears: **Volcast needs to know which sensors to use** (only for a paired entry without a recognised profile or a direct connection, and with no PV power sensor chosen yet). Its **Choose your inverter sensors** step shows a proposal built from your Home Assistant sensors.
+- The same proposal is in **Configure → Volcast Options → Installation details**. Review each sensor and **Submit**.
+
+Nothing is saved until you submit, and the inverter settings are never changed by this step. PV power is required; the other sensors improve the plan.
+
+**Signs.** Volcast expects battery power to be **positive while discharging** and grid power to be **positive while importing**. If a sensor is the other way round, turn on **Battery sensor shows discharging as negative** or **Grid sensor shows export as positive** in the same form. The battery option applies only to a battery sensor you chose there.
+
+**Sign check.** The form compares your sensors over the last 24 hours of recorder statistics (current readings if there is no history) and says whether a sign looks wrong. It needs a house load sensor assigned; without one there is no recommendation (a battery-free installation's grid sign can still be judged from idle night readings). It is a recommendation: you decide.
+
+**For automations**, the read-only action `volcast.propose_sensor_assignment` returns the same proposal and sign check and changes nothing. `config_entry_id` is optional when only one entry is paired. As the actions of an automation or script:
+
+```yaml
+actions:
+  - action: volcast.propose_sensor_assignment
+    data: {}
+    response_variable: proposal
+  - action: persistent_notification.create
+    data:
+      title: "Volcast sensor proposal"
+      message: "Applicable: {{ proposal.applicable }}, flag changes: {{ proposal.flag_changes }}"
+```
+
+`applicable` is false when an inverter integration is recognised or a direct connection is set up, because then there is nothing to propose.
+
+## Supported inverters
+
+Profiles are data files that describe how to read, and where verified, control an inverter. They can be delivered to the integration without an update, so this list can grow between releases.
+
+| Group | Inverters | What works |
+|---|---|---|
+| Verified on real hardware | GoodWe ET/EH/BT/BH (the GoodWe integration, or a direct connection) | Reading and control |
+| Prepared, read-only until first tests | Deye SUN-xK-SG, FoxESS H1-G2/AC1-G2/P1, Huawei SUN2000, Sungrow SH, SolaX X1/X3-Hybrid, Sofar HYD, Solis hybrid, SolarEdge StorEdge, Fronius GEN24 | Reading and a trial that never writes; no control |
+| Any other inverter visible in Home Assistant | Anything with sensors for power and state of charge | Reading, after you assign the sensors |
+
+Control is enabled for a brand after its tests, and only when you ask for it (see below). Profiles that arrive after the release are read-only drafts until verified. The prepared brands use the integrations `foxess_modbus`, `fronius`, `huawei_solar`, `solarman`, `solax_modbus`, `solaredge_modbus` or a Modbus connection; their profiles only map readings from those integrations.
+
+## Inverter control
+
+Volcast can write the plan's mode and power settings to your inverter. This is off until you turn it on, and it works only for verified brands. For every other inverter the status sensor shows what Volcast **would** write, and nothing reaches the inverter.
+
+Choose the method in **Configure → Inverter control**:
+
+- **Through the inverter integration (entities)**: Volcast writes the mode and power entities of your inverter integration (for example a select for mode and a number for power).
+- **Directly over the local network**: Volcast talks to the inverter itself (GoodWe over UDP, Modbus TCP or an RS485 gateway). Search under **Installation details → Search for the inverter on the local network** (read-only). The GoodWe Wi-Fi module must have Volcast as its only local client.
+- **Off — forecast and monitoring only**.
+- **Choose inverter entities manually** maps the entities yourself, with a check screen before saving.
+
+Nothing is written unless all of these are true: a method other than Off is chosen, you gave consent in the Volcast app, the **Control** switch is on in Home Assistant, and the brand is verified. For direct control, the inverter's identity at the saved address must also be confirmed and no other client may use it.
+
+A new device first goes through a verification ladder: a read-only trial that counts what it would write, a control write confirmed by read-back, and a short test window. Verified profiles start at the control write. If another controller writes the same settings, Volcast asks who controls the inverter; choosing your own controller keeps Volcast in plan-only mode.
 
 ### Safety behaviour
 
-- **Daily limit on setting changes** — Plan writes made through the inverter integration entities now count against a daily write limit per setting and in total over a rolling 24 hours. When the limit is reached, further plan writes are held. Returning the inverter to its own settings is never blocked by the limit.
-- **You change a setting yourself while control is on** — Volcast pauses control for 30 minutes, keeps the value you set, and raises a repair notification. A clock-triggered schedule you already run on your inverter is treated as ordinary drift instead — Volcast does not read it as "someone took over" — so it does **not** pause control. Instead, Volcast writes the planned value back on its next control cycle, about a minute later. If your own automation is meant to control these settings, turn the Volcast control switch off first, or the two will keep overwriting each other.
-- **Consent is revoked, the switch is turned off, or the entry is disabled/removed** — Volcast returns the inverter to how it was **before Volcast took control**: its baseline mode, export limit and SoC limits — not to the last value Volcast wrote. The one exception: if you had already taken the mode over yourself, Volcast leaves the mode alone and keeps only the last power setpoint it wrote, instead of restoring the older value there too.
-- **Before installing an older version, or removing the integration's files in HACS without first deleting the entry:** turn off the Volcast control switch and confirm the inverter is back in its normal mode first — see "Going Back to v1.7.2" above. Deleting the entry itself does restore (previous bullet); an older version or a files-only removal has no control logic to do that for you.
-- **Repeated write failures** — a repair notification tells you control has stopped working and what to check.
-- **Known limitation:** a 30-minute pause does not survive a Home Assistant restart — after a restart, control resumes immediately even if a pause was in effect before.
+- **Daily limit** on setting changes per setting and in total (rolling 24 hours) protects the inverter's memory. When it is reached, plan writes are held; returning the inverter to its own settings is never blocked.
+- **You change a setting yourself while control is on**: control pauses for 30 minutes, keeps your value and raises a repair. A clock-triggered schedule you run on the inverter counts as drift and is written back about a minute later; if your own automation should control these settings, turn the Volcast switch off. The pause does not survive a Home Assistant restart.
+- **Consent withdrawn, switch off, or entry disabled or removed**: the inverter returns to how it was before Volcast took control (baseline mode, export limit and state-of-charge limits), confirmed by read-back for direct control. If you had taken the mode over yourself, the mode is left alone.
+- **Every write is read back**; only values the inverter actually holds are recorded.
+- **Stopping, unloading or reloading** tries to set the inverter's normal mode if it is in a forced mode set by Volcast, within 10 seconds (best effort). A control cycle that cannot run the plan safely does the same.
+- **Repeated write failures**, a different device at the saved address, or another client on the connection stop control and raise a repair.
+- **These safeguards only work while Home Assistant runs.** If Home Assistant or the host fails while the inverter is in a forced mode (grid charge or selling), it stays in that mode until Home Assistant is back.
 
-### EV charger (beta)
+Known limitations: single-phase Deye inverters are not identified; no serial port (use an RS485 to TCP gateway); local IP addresses only; on some GoodWe models the upper state-of-charge limit cannot be read back and is not set directly.
 
-A charger you track under **Options → EV charger** can follow the charging slots of the Volcast plan: Volcast sets the current (a `number` entity) and starts or stops charging (a `select` or `switch` entity) of that charger only. It writes under the same conditions as inverter control (consent, control switch on, not in plan-only mode). It pauses (sends no commands, also no start) until a plan generated after the pause arrives (after a manual stop or start: a plan received after the cloud accepted that event), when: you or an automation stop charging in Home Assistant during a charging slot, or start it during an off slot; or the charger stops charging by itself during a charging slot without a recent Volcast stop (a stop from the charger's own app, button or card, the end of charging, an error, the charger becoming unavailable, unplugging). A stop shown as paused or "charged" while the current plan still needs energy is reported to the cloud as a manual stop; the cloud recalculates the plan within about half a minute, and a plan that still wants charging (for example after you tap Resume in the app) starts the charger again. A car that stops at its own charge limit looks the same and pauses until the next plan. A new charging session ends the pause. The charger's start/stop entity is not used to detect changes made outside Home Assistant: some chargers flip it by themselves. If the cloud does not answer for a long time, it starts charging at full power when the ready time gets close. This happens only when the cloud explicitly allowed it for the current plan (not when you paused charging or chose a PV-only mode), and without knowledge of the grid connection limit. Turning control off leaves the charger in its current state; start charging manually if needed. Needs the matching server-side update. Details: `docs/release-notes/v2.0.0-beta10.md`.
+Direct-connection data: the address, port, unit ID, logger serial and a salted device fingerprint stay in Home Assistant; readings, profile id, connection type and rated power go to Volcast, never the address, serials or fingerprint.
 
-### Diagnostics privacy
+## EV charger
 
-The downloadable diagnostics file masks serial numbers, MAC addresses and e-mail addresses (IP addresses are kept, since they help with troubleshooting). Once an entry is paired, its readings and control summary also go to your Volcast account, as listed above — diagnostics is no longer the only place they're visible.
+Under **Configure → EV charger**, pick the chargers found by discovery and check the entity for each role (status, charging current or power limit, start/stop, power, energy).
 
-## Beta: Direct Connection
+- **Controlled charger**: it follows the charging slots of the Volcast plan. Volcast sets the current (a `number` entity) and starts or stops charging (a `select` or `switch` entity) of that charger only, under the same conditions as inverter control (consent, switch on, not in plan-only mode). Turning control off leaves the charger as it is.
+- **Monitor-only charger**: a charger exposed as sensors only (status, power, energy) can be added as monitor-only. Its sessions are reported to Volcast; it is never controlled.
 
-### Direct connection (beta)
+A controlled charger pauses (no commands, also no start) until a plan generated after the pause arrives when you or an automation stop charging during a charging slot or start it during an off slot, or when the charger stops by itself (its own app or button, end of charging, an error, unplugging, a car that reached its limit). A stop while the plan still needs energy is reported to the cloud, which recalculates within about half a minute. If the cloud does not answer for a long time, charging at full power starts when the ready time gets close, only when the cloud allowed it for the current plan. Devices of a read-only integration, or ones with a battery state-of-charge sensor, are not offered as chargers.
 
-Volcast can connect to a supported inverter directly on your local network — **GoodWe** (ET/EH/BT/BH, over UDP or Modbus TCP), **Deye** three-phase hybrids (SUN-xK-SG, through a Solarman data logger or Modbus TCP), or either behind an RS485 ↔ TCP gateway.
+## Energy prices
 
-- **Search**: **Options → Installation details → Search for the inverter on the local network** only reads from devices that answer (identification and settings registers) and never writes; pick your inverter from the list or enter its local IP address.
-- **Sensors**: state of charge, temperatures, voltages, power flows, lifetime energy counters (Energy dashboard), the inverter mode and diagnostic settings, refreshed every 10 s by default.
-- **Read-only test connection**: for inverters whose direct control is not verified yet, **Installation details → Read-only test connection** shows the sensors and what Volcast *would* write, and never writes.
+Paired accounts on the Plan or Automate tier get two sensors, **Buy price** and **Sell price**: the current price per kWh in your market's currency, exactly as the Volcast plan and app use it (energy, variable distribution charges and VAT; fixed fees are not included). Each has today's and tomorrow's prices as an attribute list; tomorrow appears once prices are published. They are unavailable for accounts whose prices come from Home Assistant itself, and when the cloud reports no prices.
 
-**Direct mode is offered once the inverter is identified, but every device first goes through a verification ladder before Volcast writes to it.** The ladder starts with a read-only trial: Volcast reads the inverter and counts what it would have written. Only after you allow control does it make a control write (the current setting is written again and read back) and run a short test window. Brands marked verified skip the trial and start at the control write.
+If your prices come from Home Assistant, choose them in **Configure → Energy prices** (purchase and sale price sensors that already provide a complete series) or **Price source from an integration**.
 
-- **GoodWe** (ET/EH/BT/BH) — verified since v2.0.0b6 on a live GW8KN-ET over the Wi-Fi module (UDP). Writes are also enabled over Modbus TCP and over an RS485 ↔ TCP gateway (Modbus RTU framing); these use the same registers but have not been tried on hardware yet. Other ET/EH/BT/BH models share the register map but have not been tried yet; the search detects registers a model does not have, and Volcast does not use them. Choose **Options → Inverter control → Directly over the local network**.
-- **Deye** — still draft: only the read-only test connection is available, and nothing is written.
-- **Draft profiles** — Huawei SUN2000 (L1/M1, through an SDongle over Modbus TCP), Sungrow SH (WiNet-S, Modbus TCP), SolaX X1/X3-Hybrid G3/G4 (Modbus TCP or RTU), Sofar HYD 5-20KTL-3PH (Solarman logger or RTU), Solis hybrid S5/S6-EH1P and RHI (Solarman stick or RTU), FoxESS H1-G2/AC1-G2/P1 (RS485 gateway; readings through `foxess_modbus` only), SolarEdge StorEdge and Home Hub (Modbus TCP, port 1502) and Fronius GEN24 (Modbus TCP). All eight are **draft**: only the read-only test connection is available, nothing is written, and control for any of them requires a live verification on the inverter first. Their `ha` entries are only hints for mapping the readings of an existing integration: entity mode is not offered for them until that integration entry is verified. When several profiles describe the same integration (`solarman`, `solax_modbus`) and the device's manufacturer and model text does not decide between them, no profile is selected and the discovery sensor lists the candidates. Profile ids: `huawei-sun2000`, `sungrow-sh`, `solax-x-hybrid`, `sofar-hyd`, `solis-hybrid`, `foxess-h`, `solaredge-storedge`, `fronius-gen24`.
+## Read-only integrations
 
-Nothing is written unless direct control is selected, consent is given in the Volcast app, the control switch is on, the inverter's identity at the saved address is confirmed and no other client uses the inverter.
+Some integrations are described by a sensors-only profile. Volcast reads state of charge and PV, load, grid and battery power from them and never writes to them; control is not offered for such an integration. Profiles for these integrations arrive through the profile feed without a plugin update. If one becomes your chosen profile, a repair notice appears; confirm it and reload Volcast (or restart Home Assistant) to start reading. In entity mode, if the source reports identical load and grid values for 30 minutes, Volcast stops sending inverter readings until a value changes.
 
-**The GoodWe Wi-Fi module must have Volcast as its only local client.** Other Home Assistant integrations, the manufacturer's app on the local network or other energy controllers talking to the same module cause timeouts and mismatched replies.
+## Forecast
 
-Safety rules for the direct connection ("neutral mode" = the inverter's normal self-use mode, which is not the same as returning it to its settings from before Volcast):
+The sections from here to "Accuracy & Limitations" describe the forecast and are the same on both lines.
 
-- Every write is read back; only values the inverter actually holds are recorded.
-- A daily limit on setting changes protects the inverter's memory; a forced charge or discharge returns to the inverter's normal mode when the limit is hit, and returning to baseline is never blocked by it.
-- Withdrawing consent, turning the switch off, or disabling/removing the entry returns the inverter to its settings from before Volcast (confirmed by reading back). Changing the control method in the options first returns the inverter through the current method — if the inverter cannot be reached, the change is refused.
-- Stopping Home Assistant, or unloading or reloading the entry, tries to set the neutral mode if the inverter is in a forced mode set by Volcast (in both direct and entity mode); control resumes afterwards. This is best effort within a 10-second budget, not a guarantee: if the inverter does not answer in time, it keeps its last mode and an error is logged.
-- A control cycle that cannot run the plan safely (no plan, a stale or missing reading, an error, another client on the connection) sets the neutral mode if the inverter is in a forced mode set by Volcast. An action that needs a setting the inverter does not have or that cannot be read runs in the neutral mode instead; without a usable mode register direct control does not run and a repair notification is raised.
-- In a sell slot the export setpoint is recalculated from the inverter's own PV and house-load reading; without a usable reading the slot runs in the neutral mode.
-- A setting you change twice within 30 minutes pauses control for 30 minutes and stays as you set it until the plan for it changes. During a pause, a discharge set by Volcast is switched to the neutral mode once the battery reaches the plan's reserve.
-- Another integration configured with the inverter's local address blocks the direct connection (Volcast checks again every few minutes; cloud-only integrations do not block it).
-- If a different device answers at the saved address, reading and control stop until you search again.
-- **These safeguards only work while Home Assistant is running.** If Home Assistant crashes or hangs, or the host loses power or network, while the inverter is in a forced mode (charging from the grid or selling), the inverter stays in that mode until Home Assistant is back.
-
-Stored in Home Assistant only: the inverter's local address, port, unit ID, Solarman logger serial, a salted device fingerprint and the search results. Sent to Volcast: the readings, the profile id, the connection type and counters, which settings can be controlled and the rated power — **never** the address, serial numbers, the fingerprint or the salt. Raw frames appear in the diagnostics file only while the read-only test connection is on, with serial numbers and the logger serial zeroed.
-
-Known limitations: single-phase Deye inverters are not identified; Solarman logger behaviour on real hardware and the Deye write details are not verified yet; on some GoodWe models the upper state-of-charge limit cannot be read back and is not set directly. No serial port (use an RS485 ↔ TCP gateway), local IP addresses only, no background scanning. Brands that answer on input registers (function code 4) are supported by the Modbus core. The SunSpec scale factors in the draft profiles (Fronius, SolarEdge) are fixed assumptions and may be wrong for some inverters. Some brands (FoxESS) have no serial or rating register, so they cannot be identified on the direct path; until the `foxess_modbus` integration entry is verified they get readings only, no control.
-
-**Going back to v2.0.0b2:** if you used direct control, turn off the Volcast control switch and wait until the status sensor shows the inverter was returned to its previous settings — b2 cannot do that for a direct connection. See `docs/release-notes/v2.0.0-beta3.md` for details.
-
-## Features
+### Features
 
 - **Energy Dashboard integration** — appears as a solar forecast source in the HA Energy Dashboard
 - **7-day forecast** — daily energy (kWh) and peak power (kW) for up to 7 days
 - **Hourly & 5-min data** — `detailedHourly` and `detailedForecast` attributes on every daily sensor
 - **Live power estimate** — interpolated current power output (W)
-- **Production tracking** — sends your actual production to Volcast for forecast calibration (from inverter control telemetry when it reports PV power, otherwise from mapped PV sensors)
+- **Production tracking** — sends your actual production to Volcast for forecast calibration (from the inverter readings when they include PV power, otherwise from the PV sensors you choose in the Forecast options)
 - **Nowcasting** — adjusts today's remaining forecast based on actual production so far
 - **Curtailment detection** — uses battery SoC to detect inverter curtailment; affected hours are excluded from calibration so a capped system doesn't skew the forecast
 - **Persistent retry queue** — production submissions that fail (network issues, API downtime) are queued locally and retried automatically
 - **Peak production alert** — binary sensor for automations (configurable threshold)
-- **UI-based setup** — no YAML needed, just enter your API key and select your sensors
+- **UI-based setup** — no YAML needed: connect your Volcast account (or paste an API key) and select your sensors
 - **Key sanity check at setup** — a pasted key that is not a real Volcast key (for example the shortened preview shown in the app) is rejected instantly with a clear hint, before any network call
 
 ### Resilience & Reconciliation
 
-The integration now ships three layered resilience mechanisms:
+The integration has three layered resilience mechanisms:
 
 - **Forecast retry** — short network blips no longer flap entities to `unavailable`. The integration retries failed forecast fetches with 5/15/45s backoff inside one update cycle.
 - **Submit retry** — hourly production submits use the same 5/15/45 retry pattern before queuing. Persistent retry queue still kicks in for longer outages.
 - **Daily reconciliation** — the integration reads hourly statistics from HA Recorder and fills any gaps in your Volcast cloud history. The scheduled run at 00:30 local each day backfills the **previous day**. Additionally, on **HA startup** it reconciles **both yesterday and today**, so a gap left by an HA restart or update during the day self-heals immediately instead of waiting for 00:30. Requires `energy_entity` configured with `state_class: total_increasing`.
 
-New diagnostic entities (under integration → Diagnostic):
+Diagnostic entities (under integration → Diagnostic):
 - `sensor.volcast_submit_queue_depth` — readings waiting to be retried (0 = healthy).
 - `sensor.volcast_last_reconciliation` — timestamp + status of last daily backfill.
 - `binary_sensor.volcast_integration_healthy` — single signal you can wire into automations.
 
-Power-only users (no `energy_entity` configured): retry mechanisms apply, but daily reconciliation is **not** active. Planned for a future release.
+Power-only users (no `energy_entity` configured): retry mechanisms apply, but daily reconciliation is **not** active.
 
 ### Manual sync (force sync)
 
@@ -181,9 +219,16 @@ at 00:30. To force it immediately without waiting:
 Both are safe to repeat: hours already delivered (and the current in-progress
 hour) are skipped, so nothing is double-counted.
 
-**Limitation:** if HA was fully down during an hour, HA Recorder may have no
-statistics row for that hour. The energy is not lost — it lands in the next
-hour's delta — but no sync can split it back out. Daily totals stay correct.
+**After a data gap:** if Home Assistant or the inverter integration was
+unavailable for a while (a restart, an update, an offline inverter), the
+integration remembers the last known counter value. When readings return, it
+reports the whole period the reading covers (up to 36 hours) and Volcast
+spreads that energy over the hours of the gap, instead of attributing it to a
+single hour. Hours already covered by such a report are not re-sent by the
+nightly reconciliation. Once a day is closed, the integration also sends that
+day's total calculated from Home Assistant statistics — only when the
+statistics for the day are complete — so the day can be corrected after a gap.
+Sending it again gives the same value. On the 2.0 line this recovery is available from beta 15.
 
 _(The button and service require an energy sensor configured — power-only
 users have nothing to reconcile.)_
@@ -192,17 +237,21 @@ users have nothing to reconcile.)_
 
 ### Forecast Model
 
-Volcast uses a physics-based PV simulation model fed by a multi-model weather ensemble (ECMWF IFS, GFS, and regional models like ICON, UKMO, JMA depending on your location). The models are blended with horizon-dependent weighting — regional models dominate for short-range forecasts, global models take over for longer horizons.
+Volcast uses a physics-based PV simulation model fed by a multi-model weather ensemble. The models depend on your location:
 
-The integration polls the Volcast cloud API at a configurable interval (default: 60 minutes). Data is served from a server-side cache that refreshes every 2 hours, so values match exactly what you see in the Volcast mobile app.
+- **Most regions**: a regional model (for example ICON, AROME, UKMO, JMA, HRRR for the contiguous USA) blended with ECMWF IFS. The regional model dominates the first 48 hours; later, ECMWF IFS takes over, and beyond the regional model's range it is used alone.
+- **No regional model available**: ECMWF IFS blended with GFS.
+- **Netherlands / Benelux**: five models (KNMI, DMI, ICON-D2, AROME France, ECMWF IFS) averaged with equal weights over the hours each one covers.
+
+The integration polls the Volcast cloud API at a configurable interval (default: 60 minutes). Data is served from a server-side cache that is refreshed about once an hour, the same cache the Volcast mobile app reads.
 
 ### Production Tracking & Calibration
 
-When you connect your inverter's energy or power sensor, the integration sends **hourly production summaries** to Volcast. This data drives two mechanisms. When the telemetry of a paired entry reports PV power (`pv_power_w`, with inverter control on or off), production is reported through that telemetry instead, and the mapped PV sensors are not used for calibration (one production source per account):
+When you connect your inverter's energy or power sensor, the integration sends **hourly production summaries** to Volcast. This data drives two mechanisms:
 
-**Kalman filter calibration** — Volcast maintains a per-user bias estimate that adjusts forecasts based on how your actual production compares to predictions. The filter uses hourly cloud cover to apply different corrections for clear vs. cloudy conditions. This means the forecast learns your system's real-world characteristics (shading, soiling, inverter efficiency) over time. Calibration requires at least 5 days of data to activate and is applied to future days only — today's forecast stays unbiased.
+**Kalman filter calibration** — Volcast maintains a per-user bias estimate that adjusts forecasts based on how your actual production compares to predictions. The filter uses hourly cloud cover to apply different corrections for clear vs. cloudy conditions. This means the forecast learns your system's real-world characteristics (shading, soiling, inverter efficiency) over time. The correction is applied to future days and to the remaining hours of today (hours after the current one); hours that have already passed keep the forecast issued earlier.
 
-**Nowcasting** — After receiving at least 2 hourly readings for today, Volcast computes an actual-to-forecast ratio and adjusts the remaining hours of today's forecast. The adjustment decays exponentially for hours further from the last reading, so it has the strongest effect on the next few hours. This helps when conditions differ from the morning forecast — for example, unexpected cloud cover or clearer skies than predicted. Nowcast resets daily.
+**Nowcasting** — Once at least one recent hourly reading for today shows production (above 0.01 kWh) in an hour with a forecast above 0.5 kWh, Volcast computes an actual-to-forecast ratio from up to the last two such hours and adjusts the remaining hours of today's forecast. The adjustment halves with every hour after the last reading, so it has the strongest effect on the next few hours. This helps when conditions differ from the morning forecast — for example, unexpected cloud cover or clearer skies than predicted. Nowcast resets daily.
 
 **Curtailment detection** — When you connect a battery state-of-charge sensor, the integration detects hours when the inverter caps production (battery full + clear sky + low output vs. forecast). Curtailed hours are marked so calibration ignores them — otherwise the Kalman filter would learn a downward bias from artificially low production. Battery sensors are optional; without them, curtailment is not detected but calibration still works.
 
@@ -210,7 +259,7 @@ All three mechanisms are optional — the forecast works without production trac
 
 ### How production data is collected
 
-The integration's own production tracker, fed from the mapped PV sensors, is dropped only when telemetry reports PV power (`pv_power_w`). Otherwise the mapped sensors remain the production source, and the integration tracks them via state change events and accumulates data in hourly buckets:
+The integration tracks your inverter sensor via state change events and accumulates data in hourly buckets:
 
 - **Energy sensor** (preferred): Computes the delta between the first and last reading each hour. Handles counter resets and carries over the last reading to the next hour to avoid gaps.
 - **Power sensor** (fallback): If the energy sensor is unavailable or resets, uses trapezoidal integration of power readings to estimate hourly energy.
@@ -226,47 +275,33 @@ Data is submitted to Volcast once per hour (at ~5 minutes past each hour). A qua
 | `sensor.volcast_energy_forecast_day_3` – `day_7` | Energy (kWh) | Days 3–7 forecasted production |
 | `sensor.volcast_power_now` | Power (W) | Current estimated power output |
 | `binary_sensor.volcast_peak_production` | Binary | ON when power > threshold % of today's peak |
-| `sensor.volcast_api_status` | Diagnostic | API connection status; attributes include the server-side calibration (`production_source`, `kalman_bias`, `kalman_updated_at`, `calibration_buckets`, `last_production_hour`) |
-| `sensor.volcast_forecast_age` | Diagnostic (min) | Minutes since the server generated the forecast, recomputed every minute; attributes `generated_at`, `server_reported_cache_age_minutes`, `minutes_since_last_success`, `consecutive_failures` |
+| `sensor.volcast_api_status` | Diagnostic | API connection status |
 
-## Prerequisites
+## Forecast setup
 
-1. **Volcast app** — download from [App Store](https://apps.apple.com/app/volcast/id6740044441) or [Google Play](https://play.google.com/store/apps/details?id=pl.volcast.app)
-2. **Premium subscription** — required for API access
-3. **API key** — generate in the app: Settings > API Access
+The forecast works as soon as the entry is set up. To improve it with your own production data, open **Configure → Volcast Options → Forecast** (all sensors are optional and can be changed later):
 
-## Installation
+- **Today's PV generation (kWh)**: a sensor with your solar production, a daily counter or a lifetime total (for example "Today's PV Generation" or "Daily Yield"). Preferred source for calibration.
+- **Current PV power (W)**: real-time power output, used as a fallback when the energy sensor is unavailable.
+- **Battery state of charge (%)**: enables detection of inverter curtailment when the battery is full.
+- **Battery charge power (W)**: power to or from the battery; improves curtailment accuracy.
 
-### HACS (recommended)
+While inverter readings include PV power (a recognised integration or a direct connection), calibration uses them and the PV sensors above are not used; you can leave or clear them.
 
-1. Open HACS in your Home Assistant
-2. Click the 3 dots menu > **Custom repositories**
-3. Add `https://github.com/volter-labs/volcast-ha-integration` as an **Integration**
-4. Click **Install**
-5. Restart Home Assistant
+### Configuration options
 
-### Manual
+After setup, **Configure** opens **Volcast Options** with the menu **Forecast**, **Inverter control**, **Installation details**, **Energy prices**, **EV charger** and **Price source from an integration**. The **Forecast** page has:
 
-1. Download the `custom_components/volcast` folder from this repo
-2. Copy it to your HA `config/custom_components/` directory
-3. Restart Home Assistant
+| Option | Default | Range | Description |
+|--------|---------|-------|-------------|
+| Update interval | 60 min | 15–1440 | How often to poll the API |
+| Peak threshold | 80% | 50–100 | Threshold for peak production binary sensor |
+| PV energy sensor | — | — | Today's generation sensor (kWh) |
+| PV power sensor | — | — | Current power sensor (W, fallback) |
+| Battery SoC sensor | — | — | State of charge (%), enables curtailment detection |
+| Battery charge power sensor | — | — | Battery power flow (W), improves curtailment accuracy |
 
-## Setup
-
-1. Go to **Settings > Devices & Services > Add Integration**
-2. Search for **Volcast**
-3. Enter your API key (`vk_...`)
-4. **(Optional)** Connect your inverter sensors for production tracking (not needed when inverter control's telemetry reports PV power):
-   - **Today's PV generation (kWh)** — a sensor showing today's total solar production that resets daily (e.g. "Today's PV Generation", "Daily Yield" from GoodWe, Fronius, SolarEdge, Huawei, SMA, Enphase)
-   - **Current PV power (W)** — a sensor showing real-time power output, used as fallback when the energy sensor is unavailable
-5. **(Optional)** Connect your battery sensors for curtailment detection:
-   - **Battery state of charge (%)** — enables detection of inverter curtailment when the battery is full
-   - **Battery charge power (W)** — power flowing to/from the battery, improves curtailment accuracy (v2 detection)
-6. Done — sensors will appear automatically
-
-All production and battery sensors are optional. You can add or change them later in the integration options.
-
-### Energy Dashboard
+## Energy Dashboard
 
 1. Go to **Settings > Dashboards > Energy**
 2. Under **Solar panels**, click **Add solar forecast**
@@ -278,19 +313,6 @@ navigate back to previous days the Energy Dashboard still shows what was
 forecast for those days — not just today and the future. The history is
 persisted across restarts.
 
-## Configuration Options
-
-After setup, click **Configure** on the integration to adjust:
-
-| Option | Default | Range | Description |
-|--------|---------|-------|-------------|
-| Update interval | 60 min | 15–1440 | How often to poll the API |
-| Peak threshold | 80% | 50–100 | Threshold for peak production binary sensor |
-| PV energy sensor | — | — | Today's generation sensor (kWh, resets daily) |
-| PV power sensor | — | — | Current power sensor (W, fallback) |
-| Battery SoC sensor | — | — | State of charge (%) — enables curtailment detection |
-| Battery charge power sensor | — | — | Battery power flow (W) — improves curtailment accuracy |
-
 ## Sensor Attributes
 
 Each daily energy sensor (`energy_today`, `energy_tomorrow`, days 3–7) exposes rich attributes for advanced automations:
@@ -299,17 +321,17 @@ Each daily energy sensor (`energy_today`, `energy_tomorrow`, days 3–7) exposes
 |-----------|--------|-------------|
 | `hours` | `[{"hour": 10, "power_kw": 3.5, "energy_kwh": 3.2}, ...]` | Hourly breakdown (24 entries) |
 | `detailedHourly` | `[{"period_start": "ISO8601", "power_kw": 3.5, "energy_kwh": 3.2}, ...]` | Hourly with ISO timestamps (Solcast-compatible) |
-| `detailedForecast` | `[{"period_start": "ISO8601", "power_w": 3500, "energy_wh": 292}, ...]` | 5-minute granularity |
+| `detailedForecast` | `[{"period_start": "ISO8601", "power_w": 3500, "energy_wh": 292}, ...]` | 5-minute granularity, today and tomorrow only |
 | `peak_power_kw` | `float` | Day's peak power |
 | `confidence` | `high` / `medium` / `low` | Forecast confidence level |
-| `sunshine_hours` | `float` | Expected sunshine hours |
+| `sunshine_hours` | `int` | Number of forecast hours with non-zero power |
 | `cloud_cover_pct` | `float` | Average cloud cover percentage |
 
 The `energy_today` sensor additionally includes a `forecast` attribute with a 7-day daily summary.
 
 ### Accessing hourly data in templates
 
-```yaml
+```jinja
 # Today's hourly forecast as a list
 {{ state_attr('sensor.volcast_energy_forecast_today', 'detailedHourly') }}
 
@@ -328,17 +350,19 @@ for entry in state:
 
 ## Automation Examples
 
+The examples use the automation syntax of Home Assistant 2024.10 and newer. On older versions, rename `triggers:` to `trigger:`, `- trigger: <type>` to `- platform: <type>`, `actions:` to `action:` and `- action: <service>` to `- service: <service>`.
+
 ### Notify when tomorrow's forecast is high
 
 ```yaml
 automation:
   - alias: "High solar forecast tomorrow"
-    trigger:
-      - platform: numeric_state
+    triggers:
+      - trigger: numeric_state
         entity_id: sensor.volcast_energy_forecast_tomorrow
         above: 20
-    action:
-      - service: notify.mobile_app
+    actions:
+      - action: notify.mobile_app
         data:
           title: "Solar forecast"
           message: "Tomorrow: {{ states('sensor.volcast_energy_forecast_tomorrow') }} kWh expected"
@@ -349,12 +373,12 @@ automation:
 ```yaml
 automation:
   - alias: "Charge EV during peak solar"
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: binary_sensor.volcast_peak_production
         to: "on"
-    action:
-      - service: switch.turn_on
+    actions:
+      - action: switch.turn_on
         target:
           entity_id: switch.ev_charger
 ```
@@ -364,13 +388,13 @@ automation:
 ```yaml
 automation:
   - alias: "Run washing machine during high production"
-    trigger:
-      - platform: numeric_state
+    triggers:
+      - trigger: numeric_state
         entity_id: sensor.volcast_power_now
         above: 3000
         for: "00:10:00"
-    action:
-      - service: switch.turn_on
+    actions:
+      - action: switch.turn_on
         target:
           entity_id: switch.washing_machine
 ```
@@ -378,13 +402,22 @@ automation:
 ## Accuracy & Limitations
 
 - **Forecast horizon**: Accuracy is highest for today and tomorrow. Days 5–7 are less reliable, especially in variable weather.
-- **Calibration ramp-up**: The Kalman filter needs ~5 days of production data before calibration activates. During this period, forecasts use the uncalibrated model.
-- **Nowcast availability**: Requires at least 2 hourly readings with meaningful production (>0.01 kWh) and forecast (>0.5 kWh). Early morning hours or heavily overcast days may not produce enough data.
-- **Sensor compatibility**: Works with any inverter that exposes an energy or power entity in HA. Tested with GoodWe, Fronius, SolarEdge, Huawei, SMA, and Enphase.
+- **Calibration ramp-up**: Calibration learns from your production data, so forecasts start uncalibrated and improve as data accumulates.
+- **Nowcast availability**: Requires a recent hourly reading with meaningful production (>0.01 kWh) in an hour with a forecast above 0.5 kWh. Early morning hours or heavily overcast days may not produce enough data.
+- **Sensor compatibility**: Works with any inverter that exposes an energy or power entity in HA.
+
+## Privacy and diagnostics
+
+**Discovery** runs once after each Home Assistant start and after each reload. It reads your installed inverter and price integrations (device and entity registries, entity names, units and options), the inverter's host address from its settings (no passwords), how many days of long-term statistics your energy sensors have, and sends one UDP broadcast on port 48899 to find Wi-Fi data loggers on your local network. It adds an **Installation discovery** sensor and a **Run discovery** button to the Volcast device.
+
+For an entry that is not paired with an account, the discovery result stays in Home Assistant and nothing is sent to Volcast. A paired entry sends the data listed under [Connect your account](#connect-your-account-pairing).
+
+The downloadable diagnostics file masks serial numbers, MAC addresses and e-mail addresses (IP addresses and entity names are kept, since they help with troubleshooting), so review it before sharing. To get it: **Settings → Devices & services → Volcast → ⋮ → Download diagnostics**.
 
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/volter-labs/volcast-ha-integration/issues)
+- **Release notes**: [GitHub Releases](https://github.com/volter-labs/volcast-ha-integration/releases)
 - **App support**: In-app chat (Settings > Help)
 - **Website**: [volcast.app](https://volcast.app)
 
