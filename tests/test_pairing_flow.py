@@ -15,7 +15,7 @@ import tests.test_config_flow_menu  # noqa: F401 — rejestruje atrapy ConfigFlo
 
 
 def _external_step(self, *, url, step_id=None, **_):
-    # Jak HA: bez `step_id` krok zewnętrzny dostaje id kroku, który HA właśnie wywołał.
+    # Jak HA: podany `step_id` trafia do wyniku (HA wznawia krok o tym id); bez niego HA nowszych wydań ostrzega.
     result = {"type": "external", "url": url}
     if step_id is not None:
         result["step_id"] = step_id
@@ -130,8 +130,8 @@ def test_pair_happy_path_creates_entry_with_backend(monkeypatch):
         done = await flow.async_step_pair()
         return ext, done, await flow.async_step_pair_finish()
     ext, done, created = asyncio.run(go())
-    # Bez przestarzałego `step_id`: HA przypisze id wywołanego kroku.
-    assert ext == {"type": "external", "url": SESSION.connect_url}
+    # Jawny `step_id` (HA 2026.11 ostrzega o braku): krok, do którego HA wraca po `async_configure`.
+    assert ext == {"type": "external", "url": SESSION.connect_url, "step_id": "pair"}
     flow.hass.config_entries.flow.async_configure.assert_awaited_with(flow_id="flow1")
     assert done == {"type": "external_done", "next_step_id": "pair_finish"}
     d = created["data"]
@@ -154,8 +154,19 @@ def test_advanced_reentry_after_form_does_not_show_form_again(monkeypatch):
         await asyncio.gather(*flow._tasks)
         return ext, await flow.async_step_pair()
     ext, done = asyncio.run(go())
-    assert ext["type"] == "external"
+    assert ext["type"] == "external" and ext["step_id"] == "pair"
     assert done == {"type": "external_done", "next_step_id": "pair_finish"}
+
+
+def test_external_step_resumes_through_the_step_it_names(monkeypatch):
+    """HA po potwierdzeniu woła `async_step_<step_id>` bez danych — to musi kończyć krok zewnętrzny."""
+    flow = make_flow(monkeypatch, polls=[CONFIRMED])
+
+    async def go():
+        ext = await flow.async_step_pair(SUBMIT)
+        await asyncio.gather(*flow._tasks)
+        return await getattr(flow, f"async_step_{ext['step_id']}")()
+    assert asyncio.run(go()) == {"type": "external_done", "next_step_id": "pair_finish"}
 
 
 def test_begin_describes_this_instance(monkeypatch):

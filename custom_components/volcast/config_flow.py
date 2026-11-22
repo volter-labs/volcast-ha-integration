@@ -171,9 +171,9 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         przekazuje już tej flagi do kreatora), więc nadpisanie adresu żyje w sekcji
         formularza, widocznej dla każdego, ale domyślnie zwiniętej.
 
-        External step idzie bez (przestarzałego) `step_id`, więc HA zapisuje go jako
-        krok `pair` i po odpowiedzi chmury wraca TUTAJ bez danych — wtedy od razu
-        do obsługi kroku zewnętrznego, nigdy do formularza.
+        External step niesie jawny `step_id="pair"` (HA 2026.11 ostrzega o braku; starsze
+        wydania przyjmują go tak samo), więc po odpowiedzi chmury HA wraca TUTAJ bez danych
+        — wtedy od razu do obsługi kroku zewnętrznego, nigdy do formularza.
         """
         if self._session is not None or self._result is not None:
             return await self._async_step_external()
@@ -253,7 +253,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.debug("Volcast pairing: session not started (%s)", err)
                 return self.async_abort(reason="cannot_connect")
             self._pair_task = self.hass.async_create_task(self._async_wait_for_owner())
-        return self.async_external_step(url=self._session.connect_url)
+        return self.async_external_step(step_id="pair", url=self._session.connect_url)
 
     async def _async_wait_for_owner(self) -> None:
         try:
