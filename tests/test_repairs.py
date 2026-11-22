@@ -106,7 +106,9 @@ def _assignment_world(monkeypatch, *, options=None, loaded=True, entry_exists=Tr
     async def tr(hass, category):
         return oa._flat()[category]
 
-    async def propose(hass, e):
+    async def propose(hass, e, with_proposal=True):
+        if not with_proposal:
+            return oa._result(grid=oa.ON)
         return oa._result(chosen={"pv_power_w": "sensor.pv_now", "soc": "sensor.batt_soc"},
                           ambiguous={"grid_power_w": ["sensor.grid_a", "sensor.grid_b"]},
                           grid=oa.ON)
@@ -201,7 +203,7 @@ async def test_assignment_fix_survives_a_failing_proposal(monkeypatch):
     from custom_components.volcast import config_flow as cf
     hass, entry, updates, repairs = _assignment_world(monkeypatch)
 
-    async def boom(hass, e):
+    async def boom(hass, e, **_):
         raise RuntimeError("x")
     monkeypatch.setattr(cf, "async_propose", boom)
     flow, shown, first = await _open(hass, repairs)

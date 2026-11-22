@@ -222,8 +222,8 @@ def _assignment_world(monkeypatch, entries, *, controls=None):
     from custom_components.volcast import config_flow as cf
     from custom_components.volcast.const import DOMAIN
 
-    async def propose(hass, entry):
-        return oa._result(chosen={"pv_power_w": "sensor.pv_now"}, grid=oa.ON)
+    async def propose(hass, entry, with_proposal=True):
+        return oa._result(chosen={"pv_power_w": "sensor.pv_now"} if with_proposal else {}, grid=oa.ON)
     monkeypatch.setattr(cf, "async_propose", propose)
     hass = FakeHass()
     hass.config_entries = SimpleNamespace(async_entries=lambda domain=None: list(entries))
@@ -295,9 +295,9 @@ async def test_propose_picks_the_only_paired_entry_and_the_given_one(monkeypatch
     hass = _assignment_world(monkeypatch, [a, _entry("disc", mode="discovery_only"), _entry("unp", backend=False)])
     orig = cf.async_propose
 
-    async def spy(h, e):
+    async def spy(h, e, **kw):
         seen.append(e.entry_id)
-        return await orig(h, e)
+        return await orig(h, e, **kw)
     monkeypatch.setattr(cf, "async_propose", spy)
     await _propose_handler(hass)(_FakeServiceCall())
     hass2 = _assignment_world(monkeypatch, [a, b])

@@ -279,10 +279,13 @@ def _empty_proposal() -> Proposal:
     return Proposal(fields=tuple(FieldProposal(field=f, candidates=()) for f in FIELDS))
 
 
-async def async_propose(hass, entry) -> AssignmentResult:
-    """Propozycja przypisania czujników i ocena znaku dla wpisu. Tylko odczyt; nigdy nie rzuca."""
+async def async_propose(hass, entry, *, with_proposal: bool = True) -> AssignmentResult:
+    """Propozycja przypisania czujników i ocena znaku dla wpisu. Tylko odczyt; nigdy nie rzuca.
+
+    `with_proposal=False` — bez kandydatów: źródła i ocena znaku dotyczą wyłącznie czujników zapisanych
+    w mapie wpisu (gdy podpowiedź jest niedozwolona, np. falownik rozpoznany)."""
     try:
-        return await _async_propose(hass, entry)
+        return await _async_propose(hass, entry, with_proposal)
     except Exception as err:  # noqa: BLE001 — formularz i usługa muszą dostać wynik
         _LOGGER.debug("Volcast sensor assignment failed (%s)", type(err).__name__)
     try:
@@ -295,10 +298,11 @@ async def async_propose(hass, entry) -> AssignmentResult:
         sources={}, source_origin={}, excluded={}, notes=(NOTE_FAILED,))
 
 
-async def _async_propose(hass, entry) -> AssignmentResult:
+async def _async_propose(hass, entry, with_proposal: bool = True) -> AssignmentResult:
     tmap, grid_negate, battery_negate = _current_options(entry)
     snap = _snapshot(hass)
-    proposal = propose(snap.entities, snap.states, snap.devices, snap.inverters)
+    proposal = propose(snap.entities, snap.states, snap.devices, snap.inverters) if with_proposal \
+        else Proposal(())
     sources, origin, excluded = _sources(tmap, proposal, snap.platforms)
     notes = list(snap.notes)
 

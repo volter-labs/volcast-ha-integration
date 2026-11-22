@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from dataclasses import replace
 from datetime import timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -40,7 +39,6 @@ from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.select import ProfileChoice
 from .core.entity_map import KEY_DESCRIPTORS, field_group, preview_entity
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
-from .core.discovery.assign import Proposal
 from .core.discovery.identify import Candidate
 from .core.price_actions import InvalidPriceSource, attributes_from_responses, build_calls, parse_source
 from .core.price_integrations import ACTION_DOMAINS, ENTITY_DOMAINS, OFFERED_PLATFORMS, FieldKind
@@ -586,12 +584,12 @@ async def async_assignment_result(hass, entry) -> tuple[AssignmentResult, bool]:
     Falownik rozpoznany (albo nie wiadomo): ręczna mapa zasłoniłaby profil, więc bez podpowiedzi i bez
     kandydatów; ocena znaku tylko dla czujników, które użytkownik już zapisał.
     """
-    result = await async_propose(hass, entry)
     control = ((getattr(hass, "data", None) or {}).get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
     suggest = no_inverter_integration(entry.options, control)
-    if not suggest:
-        result = replace(result, proposal=Proposal(()))
-    return result, suggest
+    if suggest:
+        return await async_propose(hass, entry), True
+    # Bez podpowiedzi kandydaci nie wchodzą ani do propozycji, ani do źródeł oceny znaku.
+    return await async_propose(hass, entry, with_proposal=False), False
 
 
 async def async_load_assignment(hass, entry) -> tuple[AssignmentResult | None, dict[str, str] | None]:

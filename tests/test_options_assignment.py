@@ -1,5 +1,6 @@
 """Opcje „Installation details”: propozycja przypisania czujników, ocena znaku, odporność na błąd."""
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,11 +52,13 @@ def _flow(monkeypatch, result, calls=None, translations=None, runtime=NO_INVERTE
             raise translations
         return (translations or _flat())[category]
     monkeypatch.setattr(cf, "_async_translations", tr)
-    async def fake(hass, entry):
+    async def fake(hass, entry, with_proposal=True):
         if calls is not None:
             calls.append(1)
         if isinstance(result, Exception):
             raise result
+        if not with_proposal:
+            return dataclasses.replace(result, proposal=Proposal(()))
         return result
     monkeypatch.setattr(cf, "async_propose", fake)
     f = base.flow(runtime=runtime, **kw)
@@ -298,3 +301,30 @@ def test_details_texts_have_the_placeholders_the_code_provides():
     assert "{candidates}" in d["description"] and "{sign_check}" in d["description"]
     assert "already filled in" not in d["description"]
     assert "battery_power_negate" in d["data"] and "battery_power_negate" in d["data_description"]
+
+
+# --- bez podpowiedzi: wynik dotyczy tylko czujników zapisanych ręcznie -------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved, expected_sources", [
+    ({}, {}),
+    ({"pv_power_w": "sensor.pv_power"}, {"pv_power_w": "sensor.pv_power"}),
+])
+async def test_not_applicable_result_covers_only_manually_saved_sensors(make_hass, saved, expected_sources):
+    from unittest.mock import MagicMock, patch
+
+    import tests.test_sensor_assignment as sat
+    from custom_components.volcast.const import DOMAIN
+
+    hass = sat._hass(make_hass, entities=sat._four_entities(), states=sat._four_states())
+    hass.data = {DOMAIN: {"v1": {"control": SimpleNamespace(
+        choice=SimpleNamespace(integration_domain="goodwe"), direct=None)}}}
+    entry = sat._entry({"telemetry_map": saved} if saved else {})
+    with patch.object(sa, "statistics_during_period", MagicMock(return_value=sat._stats_rows())):
+        result, applicable = await cf.async_assignment_result(hass, entry)
+    assert applicable is False and result.proposal.chosen() == {}
+    # kandydaci z propozycji nie mogą trafić do oceny znaku ani do źródeł
+    assert result.sources == expected_sources
+    assert set(result.source_origin.values()) <= {"map"}
+    if not saved:
+        assert result.basis == sa.BASIS_NONE and result.samples == 0
