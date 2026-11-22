@@ -478,3 +478,12 @@ def test_config_flow_aborts_client_outdated(monkeypatch):
     assert ab.call_args.kwargs["description_placeholders"] == {"min_version": "2.0.0b4",
                                                                "latest_version": "2.0.0b5"}
     assert flow._tasks == []
+
+
+def test_update_hints_do_not_assume_hacs_only():
+    # Aktualizacja idzie przez HACS albo Marketplace — tekst nie może wskazywać tylko jednego.
+    path = Path(__file__).parents[1] / "custom_components" / "volcast" / "strings.json"
+    texts = json.loads(path.read_text("utf-8"))
+    for text in (texts["config"]["abort"]["client_outdated"], texts["issues"]["update_available"]["description"]):
+        assert "in HACS or in the Home Assistant Marketplace" in text
+        assert "restart Home Assistant" in text
