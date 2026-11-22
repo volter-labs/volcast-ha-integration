@@ -177,10 +177,11 @@ def check_signs(samples: Iterable[Mapping[str, Any]]) -> SignCheck:
                          battery=_verdict(reason if has[BATTERY] else NO_SENSOR),
                          samples=n)
 
-    if n < MIN_SAMPLES:
-        return undecided(TOO_FEW_SAMPLES)
+    # Brak czujnika zużycia przed liczbą próbek: powód nie zmienia się, gdy po dobie przybędzie historii.
     if LOAD not in assigned:
         return undecided(NO_LOAD_SENSOR)
+    if n < MIN_SAMPLES:
+        return undecided(TOO_FEW_SAMPLES)
 
     peaks = sorted(max(abs(p), abs(g), abs(b), abs(l)) for p, g, b, l in data)
     scale = peaks[int(SCALE_PERCENTILE * (n - 1))]
