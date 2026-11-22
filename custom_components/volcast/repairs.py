@@ -17,7 +17,7 @@ from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 import voluptuous as vol
 
 from .const import DOMAIN, OPT_TELEMETRY_MAP
-from .control.runtime import async_resume_control
+from .control.runtime import async_resume_control, no_inverter_integration
 
 _FOREIGN_PREFIX = "foreign_control_"
 _CONFLICT_PREFIX = "controller_conflict_"
@@ -104,6 +104,11 @@ class SensorAssignmentFlow(RepairsFlow):
         errors: dict[str, str] = {}
         shown_options = entry.options
         if user_input is not None:
+            # Naprawa mogła zostać otwarta przed rozpoznaniem falownika (np. profil dostarczony po starcie) —
+            # ręczna mapa zasłoniłaby po przeładowaniu profil, więc przy zatwierdzeniu sprawdzamy to samo co przy podpowiedzi.
+            control = ((getattr(self.hass, "data", None) or {}).get(DOMAIN, {}).get(self._entry_id) or {}).get("control")
+            if not no_inverter_integration(entry.options, control):
+                return self.async_abort(reason="inverter_recognised")
             patch = sensor_map_patch(user_input)
             options = merge_options(entry.options, patch)
             # Bez mocy PV zgłoszenie wróciłoby po przeładowaniu — formularz zostaje, nic nie jest zapisane.

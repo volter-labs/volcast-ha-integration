@@ -601,7 +601,8 @@
           "pv_power_required": "Choose the PV power sensor. Volcast needs it for live data."
         },
         "abort": {
-          "not_loaded": "Volcast is not running for this entry. Reload the integration and try again."
+          "not_loaded": "Volcast is not running for this entry. Reload the integration and try again.",
+          "inverter_recognised": "Volcast has recognised your inverter in the meantime, so no sensors need to be picked. Reload the integration."
         }
       }
     },

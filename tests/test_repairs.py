@@ -303,3 +303,18 @@ async def test_assignment_fix_opened_after_the_inverter_got_recognised_proposes_
     assert all(v is None for v in _suggested(shown).values())
     assert shown["description_placeholders"] == {"candidates": "", "sign_check": ""}
     assert updates == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", [
+    SimpleNamespace(choice=None, direct=None, announced_choice=("acme-hybrid", "acme")),   # profil czeka na przeładowanie
+    SimpleNamespace(choice=SimpleNamespace(integration_domain="goodwe"), direct=None),    # integracja rozpoznana
+    SimpleNamespace(choice=None, direct=object()),                                          # połączenie bezpośrednie
+])
+async def test_assignment_fix_saves_nothing_once_an_inverter_is_recognised(monkeypatch, control):
+    hass, entry, updates, repairs = _assignment_world(monkeypatch)
+    flow, shown, first = await _open(hass, repairs)
+    assert first["type"] == "form"
+    hass.data["volcast"]["e1"]["control"] = control        # rozpoznanie pojawiło się po otwarciu naprawy
+    done = await flow.async_step_assign({"pv_power_w": "sensor.pv_now"})
+    assert done == {"type": "abort", "reason": "inverter_recognised"} and updates == []
