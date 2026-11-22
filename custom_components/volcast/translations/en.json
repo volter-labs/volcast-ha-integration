@@ -597,6 +597,9 @@
             }
           }
         },
+        "error": {
+          "pv_power_required": "Choose the PV power sensor. Volcast needs it for live data."
+        },
         "abort": {
           "not_loaded": "Volcast is not running for this entry. Reload the integration and try again."
         }

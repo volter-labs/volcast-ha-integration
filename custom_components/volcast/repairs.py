@@ -16,7 +16,7 @@ from __future__ import annotations
 from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 import voluptuous as vol
 
-from .const import DOMAIN
+from .const import DOMAIN, OPT_TELEMETRY_MAP
 from .control.runtime import async_resume_control
 
 _FOREIGN_PREFIX = "foreign_control_"
@@ -101,13 +101,21 @@ class SensorAssignmentFlow(RepairsFlow):
         entry = self._entry()
         if entry is None:
             return self.async_abort(reason="not_loaded")
+        errors: dict[str, str] = {}
+        shown_options = entry.options
         if user_input is not None:
-            options = merge_options(entry.options, sensor_map_patch(user_input))
-            self.hass.config_entries.async_update_entry(entry, options=options)
-            return self.async_create_entry(data={})
+            patch = sensor_map_patch(user_input)
+            options = merge_options(entry.options, patch)
+            # Bez mocy PV zgłoszenie wróciłoby po przeładowaniu — formularz zostaje, nic nie jest zapisane.
+            if patch[OPT_TELEMETRY_MAP].get("pv_power_w"):
+                self.hass.config_entries.async_update_entry(entry, options=options)
+                return self.async_create_entry(data={})
+            errors["base"] = "pv_power_required"
+            shown_options = options        # to, co użytkownik już wybrał, zostaje w polach
         assignment, placeholders = await async_load_assignment(self.hass, entry)
         return self.async_show_form(
-            step_id="assign", data_schema=vol.Schema(sensor_map_fields(entry.options, assignment)),
+            step_id="assign", data_schema=vol.Schema(sensor_map_fields(shown_options, assignment)),
+            errors=errors,
             description_placeholders=placeholders or {"candidates": "", "sign_check": ""})
 
 

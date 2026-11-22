@@ -163,12 +163,27 @@ async def test_assignment_fix_submit_saves_map_and_flags_and_keeps_other_options
 
 
 @pytest.mark.asyncio
-async def test_assignment_fix_empty_submit_clears_map_without_losing_other_options(monkeypatch):
+async def test_assignment_fix_submit_clears_other_fields_without_losing_other_options(monkeypatch):
     hass, entry, updates, repairs = _assignment_world(monkeypatch, options={"rated_power_w": 8000,
                                                                           "battery_power_negate": True})
     flow, _, _ = await _open(hass, repairs)
-    await flow.async_step_assign({})
-    assert entry.options == {"rated_power_w": 8000}
+    await flow.async_step_assign({"pv_power_w": "sensor.pv"})
+    assert entry.options == {"rated_power_w": 8000, "telemetry_map": {"pv_power_w": "sensor.pv"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_input", [{}, {"pv_power_w": ""}, {"pv_power_w": "   ", "soc": "sensor.soc"}])
+async def test_assignment_fix_without_pv_power_shows_the_form_again_and_saves_nothing(monkeypatch, user_input):
+    hass, entry, updates, repairs = _assignment_world(monkeypatch, options={"rated_power_w": 8000})
+    flow, shown, _ = await _open(hass, repairs)
+    shown.clear()
+    result = await flow.async_step_assign(user_input)
+    assert result["type"] == "form" and result["step_id"] == "assign"
+    assert shown["errors"] == {"base": "pv_power_required"}
+    assert updates == [] and entry.options == {"rated_power_w": 8000}
+    # to, co użytkownik już wybrał, zostaje w formularzu
+    if user_input.get("soc"):
+        assert _suggested(shown)["soc"] == "sensor.soc"
 
 
 @pytest.mark.asyncio
