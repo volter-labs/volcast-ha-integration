@@ -585,7 +585,8 @@
           "pv_power_required": "Scegli il sensore della potenza FV. Volcast lo richiede per i dati in tempo reale."
         },
         "abort": {
-          "not_loaded": "Volcast non è in esecuzione per questa voce. Ricarica l'integrazione e riprova."
+          "not_loaded": "Volcast non è in esecuzione per questa voce. Ricarica l'integrazione e riprova.",
+          "inverter_recognised": "Nel frattempo Volcast ha riconosciuto l'inverter, quindi non occorre scegliere alcun sensore. Ricarica l'integrazione."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "L'inverter ha una propria modalità di lavoro o programmazione (ad esempio Eco o una fascia oraria impostata nell'app del produttore) che può caricare la batteria dalla rete al di fuori del piano Volcast. Disattivi quella modalità o programmazione nell'app del produttore dell'inverter e lasci attiva la modalità generale (standard). Non spenga l'inverter stesso."
     },
     "brand_profile_ready": {
-      "title": "È disponibile un profilo di prova per il tuo inverter",
+      "title": "È disponibile un nuovo profilo per il tuo inverter",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, ho capito",
-            "description": "Volcast ha ricevuto un nuovo profilo di prova adatto a questa installazione: {label} ({profile}). Dopo il ricaricamento dell'integrazione, Volcast può usarlo per riconoscere l'inverter e leggerne i dati. Un profilo di prova serve solo a riconoscere l'inverter e leggerne i dati; controllare l'inverter richiede un profilo verificato e il tuo consenso. Seleziona Ripara per chiudere questo avviso."
+            "description": "Volcast ha ricevuto un nuovo profilo adatto a questa installazione: {label} ({profile}). Dopo il ricaricamento dell'integrazione, Volcast può usarlo per riconoscere l'inverter e leggerne i dati. Un profilo ancora in fase di prova non serve a nient'altro; controllare l'inverter richiede un profilo verificato e il tuo consenso. Seleziona Ripara per chiudere questo avviso."
           }
         }
       }

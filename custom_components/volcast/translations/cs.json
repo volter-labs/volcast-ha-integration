@@ -585,7 +585,8 @@
           "pv_power_required": "Vyberte senzor výkonu FV. Volcast ho potřebuje pro živá data."
         },
         "abort": {
-          "not_loaded": "Volcast pro tuto položku neběží. Znovu načtěte integraci a zkuste to znovu."
+          "not_loaded": "Volcast pro tuto položku neběží. Znovu načtěte integraci a zkuste to znovu.",
+          "inverter_recognised": "Volcast mezitím střídač rozpoznal, takže není třeba vybírat žádné senzory. Znovu načtěte integraci."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "Střídač má vlastní pracovní režim nebo plán (například Eco nebo tarifní plán nastavený v aplikaci výrobce), který může nabíjet baterii ze sítě mimo plán Volcast. Tento režim nebo plán vypněte v aplikaci výrobce střídače a ponechte zapnutý obecný (standardní) režim. Nevypínejte samotný střídač."
     },
     "brand_profile_ready": {
-      "title": "Je k dispozici testovací profil pro váš střídač",
+      "title": "Je k dispozici nový profil pro váš střídač",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, rozumím",
-            "description": "Volcast získal nový testovací profil, který odpovídá této instalaci: {label} ({profile}). Po opětovném načtení integrace ho Volcast může použít k rozpoznání střídače a čtení jeho dat. Testovací profil slouží jen k rozpoznání střídače a čtení dat; řízení střídače vyžaduje ověřený profil a váš souhlas. Zvolte Opravit pro zavření tohoto upozornění."
+            "description": "Volcast získal nový profil, který odpovídá této instalaci: {label} ({profile}). Po opětovném načtení integrace ho Volcast může použít k rozpoznání střídače a čtení jeho dat. Profil, který je ještě ve fázi testování, se k ničemu jinému nepoužívá; řízení střídače vyžaduje ověřený profil a váš souhlas. Zvolte Opravit pro zavření tohoto upozornění."
           }
         }
       }

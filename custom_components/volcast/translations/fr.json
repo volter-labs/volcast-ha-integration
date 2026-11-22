@@ -585,7 +585,8 @@
           "pv_power_required": "Choisissez le capteur de puissance PV. Volcast en a besoin pour les données en direct."
         },
         "abort": {
-          "not_loaded": "Volcast ne fonctionne pas pour cette entrée. Rechargez l'intégration et réessayez."
+          "not_loaded": "Volcast ne fonctionne pas pour cette entrée. Rechargez l'intégration et réessayez.",
+          "inverter_recognised": "Volcast a entre-temps reconnu votre onduleur, il n'est donc pas nécessaire de choisir des capteurs. Rechargez l'intégration."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "L'onduleur a son propre mode de fonctionnement ou planning (par exemple Eco ou un planning tarifaire réglé dans l'application du fabricant) qui peut charger la batterie depuis le réseau en dehors du plan Volcast. Désactivez ce mode ou ce planning dans l'application du fabricant de l'onduleur et laissez le mode général (standard) activé. N'éteignez pas l'onduleur lui-même."
     },
     "brand_profile_ready": {
-      "title": "Un profil de test pour votre onduleur est disponible",
+      "title": "Un nouveau profil pour votre onduleur est disponible",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, compris",
-            "description": "Volcast a reçu un nouveau profil de test correspondant à cette installation : {label} ({profile}). Après le rechargement de l'intégration, Volcast peut l'utiliser pour reconnaître l'onduleur et lire ses données. Un profil de test sert uniquement à reconnaître l'onduleur et à lire ses données ; piloter l'onduleur nécessite un profil vérifié et votre consentement. Sélectionnez Réparer pour fermer cet avis."
+            "description": "Volcast a reçu un nouveau profil correspondant à cette installation : {label} ({profile}). Après le rechargement de l'intégration, Volcast peut l'utiliser pour reconnaître l'onduleur et lire ses données. Un profil encore en test ne sert à rien d'autre ; piloter l'onduleur nécessite un profil vérifié et votre consentement. Sélectionnez Réparer pour fermer cet avis."
           }
         }
       }

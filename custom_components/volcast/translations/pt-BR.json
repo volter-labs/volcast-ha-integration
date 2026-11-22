@@ -585,7 +585,8 @@
           "pv_power_required": "Escolha o sensor de potência FV. O Volcast precisa dele para os dados em tempo real."
         },
         "abort": {
-          "not_loaded": "O Volcast não está em execução para esta entrada. Recarregue a integração e tente novamente."
+          "not_loaded": "O Volcast não está em execução para esta entrada. Recarregue a integração e tente novamente.",
+          "inverter_recognised": "Enquanto isso, o Volcast reconheceu o inversor, então não é preciso escolher sensores. Recarregue a integração."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "O inversor tem seu próprio modo de operação ou programação (por exemplo Eco ou um horário tarifário definido no app do fabricante) que pode carregar a bateria pela rede fora do plano Volcast. Desative esse modo ou programação no app do fabricante do inversor e deixe ativo o modo geral (padrão). Não desligue o próprio inversor."
     },
     "brand_profile_ready": {
-      "title": "Há um perfil de teste disponível para o seu inversor",
+      "title": "Há um novo perfil disponível para o seu inversor",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, entendi",
-            "description": "O Volcast recebeu um novo perfil de teste que corresponde a esta instalação: {label} ({profile}). Depois que a integração for recarregada, o Volcast pode usá-lo para reconhecer o inversor e ler os dados dele. Um perfil de teste só é usado para reconhecer o inversor e ler dados; controlar o inversor exige um perfil verificado e o seu consentimento. Selecione Corrigir para fechar este aviso."
+            "description": "O Volcast recebeu um novo perfil que corresponde a esta instalação: {label} ({profile}). Depois que a integração for recarregada, o Volcast pode usá-lo para reconhecer o inversor e ler os dados dele. Um perfil que ainda está em teste não serve para mais nada; controlar o inversor exige um perfil verificado e o seu consentimento. Selecione Corrigir para fechar este aviso."
           }
         }
       }

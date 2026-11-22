@@ -585,7 +585,8 @@
           "pv_power_required": "Wähle den Sensor für die PV-Leistung. Volcast benötigt ihn für Live-Daten."
         },
         "abort": {
-          "not_loaded": "Volcast läuft für diesen Eintrag nicht. Lade die Integration neu und versuche es erneut."
+          "not_loaded": "Volcast läuft für diesen Eintrag nicht. Lade die Integration neu und versuche es erneut.",
+          "inverter_recognised": "Volcast hat den Wechselrichter inzwischen erkannt, daher müssen keine Sensoren ausgewählt werden. Lade die Integration neu."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "Der Wechselrichter hat einen eigenen Arbeitsmodus oder Zeitplan (z. B. Eco oder ein Tarifzeitplan aus der App des Herstellers), der den Akku außerhalb des Volcast-Plans aus dem Netz laden kann. Schalten Sie diesen Modus oder Zeitplan in der Wechselrichter-App des Herstellers aus und lassen Sie den allgemeinen (Standard-)Modus aktiv. Schalten Sie nicht den Wechselrichter selbst aus."
     },
     "brand_profile_ready": {
-      "title": "Ein Testprofil für Ihren Wechselrichter ist verfügbar",
+      "title": "Ein neues Profil für Ihren Wechselrichter ist verfügbar",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, verstanden",
-            "description": "Volcast hat ein neues Testprofil erhalten, das zu dieser Installation passt: {label} ({profile}). Nach dem Neuladen der Integration kann Volcast es verwenden, um den Wechselrichter zu erkennen und seine Daten zu lesen. Ein Testprofil wird nur zum Erkennen des Wechselrichters und zum Lesen der Daten verwendet; die Steuerung des Wechselrichters erfordert ein verifiziertes Profil und deine Zustimmung. Wähle Beheben, um diesen Hinweis zu schließen."
+            "description": "Volcast hat ein neues Profil erhalten, das zu dieser Installation passt: {label} ({profile}). Nach dem Neuladen der Integration kann Volcast es verwenden, um den Wechselrichter zu erkennen und seine Daten zu lesen. Ein Profil, das sich noch in der Testphase befindet, wird für nichts weiter verwendet; die Steuerung des Wechselrichters erfordert ein verifiziertes Profil und deine Zustimmung. Wähle Beheben, um diesen Hinweis zu schließen."
           }
         }
       }

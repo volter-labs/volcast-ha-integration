@@ -585,7 +585,8 @@
           "pv_power_required": "Alege senzorul puterii FV. Volcast are nevoie de el pentru datele în timp real."
         },
         "abort": {
-          "not_loaded": "Volcast nu rulează pentru această intrare. Reîncarcă integrarea și încearcă din nou."
+          "not_loaded": "Volcast nu rulează pentru această intrare. Reîncarcă integrarea și încearcă din nou.",
+          "inverter_recognised": "Între timp, Volcast a recunoscut invertorul, așa că nu mai trebuie aleși senzori. Reîncarcă integrarea."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "Invertorul are propriul mod de lucru sau program (de exemplu Eco sau un program tarifar setat în aplicația producătorului) care poate încărca bateria din rețea în afara planului Volcast. Dezactivați acel mod sau program în aplicația producătorului invertorului și lăsați activ modul general (standard). Nu opriți invertorul în sine."
     },
     "brand_profile_ready": {
-      "title": "Este disponibil un profil de test pentru invertorul tău",
+      "title": "Este disponibil un profil nou pentru invertorul tău",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, am înțeles",
-            "description": "Volcast a primit un profil de test nou care se potrivește cu această instalație: {label} ({profile}). După reîncărcarea integrării, Volcast îl poate folosi pentru a recunoaște invertorul și a-i citi datele. Un profil de test este folosit doar pentru a recunoaște invertorul și a citi datele; controlul invertorului necesită un profil verificat și acordul tău. Selectează Remediază pentru a închide această notificare."
+            "description": "Volcast a primit un profil nou care se potrivește cu această instalație: {label} ({profile}). După reîncărcarea integrării, Volcast îl poate folosi pentru a recunoaște invertorul și a-i citi datele. Un profil încă în testare nu este folosit pentru nimic altceva; controlul invertorului necesită un profil verificat și acordul tău. Selectează Remediază pentru a închide această notificare."
           }
         }
       }

@@ -585,7 +585,8 @@
           "pv_power_required": "Wybierz czujnik mocy PV. Volcast potrzebuje go do danych na żywo."
         },
         "abort": {
-          "not_loaded": "Volcast nie działa dla tego wpisu. Załaduj integrację ponownie i spróbuj jeszcze raz."
+          "not_loaded": "Volcast nie działa dla tego wpisu. Załaduj integrację ponownie i spróbuj jeszcze raz.",
+          "inverter_recognised": "Volcast w międzyczasie rozpoznał falownik, więc nie trzeba wybierać czujników. Załaduj integrację ponownie."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "Falownik ma własny tryb pracy lub harmonogram (np. Eco albo harmonogram taryfowy ustawiony w aplikacji producenta), który może ładować baterię z sieci poza planem Volcast. Wyłącz ten tryb lub harmonogram w aplikacji producenta falownika i zostaw włączony tryb ogólny (standardowy). Nie wyłączaj samego falownika."
     },
     "brand_profile_ready": {
-      "title": "Dostępny profil testowy Twojego falownika",
+      "title": "Dostępny nowy profil Twojego falownika",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, rozumiem",
-            "description": "Volcast otrzymał nowy profil testowy pasujący do tej instalacji: {label} ({profile}). Po ponownym wczytaniu integracji Volcast może go użyć do rozpoznania falownika i odczytu jego danych. Profil testowy służy tylko do rozpoznania falownika i odczytu danych; sterowanie falownikiem wymaga zweryfikowanego profilu i Twojej zgody. Wybierz Napraw, aby zamknąć to powiadomienie."
+            "description": "Volcast otrzymał nowy profil pasujący do tej instalacji: {label} ({profile}). Po ponownym wczytaniu integracji Volcast może go użyć do rozpoznania falownika i odczytu jego danych. Profil, który jest jeszcze testowany, nie służy do niczego więcej; sterowanie falownikiem wymaga zweryfikowanego profilu i Twojej zgody. Wybierz Napraw, aby zamknąć to powiadomienie."
           }
         }
       }

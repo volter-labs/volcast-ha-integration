@@ -585,7 +585,8 @@
           "pv_power_required": "Elige el sensor de potencia FV. Volcast lo necesita para los datos en directo."
         },
         "abort": {
-          "not_loaded": "Volcast no está en ejecución para esta entrada. Recarga la integración e inténtalo de nuevo."
+          "not_loaded": "Volcast no está en ejecución para esta entrada. Recarga la integración e inténtalo de nuevo.",
+          "inverter_recognised": "Volcast ha reconocido tu inversor entretanto, así que no hace falta elegir sensores. Recarga la integración."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "El inversor tiene su propio modo de trabajo o programación (por ejemplo Eco o un horario por tarifa ajustado en la app del fabricante) que puede cargar la batería desde la red fuera del plan de Volcast. Desactive ese modo o programación en la app del fabricante del inversor y deje activo el modo general (estándar). No apague el inversor en sí."
     },
     "brand_profile_ready": {
-      "title": "Hay un perfil de prueba disponible para tu inversor",
+      "title": "Hay un nuevo perfil disponible para tu inversor",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "De acuerdo, entendido",
-            "description": "Volcast ha recibido un nuevo perfil de prueba que coincide con esta instalación: {label} ({profile}). Después de recargar la integración, Volcast puede usarlo para reconocer el inversor y leer sus datos. Un perfil de prueba solo se usa para reconocer el inversor y leer sus datos; controlar el inversor requiere un perfil verificado y tu consentimiento. Selecciona Reparar para cerrar este aviso."
+            "description": "Volcast ha recibido un nuevo perfil que coincide con esta instalación: {label} ({profile}). Después de recargar la integración, Volcast puede usarlo para reconocer el inversor y leer sus datos. Un perfil que aún está en pruebas no se usa para nada más; controlar el inversor requiere un perfil verificado y tu consentimiento. Selecciona Reparar para cerrar este aviso."
           }
         }
       }

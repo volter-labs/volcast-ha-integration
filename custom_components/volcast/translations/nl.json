@@ -585,7 +585,8 @@
           "pv_power_required": "Kies de sensor voor het PV-vermogen. Volcast heeft die nodig voor live gegevens."
         },
         "abort": {
-          "not_loaded": "Volcast draait niet voor deze invoer. Laad de integratie opnieuw en probeer het nog eens."
+          "not_loaded": "Volcast draait niet voor deze invoer. Laad de integratie opnieuw en probeer het nog eens.",
+          "inverter_recognised": "Volcast heeft je omvormer inmiddels herkend, dus er hoeven geen sensoren gekozen te worden. Laad de integratie opnieuw."
         }
       }
     },
@@ -660,12 +661,12 @@
       "description": "De omvormer heeft een eigen werkmodus of schema (bijvoorbeeld Eco of een tariefschema uit de app van de fabrikant) dat de accu buiten het Volcast-plan om uit het net kan laden. Schakel die modus of dat schema uit in de omvormer-app van de fabrikant en laat de algemene (standaard)modus aan. Zet de omvormer zelf niet uit."
     },
     "brand_profile_ready": {
-      "title": "Er is een testprofiel voor je omvormer beschikbaar",
+      "title": "Er is een nieuw profiel voor je omvormer beschikbaar",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, begrepen",
-            "description": "Volcast heeft een nieuw testprofiel ontvangen dat bij deze installatie past: {label} ({profile}). Nadat de integratie opnieuw is geladen, kan Volcast het gebruiken om de omvormer te herkennen en zijn gegevens te lezen. Een testprofiel wordt alleen gebruikt om de omvormer te herkennen en gegevens te lezen; het aansturen van de omvormer vereist een geverifieerd profiel en je toestemming. Kies Repareren om deze melding te sluiten."
+            "description": "Volcast heeft een nieuw profiel ontvangen dat bij deze installatie past: {label} ({profile}). Nadat de integratie opnieuw is geladen, kan Volcast het gebruiken om de omvormer te herkennen en zijn gegevens te lezen. Een profiel dat nog wordt getest, wordt nergens anders voor gebruikt; het aansturen van de omvormer vereist een geverifieerd profiel en je toestemming. Kies Repareren om deze melding te sluiten."
           }
         }
       }
