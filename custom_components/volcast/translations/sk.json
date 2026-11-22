@@ -70,7 +70,7 @@
       "single_instance_allowed": "Volcast je tu už nastavený a zisťovanie inštalácie už beží ako jeho súčasť.",
       "cannot_connect": "Službu párovania Volcast sa nepodarilo zastihnúť. Skontrolujte pripojenie na internet a skúste to znova.",
       "pairing_expired": "Žiadosť o párovanie vypršala alebo bola zrušená pred potvrdením. Začnite znova a potvrďte do 10 minút.",
-      "client_outdated": "Táto verzia integrácie Volcast je príliš stará na pripojenie k vášmu účtu (minimálna {min_version}, najnovšia {latest_version}). Aktualizujte Volcast v HACS, reštartujte Home Assistant a skúste to znova.",
+      "client_outdated": "Táto verzia integrácie Volcast je príliš stará na pripojenie k vášmu účtu (minimálna {min_version}, najnovšia {latest_version}). Aktualizujte Volcast v HACS alebo v Marketplace Home Assistant, reštartujte Home Assistant a skúste to znova.",
       "pairing_disabled": "Párovanie teraz nie je dostupné. Skúste to neskôr alebo sa pripojte pomocou kľúča API.",
       "pairing_failed": "Párovanie sa nedokončilo. Začnite znova; ak to stále zlyháva, pripojte sa pomocou kľúča API.",
       "paired_existing": "Váš existujúci záznam Volcast je teraz pripojený k vášmu účtu.",
@@ -81,10 +81,88 @@
       "converted_existing": "Váš záznam iba so zisťovaním teraz používa váš účet Volcast."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": {
+      "message": "Sieť"
+    },
+    "assignment_quantity_battery": {
+      "message": "Batéria"
+    },
+    "assignment_sign_recommend_on": {
+      "message": "{quantity}: odporúčané - zapnite \"{option}\""
+    },
+    "assignment_sign_recommend_off": {
+      "message": "{quantity}: odporúčané - vypnite \"{option}\""
+    },
+    "assignment_sign_match": {
+      "message": "{quantity}: zodpovedá aktuálnemu nastaveniu"
+    },
+    "assignment_sign_unknown": {
+      "message": "{quantity}: nedá sa vyhodnotiť - {reason}"
+    },
+    "assignment_note": {
+      "message": "Poznámka: {text}"
+    },
+    "assignment_reason_unknown": {
+      "message": "nedá sa vyhodnotiť"
+    },
+    "assignment_reason_no_sensor": {
+      "message": "nie je vybraný žiadny senzor"
+    },
+    "assignment_reason_too_few_samples": {
+      "message": "je zaznamenaných príliš málo hodnôt (potrebných je niekoľko hodín údajov)"
+    },
+    "assignment_reason_grid_idle": {
+      "message": "v zaznamenanom období nebol žiadny zreteľný odber ani pretok do siete"
+    },
+    "assignment_reason_battery_idle": {
+      "message": "batéria bola v zaznamenanom období nečinná (žiadne zreteľné nabíjanie ani vybíjanie)"
+    },
+    "assignment_reason_no_load_sensor": {
+      "message": "na porovnanie hodnôt je potrebný senzor výkonu spotreby domu"
+    },
+    "assignment_reason_ambiguous": {
+      "message": "hodnoty jednoznačne neukazujú na jedno znamienko"
+    },
+    "assignment_excluded_load_derived": {
+      "message": "senzor spotreby domu sa počíta z iných senzorov, takže nemôže potvrdiť znamienko"
+    },
+    "assignment_excluded_load_state_only": {
+      "message": "senzor spotreby domu nemá v Home Assistant jedinečné ID, takže sa nedá overiť"
+    },
+    "assignment_excluded_load_unverified": {
+      "message": "senzor spotreby domu sa teraz nedal overiť"
+    },
+    "assignment_note_recorder_unavailable": {
+      "message": "história nie je dostupná, použili sa aktuálne hodnoty"
+    },
+    "assignment_note_no_statistics": {
+      "message": "nenašla sa zaznamenaná história, použili sa aktuálne hodnoty"
+    },
+    "assignment_note_recorder_error": {
+      "message": "históriu sa nepodarilo načítať, použili sa aktuálne hodnoty"
+    },
+    "assignment_note_registry_unavailable": {
+      "message": "register entít nie je dostupný"
+    },
+    "assignment_note_failed": {
+      "message": "návrh sa nepodarilo pripraviť"
+    },
+    "assignment_candidates_heading": {
+      "message": "Týmto poliam zodpovedá viac senzorov, vyberte jeden:"
+    },
+    "assignment_sign_heading": {
+      "message": "Kontrola znamienka výkonu (z posledných 24 hodín zaznamenaných údajov alebo z aktuálnych hodnôt):"
+    },
+    "account_connection_hint": {
+      "message": "Živé údaje a priradenie senzorov inštalácie vyžadujú pripojenie k vášmu účtu Volcast. Ak ich chcete používať, pridajte integráciu znova a zvoľte pripojenie k účtu."
+    }
+  },
   "options": {
     "step": {
       "init": {
         "title": "Možnosti Volcast",
+        "description": "{account_hint}",
         "data": {
           "update_interval": "Interval aktualizácie (minúty)",
           "peak_threshold": "Prah špičkovej výroby (%)",
@@ -137,7 +215,7 @@
       },
       "details": {
         "title": "Podrobnosti o inštalácii",
-        "description": "Voliteľné. Vyberte senzory pre hodnoty, ktoré Volcast nenájde cez integráciu striedača, a opravte údaje o inštalácii.",
+        "description": "Voliteľné. Vyberte senzory pre hodnoty, ktoré Volcast nenájde cez integráciu invertora, a opravte údaje o inštalácii.\n\nSenzory, ktoré Volcast navrhuje, sú len návrh založený na vašich senzoroch Home Assistant, preto každý najprv skontrolujte. Nič sa neuloží, kým neodošlete formulár; navrhnuté senzory sa uložia až potom a vymazanie poľa ho ponechá nepriradené. Volcast očakáva, že výkon batérie je kladný pri vybíjaní a výkon siete kladný pri odbere.\n\n{candidates}\n\n{sign_check}",
         "data": {
           "soc": "Stav nabitia batérie",
           "pv_power_w": "Výkon FV",
@@ -148,6 +226,7 @@
           "grid_import_total_kwh": "Celkový odber zo siete",
           "grid_export_total_kwh": "Celkový export do siete",
           "grid_power_negate": "Senzor siete zobrazuje export ako kladný",
+          "battery_power_negate": "Senzor batérie zobrazuje vybíjanie ako záporné",
           "rated_power_w": "Menovitý výkon striedača (W)",
           "battery_capacity_kwh": "Kapacita batérie (kWh)",
           "load_energy_entity": "Senzor energie spotreby domu (kWh)",
@@ -157,6 +236,7 @@
         },
         "data_description": {
           "grid_power_negate": "Zapnite, ak je senzor siete pri odbere záporný.",
+          "battery_power_negate": "Zapnite, ak je senzor batérie pri vybíjaní záporný. Platí len pre tu vybraný senzor batérie.",
           "rated_power_w": "Medzi 1000 a 30000 W.",
           "load_energy_entity": "Použije sa jednorazovo na odoslanie histórie spotreby do Volcast.",
           "direct_search": "Číta iba identifikáciu striedača; nič sa nezapisuje.",
@@ -400,7 +480,7 @@
     },
     "update_available": {
       "title": "Je k dispozícii aktualizácia Volcast",
-      "description": "Volcast {latest_version} je k dispozícii (máte {current_version}). Aktualizujte Volcast v HACS a reštartujte Home Assistant, aby ste získali najnovšie opravy."
+      "description": "Volcast {latest_version} je k dispozícii (máte {current_version}). Aktualizujte Volcast v HACS alebo v Marketplace Home Assistant a reštartujte Home Assistant, aby ste získali najnovšie opravy."
     },
     "foreign_control": {
       "title": "Riadenie striedača cez Volcast je pozastavené",
@@ -475,6 +555,39 @@
     "direct_start_failed": {
       "title": "Volcast nemohol spustiť priame pripojenie k striedaču",
       "description": "Priame pripojenie k striedaču sa kvôli neočakávanej chybe nepodarilo spustiť. Volcast to niekoľkokrát zopakuje; kým sa nepripojí, nemôže meniť ani vracať nastavenia striedača. Ak to trvá, znova načítajte Volcast a skontrolujte protokoly Home Assistanta."
+    },
+    "sensor_assignment_missing": {
+      "title": "Volcast potrebuje vedieť, ktoré senzory použiť",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Vyberte senzory striedača",
+            "description": "Volcast nerozpoznal integráciu striedača, takže živé údaje netečú, kým nevyberiete senzory. Nižšie je návrh založený na vašich senzoroch Home Assistant - najprv skontrolujte každý senzor. Nič sa neuloží, kým neodošlete formulár, a nastavenia striedača sa nemenia. Volcast očakáva, že výkon batérie je kladný pri vybíjaní a výkon siete kladný pri odbere.\n\n{candidates}\n\n{sign_check}",
+            "data": {
+              "soc": "Stav nabitia batérie",
+              "pv_power_w": "Výkon FV",
+              "battery_power_w": "Výkon batérie",
+              "grid_power_w": "Výkon siete",
+              "load_power_w": "Výkon spotreby domu",
+              "pv_energy_total_kwh": "Celková energia FV",
+              "grid_import_total_kwh": "Celkový odber zo siete",
+              "grid_export_total_kwh": "Celkový export do siete",
+              "grid_power_negate": "Senzor siete zobrazuje export ako kladný",
+              "battery_power_negate": "Senzor batérie zobrazuje vybíjanie ako záporné"
+            },
+            "data_description": {
+              "grid_power_negate": "Zapnite, ak je senzor siete pri odbere záporný.",
+              "battery_power_negate": "Zapnite, ak je senzor batérie pri vybíjaní záporný. Platí len pre tu vybraný senzor batérie."
+            }
+          }
+        },
+        "error": {
+          "pv_power_required": "Vyberte senzor výkonu FV. Volcast ho potrebuje pre živé údaje."
+        },
+        "abort": {
+          "not_loaded": "Volcast pre túto položku nebeží. Znova načítajte integráciu a skúste to znova."
+        }
+      }
     },
     "unsupported_setting": {
       "title": "Niektoré nastavenia striedača nie sú pre Volcast dostupné",
@@ -552,13 +665,23 @@
         "step": {
           "confirm": {
             "title": "OK, rozumiem",
-            "description": "Volcast získal nový testovací profil, ktorý zodpovedá tejto inštalácii: {label} ({profile}). Po opätovnom načítaní integrácie ho Volcast môže použiť na rozpoznanie striedača a čítanie jeho údajov. S profilom získaným týmto spôsobom Volcast striedač nikdy neriadi. Zvoľte Opraviť na zatvorenie tohto upozornenia."
+            "description": "Volcast získal nový testovací profil, ktorý zodpovedá tejto inštalácii: {label} ({profile}). Po opätovnom načítaní integrácie ho Volcast môže použiť na rozpoznanie striedača a čítanie jeho údajov. Testovací profil sa používa len na rozpoznanie striedača a čítanie údajov; riadenie striedača vyžaduje overený profil a váš súhlas. Zvoľte Opraviť na zatvorenie tohto upozornenia."
           }
         }
       }
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Navrhnúť priradenie senzorov",
+      "description": "Vráti návrh, ktoré senzory použiť pre vašu inštaláciu, a výsledok kontroly znamienka. Nič nemení; uplatnenie vyžaduje schválenie v nastaveniach integrácie.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Položka",
+          "description": "Položka Volcast na kontrolu. Nechajte prázdne, ak je k vášmu účtu spárovaná iba jedna položka."
+        }
+      }
+    },
     "sync_production": {
       "name": "Synchronizovať výrobu",
       "description": "Vynúti synchronizáciu hodinovej výroby FV do Volcast pomocou štatistík recordera Home Assistanta. Doplní medzery po výpadku HA (napr. po aktualizácii systému). Bez dátumu synchronizuje včerajšok a dnešok.",

@@ -70,7 +70,7 @@
       "single_instance_allowed": "Volcast è già configurato qui e il rilevamento dell'impianto è già in esecuzione al suo interno.",
       "cannot_connect": "Impossibile raggiungere il servizio di abbinamento di Volcast. Controlla la connessione a internet e riprova.",
       "pairing_expired": "La richiesta di abbinamento è scaduta o è stata annullata prima della conferma. Ricomincia e conferma entro 10 minuti.",
-      "client_outdated": "Questa versione dell'integrazione Volcast è troppo vecchia per connettersi al tuo account (minima {min_version}, ultima {latest_version}). Aggiorna Volcast in HACS, riavvia Home Assistant e riprova.",
+      "client_outdated": "Questa versione dell'integrazione Volcast è troppo vecchia per connettersi al tuo account (minima {min_version}, ultima {latest_version}). Aggiorna Volcast in HACS o nel Marketplace di Home Assistant, riavvia Home Assistant e riprova.",
       "pairing_disabled": "L'abbinamento non è disponibile al momento. Riprova più tardi oppure collegati con una chiave API.",
       "pairing_failed": "L'abbinamento non è stato completato. Ricomincia; se continua a fallire, collegati con una chiave API.",
       "paired_existing": "La tua voce Volcast esistente ora è collegata al tuo account.",
@@ -81,10 +81,88 @@
       "converted_existing": "La tua voce solo rilevamento ora usa il tuo account Volcast."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": {
+      "message": "Rete"
+    },
+    "assignment_quantity_battery": {
+      "message": "Batteria"
+    },
+    "assignment_sign_recommend_on": {
+      "message": "{quantity}: consigliato - attiva \"{option}\""
+    },
+    "assignment_sign_recommend_off": {
+      "message": "{quantity}: consigliato - disattiva \"{option}\""
+    },
+    "assignment_sign_match": {
+      "message": "{quantity}: corrisponde all'impostazione attuale"
+    },
+    "assignment_sign_unknown": {
+      "message": "{quantity}: impossibile valutare - {reason}"
+    },
+    "assignment_note": {
+      "message": "Nota: {text}"
+    },
+    "assignment_reason_unknown": {
+      "message": "non è stato possibile valutarlo"
+    },
+    "assignment_reason_no_sensor": {
+      "message": "per esso non è selezionato alcun sensore"
+    },
+    "assignment_reason_too_few_samples": {
+      "message": "ci sono troppe poche letture registrate (servono alcune ore di dati)"
+    },
+    "assignment_reason_grid_idle": {
+      "message": "nel periodo registrato non c'è stato un prelievo o un'immissione di rete chiari"
+    },
+    "assignment_reason_battery_idle": {
+      "message": "la batteria è stata inattiva nel periodo registrato (nessuna carica o scarica chiara)"
+    },
+    "assignment_reason_no_load_sensor": {
+      "message": "per confrontare le letture serve un sensore della potenza di consumo della casa"
+    },
+    "assignment_reason_ambiguous": {
+      "message": "le letture non indicano chiaramente un solo segno"
+    },
+    "assignment_excluded_load_derived": {
+      "message": "il sensore di consumo della casa è calcolato da altri sensori, quindi non può confermare il segno"
+    },
+    "assignment_excluded_load_state_only": {
+      "message": "il sensore di consumo della casa non ha un ID univoco in Home Assistant, quindi non può essere verificato"
+    },
+    "assignment_excluded_load_unverified": {
+      "message": "il sensore di consumo della casa non può essere verificato ora"
+    },
+    "assignment_note_recorder_unavailable": {
+      "message": "lo storico non è disponibile, sono state usate le letture attuali"
+    },
+    "assignment_note_no_statistics": {
+      "message": "non è stato trovato uno storico registrato, sono state usate le letture attuali"
+    },
+    "assignment_note_recorder_error": {
+      "message": "lo storico non può essere letto, sono state usate le letture attuali"
+    },
+    "assignment_note_registry_unavailable": {
+      "message": "il registro delle entità non è disponibile"
+    },
+    "assignment_note_failed": {
+      "message": "non è stato possibile preparare la proposta"
+    },
+    "assignment_candidates_heading": {
+      "message": "Più sensori corrispondono a questi campi, sceglierne uno:"
+    },
+    "assignment_sign_heading": {
+      "message": "Controllo del segno della potenza (dalle ultime 24 ore di dati registrati, o dalle letture attuali):"
+    },
+    "account_connection_hint": {
+      "message": "I dati in tempo reale e l'assegnazione dei sensori dell'impianto richiedono una connessione al tuo account Volcast. Per usarli, aggiungi di nuovo l'integrazione e scegli di connetterti con il tuo account."
+    }
+  },
   "options": {
     "step": {
       "init": {
         "title": "Opzioni di Volcast",
+        "description": "{account_hint}",
         "data": {
           "update_interval": "Intervallo di aggiornamento (minuti)",
           "peak_threshold": "Soglia di produzione di picco (%)",
@@ -137,7 +215,7 @@
       },
       "details": {
         "title": "Dettagli dell'impianto",
-        "description": "Facoltativo. Scegli i sensori per le letture che Volcast non trova tramite l'integrazione dell'inverter e correggi i dati dell'impianto.",
+        "description": "Facoltativo. Scegli i sensori per le letture che Volcast non trova tramite l'integrazione dell'inverter e correggi i dati dell'impianto.\n\nI sensori suggeriti da Volcast sono solo una proposta basata sui tuoi sensori di Home Assistant, quindi controllali prima tutti. Non si salva nulla finché non invii; i sensori suggeriti vengono salvati solo allora, e svuotare un campo lo lascia non assegnato. Volcast si aspetta che la potenza della batteria sia positiva in scarica e quella di rete positiva in prelievo.\n\n{candidates}\n\n{sign_check}",
         "data": {
           "soc": "Stato di carica della batteria",
           "pv_power_w": "Potenza FV",
@@ -148,6 +226,7 @@
           "grid_import_total_kwh": "Prelievo dalla rete totale",
           "grid_export_total_kwh": "Immissione in rete totale",
           "grid_power_negate": "Il sensore di rete mostra l'immissione come positiva",
+          "battery_power_negate": "Il sensore della batteria mostra la scarica come negativa",
           "rated_power_w": "Potenza nominale dell'inverter (W)",
           "battery_capacity_kwh": "Capacità della batteria (kWh)",
           "load_energy_entity": "Sensore di energia dei consumi della casa (kWh)",
@@ -157,6 +236,7 @@
         },
         "data_description": {
           "grid_power_negate": "Attivalo quando il sensore di rete è negativo durante il prelievo.",
+          "battery_power_negate": "Attivalo quando il sensore della batteria è negativo in scarica. Si applica solo al sensore della batteria scelto qui.",
           "rated_power_w": "Tra 1000 e 30000 W.",
           "load_energy_entity": "Usato una sola volta per inviare a Volcast lo storico dei consumi.",
           "direct_search": "Legge solo l'identificazione dell'inverter; non viene scritto nulla.",
@@ -400,7 +480,7 @@
     },
     "update_available": {
       "title": "È disponibile un aggiornamento di Volcast",
-      "description": "Volcast {latest_version} è disponibile (hai {current_version}). Aggiorna Volcast in HACS e riavvia Home Assistant per ottenere le ultime correzioni."
+      "description": "Volcast {latest_version} è disponibile (hai {current_version}). Aggiorna Volcast in HACS o nel Marketplace di Home Assistant e riavvia Home Assistant per ottenere le ultime correzioni."
     },
     "foreign_control": {
       "title": "Controllo dell'inverter da parte di Volcast in pausa",
@@ -475,6 +555,39 @@
     "direct_start_failed": {
       "title": "Volcast non è riuscito ad avviare la connessione diretta all'inverter",
       "description": "La connessione diretta all'inverter non si è avviata a causa di un errore imprevisto. Volcast riprova alcune volte; finché non si connette, non può modificare né ripristinare le impostazioni dell'inverter. Se il problema persiste, ricarica Volcast e controlla i log di Home Assistant."
+    },
+    "sensor_assignment_missing": {
+      "title": "Volcast deve sapere quali sensori usare",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Scegli i sensori dell'inverter",
+            "description": "Volcast non ha riconosciuto un'integrazione dell'inverter, quindi i dati in tempo reale non arrivano finché non scegli i sensori. Qui sotto c'è una proposta basata sui tuoi sensori di Home Assistant: controlla prima ogni sensore. Non si salva nulla finché non invii, e le impostazioni dell'inverter non cambiano. Volcast si aspetta che la potenza della batteria sia positiva in scarica e quella di rete positiva in prelievo.\n\n{candidates}\n\n{sign_check}",
+            "data": {
+              "soc": "Stato di carica della batteria",
+              "pv_power_w": "Potenza FV",
+              "battery_power_w": "Potenza della batteria",
+              "grid_power_w": "Potenza di rete",
+              "load_power_w": "Potenza di consumo della casa",
+              "pv_energy_total_kwh": "Energia FV totale",
+              "grid_import_total_kwh": "Prelievo dalla rete totale",
+              "grid_export_total_kwh": "Immissione in rete totale",
+              "grid_power_negate": "Il sensore di rete mostra l'immissione come positiva",
+              "battery_power_negate": "Il sensore della batteria mostra la scarica come negativa"
+            },
+            "data_description": {
+              "grid_power_negate": "Attivalo quando il sensore di rete è negativo durante il prelievo.",
+              "battery_power_negate": "Attivalo quando il sensore della batteria è negativo in scarica. Si applica solo al sensore della batteria scelto qui."
+            }
+          }
+        },
+        "error": {
+          "pv_power_required": "Scegli il sensore della potenza FV. Volcast lo richiede per i dati in tempo reale."
+        },
+        "abort": {
+          "not_loaded": "Volcast non è in esecuzione per questa voce. Ricarica l'integrazione e riprova."
+        }
+      }
     },
     "unsupported_setting": {
       "title": "Alcune impostazioni dell'inverter non sono disponibili per Volcast",
@@ -552,13 +665,23 @@
         "step": {
           "confirm": {
             "title": "OK, ho capito",
-            "description": "Volcast ha ricevuto un nuovo profilo di prova adatto a questa installazione: {label} ({profile}). Dopo il ricaricamento dell'integrazione, Volcast può usarlo per riconoscere l'inverter e leggerne i dati. Volcast non controlla mai l'inverter con un profilo ricevuto in questo modo. Seleziona Ripara per chiudere questo avviso."
+            "description": "Volcast ha ricevuto un nuovo profilo di prova adatto a questa installazione: {label} ({profile}). Dopo il ricaricamento dell'integrazione, Volcast può usarlo per riconoscere l'inverter e leggerne i dati. Un profilo di prova serve solo a riconoscere l'inverter e leggerne i dati; controllare l'inverter richiede un profilo verificato e il tuo consenso. Seleziona Ripara per chiudere questo avviso."
           }
         }
       }
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Proponi assegnazione dei sensori",
+      "description": "Restituisce una proposta dei sensori da usare per il tuo impianto e il risultato del controllo del segno. Non modifica nulla; applicarla richiede la tua approvazione nelle opzioni dell'integrazione.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Voce",
+          "description": "La voce Volcast da controllare. Lascia vuoto se nel tuo account è associata una sola voce."
+        }
+      }
+    },
     "sync_production": {
       "name": "Sincronizza produzione",
       "description": "Forza la sincronizzazione della produzione FV oraria con Volcast usando le statistiche del recorder di Home Assistant. Colma le lacune lasciate dall'inattività di HA (ad es. un aggiornamento del sistema). Senza data, sincronizza ieri e oggi.",
