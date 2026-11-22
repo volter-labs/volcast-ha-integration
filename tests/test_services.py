@@ -210,3 +210,154 @@ async def test_unload_platforms_failure_keeps_service_and_entry():
     assert "entry1" in hass.data[DOMAIN]
     tracker.async_stop.assert_not_awaited()
     assert hass.services.has_service(DOMAIN, SERVICE_SYNC_PRODUCTION)
+
+
+# ── volcast.propose_sensor_assignment (tylko odczyt, z odpowiedzią) ───────────
+
+def _assignment_world(monkeypatch, entries, *, controls=None):
+    """hass z wpisami i składaniem sterowania; propozycja podmieniona na stałą (kandydat `pv_power_w`)."""
+    from types import SimpleNamespace
+
+    import tests.test_options_assignment as oa
+    from custom_components.volcast import config_flow as cf
+    from custom_components.volcast.const import DOMAIN
+
+    async def propose(hass, entry, with_proposal=True):
+        return oa._result(chosen={"pv_power_w": "sensor.pv_now"} if with_proposal else {}, grid=oa.ON)
+    monkeypatch.setattr(cf, "async_propose", propose)
+    hass = FakeHass()
+    hass.config_entries = SimpleNamespace(async_entries=lambda domain=None: list(entries))
+    hass.data[DOMAIN] = {
+        e.entry_id: {"control": (controls or {}).get(e.entry_id, SimpleNamespace(choice=None, direct=None))}
+        for e in entries
+    }
+    hass.registry = oa.live_registry(monkeypatch, hass)     # domyślnie: w rejestrach nie ma falownika
+    return hass
+
+
+def _entry(entry_id="e1", *, backend=True, mode=None, options=None):
+    from types import SimpleNamespace
+
+    data = {"api_key": "vk_x"}
+    if backend:
+        data["backend"] = {"x": 1}
+    if mode:
+        data["mode"] = mode
+    return SimpleNamespace(entry_id=entry_id, domain="volcast", data=data, options=dict(options or {}))
+
+
+def _propose_handler(hass):
+    from custom_components.volcast import _async_register_services
+    from custom_components.volcast.const import DOMAIN
+
+    _async_register_services(hass)
+    return hass.services.registered[(DOMAIN, "propose_sensor_assignment")]
+
+
+def test_propose_service_registers_with_response_and_idempotently():
+    from homeassistant.core import SupportsResponse
+
+    from custom_components.volcast import _async_register_services
+    from custom_components.volcast.const import DOMAIN
+
+    hass = FakeHass()
+    _async_register_services(hass)
+    first = hass.services.registered[(DOMAIN, "propose_sensor_assignment")]
+    assert hass.services.responses[(DOMAIN, "propose_sensor_assignment")] == SupportsResponse.ONLY
+    schema = hass.services.schemas[(DOMAIN, "propose_sensor_assignment")]
+    assert schema({}) == {} and schema({"config_entry_id": "e1"}) == {"config_entry_id": "e1"}
+    _async_register_services(hass)
+    assert hass.services.registered[(DOMAIN, "propose_sensor_assignment")] is first
+
+
+@pytest.mark.asyncio
+async def test_propose_returns_the_proposal_shape_and_changes_nothing(monkeypatch):
+    import json
+
+    entry = _entry(options={"telemetry_map": {"soc": "sensor.s"}})
+    before = {"telemetry_map": {"soc": "sensor.s"}}
+    hass = _assignment_world(monkeypatch, [entry])
+    out = await _propose_handler(hass)(_FakeServiceCall())
+    assert set(out) == {"applicable", "proposal", "telemetry_map", "flags", "sign_check", "basis", "samples",
+                        "sources", "source_origin", "excluded", "flag_changes", "notes"}
+    assert out["applicable"] is True
+    assert out["proposal"]["chosen"] == {"pv_power_w": "sensor.pv_now"}
+    json.dumps(out)                                    # czysty JSON
+    assert entry.options == before
+    assert hass.created_tasks == []
+
+
+@pytest.mark.asyncio
+async def test_propose_picks_the_only_paired_entry_and_the_given_one(monkeypatch):
+    from custom_components.volcast import config_flow as cf
+
+    seen = []
+    a, b = _entry("a"), _entry("b")
+    hass = _assignment_world(monkeypatch, [a, _entry("disc", mode="discovery_only"), _entry("unp", backend=False)])
+    orig = cf.async_propose
+
+    async def spy(h, e, **kw):
+        seen.append(e.entry_id)
+        return await orig(h, e, **kw)
+    monkeypatch.setattr(cf, "async_propose", spy)
+    await _propose_handler(hass)(_FakeServiceCall())
+    hass2 = _assignment_world(monkeypatch, [a, b])
+    monkeypatch.setattr(cf, "async_propose", spy)
+    await _propose_handler(hass2)(_FakeServiceCall({"config_entry_id": "b"}))
+    assert seen == ["a", "b"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entries, data, message", [
+    ([], {}, "No paired Volcast entry"),
+    ([_entry(backend=False)], {}, "No paired Volcast entry"),
+    ([_entry(mode="discovery_only")], {}, "No paired Volcast entry"),
+    ([_entry("a"), _entry("b")], {}, "Several Volcast entries are paired"),
+    ([_entry("a")], {"config_entry_id": "zzz"}, "Unknown Volcast entry"),
+    ([_entry("a"), _entry("u", backend=False)], {"config_entry_id": "u"}, "is not paired"),
+    ([_entry("a"), _entry("d", mode="discovery_only")], {"config_entry_id": "d"}, "is not paired"),
+])
+async def test_propose_validation_errors(monkeypatch, entries, data, message):
+    from homeassistant.exceptions import ServiceValidationError
+
+    hass = _assignment_world(monkeypatch, entries)
+    with pytest.raises(ServiceValidationError, match=message):
+        await _propose_handler(hass)(_FakeServiceCall(data))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["profile", "direct", "none"])
+async def test_propose_not_applicable_with_recognised_inverter_returns_empty_proposal(monkeypatch, control):
+    from types import SimpleNamespace
+
+    ctl = {"profile": SimpleNamespace(choice=SimpleNamespace(integration_domain="goodwe"), direct=None),
+           "direct": SimpleNamespace(choice=None, direct=object()),
+           "none": None}[control]
+    entry = _entry(options={"telemetry_map": {"soc": "sensor.s"}})
+    hass = _assignment_world(monkeypatch, [entry], controls={"e1": ctl})
+    out = await _propose_handler(hass)(_FakeServiceCall())
+    assert out["applicable"] is False
+    assert out["proposal"] == {"fields": {}, "chosen": {}}
+    assert "flags" in out and "sign_check" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live", ["integration_added", "choice_fails"])
+async def test_propose_not_applicable_when_the_live_choice_recognises_or_fails(monkeypatch, live):
+    import tests.test_options_assignment as oa
+    from custom_components.volcast.control import runtime as rt_mod
+
+    entry = _entry()
+    hass = _assignment_world(monkeypatch, [entry])
+    assert (await _propose_handler(hass)(_FakeServiceCall()))["applicable"] is True    # przed: podpowiedź
+    if live == "integration_added":
+        hass.registry.devices["gw"] = oa.GW_DEVICE           # integracja falownika dodana bez przeładowania
+    else:
+        def boom():
+            raise RuntimeError("profiles unreadable")
+        monkeypatch.setattr(rt_mod.ds, "load_profiles", boom)
+    out = await _propose_handler(hass)(_FakeServiceCall())
+    assert out["applicable"] is False
+    assert out["proposal"] == {"fields": {}, "chosen": {}}
+    assert hass.data["volcast"]["e1"]["control"].choice is None
+

@@ -61,6 +61,7 @@ from ..cloud.signal_channel import SignalChannel
 from ..coordinator import async_get_profile_feed, async_profile_ready_issue, profile_ready_applies
 from ..const import (DEFAULT_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_ENERGY_ENTITY, CONTROL_MODE_DIRECT,
                      CONTROL_MODE_ENTITIES, DIRECT_POLL_S, DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_DIRECT_POLL_S,
+                     OPT_BATTERY_NEGATE,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL, OPT_ENTITY_MAP, OPT_GRID_NEGATE, OPT_INVERTER_DOMAIN,
                      OPT_LOAD_ENERGY, OPT_PROFILE_ID, OPT_RATED_POWER_W, OPT_TELEMETRY_MAP,
                      SIGNAL_CONTROL_STATE_UPDATED, SIGNAL_DISCOVERY_UPDATED, SIGNAL_PRICES_UPDATED)
@@ -110,8 +111,10 @@ _LOCKS_KEY = "volcast_control_locks"
 CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL,
                        OPT_ENTITY_MAP)
 _POLL_RANGE_S = (5.0, 60.0)
-# Opcje, których zmiana nie wymaga przeładowania wpisu (wystarczy import historii).
-RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY})
+# Opcje, których zmiana nie wymaga przeładowania wpisu: czujnik zużycia (wystarczy import historii) i znak
+# baterii z czujnika ręcznego (tylko telemetria — podmiana w działającym nadawcy). Przeładowanie zapisałoby
+# tryb neutralny przy rozładunku, a nowy wykonawca stosowałby plan od nowa.
+RELOAD_FREE_KEYS = frozenset({OPT_LOAD_ENERGY, OPT_BATTERY_NEGATE})
 # Wybór sterownika z chmury (`control_choice.controller`).
 CONTROLLER_VOLCAST, CONTROLLER_OWN_EMS = "volcast", "own_ems"
 
@@ -641,6 +644,44 @@ def _binding(options: Mapping, profile=None) -> tuple:
     if found is not None:
         return CONTROL_MODE_DIRECT, _target_identity(found[0], profile)
     return CONTROL_MODE_ENTITIES, options.get(OPT_PROFILE_ID), options.get(OPT_INVERTER_DOMAIN)
+
+
+def no_inverter_integration(options: Mapping, control) -> bool:
+    """Wtyczka nie rozpoznała integracji falownika i nie ma połączenia bezpośredniego.
+
+    Wspólny warunek zgłoszenia naprawy mapy czujników i podpowiedzi czujników w opcjach: tylko wtedy ręczna
+    mapa nie zasłania profilu. Bez składania sterowania (`control` None) nie wiadomo, co rozpoznano — fałsz.
+    """
+    if control is None:
+        return False
+    choice = getattr(control, "choice", None)
+    if choice is not None and getattr(choice, "integration_domain", None):
+        return False
+    # Profil z feedu dostarczony po starcie: wybór `choice` jest stały do przeładowania, a naprawa „profil gotowy”
+    # już czeka (`watch_profile_choice`) — do przeładowania nie podpowiadamy czujników, które potem zasłoniłyby profil.
+    announced = getattr(control, "announced_choice", None)
+    if isinstance(announced, tuple) and len(announced) == 2 and announced[1]:
+        return False
+    return getattr(control, "direct", None) is None and not isinstance(options.get(OPT_DIRECT_TARGET), Mapping)
+
+
+async def async_no_inverter_integration_now(hass, entry, control) -> bool:
+    """`no_inverter_integration` plus wybór profilu liczony NA ŻYWO z bieżących rejestrów (`_choice_for`).
+
+    `control.choice` jest stały od setupu, a integrację falownika można doinstalować bez przeładowania wpisu —
+    wtedy ręczna mapa zapisana z podpowiedzi zasłoniłaby po przeładowaniu rozpoznany profil. Wynik służy
+    wyłącznie podpowiedzi czujników i zapisowi mapy z naprawy; `control.choice` (sterowanie) zostaje bez zmian.
+    Każdy błąd wyliczenia = fałsz (bez podpowiedzi i bez zapisu).
+    """
+    if not no_inverter_integration(entry.options, control):
+        return False
+    try:
+        profiles = await hass.async_add_executor_job(ds.load_profiles)
+        live = _choice_for(hass, entry, profiles)
+    except Exception as err:  # noqa: BLE001 — niepewność = jak rozpoznany falownik
+        _LOGGER.debug("Volcast: live inverter profile check failed (%s)", type(err).__name__)
+        return False
+    return live is None or not live.integration_domain
 
 
 async def async_control_change_allowed(runtime, old: Mapping, new: Mapping) -> bool:
@@ -1326,7 +1367,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
                                      source="user" if manual_rated else "entities")
         telemetry = TelemetrySender(hass, entry, cloud, executor, choice=choice, profile_map=mapped,
                                     manual_map=opts.get(OPT_TELEMETRY_MAP) or {},
-                                    grid_negate=bool(opts.get(OPT_GRID_NEGATE)), limits=limits, direct=conn,
+                                    grid_negate=bool(opts.get(OPT_GRID_NEGATE)),
+                                    battery_negate=bool(opts.get(OPT_BATTERY_NEGATE)), limits=limits, direct=conn,
                                     direct_capabilities=direct_caps_for(opts, choice.profile) if conn else None,
                                     on_signals=_apply, signal_connected=lambda: channel.connected)
         _flush = telemetry.async_flush

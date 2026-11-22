@@ -33,7 +33,7 @@ except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w for
 
 from .cloud.client import Backend, ClientOutdated, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control import direct_search as ds
-from .control.runtime import async_control_change_allowed, async_direct_search, map_entities, mapped_with_overrides
+from .control.runtime import async_control_change_allowed, async_no_inverter_integration_now, async_direct_search, map_entities, mapped_with_overrides
 from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_pv_power
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.select import ProfileChoice
@@ -48,6 +48,7 @@ from .core.price_setup import (ActionCandidate, SeriesCheck, action_candidates, 
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
+from .sensor_assignment import AssignmentResult, async_propose
 from .version import async_integration_version
 from .const import (
     DEFAULT_PAIRING_URL,
@@ -73,6 +74,7 @@ from .const import (
     MODE_DISCOVERY_ONLY,
     OPT_BATTERY_CAPACITY_KWH,
     OPT_CONTROL_MODE,
+    OPT_BATTERY_NEGATE,
     OPT_GRID_NEGATE,
     OPT_INVERTER_DOMAIN,
     OPT_LOAD_ENERGY,
@@ -169,9 +171,9 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
         przekazuje już tej flagi do kreatora), więc nadpisanie adresu żyje w sekcji
         formularza, widocznej dla każdego, ale domyślnie zwiniętej.
 
-        External step idzie bez (przestarzałego) `step_id`, więc HA zapisuje go jako
-        krok `pair` i po odpowiedzi chmury wraca TUTAJ bez danych — wtedy od razu
-        do obsługi kroku zewnętrznego, nigdy do formularza.
+        External step niesie jawny `step_id="pair"` (HA 2026.11 ostrzega o braku; starsze
+        wydania przyjmują go tak samo), więc po odpowiedzi chmury HA wraca TUTAJ bez danych
+        — wtedy od razu do obsługi kroku zewnętrznego, nigdy do formularza.
         """
         if self._session is not None or self._result is not None:
             return await self._async_step_external()
@@ -251,7 +253,7 @@ class VolcastConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.debug("Volcast pairing: session not started (%s)", err)
                 return self.async_abort(reason="cannot_connect")
             self._pair_task = self.hass.async_create_task(self._async_wait_for_owner())
-        return self.async_external_step(url=self._session.connect_url)
+        return self.async_external_step(step_id="pair", url=self._session.connect_url)
 
     async def _async_wait_for_owner(self) -> None:
         try:
@@ -499,6 +501,138 @@ def _clean(values: dict[str, Any]) -> dict[str, Any]:
 # Wszystkie zmienne tekstów kroku źródła cen — HA wstawia je do opisu i błędów.
 #: Limit jednego próbnego wywołania akcji (przepływ czeka na użytkownika; runtime ma własne 30 s).
 PROBE_TIMEOUT_S = 10.0
+
+# Opis kroku „Installation details”: linie wyniku propozycji (kandydaci, ocena znaku) składamy z tłumaczeń
+# kategorii `exceptions` (klucze `assignment_*` w strings.json; 13 języków, zapas: angielski — robi to HA).
+# Klucz powodu / wyłączenia / notatki = prefiks + kod z `sign_check` / `sensor_assignment` (pilnuje test).
+_TR_REASON = "assignment_reason_"
+_TR_EXCLUDED = "assignment_excluded_"
+_TR_NOTE = "assignment_note_"
+_MAX_CANDIDATES = 3
+#: Opis kroku bez propozycji i bez oceny znaku.
+NO_ASSIGNMENT_TEXT = {"candidates": "", "sign_check": ""}
+
+
+async def _async_translations(hass, category: str) -> dict[str, str]:
+    """Spłaszczone tłumaczenia integracji (`component.<domena>.<kategoria>.…`) w języku HA."""
+    from homeassistant.helpers.translation import async_get_translations  # import na żądanie: tylko ten krok
+    return await async_get_translations(hass, getattr(hass.config, "language", "en"), category,
+                                        integrations=[DOMAIN])
+
+
+class _Texts:
+    """Teksty z tłumaczeń; brak klucza = sam klucz (nie blokuje opisu)."""
+
+    def __init__(self, exceptions: dict[str, str], options: dict[str, str]) -> None:
+        self._exc, self._opt = exceptions, options
+
+    def exc(self, key: str, **values: str) -> str:
+        text = self._exc.get(f"component.{DOMAIN}.exceptions.{key}.message", key)
+        try:
+            return text.format(**values)
+        except (KeyError, IndexError, ValueError):
+            return text
+
+    def field(self, name: str) -> str:
+        return self._opt.get(f"component.{DOMAIN}.options.step.details.data.{name}", name)
+
+
+def _sign_line(texts: _Texts, quantity: str, option: str, verdict, current: bool) -> str:
+    """Jedna linia oceny znaku: zalecenie zmiany, zgodność albo brak oceny z powodem."""
+    if verdict.negate is None:
+        reason = texts.exc(f"{_TR_REASON}{verdict.reason}") if verdict.reason else texts.exc(f"{_TR_REASON}unknown")
+        return "- " + texts.exc("assignment_sign_unknown", quantity=quantity, reason=reason)
+    if verdict.negate == current:
+        return "- " + texts.exc("assignment_sign_match", quantity=quantity)
+    return "- " + texts.exc("assignment_sign_recommend_on" if verdict.negate else "assignment_sign_recommend_off",
+                            quantity=quantity, option=texts.field(option))
+
+
+def assignment_placeholders(result: AssignmentResult | None, saved: dict[str, Any],
+                            texts: _Texts | None = None) -> dict[str, str]:
+    """Dane do opisu kroku: kandydaci dla pól niejednoznacznych i wynik oceny znaku (tekst z tłumaczeń)."""
+    if result is None or texts is None:
+        return dict(NO_ASSIGNMENT_TEXT)
+    cands = [f"- {texts.field(fp.field)}: " + ", ".join(c.entity_id for c in fp.candidates[:_MAX_CANDIDATES])
+             for fp in result.proposal.fields if fp.candidates and not fp.chosen and not saved.get(fp.field)]
+    signs = [_sign_line(texts, texts.exc("assignment_quantity_grid"), OPT_GRID_NEGATE, result.sign_check.grid,
+                        result.grid_negate),
+             _sign_line(texts, texts.exc("assignment_quantity_battery"), OPT_BATTERY_NEGATE,
+                        result.sign_check.battery, result.battery_negate)]
+    signs += ["- " + texts.exc("assignment_note", text=texts.exc(f"{_TR_EXCLUDED}{code}"))
+              for code in result.excluded.values()]
+    signs += ["- " + texts.exc("assignment_note", text=texts.exc(f"{_TR_NOTE}{n}")) for n in result.notes]
+    # Nagłówki należą do placeholderów (puste, gdy nie ma czego pokazać) — opis kroku jest wtedy zawsze prawdziwy.
+    return {"candidates": "\n".join([texts.exc("assignment_candidates_heading"), *cands]) if cands else "",
+            "sign_check": "\n".join([texts.exc("assignment_sign_heading"), *signs])}
+
+
+def merge_options(options: Any, patch: dict[str, Any]) -> dict[str, Any]:
+    """Opcje wpisu z naniesioną poprawką; wartość pusta (`_EMPTY`) usuwa klucz."""
+    out = dict(options)
+    for key, value in patch.items():
+        if any(value is e or value == e for e in _EMPTY):
+            out.pop(key, None)
+        else:
+            out[key] = value
+    return out
+
+
+async def async_assignment_result(hass, entry) -> tuple[AssignmentResult, bool]:
+    """Propozycja dla wpisu i to, czy wolno ją pokazać (`suggest`); wspólne dla formularza i usługi.
+
+    Falownik rozpoznany (albo nie wiadomo): ręczna mapa zasłoniłaby profil, więc bez podpowiedzi i bez
+    kandydatów; ocena znaku tylko dla czujników, które użytkownik już zapisał.
+    """
+    control = ((getattr(hass, "data", None) or {}).get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
+    # Wybór profilu na żywo: integracja falownika mogła zostać dodana po setupie wpisu.
+    suggest = await async_no_inverter_integration_now(hass, entry, control)
+    if suggest:
+        return await async_propose(hass, entry), True
+    # Bez podpowiedzi kandydaci nie wchodzą ani do propozycji, ani do źródeł oceny znaku.
+    return await async_propose(hass, entry, with_proposal=False), False
+
+
+async def async_load_assignment(hass, entry) -> tuple[AssignmentResult | None, dict[str, str] | None]:
+    """Propozycja przypisania czujników i opis do formularza mapy (krok opcji i naprawa); błąd = brak propozycji."""
+    result = placeholders = None
+    try:
+        result, suggest = await async_assignment_result(hass, entry)
+        saved = entry.options.get(OPT_TELEMETRY_MAP) or {}
+        texts = _Texts(await _async_translations(hass, "exceptions"),
+                       await _async_translations(hass, "options"))
+        placeholders = assignment_placeholders(result, saved, texts)
+        if not suggest and not saved:
+            placeholders = dict(NO_ASSIGNMENT_TEXT)
+    except Exception:  # noqa: BLE001 — opis to dodatek, formularz ma się pokazać zawsze
+        placeholders = None
+    return result, placeholders
+
+
+def sensor_map_fields(options: Any, assignment: AssignmentResult | None) -> dict:
+    """Pola mapy czujników (8 pól telemetrii i dwa znaki mocy) — wspólne dla kroku opcji i naprawy."""
+    tmap = options.get(OPT_TELEMETRY_MAP) or {}
+    # Puste pola dostają podpowiedź z propozycji (tylko kandydaci pewni); zapisana wartość ma pierwszeństwo.
+    proposed = assignment.proposal.chosen() if assignment is not None else {}
+    fields: dict = {
+        _entity_field(key, tmap.get(key) or proposed.get(key)):
+            selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+        for key in TELEMETRY_FIELDS
+    }
+    # Zalecenie oceny znaku jest tylko tekstem — zaznaczenie zostaje wartością z opcji.
+    fields[vol.Optional(OPT_GRID_NEGATE, default=bool(options.get(OPT_GRID_NEGATE)))] = bool
+    fields[vol.Optional(OPT_BATTERY_NEGATE, default=bool(options.get(OPT_BATTERY_NEGATE)))] = bool
+    return fields
+
+
+def sensor_map_patch(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Poprawka opcji z wypełnionej mapy: puste pole = brak wpisu, puste flagi znaku = brak klucza."""
+    return {
+        OPT_TELEMETRY_MAP: {k: v for k in TELEMETRY_FIELDS if (v := (user_input.get(k) or "").strip())},
+        OPT_GRID_NEGATE: bool(user_input.get(OPT_GRID_NEGATE)) or None,
+        OPT_BATTERY_NEGATE: bool(user_input.get(OPT_BATTERY_NEGATE)) or None}
+
+
 _NO_PLACEHOLDERS = {"hours": "0", "source_currency": "", "option_currency": "", "currency": ""}
 
 
@@ -521,13 +655,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     _shown_sources: dict[str, tuple[str, Any]] | None = None
 
     def _merged(self, patch: dict[str, Any]) -> dict[str, Any]:
-        out = dict(self.config_entry.options)
-        for key, value in patch.items():
-            if any(value is e or value == e for e in _EMPTY):
-                out.pop(key, None)
-            else:
-                out[key] = value
-        return out
+        return merge_options(self.config_entry.options, patch)
 
     def _runtime(self):
         data = getattr(self.hass, "data", None) or {}
@@ -576,9 +704,16 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         if not self._paired():
             if user_input is not None:
                 return await self._finish(self._forecast_options(user_input))
-            return self.async_show_form(step_id="init", data_schema=self._forecast_schema())
+            try:
+                hint = _Texts(await _async_translations(self.hass, "exceptions"), {}).exc("account_connection_hint")
+            except Exception:  # noqa: BLE001 — zdanie to dodatek, formularz ma się pokazać zawsze
+                hint = ""
+            return self.async_show_form(step_id="init", data_schema=self._forecast_schema(),
+                                        description_placeholders={"account_hint": hint})
+        # Opis kroku `init` dotyczy tylko formularza wpisu z kluczem API; menu sparowanego wpisu go nie ma.
         return self.async_show_menu(
-            step_id="init", menu_options=["forecast", "control", "details", "prices", "price_source", "ev_charger"])
+            step_id="init", menu_options=["forecast", "control", "details", "prices", "price_source", "ev_charger"],
+            description_placeholders={"account_hint": ""})
 
     async def async_step_forecast(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -744,16 +879,27 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._finish(self._merged({OPT_CONTROL_MODE: None}))
 
+    _assignment: AssignmentResult | None = None
+
+    _assignment_placeholders: dict[str, str] | None = None
+
+    async def _async_load_assignment(self) -> None:
+        """Propozycja i opis liczone raz na wejście do kroku; błąd nie blokuje formularza (bez propozycji)."""
+        self._assignment, self._assignment_placeholders = await async_load_assignment(self.hass, self.config_entry)
+
+    def _show_details(self, errors: dict[str, str] | None = None) -> ConfigFlowResult:
+        return self.async_show_form(
+            step_id="details", data_schema=self._details_schema(), errors=errors,
+            description_placeholders=self._assignment_placeholders or dict(NO_ASSIGNMENT_TEXT))
+
     async def async_step_details(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         await self._async_profiles()
         if user_input is not None:
             errors = self._direct_errors(user_input)
             if errors:
-                return self.async_show_form(step_id="details", data_schema=self._details_schema(), errors=errors)
-            tmap = {k: v for k in TELEMETRY_FIELDS if (v := (user_input.get(k) or "").strip())}
+                return self._show_details(errors)
             patch = {
-                OPT_TELEMETRY_MAP: tmap,
-                OPT_GRID_NEGATE: bool(user_input.get(OPT_GRID_NEGATE)) or None,
+                **sensor_map_patch(user_input),
                 OPT_RATED_POWER_W: user_input.get(OPT_RATED_POWER_W),
                 OPT_BATTERY_CAPACITY_KWH: user_input.get(OPT_BATTERY_CAPACITY_KWH),
                 OPT_LOAD_ENERGY: user_input.get(OPT_LOAD_ENERGY)}
@@ -764,9 +910,9 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             if user_input.get(_SEARCH):
                 self._pending = self._merged(patch)
                 return await self.async_step_direct_search()
-            return await self._finish(self._merged(patch), retry_form=lambda errors: self.async_show_form(
-                step_id="details", data_schema=self._details_schema(), errors=errors))
-        return self.async_show_form(step_id="details", data_schema=self._details_schema())
+            return await self._finish(self._merged(patch), retry_form=lambda errors: self._show_details(errors))
+        await self._async_load_assignment()
+        return self._show_details()
 
     # ── ładowarka EV: potwierdzenie znalezisk z wykrywania ─────────────────
     def _ev_findings(self) -> list:
@@ -1369,12 +1515,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     def _details_schema(self) -> vol.Schema:
         o = self.config_entry.options
-        tmap = o.get(OPT_TELEMETRY_MAP) or {}
-        fields: dict = {
-            _entity_field(key, tmap.get(key)): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
-            for key in TELEMETRY_FIELDS
-        }
-        fields[vol.Optional(OPT_GRID_NEGATE, default=bool(o.get(OPT_GRID_NEGATE)))] = bool
+        fields: dict = sensor_map_fields(o, self._assignment)
         rated = vol.Optional(OPT_RATED_POWER_W, description={"suggested_value": o.get(OPT_RATED_POWER_W)})
         fields[rated] = vol.All(vol.Coerce(int), vol.Range(min=int(RATED_POWER_RANGE_W[0]),
                                                                  max=int(RATED_POWER_RANGE_W[1])))

@@ -70,7 +70,7 @@
       "single_instance_allowed": "Volcast is hier al ingesteld en de installatiedetectie draait al als onderdeel daarvan.",
       "cannot_connect": "De Volcast-koppelingsservice is niet bereikbaar. Controleer je internetverbinding en probeer het opnieuw.",
       "pairing_expired": "Het koppelingsverzoek is verlopen of geannuleerd voordat het werd bevestigd. Begin opnieuw en bevestig binnen 10 minuten.",
-      "client_outdated": "Deze versie van de Volcast-integratie is te oud om verbinding te maken met je account (minimaal {min_version}, nieuwste {latest_version}). Werk Volcast bij in HACS, herstart Home Assistant en probeer het opnieuw.",
+      "client_outdated": "Deze versie van de Volcast-integratie is te oud om verbinding te maken met je account (minimaal {min_version}, nieuwste {latest_version}). Werk Volcast bij in HACS of in de Home Assistant Marketplace, herstart Home Assistant en probeer het opnieuw.",
       "pairing_disabled": "Koppelen is op dit moment niet beschikbaar. Probeer het later opnieuw of verbind met een API-sleutel.",
       "pairing_failed": "Koppelen is niet voltooid. Begin opnieuw; als het blijft mislukken, verbind dan met een API-sleutel.",
       "paired_existing": "Je bestaande Volcast-item is nu verbonden met je account.",
@@ -81,10 +81,88 @@
       "converted_existing": "Je item met alleen detectie gebruikt nu je Volcast-account."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": {
+      "message": "Net"
+    },
+    "assignment_quantity_battery": {
+      "message": "Accu"
+    },
+    "assignment_sign_recommend_on": {
+      "message": "{quantity}: aanbevolen - schakel \"{option}\" in"
+    },
+    "assignment_sign_recommend_off": {
+      "message": "{quantity}: aanbevolen - schakel \"{option}\" uit"
+    },
+    "assignment_sign_match": {
+      "message": "{quantity}: komt overeen met de huidige instelling"
+    },
+    "assignment_sign_unknown": {
+      "message": "{quantity}: kon niet worden beoordeeld - {reason}"
+    },
+    "assignment_note": {
+      "message": "Opmerking: {text}"
+    },
+    "assignment_reason_unknown": {
+      "message": "het kon niet worden beoordeeld"
+    },
+    "assignment_reason_no_sensor": {
+      "message": "er is geen sensor voor geselecteerd"
+    },
+    "assignment_reason_too_few_samples": {
+      "message": "er zijn te weinig opgeslagen metingen (er is een paar uur aan gegevens nodig)"
+    },
+    "assignment_reason_grid_idle": {
+      "message": "er was in de opgeslagen periode geen duidelijke netafname of teruglevering"
+    },
+    "assignment_reason_battery_idle": {
+      "message": "de accu was in de opgeslagen periode inactief (geen duidelijk laden of ontladen)"
+    },
+    "assignment_reason_no_load_sensor": {
+      "message": "er is een sensor voor het huisverbruiksvermogen nodig om de metingen te vergelijken"
+    },
+    "assignment_reason_ambiguous": {
+      "message": "de metingen wijzen niet duidelijk op één teken"
+    },
+    "assignment_excluded_load_derived": {
+      "message": "de sensor voor het huisverbruik wordt berekend uit andere sensoren, dus die kan het teken niet bevestigen"
+    },
+    "assignment_excluded_load_state_only": {
+      "message": "de sensor voor het huisverbruik heeft geen unieke ID in Home Assistant, dus die kan niet worden geverifieerd"
+    },
+    "assignment_excluded_load_unverified": {
+      "message": "de sensor voor het huisverbruik kon nu niet worden geverifieerd"
+    },
+    "assignment_note_recorder_unavailable": {
+      "message": "de geschiedenis is niet beschikbaar, de huidige metingen zijn gebruikt"
+    },
+    "assignment_note_no_statistics": {
+      "message": "er is geen opgeslagen geschiedenis gevonden, de huidige metingen zijn gebruikt"
+    },
+    "assignment_note_recorder_error": {
+      "message": "de geschiedenis kon niet worden gelezen, de huidige metingen zijn gebruikt"
+    },
+    "assignment_note_registry_unavailable": {
+      "message": "het entiteitenregister is niet beschikbaar"
+    },
+    "assignment_note_failed": {
+      "message": "het voorstel kon niet worden voorbereid"
+    },
+    "assignment_candidates_heading": {
+      "message": "Meerdere sensoren passen bij deze velden, kies er een:"
+    },
+    "assignment_sign_heading": {
+      "message": "Controle van het vermogensteken (van de laatste 24 uur aan opgeslagen gegevens, of van de huidige metingen):"
+    },
+    "account_connection_hint": {
+      "message": "Live gegevens en de toewijzing van de sensoren van je installatie vereisen een verbinding met je Volcast-account. Voeg de integratie opnieuw toe en kies verbinden met je account om ze te gebruiken."
+    }
+  },
   "options": {
     "step": {
       "init": {
         "title": "Volcast-opties",
+        "description": "{account_hint}",
         "data": {
           "update_interval": "Vernieuwingsinterval (minuten)",
           "peak_threshold": "Drempel voor piekopbrengst (%)",
@@ -137,7 +215,7 @@
       },
       "details": {
         "title": "Installatiegegevens",
-        "description": "Optioneel. Kies sensoren voor de metingen die Volcast niet via de omvormerintegratie kan vinden en corrigeer de installatiegegevens.",
+        "description": "Optioneel. Kies sensoren voor de metingen die Volcast niet via de omvormerintegratie kan vinden en corrigeer de installatiegegevens.\n\nSensoren die Volcast voorstelt zijn alleen een voorstel op basis van je Home Assistant-sensoren, controleer dus eerst elk ervan. Er wordt niets opgeslagen voordat je verzendt; de voorgestelde sensoren worden dan opgeslagen, en een leeggemaakt veld blijft niet toegewezen. Volcast verwacht dat het accuvermogen positief is bij ontladen en het netvermogen positief bij afname.\n\n{candidates}\n\n{sign_check}",
         "data": {
           "soc": "Laadtoestand van de accu",
           "pv_power_w": "PV-vermogen",
@@ -148,6 +226,7 @@
           "grid_import_total_kwh": "Netafname totaal",
           "grid_export_total_kwh": "Netteruglevering totaal",
           "grid_power_negate": "Netsensor toont teruglevering als positief",
+          "battery_power_negate": "Accusensor toont ontladen als negatief",
           "rated_power_w": "Nominaal vermogen van de omvormer (W)",
           "battery_capacity_kwh": "Accucapaciteit (kWh)",
           "load_energy_entity": "Energiesensor voor huisverbruik (kWh)",
@@ -157,6 +236,7 @@
         },
         "data_description": {
           "grid_power_negate": "Schakel in als je netsensor negatief is tijdens afname.",
+          "battery_power_negate": "Schakel in als je accusensor negatief is tijdens ontladen. Geldt alleen voor de hier gekozen accusensor.",
           "rated_power_w": "Tussen 1000 en 30000 W.",
           "load_energy_entity": "Wordt eenmalig gebruikt om je verbruiksgeschiedenis naar Volcast te sturen.",
           "direct_search": "Leest alleen de identificatie van de omvormer; er wordt niets geschreven.",
@@ -400,7 +480,7 @@
     },
     "update_available": {
       "title": "Er is een Volcast-update beschikbaar",
-      "description": "Volcast {latest_version} is beschikbaar (je hebt {current_version}). Werk Volcast bij in HACS en herstart Home Assistant om de nieuwste oplossingen te krijgen."
+      "description": "Volcast {latest_version} is beschikbaar (je hebt {current_version}). Werk Volcast bij in HACS of in de Home Assistant Marketplace en herstart Home Assistant om de nieuwste oplossingen te krijgen."
     },
     "foreign_control": {
       "title": "Omvormerbesturing door Volcast gepauzeerd",
@@ -476,6 +556,40 @@
       "title": "Volcast kon de directe omvormerverbinding niet starten",
       "description": "De directe verbinding met de omvormer kon door een onverwachte fout niet starten. Volcast probeert het een paar keer opnieuw; totdat er verbinding is, kan het omvormerinstellingen niet wijzigen of terugzetten. Blijft dit zo, laad Volcast dan opnieuw en controleer de Home Assistant-logs."
     },
+    "sensor_assignment_missing": {
+      "title": "Volcast moet weten welke sensoren gebruikt moeten worden",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Kies je omvormersensoren",
+            "description": "Volcast heeft geen omvormerintegratie herkend, dus er stromen geen live gegevens tot je de sensoren kiest. Hieronder staat een voorstel op basis van je Home Assistant-sensoren - controleer eerst elke sensor. Er wordt niets opgeslagen voordat je verzendt, en de omvormerinstellingen worden niet gewijzigd. Volcast verwacht dat het accuvermogen positief is bij ontladen en het netvermogen positief bij afname.\n\n{candidates}\n\n{sign_check}",
+            "data": {
+              "soc": "Laadtoestand van de accu",
+              "pv_power_w": "PV-vermogen",
+              "battery_power_w": "Accuvermogen",
+              "grid_power_w": "Netvermogen",
+              "load_power_w": "Huisverbruiksvermogen",
+              "pv_energy_total_kwh": "PV-energie totaal",
+              "grid_import_total_kwh": "Netafname totaal",
+              "grid_export_total_kwh": "Netteruglevering totaal",
+              "grid_power_negate": "Netsensor toont teruglevering als positief",
+              "battery_power_negate": "Accusensor toont ontladen als negatief"
+            },
+            "data_description": {
+              "grid_power_negate": "Schakel in als je netsensor negatief is tijdens afname.",
+              "battery_power_negate": "Schakel in als je accusensor negatief is tijdens ontladen. Geldt alleen voor de hier gekozen accusensor."
+            }
+          }
+        },
+        "error": {
+          "pv_power_required": "Kies de sensor voor het PV-vermogen. Volcast heeft die nodig voor live gegevens."
+        },
+        "abort": {
+          "not_loaded": "Volcast draait niet voor deze invoer. Laad de integratie opnieuw en probeer het nog eens.",
+          "inverter_recognised": "Volcast heeft je omvormer inmiddels herkend, dus er hoeven geen sensoren gekozen te worden. Laad de integratie opnieuw."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Sommige omvormerinstellingen zijn niet beschikbaar voor Volcast",
       "description": "Volcast kan deze omvormerinstellingen niet gebruiken omdat hun entiteiten ontbreken, uitgeschakeld of niet beschikbaar zijn: {entities}. De besturing gaat zonder deze instellingen door en het Volcast-plan vertrouwt er niet meer op. Zodra de entiteiten weer beschikbaar zijn, gebruikt Volcast ze automatisch."
@@ -547,18 +661,28 @@
       "description": "De omvormer heeft een eigen werkmodus of schema (bijvoorbeeld Eco of een tariefschema uit de app van de fabrikant) dat de accu buiten het Volcast-plan om uit het net kan laden. Schakel die modus of dat schema uit in de omvormer-app van de fabrikant en laat de algemene (standaard)modus aan. Zet de omvormer zelf niet uit."
     },
     "brand_profile_ready": {
-      "title": "Er is een testprofiel voor je omvormer beschikbaar",
+      "title": "Er is een nieuw profiel voor je omvormer beschikbaar",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, begrepen",
-            "description": "Volcast heeft een nieuw testprofiel ontvangen dat bij deze installatie past: {label} ({profile}). Nadat de integratie opnieuw is geladen, kan Volcast het gebruiken om de omvormer te herkennen en zijn gegevens te lezen. Met een profiel dat op deze manier is ontvangen, stuurt Volcast de omvormer nooit aan. Kies Repareren om deze melding te sluiten."
+            "description": "Volcast heeft een nieuw profiel ontvangen dat bij deze installatie past: {label} ({profile}). Nadat de integratie opnieuw is geladen, kan Volcast het gebruiken om de omvormer te herkennen en zijn gegevens te lezen. Een profiel dat nog wordt getest, wordt nergens anders voor gebruikt; het aansturen van de omvormer vereist een geverifieerd profiel en je toestemming. Kies Repareren om deze melding te sluiten."
           }
         }
       }
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Sensortoewijzing voorstellen",
+      "description": "Geeft een voorstel terug van welke sensoren je voor je installatie moet gebruiken, en het resultaat van de tekencontrole. Er wordt niets gewijzigd; toepassen vereist je goedkeuring in de integratie-opties.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Invoer",
+          "description": "De Volcast-invoer om te controleren. Laat leeg als er maar één invoer aan je account is gekoppeld."
+        }
+      }
+    },
     "sync_production": {
       "name": "Opbrengst synchroniseren",
       "description": "Forceert het synchroniseren van de uurlijkse PV-opbrengst met Volcast op basis van de recorderstatistieken van Home Assistant. Vult hiaten op door downtime van HA (bijv. een systeemupdate). Zonder datum worden gisteren en vandaag gesynchroniseerd.",

@@ -70,7 +70,7 @@
       "single_instance_allowed": "Volcast is already set up here, and installation discovery already runs as part of it.",
       "cannot_connect": "Unable to reach the Volcast pairing service. Check your internet connection and try again.",
       "pairing_expired": "The pairing request expired or was cancelled before it was confirmed. Start again and confirm within 10 minutes.",
-      "client_outdated": "This version of the Volcast integration is too old to connect to your account (minimum {min_version}, latest {latest_version}). Update Volcast in HACS, restart Home Assistant and try again.",
+      "client_outdated": "This version of the Volcast integration is too old to connect to your account (minimum {min_version}, latest {latest_version}). Update Volcast in HACS or in the Home Assistant Marketplace, restart Home Assistant and try again.",
       "pairing_disabled": "Pairing is not available right now. Try again later, or connect with an API key.",
       "pairing_failed": "Pairing did not complete. Start again; if it keeps failing, connect with an API key.",
       "paired_existing": "Your existing Volcast entry is now connected to your account.",
@@ -81,10 +81,88 @@
       "converted_existing": "Your discovery-only entry now uses your Volcast account."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": {
+      "message": "Grid"
+    },
+    "assignment_quantity_battery": {
+      "message": "Battery"
+    },
+    "assignment_sign_recommend_on": {
+      "message": "{quantity}: recommended - turn on \"{option}\""
+    },
+    "assignment_sign_recommend_off": {
+      "message": "{quantity}: recommended - turn off \"{option}\""
+    },
+    "assignment_sign_match": {
+      "message": "{quantity}: matches the current setting"
+    },
+    "assignment_sign_unknown": {
+      "message": "{quantity}: could not be assessed - {reason}"
+    },
+    "assignment_note": {
+      "message": "Note: {text}"
+    },
+    "assignment_reason_unknown": {
+      "message": "it could not be assessed"
+    },
+    "assignment_reason_no_sensor": {
+      "message": "no sensor is selected for it"
+    },
+    "assignment_reason_too_few_samples": {
+      "message": "there are too few recorded readings (needs a couple of hours of data)"
+    },
+    "assignment_reason_grid_idle": {
+      "message": "there was no clear grid import or export in the recorded period"
+    },
+    "assignment_reason_battery_idle": {
+      "message": "the battery was idle in the recorded period (no clear charging or discharging)"
+    },
+    "assignment_reason_no_load_sensor": {
+      "message": "a house load power sensor is needed to compare the readings"
+    },
+    "assignment_reason_ambiguous": {
+      "message": "the readings do not clearly point to one sign"
+    },
+    "assignment_excluded_load_derived": {
+      "message": "the house load sensor is calculated from other sensors, so it cannot confirm the sign"
+    },
+    "assignment_excluded_load_state_only": {
+      "message": "the house load sensor has no unique ID in Home Assistant, so it cannot be verified"
+    },
+    "assignment_excluded_load_unverified": {
+      "message": "the house load sensor could not be verified now"
+    },
+    "assignment_note_recorder_unavailable": {
+      "message": "history is not available, current readings were used"
+    },
+    "assignment_note_no_statistics": {
+      "message": "no recorded history found, current readings were used"
+    },
+    "assignment_note_recorder_error": {
+      "message": "history could not be read, current readings were used"
+    },
+    "assignment_note_registry_unavailable": {
+      "message": "the entity registry is not available"
+    },
+    "assignment_note_failed": {
+      "message": "the proposal could not be prepared"
+    },
+    "assignment_candidates_heading": {
+      "message": "Several sensors fit these fields, pick one:"
+    },
+    "assignment_sign_heading": {
+      "message": "Power sign check (from the last 24 hours of recorded data, or from current readings):"
+    },
+    "account_connection_hint": {
+      "message": "Live data and the assignment of your installation sensors need a connection to your Volcast account. To use them, add the integration again and choose to connect with your account."
+    }
+  },
   "options": {
     "step": {
       "init": {
         "title": "Volcast Options",
+        "description": "{account_hint}",
         "data": {
           "update_interval": "Update interval (minutes)",
           "peak_threshold": "Peak production threshold (%)",
@@ -137,7 +215,7 @@
       },
       "details": {
         "title": "Installation details",
-        "description": "Optional. Pick sensors for the readings Volcast cannot find through the inverter integration, and correct the installation data.",
+        "description": "Optional. Pick sensors for the readings Volcast cannot find through the inverter integration, and correct the installation data.\n\nSensors that Volcast suggests are only a proposal based on your Home Assistant sensors, so check every one first. Nothing is saved until you submit; suggested sensors are saved when you do, and clearing a field leaves it unassigned. Volcast expects battery power to be positive while discharging and grid power to be positive while importing.\n\n{candidates}\n\n{sign_check}",
         "data": {
           "soc": "Battery state of charge",
           "pv_power_w": "PV power",
@@ -148,6 +226,7 @@
           "grid_import_total_kwh": "Grid import total",
           "grid_export_total_kwh": "Grid export total",
           "grid_power_negate": "Grid sensor shows export as positive",
+          "battery_power_negate": "Battery sensor shows discharging as negative",
           "rated_power_w": "Inverter rated power (W)",
           "battery_capacity_kwh": "Battery capacity (kWh)",
           "load_energy_entity": "House consumption energy sensor (kWh)",
@@ -157,6 +236,7 @@
         },
         "data_description": {
           "grid_power_negate": "Turn on when your grid sensor is negative while importing.",
+          "battery_power_negate": "Turn on when your battery sensor is negative while discharging. Applies only to the battery sensor chosen here.",
           "rated_power_w": "Between 1000 and 30000 W.",
           "load_energy_entity": "Used once to send your consumption history to Volcast.",
           "direct_search": "Reads the inverter's identification only; nothing is written.",
@@ -400,7 +480,7 @@
     },
     "update_available": {
       "title": "A Volcast update is available",
-      "description": "Volcast {latest_version} is available (you have {current_version}). Update Volcast in HACS and restart Home Assistant to get the latest fixes."
+      "description": "Volcast {latest_version} is available (you have {current_version}). Update Volcast in HACS or in the Home Assistant Marketplace and restart Home Assistant to get the latest fixes."
     },
     "foreign_control": {
       "title": "Volcast inverter control paused",
@@ -492,6 +572,40 @@
       "title": "Volcast could not start the direct inverter connection",
       "description": "The direct connection to the inverter failed to start because of an unexpected error. Volcast retries a few times; until it connects, it cannot change or return the inverter settings. If this stays, reload Volcast and check the Home Assistant logs."
     },
+    "sensor_assignment_missing": {
+      "title": "Volcast needs to know which sensors to use",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Choose your inverter sensors",
+            "description": "Volcast did not recognise an inverter integration, so live data does not flow until you pick the sensors. Below is a proposal based on your Home Assistant sensors - check every sensor first. Nothing is saved until you submit, and the inverter settings are not changed. Volcast expects battery power to be positive while discharging and grid power to be positive while importing.\n\n{candidates}\n\n{sign_check}",
+            "data": {
+              "soc": "Battery state of charge",
+              "pv_power_w": "PV power",
+              "battery_power_w": "Battery power",
+              "grid_power_w": "Grid power",
+              "load_power_w": "House load power",
+              "pv_energy_total_kwh": "PV energy total",
+              "grid_import_total_kwh": "Grid import total",
+              "grid_export_total_kwh": "Grid export total",
+              "grid_power_negate": "Grid sensor shows export as positive",
+              "battery_power_negate": "Battery sensor shows discharging as negative"
+            },
+            "data_description": {
+              "grid_power_negate": "Turn on when your grid sensor is negative while importing.",
+              "battery_power_negate": "Turn on when your battery sensor is negative while discharging. Applies only to the battery sensor chosen here."
+            }
+          }
+        },
+        "error": {
+          "pv_power_required": "Choose the PV power sensor. Volcast needs it for live data."
+        },
+        "abort": {
+          "not_loaded": "Volcast is not running for this entry. Reload the integration and try again.",
+          "inverter_recognised": "Volcast has recognised your inverter in the meantime, so no sensors need to be picked. Reload the integration."
+        }
+      }
+    },
     "controller_conflict": {
       "title": "Another controller is controlling your inverter",
       "fix_flow": {
@@ -547,18 +661,28 @@
       "description": "The inverter has its own work mode or schedule (for example Eco or a time-of-use schedule set in the manufacturer's app) that can charge the battery from the grid outside the Volcast plan. Switch that mode or schedule off in the manufacturer's inverter app and leave the general (standard) mode on. Do not switch the inverter itself off."
     },
     "brand_profile_ready": {
-      "title": "A test profile for your inverter is available",
+      "title": "A new profile for your inverter is available",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, understood",
-            "description": "Volcast received a new test profile that matches this installation: {label} ({profile}). After the integration reloads, Volcast can use it to recognise the inverter and read its data. Volcast never controls the inverter with a profile received this way. Select Fix to dismiss this notice."
+            "description": "Volcast received a new profile that matches this installation: {label} ({profile}). After the integration reloads, Volcast can use it to recognise the inverter and read its data. A profile that is still being tested is used for nothing more; controlling the inverter needs a verified profile and your consent. Select Fix to dismiss this notice."
           }
         }
       }
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Propose sensor assignment",
+      "description": "Returns a proposal of which sensors to use for your installation, and the result of the sign check. It changes nothing; applying it needs your approval in the integration options.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Entry",
+          "description": "The Volcast entry to check. Leave empty when only one entry is paired with your account."
+        }
+      }
+    },
     "resume_control": {
       "name": "Resume control",
       "description": "Ends the pause after an inverter setting was changed outside Volcast and applies the Volcast plan right away, without reloading the integration."

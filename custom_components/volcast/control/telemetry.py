@@ -292,7 +292,7 @@ def build_reading(*, now_utc: datetime, profile_readings: Mapping[str, float | s
 class TelemetrySender:
     def __init__(self, hass, entry, cloud, executor, *, choice: ProfileChoice | None,
                  profile_map: Mapping[str, str], manual_map: Mapping[str, str], grid_negate: bool,
-                 limits: dict | None, utcnow=dt_util.utcnow, direct=None,
+                 limits: dict | None, battery_negate: bool = False, utcnow=dt_util.utcnow, direct=None,
                  direct_capabilities: Mapping[str, bool] | None = None,
                  signal_connected: Callable[[], bool] | None = None,
                  on_signals: Callable[[dict | None], Awaitable[None]] | None = None) -> None:
@@ -300,7 +300,9 @@ class TelemetrySender:
         self._choice = choice
         self._profile_map = dict(profile_map) if choice and choice.integration_domain else {}
         self._manual_map = dict(manual_map)
-        self._negate = grid_negate
+        # Klucze, których ręczny odczyt odwracamy; czujników z profilu ani rejestrów to nie dotyczy.
+        self._negated = frozenset(k for k, on in (("grid_power_w", grid_negate),
+                                                  ("battery_power_w", battery_negate)) if on)
         self._limits = limits
         # Szczyt mocy z prądu BMS (doba) — tylko tryb bezpośredni.
         self._peaks = {key: PeakLimit() for key in BMS_POWER_FIELDS}
@@ -337,6 +339,10 @@ class TelemetrySender:
         # Jednorazowy hak (ustawia runtime): pierwsza przyjęta telemetria z choć jednym odczytem.
         self.on_first_success: Callable[[], None] | None = None
         self._first_success_done = False
+
+    def set_battery_negate(self, on: bool) -> None:
+        """Nowa wartość opcji znaku baterii bez przeładowania wpisu — działa od następnego odczytu."""
+        self._negated = (self._negated | {"battery_power_w"}) if on else (self._negated - {"battery_power_w"})
 
     @property
     def reports_pv_production(self) -> bool:
@@ -449,7 +455,7 @@ class TelemetrySender:
         if r is None or not (r.unit is None or isinstance(r.unit, str)):
             return None               # nieznana postać jednostki ≠ brak jednostki
         try:
-            return manual_reading(key, r, negate=(key == "grid_power_w" and self._negate))
+            return manual_reading(key, r, negate=key in self._negated)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Volcast telemetry: manual reading of %s skipped (%s)", key, type(err).__name__)
             return None

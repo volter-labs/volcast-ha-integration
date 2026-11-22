@@ -144,3 +144,111 @@ async def test_unload_deletes_mapping_unused_issue(monkeypatch):
     delete.reset_mock()
     assert await integ.async_unload_entry(hass, entry) is True
     assert any(c.args[2] == f"production_mapping_unused_{entry.entry_id}" for c in delete.call_args_list)
+
+
+# --- Przypisanie czujników: zgłoszenie „brak mapy" przy niepoznanym falowniku ------------------
+
+def _assignment_calls(mock):
+    return [c for c in mock.call_args_list if c.args[2].startswith("sensor_assignment_missing_")]
+
+
+def _paired_with(monkeypatch, *, choice=None, control=True):
+    import custom_components.volcast as integ
+    from .test_setup_paired import fake_runtime
+
+    async def setup_control(hass, entry, *, report):
+        if not control:
+            return None
+        rt = fake_runtime()
+        rt.choice = choice
+        return rt
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+
+
+@pytest.mark.asyncio
+async def test_paired_without_profile_and_pv_power_raises_assignment_issue(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_with(monkeypatch)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok
+    calls = _assignment_calls(create)
+    assert len(calls) == 1
+    assert calls[0].args[2] == f"sensor_assignment_missing_{entry.entry_id}"
+    kw = calls[0].kwargs
+    assert kw["translation_key"] == "sensor_assignment_missing" and kw["is_fixable"] is True
+    assert kw["severity"] == "warning" and kw["data"] == {"entry_id": entry.entry_id}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [
+    {"telemetry_map": {"pv_power_w": "sensor.pv"}},                      # moc PV przypisana (także bez baterii)
+    {"direct_target": {"host": "192.0.2.5", "port": 502}},               # połączenie bezpośrednie
+])
+async def test_assignment_issue_absent_when_pv_power_or_direct_connection_is_set(monkeypatch, options):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_with(monkeypatch)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, options=options)
+    assert ok and not _assignment_calls(create)
+    assert any(c.args[2] == f"sensor_assignment_missing_{entry.entry_id}" for c in delete.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_assignment_issue_absent_for_recognised_inverter_integration(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_with(monkeypatch, choice=SimpleNamespace(integration_domain="goodwe"))
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and not _assignment_calls(create)
+    assert any(c.args[2] == f"sensor_assignment_missing_{entry.entry_id}" for c in delete.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_assignment_issue_absent_for_api_key_entry_and_discovery_only(monkeypatch):
+    create, delete = _patch_issues(monkeypatch)
+    hass, entry, ok = await run_setup(monkeypatch.setattr)
+    assert ok and not _assignment_calls(create)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data={"mode": "discovery_only"})
+    assert ok and not _assignment_calls(create)
+
+
+@pytest.mark.asyncio
+async def test_assignment_issue_not_raised_when_control_did_not_come_up(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_with(monkeypatch, control=False)      # nie wiadomo, czy falownik rozpoznano
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and not _assignment_calls(create)
+
+
+@pytest.mark.asyncio
+async def test_assignment_issue_goes_away_on_unload_and_removal(monkeypatch):
+    import custom_components.volcast as integ
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_with(monkeypatch)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    issue = f"sensor_assignment_missing_{entry.entry_id}"
+    monkeypatch.setattr(integ, "async_unload_control", AsyncMock())
+    delete.reset_mock()
+    assert await integ.async_unload_entry(hass, entry) is True
+    assert any(c.args[2] == issue for c in delete.call_args_list)
+    delete.reset_mock()
+    monkeypatch.setattr(integ, "async_remove_control", AsyncMock())
+    await integ.async_remove_entry(hass, entry)
+    assert any(c.args[2] == issue for c in delete.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_assignment_issue_clears_once_the_map_has_pv_power(monkeypatch):
+    # Zapis mapy przeładowuje wpis — ponowny setup z mapą kasuje zgłoszenie.
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_with(monkeypatch)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert len(_assignment_calls(create)) == 1
+    delete.reset_mock()
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED,
+                                      options={"telemetry_map": {"pv_power_w": "sensor.pv"}})
+    assert ok and any(c.args[2].startswith("sensor_assignment_missing_") for c in delete.call_args_list)

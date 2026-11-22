@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -631,6 +632,68 @@ def test_manual_map_with_grid_negate():
     s = sender(h, cloud, manual={"grid_power_w": "sensor.grid", "load_power_w": "sensor.nope"}, negate=True)
     asyncio.run(s.async_flush())
     assert cloud.sent[0]["grid_power_w"] == -1500.0 and "load_power_w" not in cloud.sent[0]
+
+
+# ── znak baterii z czujnika wskazanego ręcznie ─────────────────────────────
+
+GW_BATTERY = "sensor.goodwe_battery_power"           # encja baterii z profilu (bez transformacji znaku)
+
+
+def _live_states(h):
+    """Ręczne czujniki mocy: PV, pobór, sieć i bateria (kW i W, żeby objąć przeliczenie jednostek)."""
+    h.states.set("sensor.m_pv", "3.2", {"unit_of_measurement": "kW"})
+    h.states.set("sensor.m_load", "900", {"unit_of_measurement": "W"})
+    h.states.set("sensor.m_grid", "400", {"unit_of_measurement": "W"})
+    h.states.set("sensor.m_battery", "1.2", {"unit_of_measurement": "kW"})
+    return h
+
+
+MANUAL_ALL = {"pv_power_w": "sensor.m_pv", "load_power_w": "sensor.m_load", "grid_power_w": "sensor.m_grid",
+              "battery_power_w": "sensor.m_battery"}
+
+
+def test_manual_battery_sign_flipped_only_with_option():
+    h, cloud = _live_states(goodwe_hass()), Cloud()
+    asyncio.run(sender(h, cloud, manual={"battery_power_w": "sensor.m_battery"}, battery_negate=True).async_flush())
+    asyncio.run(sender(h, cloud, manual={"battery_power_w": "sensor.m_battery"}, battery_negate=False).async_flush())
+    asyncio.run(sender(h, cloud, manual={"battery_power_w": "sensor.m_battery"}).async_flush())   # domyślnie: wył.
+    assert [r["battery_power_w"] for r in cloud.sent] == [-1200.0, 1200.0, 1200.0]
+
+
+def test_manual_battery_negate_never_sends_negative_zero():
+    h, cloud = goodwe_hass(), Cloud()
+    h.states.set("sensor.m_battery", "0", {"unit_of_measurement": "W"})
+    asyncio.run(sender(h, cloud, manual={"battery_power_w": "sensor.m_battery"}, battery_negate=True).async_flush())
+    v = cloud.sent[0]["battery_power_w"]
+    assert v == 0.0 and math.copysign(1.0, v) == 1.0
+    assert "-0.0" not in json.dumps(cloud.sent[0])
+
+
+@pytest.mark.parametrize("battery_negate", [False, True])
+def test_profile_battery_sensor_is_never_flipped(battery_negate):
+    # Czujnik baterii z profilu (bez ręcznego nadpisania): opcja go nie dotyczy, nawet gdy ręczna mapa
+    # wskazuje inne pola.
+    h, cloud = _live_states(goodwe_hass()), Cloud()
+    h.states.set(GW_BATTERY, "1500", {"unit_of_measurement": "W"})
+    _nordpool(h)
+    entry = SimpleNamespace(entry_id="e1", options={"entity_price_buy": "sensor.nordpool"})
+    s = TelemetrySender(h, entry, cloud, Exec(), choice=GW, profile_map={**E, "battery_power_w": GW_BATTERY},
+                        manual_map={"grid_power_w": "sensor.m_grid"}, grid_negate=False,
+                        battery_negate=battery_negate, limits=None, utcnow=lambda: NOW)
+    asyncio.run(s.async_flush())
+    assert cloud.sent[0]["battery_power_w"] == 1500.0 and cloud.sent[0]["grid_power_w"] == 400.0
+    assert cloud.sent[0]["driver"]["meta"]["readings_source"]["battery_power_w"] == "entity"
+
+
+@pytest.mark.parametrize("grid_negate,battery_negate", [(False, False), (True, False), (False, True), (True, True)])
+def test_battery_and_grid_sign_options_are_independent(grid_negate, battery_negate):
+    h, cloud = _live_states(goodwe_hass()), Cloud()
+    asyncio.run(sender(h, cloud, manual=MANUAL_ALL, negate=grid_negate, battery_negate=battery_negate).async_flush())
+    r = cloud.sent[0]
+    assert r["grid_power_w"] == (-400.0 if grid_negate else 400.0)
+    assert r["battery_power_w"] == (-1200.0 if battery_negate else 1200.0)
+    # pozostałe pola bez zmian niezależnie od obu opcji
+    assert r["pv_power_w"] == 3200.0 and r["load_power_w"] == 900.0 and r["battery_soc"] == 60.0
 
 
 def test_limits_and_driver_in_reading():

@@ -70,7 +70,7 @@
       "single_instance_allowed": "Volcast est déjà configuré ici, et la détection de l'installation s'exécute déjà dans ce cadre.",
       "cannot_connect": "Impossible de joindre le service d'appairage Volcast. Vérifiez votre connexion internet et réessayez.",
       "pairing_expired": "La demande d'appairage a expiré ou a été annulée avant d'être confirmée. Recommencez et confirmez dans les 10 minutes.",
-      "client_outdated": "Cette version de l'intégration Volcast est trop ancienne pour se connecter à votre compte (minimum {min_version}, dernière {latest_version}). Mettez à jour Volcast dans HACS, redémarrez Home Assistant et réessayez.",
+      "client_outdated": "Cette version de l'intégration Volcast est trop ancienne pour se connecter à votre compte (minimum {min_version}, dernière {latest_version}). Mettez à jour Volcast dans HACS ou dans la Marketplace de Home Assistant, redémarrez Home Assistant et réessayez.",
       "pairing_disabled": "L'appairage n'est pas disponible pour le moment. Réessayez plus tard ou connectez-vous avec une clé API.",
       "pairing_failed": "L'appairage n'a pas abouti. Recommencez ; si cela échoue encore, connectez-vous avec une clé API.",
       "paired_existing": "Votre entrée Volcast existante est maintenant connectée à votre compte.",
@@ -81,10 +81,88 @@
       "converted_existing": "Votre entrée en détection seule utilise maintenant votre compte Volcast."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": {
+      "message": "Réseau"
+    },
+    "assignment_quantity_battery": {
+      "message": "Batterie"
+    },
+    "assignment_sign_recommend_on": {
+      "message": "{quantity} : recommandé - activez « {option} »"
+    },
+    "assignment_sign_recommend_off": {
+      "message": "{quantity} : recommandé - désactivez « {option} »"
+    },
+    "assignment_sign_match": {
+      "message": "{quantity} : correspond au réglage actuel"
+    },
+    "assignment_sign_unknown": {
+      "message": "{quantity} : impossible à évaluer - {reason}"
+    },
+    "assignment_note": {
+      "message": "Remarque : {text}"
+    },
+    "assignment_reason_unknown": {
+      "message": "il n'a pas pu être évalué"
+    },
+    "assignment_reason_no_sensor": {
+      "message": "aucun capteur n'est sélectionné pour lui"
+    },
+    "assignment_reason_too_few_samples": {
+      "message": "il y a trop peu de mesures enregistrées (il faut quelques heures de données)"
+    },
+    "assignment_reason_grid_idle": {
+      "message": "il n'y a pas eu d'import ni d'export réseau clair sur la période enregistrée"
+    },
+    "assignment_reason_battery_idle": {
+      "message": "la batterie est restée inactive sur la période enregistrée (ni charge ni décharge nettes)"
+    },
+    "assignment_reason_no_load_sensor": {
+      "message": "un capteur de puissance de consommation de la maison est nécessaire pour comparer les mesures"
+    },
+    "assignment_reason_ambiguous": {
+      "message": "les mesures ne désignent pas clairement un seul signe"
+    },
+    "assignment_excluded_load_derived": {
+      "message": "le capteur de consommation de la maison est calculé à partir d'autres capteurs, il ne peut donc pas confirmer le signe"
+    },
+    "assignment_excluded_load_state_only": {
+      "message": "le capteur de consommation de la maison n'a pas d'identifiant unique dans Home Assistant, il ne peut donc pas être vérifié"
+    },
+    "assignment_excluded_load_unverified": {
+      "message": "le capteur de consommation de la maison n'a pas pu être vérifié pour l'instant"
+    },
+    "assignment_note_recorder_unavailable": {
+      "message": "l'historique n'est pas disponible, les mesures actuelles ont été utilisées"
+    },
+    "assignment_note_no_statistics": {
+      "message": "aucun historique enregistré n'a été trouvé, les mesures actuelles ont été utilisées"
+    },
+    "assignment_note_recorder_error": {
+      "message": "l'historique n'a pas pu être lu, les mesures actuelles ont été utilisées"
+    },
+    "assignment_note_registry_unavailable": {
+      "message": "le registre des entités n'est pas disponible"
+    },
+    "assignment_note_failed": {
+      "message": "la proposition n'a pas pu être préparée"
+    },
+    "assignment_candidates_heading": {
+      "message": "Plusieurs capteurs correspondent à ces champs, choisissez-en un :"
+    },
+    "assignment_sign_heading": {
+      "message": "Contrôle du signe de puissance (sur les 24 dernières heures de données enregistrées, ou sur les mesures actuelles) :"
+    },
+    "account_connection_hint": {
+      "message": "Les données en direct et l'affectation des capteurs de votre installation nécessitent une connexion à votre compte Volcast. Pour les utiliser, ajoutez à nouveau l'intégration et choisissez de vous connecter avec votre compte."
+    }
+  },
   "options": {
     "step": {
       "init": {
         "title": "Options de Volcast",
+        "description": "{account_hint}",
         "data": {
           "update_interval": "Intervalle de mise à jour (minutes)",
           "peak_threshold": "Seuil de production maximale (%)",
@@ -137,7 +215,7 @@
       },
       "details": {
         "title": "Détails de l'installation",
-        "description": "Facultatif. Choisissez des capteurs pour les mesures que Volcast ne trouve pas via l'intégration de l'onduleur, et corrigez les données de l'installation.",
+        "description": "Facultatif. Choisissez des capteurs pour les mesures que Volcast ne trouve pas via l'intégration de l'onduleur, et corrigez les données de l'installation.\n\nLes capteurs suggérés par Volcast ne sont qu'une proposition basée sur vos capteurs Home Assistant : vérifiez d'abord chacun d'eux. Rien n'est enregistré avant l'envoi ; les capteurs suggérés sont alors enregistrés, et vider un champ le laisse non affecté. Volcast attend une puissance batterie positive en décharge et une puissance réseau positive en soutirage.\n\n{candidates}\n\n{sign_check}",
         "data": {
           "soc": "État de charge de la batterie",
           "pv_power_w": "Puissance PV",
@@ -148,6 +226,7 @@
           "grid_import_total_kwh": "Soutirage réseau total",
           "grid_export_total_kwh": "Injection réseau totale",
           "grid_power_negate": "Le capteur réseau indique l'injection comme positive",
+          "battery_power_negate": "Le capteur de batterie affiche la décharge comme négative",
           "rated_power_w": "Puissance nominale de l'onduleur (W)",
           "battery_capacity_kwh": "Capacité de la batterie (kWh)",
           "load_energy_entity": "Capteur d'énergie de consommation de la maison (kWh)",
@@ -157,6 +236,7 @@
         },
         "data_description": {
           "grid_power_negate": "Activez si votre capteur réseau est négatif lors du soutirage.",
+          "battery_power_negate": "Activez si votre capteur de batterie est négatif lors de la décharge. S'applique uniquement au capteur de batterie choisi ici.",
           "rated_power_w": "Entre 1000 et 30000 W.",
           "load_energy_entity": "Utilisé une seule fois pour envoyer votre historique de consommation à Volcast.",
           "direct_search": "Lit uniquement l'identification de l'onduleur ; rien n'est écrit.",
@@ -400,7 +480,7 @@
     },
     "update_available": {
       "title": "Une mise à jour de Volcast est disponible",
-      "description": "Volcast {latest_version} est disponible (vous avez {current_version}). Mettez à jour Volcast dans HACS et redémarrez Home Assistant pour bénéficier des derniers correctifs."
+      "description": "Volcast {latest_version} est disponible (vous avez {current_version}). Mettez à jour Volcast dans HACS ou dans la Marketplace de Home Assistant et redémarrez Home Assistant pour bénéficier des derniers correctifs."
     },
     "foreign_control": {
       "title": "Pilotage de l'onduleur par Volcast en pause",
@@ -476,6 +556,40 @@
       "title": "Volcast n'a pas pu démarrer la connexion directe à l'onduleur",
       "description": "La connexion directe à l'onduleur n'a pas pu démarrer à cause d'une erreur inattendue. Volcast réessaie plusieurs fois ; tant qu'il n'est pas connecté, il ne peut ni modifier ni rétablir les réglages de l'onduleur. Si cela persiste, rechargez Volcast et vérifiez les journaux de Home Assistant."
     },
+    "sensor_assignment_missing": {
+      "title": "Volcast doit savoir quels capteurs utiliser",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Choisissez les capteurs de l'onduleur",
+            "description": "Volcast n'a pas reconnu d'intégration d'onduleur, donc les données en direct ne circulent pas tant que vous n'avez pas choisi les capteurs. Ci-dessous, une proposition basée sur vos capteurs Home Assistant : vérifiez d'abord chaque capteur. Rien n'est enregistré avant l'envoi, et les réglages de l'onduleur ne sont pas modifiés. Volcast attend une puissance batterie positive en décharge et une puissance réseau positive en soutirage.\n\n{candidates}\n\n{sign_check}",
+            "data": {
+              "soc": "État de charge de la batterie",
+              "pv_power_w": "Puissance PV",
+              "battery_power_w": "Puissance de la batterie",
+              "grid_power_w": "Puissance du réseau",
+              "load_power_w": "Puissance de consommation de la maison",
+              "pv_energy_total_kwh": "Énergie PV totale",
+              "grid_import_total_kwh": "Soutirage réseau total",
+              "grid_export_total_kwh": "Injection réseau totale",
+              "grid_power_negate": "Le capteur réseau indique l'injection comme positive",
+              "battery_power_negate": "Le capteur de batterie affiche la décharge comme négative"
+            },
+            "data_description": {
+              "grid_power_negate": "Activez si votre capteur réseau est négatif lors du soutirage.",
+              "battery_power_negate": "Activez si votre capteur de batterie est négatif lors de la décharge. S'applique uniquement au capteur de batterie choisi ici."
+            }
+          }
+        },
+        "error": {
+          "pv_power_required": "Choisissez le capteur de puissance PV. Volcast en a besoin pour les données en direct."
+        },
+        "abort": {
+          "not_loaded": "Volcast ne fonctionne pas pour cette entrée. Rechargez l'intégration et réessayez.",
+          "inverter_recognised": "Volcast a entre-temps reconnu votre onduleur, il n'est donc pas nécessaire de choisir des capteurs. Rechargez l'intégration."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Certains réglages de l'onduleur ne sont pas disponibles pour Volcast",
       "description": "Volcast ne peut pas utiliser ces réglages de l'onduleur, car leurs entités sont manquantes, désactivées ou indisponibles : {entities}. Le pilotage continue sans eux et le plan Volcast ne s'appuie plus dessus. Lorsque les entités redeviennent disponibles, Volcast les utilise automatiquement."
@@ -547,18 +661,28 @@
       "description": "L'onduleur a son propre mode de fonctionnement ou planning (par exemple Eco ou un planning tarifaire réglé dans l'application du fabricant) qui peut charger la batterie depuis le réseau en dehors du plan Volcast. Désactivez ce mode ou ce planning dans l'application du fabricant de l'onduleur et laissez le mode général (standard) activé. N'éteignez pas l'onduleur lui-même."
     },
     "brand_profile_ready": {
-      "title": "Un profil de test pour votre onduleur est disponible",
+      "title": "Un nouveau profil pour votre onduleur est disponible",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, compris",
-            "description": "Volcast a reçu un nouveau profil de test correspondant à cette installation : {label} ({profile}). Après le rechargement de l'intégration, Volcast peut l'utiliser pour reconnaître l'onduleur et lire ses données. Volcast ne pilote jamais l'onduleur avec un profil reçu de cette façon. Sélectionnez Réparer pour fermer cet avis."
+            "description": "Volcast a reçu un nouveau profil correspondant à cette installation : {label} ({profile}). Après le rechargement de l'intégration, Volcast peut l'utiliser pour reconnaître l'onduleur et lire ses données. Un profil encore en test ne sert à rien d'autre ; piloter l'onduleur nécessite un profil vérifié et votre consentement. Sélectionnez Réparer pour fermer cet avis."
           }
         }
       }
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Proposer une affectation des capteurs",
+      "description": "Renvoie une proposition des capteurs à utiliser pour votre installation, ainsi que le résultat du contrôle du signe. Ne modifie rien ; l'appliquer nécessite votre approbation dans les options de l'intégration.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Entrée",
+          "description": "L'entrée Volcast à vérifier. Laissez vide si une seule entrée est associée à votre compte."
+        }
+      }
+    },
     "sync_production": {
       "name": "Synchroniser la production",
       "description": "Force la synchronisation de la production PV horaire vers Volcast à partir des statistiques de l'enregistreur de Home Assistant. Comble les trous laissés par une indisponibilité de HA (p. ex. une mise à jour du système). Sans date, synchronise hier et aujourd'hui.",

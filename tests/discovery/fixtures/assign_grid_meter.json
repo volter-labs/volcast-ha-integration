@@ -1,0 +1,302 @@
+{
+  "_note": "Inverter with a separate battery device and no grid sensor of its own; the grid is measured by a separate energy meter whose entities carry only generic names (the device name says 'Grid meter'); the house load comes from a template sensor. Synthetic.",
+  "config_entries": [
+    {
+      "entry_id": "entry-inv",
+      "domain": "huawei_solar",
+      "title": "Inverter",
+      "host": "192.0.2.70"
+    },
+    {
+      "entry_id": "entry-meter",
+      "domain": "shelly",
+      "title": "Grid meter",
+      "host": "192.0.2.71"
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-inv",
+      "manufacturer": "Huawei",
+      "model": "SUN2000-10KTL-M1",
+      "name": "Inverter",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "huawei_solar",
+          "DEVICE-INV"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-inv"
+      ]
+    },
+    {
+      "id": "device-bat",
+      "manufacturer": "Huawei",
+      "model": "LUNA2000",
+      "name": "Battery",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "huawei_solar",
+          "DEVICE-BAT"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-inv"
+      ]
+    },
+    {
+      "id": "device-meter",
+      "manufacturer": "Shelly",
+      "model": "Pro 3EM",
+      "name": "Grid meter",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "shelly",
+          "DEVICE-METER"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-meter"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "sensor.inverter_input_power",
+      "platform": "huawei_solar",
+      "unique_id": "SN0001_input_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Input power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_active_power",
+      "platform": "huawei_solar",
+      "unique_id": "SN0001_active_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Active power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_total_yield",
+      "platform": "huawei_solar",
+      "unique_id": "SN0001_total_yield",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Total yield",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_charge_discharge_power",
+      "platform": "huawei_solar",
+      "unique_id": "SN0001_charge_discharge_power",
+      "device_id": "device-bat",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Charge/Discharge power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_state_of_capacity",
+      "platform": "huawei_solar",
+      "unique_id": "SN0001_state_of_capacity",
+      "device_id": "device-bat",
+      "config_entry_id": "entry-inv",
+      "device_class": "battery",
+      "unit": "%",
+      "translation_key": null,
+      "original_name": "State of capacity",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_meter_power",
+      "platform": "shelly",
+      "unique_id": "SN0001_power",
+      "device_id": "device-meter",
+      "config_entry_id": "entry-meter",
+      "device_class": "power",
+      "unit": "kW",
+      "translation_key": null,
+      "original_name": "Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_meter_total_active_energy",
+      "platform": "shelly",
+      "unique_id": "SN0001_total_active_energy",
+      "device_id": "device-meter",
+      "config_entry_id": "entry-meter",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Total active energy",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_meter_total_active_returned_energy",
+      "platform": "shelly",
+      "unique_id": "SN0001_total_active_returned_energy",
+      "device_id": "device-meter",
+      "config_entry_id": "entry-meter",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Total active returned energy",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.house_load",
+      "platform": "template",
+      "unique_id": "SN0001_house_load",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "House load",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    }
+  ],
+  "states": [
+    {
+      "entity_id": "sensor.inverter_input_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Input power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_active_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Active power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_total_yield",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Total yield",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_charge_discharge_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Charge/Discharge power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_state_of_capacity",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "State of capacity",
+        "device_class": "battery",
+        "unit_of_measurement": "%",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_meter_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Power",
+        "device_class": "power",
+        "unit_of_measurement": "kW",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_meter_total_active_energy",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Total active energy",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.grid_meter_total_active_returned_energy",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Total active returned energy",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.house_load",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "House load",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    }
+  ]
+}

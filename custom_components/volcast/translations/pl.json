@@ -70,7 +70,7 @@
       "single_instance_allowed": "Volcast jest tu już skonfigurowany, a wykrywanie instalacji działa już w jego ramach.",
       "cannot_connect": "Nie można połączyć się z usługą parowania Volcast. Sprawdź połączenie z internetem i spróbuj ponownie.",
       "pairing_expired": "Prośba o parowanie wygasła lub została anulowana przed potwierdzeniem. Zacznij od nowa i potwierdź w ciągu 10 minut.",
-      "client_outdated": "Ta wersja integracji Volcast jest za stara, by połączyć się z Twoim kontem (minimalna {min_version}, najnowsza {latest_version}). Zaktualizuj Volcast w HACS, zrestartuj Home Assistant i spróbuj ponownie.",
+      "client_outdated": "Ta wersja integracji Volcast jest za stara, by połączyć się z Twoim kontem (minimalna {min_version}, najnowsza {latest_version}). Zaktualizuj Volcast w HACS lub w Marketplace Home Assistant, zrestartuj Home Assistant i spróbuj ponownie.",
       "pairing_disabled": "Parowanie jest teraz niedostępne. Spróbuj później albo połącz się za pomocą klucza API.",
       "pairing_failed": "Parowanie nie zostało ukończone. Zacznij od nowa; jeśli problem się powtarza, połącz się za pomocą klucza API.",
       "paired_existing": "Twój istniejący wpis Volcast jest teraz połączony z Twoim kontem.",
@@ -81,10 +81,88 @@
       "converted_existing": "Twój wpis tylko z wykrywaniem korzysta teraz z Twojego konta Volcast."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": {
+      "message": "Sieć"
+    },
+    "assignment_quantity_battery": {
+      "message": "Bateria"
+    },
+    "assignment_sign_recommend_on": {
+      "message": "{quantity}: zalecane - włącz \"{option}\""
+    },
+    "assignment_sign_recommend_off": {
+      "message": "{quantity}: zalecane - wyłącz \"{option}\""
+    },
+    "assignment_sign_match": {
+      "message": "{quantity}: zgadza się z obecnym ustawieniem"
+    },
+    "assignment_sign_unknown": {
+      "message": "{quantity}: nie udało się ocenić - {reason}"
+    },
+    "assignment_note": {
+      "message": "Uwaga: {text}"
+    },
+    "assignment_reason_unknown": {
+      "message": "nie udało się tego ocenić"
+    },
+    "assignment_reason_no_sensor": {
+      "message": "nie wybrano dla niego czujnika"
+    },
+    "assignment_reason_too_few_samples": {
+      "message": "zapisanych odczytów jest za mało (potrzeba kilku godzin danych)"
+    },
+    "assignment_reason_grid_idle": {
+      "message": "w zapisanym okresie nie było wyraźnego poboru ani oddawania do sieci"
+    },
+    "assignment_reason_battery_idle": {
+      "message": "bateria była bezczynna w zapisanym okresie (brak wyraźnego ładowania lub rozładowania)"
+    },
+    "assignment_reason_no_load_sensor": {
+      "message": "do porównania odczytów potrzebny jest czujnik mocy odbiorów domu"
+    },
+    "assignment_reason_ambiguous": {
+      "message": "odczyty nie wskazują wyraźnie jednego znaku"
+    },
+    "assignment_excluded_load_derived": {
+      "message": "czujnik mocy odbiorów domu jest wyliczany z innych czujników, więc nie może potwierdzić znaku"
+    },
+    "assignment_excluded_load_state_only": {
+      "message": "czujnik mocy odbiorów domu nie ma unikalnego ID w Home Assistant, więc nie można go zweryfikować"
+    },
+    "assignment_excluded_load_unverified": {
+      "message": "czujnika mocy odbiorów domu nie udało się teraz zweryfikować"
+    },
+    "assignment_note_recorder_unavailable": {
+      "message": "historia jest niedostępna, użyto bieżących odczytów"
+    },
+    "assignment_note_no_statistics": {
+      "message": "nie znaleziono zapisanej historii, użyto bieżących odczytów"
+    },
+    "assignment_note_recorder_error": {
+      "message": "nie udało się odczytać historii, użyto bieżących odczytów"
+    },
+    "assignment_note_registry_unavailable": {
+      "message": "rejestr encji jest niedostępny"
+    },
+    "assignment_note_failed": {
+      "message": "nie udało się przygotować propozycji"
+    },
+    "assignment_candidates_heading": {
+      "message": "Kilka czujników pasuje do tych pól, wybierz jeden:"
+    },
+    "assignment_sign_heading": {
+      "message": "Sprawdzenie znaku mocy (z ostatnich 24 godzin zapisanych danych albo z bieżących odczytów):"
+    },
+    "account_connection_hint": {
+      "message": "Dane na żywo i przypisanie czujników instalacji wymagają połączenia z kontem Volcast. Aby z nich korzystać, dodaj integrację ponownie i wybierz połączenie z kontem."
+    }
+  },
   "options": {
     "step": {
       "init": {
         "title": "Opcje Volcast",
+        "description": "{account_hint}",
         "data": {
           "update_interval": "Interwał aktualizacji (minuty)",
           "peak_threshold": "Próg szczytu produkcji (%)",
@@ -137,7 +215,7 @@
       },
       "details": {
         "title": "Szczegóły instalacji",
-        "description": "Opcjonalne. Wskaż czujniki dla odczytów, których Volcast nie znajduje przez integrację falownika, i popraw dane instalacji.",
+        "description": "Opcjonalne. Wskaż czujniki dla odczytów, których Volcast nie znajduje przez integrację falownika, i popraw dane instalacji.\n\nSugerowane przez Volcast czujniki to tylko propozycja oparta na czujnikach Home Assistant, więc sprawdź najpierw każdy z nich. Nic nie zostaje zapisane do momentu wysłania formularza; sugerowane czujniki zapisują się wtedy, a wyczyszczenie pola pozostawia je nieprzypisane. Volcast oczekuje, że moc baterii jest dodatnia przy rozładowaniu, a moc sieci dodatnia przy poborze.\n\n{candidates}\n\n{sign_check}",
         "data": {
           "soc": "Stan naładowania baterii",
           "pv_power_w": "Moc PV",
@@ -148,6 +226,7 @@
           "grid_import_total_kwh": "Pobór z sieci łącznie",
           "grid_export_total_kwh": "Oddanie do sieci łącznie",
           "grid_power_negate": "Czujnik sieci pokazuje eksport jako wartość dodatnią",
+          "battery_power_negate": "Czujnik baterii pokazuje rozładowanie jako wartość ujemną",
           "rated_power_w": "Moc znamionowa falownika (W)",
           "battery_capacity_kwh": "Pojemność baterii (kWh)",
           "load_energy_entity": "Czujnik energii zużycia domu (kWh)",
@@ -157,6 +236,7 @@
         },
         "data_description": {
           "grid_power_negate": "Włącz, gdy czujnik sieci pokazuje wartość ujemną przy poborze.",
+          "battery_power_negate": "Włącz, gdy czujnik baterii przy rozładowaniu pokazuje wartość ujemną. Dotyczy tylko wybranego tutaj czujnika baterii.",
           "rated_power_w": "Od 1000 do 30000 W.",
           "load_energy_entity": "Używany jednorazowo do wysłania historii zużycia do Volcast.",
           "direct_search": "Odczytuje wyłącznie identyfikację falownika; nic nie jest zapisywane.",
@@ -400,7 +480,7 @@
     },
     "update_available": {
       "title": "Dostępna aktualizacja Volcast",
-      "description": "Dostępna jest wersja Volcast {latest_version} (masz {current_version}). Zaktualizuj Volcast w HACS i zrestartuj Home Assistant, aby otrzymać najnowsze poprawki."
+      "description": "Dostępna jest wersja Volcast {latest_version} (masz {current_version}). Zaktualizuj Volcast w HACS lub w Marketplace Home Assistant i zrestartuj Home Assistant, aby otrzymać najnowsze poprawki."
     },
     "foreign_control": {
       "title": "Sterowanie falownikiem przez Volcast wstrzymane",
@@ -476,6 +556,40 @@
       "title": "Volcast nie mógł uruchomić bezpośredniego połączenia z falownikiem",
       "description": "Bezpośrednie połączenie z falownikiem nie uruchomiło się z powodu nieoczekiwanego błędu. Volcast ponawia próbę kilka razy; do czasu połączenia nie może zmieniać ani przywracać ustawień falownika. Jeśli problem trwa, przeładuj Volcast i sprawdź logi Home Assistanta."
     },
+    "sensor_assignment_missing": {
+      "title": "Volcast musi wiedzieć, których czujników użyć",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Wybierz czujniki falownika",
+            "description": "Volcast nie rozpoznał integracji falownika, więc dane na żywo nie napływają, dopóki nie wybierzesz czujników. Poniżej jest propozycja oparta na czujnikach Home Assistant - sprawdź najpierw każdy czujnik. Nic nie zostaje zapisane przed wysłaniem, a ustawienia falownika nie są zmieniane. Volcast oczekuje, że moc baterii jest dodatnia przy rozładowaniu, a moc sieci dodatnia przy poborze.\n\n{candidates}\n\n{sign_check}",
+            "data": {
+              "soc": "Stan naładowania baterii",
+              "pv_power_w": "Moc PV",
+              "battery_power_w": "Moc baterii",
+              "grid_power_w": "Moc sieci",
+              "load_power_w": "Moc odbiorów domu",
+              "pv_energy_total_kwh": "Energia PV łącznie",
+              "grid_import_total_kwh": "Pobór z sieci łącznie",
+              "grid_export_total_kwh": "Oddanie do sieci łącznie",
+              "grid_power_negate": "Czujnik sieci pokazuje eksport jako wartość dodatnią",
+              "battery_power_negate": "Czujnik baterii pokazuje rozładowanie jako wartość ujemną"
+            },
+            "data_description": {
+              "grid_power_negate": "Włącz, gdy czujnik sieci pokazuje wartość ujemną przy poborze.",
+              "battery_power_negate": "Włącz, gdy czujnik baterii przy rozładowaniu pokazuje wartość ujemną. Dotyczy tylko wybranego tutaj czujnika baterii."
+            }
+          }
+        },
+        "error": {
+          "pv_power_required": "Wybierz czujnik mocy PV. Volcast potrzebuje go do danych na żywo."
+        },
+        "abort": {
+          "not_loaded": "Volcast nie działa dla tego wpisu. Załaduj integrację ponownie i spróbuj jeszcze raz.",
+          "inverter_recognised": "Volcast w międzyczasie rozpoznał falownik, więc nie trzeba wybierać czujników. Załaduj integrację ponownie."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Część ustawień falownika jest niedostępna dla Volcast",
       "description": "Volcast nie może używać tych ustawień falownika, ponieważ ich encje są brakujące, wyłączone lub niedostępne: {entities}. Sterowanie działa dalej bez nich, a plan Volcast już na nich nie polega. Gdy encje znów będą dostępne, Volcast użyje ich automatycznie."
@@ -547,18 +661,28 @@
       "description": "Falownik ma własny tryb pracy lub harmonogram (np. Eco albo harmonogram taryfowy ustawiony w aplikacji producenta), który może ładować baterię z sieci poza planem Volcast. Wyłącz ten tryb lub harmonogram w aplikacji producenta falownika i zostaw włączony tryb ogólny (standardowy). Nie wyłączaj samego falownika."
     },
     "brand_profile_ready": {
-      "title": "Dostępny profil testowy Twojego falownika",
+      "title": "Dostępny nowy profil Twojego falownika",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, rozumiem",
-            "description": "Volcast otrzymał nowy profil testowy pasujący do tej instalacji: {label} ({profile}). Po ponownym wczytaniu integracji Volcast może go użyć do rozpoznania falownika i odczytu jego danych. Volcast nigdy nie steruje falownikiem z profilem otrzymanym w ten sposób. Wybierz Napraw, aby zamknąć to powiadomienie."
+            "description": "Volcast otrzymał nowy profil pasujący do tej instalacji: {label} ({profile}). Po ponownym wczytaniu integracji Volcast może go użyć do rozpoznania falownika i odczytu jego danych. Profil, który jest jeszcze testowany, nie służy do niczego więcej; sterowanie falownikiem wymaga zweryfikowanego profilu i Twojej zgody. Wybierz Napraw, aby zamknąć to powiadomienie."
           }
         }
       }
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Zaproponuj przypisanie czujników",
+      "description": "Zwraca propozycję, których czujników użyć w Twojej instalacji, wraz z wynikiem sprawdzenia znaku. Nic nie zmienia; zastosowanie wymaga zatwierdzenia w opcjach integracji.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Wpis",
+          "description": "Wpis Volcast do sprawdzenia. Zostaw puste, gdy na koncie jest sparowany tylko jeden wpis."
+        }
+      }
+    },
     "sync_production": {
       "name": "Synchronizuj produkcję",
       "description": "Wymusza synchronizację godzinowej produkcji PV z Volcast na podstawie statystyk rejestratora Home Assistanta. Uzupełnia luki po niedostępności HA (np. po aktualizacji systemu). Bez podania daty synchronizuje wczoraj i dziś.",

@@ -75,6 +75,66 @@ def _capabilities(entry: Any) -> dict[str, Any] | None:
     return dict(raw) if raw else None
 
 
+# Migawki rejestrów — funkcje wielokrotnego użytku (wykrywanie i propozycja przypisania czujników)
+
+def snap_devices(hass) -> tuple[list[DeviceSnap], frozenset[str]]:
+    """Migawki aktywnych urządzeń i identyfikatory pominiętych (wyłączonych).
+
+    Wyłączone urządzenia (także te po wyłączonym wpisie, disabled_by=config_entry)
+    nie są działającą instalacją — bez nich nie wracają ścieżką producenta. Ich
+    identyfikatory zwracamy, bo encje takich urządzeń też trzeba pominąć.
+    """
+    devices = all_devices(dr.async_get(hass))
+    active = [d for d in devices if not getattr(d, "disabled_by", None)]
+    skipped = frozenset(d.id for d in devices if getattr(d, "disabled_by", None))
+    return [
+        DeviceSnap(
+            id=d.id, manufacturer=d.manufacturer, model=d.model, name=d.name,
+            sw_version=d.sw_version, hw_version=getattr(d, "hw_version", None),
+            serial_number=getattr(d, "serial_number", None),
+            identifiers=_identifiers(d.identifiers),
+            config_entry_ids=device_config_entry_ids(d),
+            slug=slugify(d.name) if d.name else None,
+        )
+        for d in active
+    ], skipped
+
+
+def snap_entities(hass, skipped_devices: frozenset[str] = frozenset()) -> list[EntitySnap]:
+    # Encje pominiętego urządzenia pomijamy: jego serial nie trafia do zbioru
+    # maskowanego, a encje dołączyłyby do znaleziska po config_entry_id i
+    # wyniosły serial z entity_id/unique_id w jawnej postaci.
+    return [
+        EntitySnap(
+            entity_id=e.entity_id, platform=e.platform, unique_id=str(e.unique_id),
+            device_id=e.device_id, config_entry_id=e.config_entry_id,
+            device_class=e.device_class or e.original_device_class,
+            unit=e.unit_of_measurement,
+            translation_key=getattr(e, "translation_key", None),
+            original_name=e.original_name, disabled=e.disabled_by is not None,
+            # options/min/max/step z rejestru — klasyfikacja ładowarek działa bez stanów;
+            # raport do chmury ich nie serializuje (pola wybierane jawnie)
+            capabilities=_capabilities(e),
+        )
+        for e in er.async_get(hass).entities.values()
+        if e.device_id not in skipped_devices
+    ]
+
+
+def snap_entries(hass) -> list[ConfigEntrySnap]:
+    # async_entries() domyślnie zwraca też wpisy zignorowane (source "ignore",
+    # przycisk „Ignoruj" przy wykrytym urządzeniu) i wyłączone — to nie są działające
+    # integracje falownika, a ich tytuł (często nazwa urządzenia z numerem seryjnym)
+    # trafiłby do raportu bez maskowania. Filtr po atrybutach działa w każdej wersji HA.
+    return [
+        ConfigEntrySnap(entry_id=c.entry_id, domain=c.domain, title=c.title,
+                        host=_host(getattr(c, "data", None)))
+        for c in hass.config_entries.async_entries()
+        if getattr(c, "source", None) != "ignore"
+        and not getattr(c, "disabled_by", None)
+    ]
+
+
 class DiscoveryRunner:
     """Jeden przebieg wykrywania na żądanie; przechowuje ostatni raport."""
 
@@ -193,59 +253,13 @@ class DiscoveryRunner:
             return []
 
     def _snap_devices(self) -> tuple[list[DeviceSnap], frozenset[str]]:
-        """Migawki aktywnych urządzeń i identyfikatory pominiętych (wyłączonych).
-
-        Wyłączone urządzenia (także te po wyłączonym wpisie, disabled_by=config_entry)
-        nie są działającą instalacją — bez nich nie wracają ścieżką producenta. Ich
-        identyfikatory zwracamy, bo encje takich urządzeń też trzeba pominąć.
-        """
-        devices = all_devices(dr.async_get(self.hass))
-        active = [d for d in devices if not getattr(d, "disabled_by", None)]
-        skipped = frozenset(d.id for d in devices if getattr(d, "disabled_by", None))
-        return [
-            DeviceSnap(
-                id=d.id, manufacturer=d.manufacturer, model=d.model, name=d.name,
-                sw_version=d.sw_version, hw_version=getattr(d, "hw_version", None),
-                serial_number=getattr(d, "serial_number", None),
-                identifiers=_identifiers(d.identifiers),
-                config_entry_ids=device_config_entry_ids(d),
-                slug=slugify(d.name) if d.name else None,
-            )
-            for d in active
-        ], skipped
+        return snap_devices(self.hass)
 
     def _snap_entities(self, skipped_devices: frozenset[str]) -> list[EntitySnap]:
-        # Encje pominiętego urządzenia pomijamy: jego serial nie trafia do zbioru
-        # maskowanego, a encje dołączyłyby do znaleziska po config_entry_id i
-        # wyniosły serial z entity_id/unique_id w jawnej postaci.
-        return [
-            EntitySnap(
-                entity_id=e.entity_id, platform=e.platform, unique_id=str(e.unique_id),
-                device_id=e.device_id, config_entry_id=e.config_entry_id,
-                device_class=e.device_class or e.original_device_class,
-                unit=e.unit_of_measurement,
-                translation_key=getattr(e, "translation_key", None),
-                original_name=e.original_name, disabled=e.disabled_by is not None,
-                # options/min/max/step z rejestru — klasyfikacja ładowarek działa bez stanów;
-                # raport do chmury ich nie serializuje (pola wybierane jawnie)
-                capabilities=_capabilities(e),
-            )
-            for e in er.async_get(self.hass).entities.values()
-            if e.device_id not in skipped_devices
-        ]
+        return snap_entities(self.hass, skipped_devices)
 
     def _snap_entries(self) -> list[ConfigEntrySnap]:
-        # async_entries() domyślnie zwraca też wpisy zignorowane (source "ignore",
-        # przycisk „Ignoruj" przy wykrytym urządzeniu) i wyłączone — to nie są działające
-        # integracje falownika, a ich tytuł (często nazwa urządzenia z numerem seryjnym)
-        # trafiłby do raportu bez maskowania. Filtr po atrybutach działa w każdej wersji HA.
-        return [
-            ConfigEntrySnap(entry_id=c.entry_id, domain=c.domain, title=c.title,
-                            host=_host(getattr(c, "data", None)))
-            for c in self.hass.config_entries.async_entries()
-            if getattr(c, "source", None) != "ignore"
-            and not getattr(c, "disabled_by", None)
-        ]
+        return snap_entries(self.hass)
 
     def _snap_states(self, c: Classification) -> dict[str, StateSnap]:
         wanted: list[str] = []

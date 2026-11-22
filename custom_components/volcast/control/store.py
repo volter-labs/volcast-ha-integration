@@ -163,7 +163,8 @@ class ControlStore:
         if tou_raw is not None and tou_snapshot is None:
             _LOGGER.warning("Stored time-of-use snapshot is malformed; ignoring it")
         verification = raw.get("verification")
-        if verification is not None and not valid_record(verification):
+        # Pusty rekord `{}` to zapisany brak weryfikacji (tak zapisuje `async_save`), nie uszkodzenie.
+        if verification is not None and verification != {} and not valid_record(verification):
             _LOGGER.warning("Stored device verification record is malformed; starting the verification again")
             verification = None
         mode_uid = raw.get(_OWNER_MODE_UID)

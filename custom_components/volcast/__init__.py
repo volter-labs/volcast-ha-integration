@@ -8,9 +8,10 @@ from datetime import date, datetime, timedelta
 import logging
 
 import homeassistant.util.dt as dt_util
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STARTED, Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -19,6 +20,7 @@ from homeassistant.helpers.event import async_track_time_change
 from .cloud.client import Backend
 from .const import (
     PAIRING_ONLY_UPDATE_KEY,
+    ATTR_CONFIG_ENTRY_ID,
     ATTR_DATE,
     CONF_API_URL,
     CONF_BACKEND,
@@ -33,12 +35,15 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     MODE_DISCOVERY_ONLY,
+    OPT_BATTERY_NEGATE,
     OPT_LOAD_ENERGY,
+    OPT_TELEMETRY_MAP,
+    SERVICE_PROPOSE_SENSOR_ASSIGNMENT,
     SERVICE_RESUME_CONTROL,
     SERVICE_SYNC_PRODUCTION,
 )
 from .control.history_import import async_import_history_once
-from .control.runtime import (RELOAD_FREE_KEYS, ControlRuntime, async_remove_control, async_restore_if_control_changed,
+from .control.runtime import (RELOAD_FREE_KEYS, ControlRuntime, no_inverter_integration, async_remove_control, async_restore_if_control_changed,
                               async_resume_control,
                               async_setup_control, async_unload_control, changed_option_keys,
                               control_identity_changed, freeze_control)
@@ -102,6 +107,39 @@ def _migrate_unique_id(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.warning("Volcast: could not update the entry identifier (%s)", type(err).__name__)
 
 
+def _paired_entries(hass: HomeAssistant) -> list[ConfigEntry]:
+    """Wpisy sparowane z kontem (nie „tylko wykrywanie”, z zapisanym połączeniem)."""
+    return [e for e in hass.config_entries.async_entries(DOMAIN)
+            if e.data.get(CONF_BACKEND) and e.data.get(CONF_MODE) != MODE_DISCOVERY_ONLY]
+
+
+async def _async_propose_sensor_assignment(hass: HomeAssistant, entry_id: str | None) -> dict:
+    """Odpowiedź usługi `propose_sensor_assignment`: tylko odczyt, niczego nie zapisuje.
+
+    `applicable` mówi to samo co formularz opcji: gdy rozpoznano integrację falownika albo jest połączenie
+    bezpośrednie, kandydatów nie ma (wspólny kod z `config_flow.async_assignment_result`).
+    """
+    paired = _paired_entries(hass)
+    if entry_id is not None:
+        entry = next((e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id == entry_id), None)
+        if entry is None:
+            raise ServiceValidationError(f"Unknown Volcast entry {entry_id!r}")
+        if entry not in paired:
+            raise ServiceValidationError(
+                f"Volcast entry {entry_id!r} is not paired with an account (discovery-only or not paired)")
+    elif not paired:
+        raise ServiceValidationError("No paired Volcast entry — pair Volcast with your account first")
+    elif len(paired) > 1:
+        raise ServiceValidationError(
+            "Several Volcast entries are paired — pass config_entry_id to choose one")
+    else:
+        entry = paired[0]
+    from .config_flow import async_assignment_result  # import na żądanie: formularz jest wspólny z opcjami
+
+    result, applicable = await async_assignment_result(hass, entry)
+    return {"applicable": applicable, **result.as_dict()}
+
+
 def _async_register_services(hass: HomeAssistant) -> None:
     """Zarejestruj serwisy domeny volcast.sync_production i volcast.resume_control (idempotentnie).
 
@@ -119,6 +157,14 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 raise ServiceValidationError("No Volcast entry controls an inverter")
 
         hass.services.async_register(DOMAIN, SERVICE_RESUME_CONTROL, _handle_resume_control)
+    if not hass.services.has_service(DOMAIN, SERVICE_PROPOSE_SENSOR_ASSIGNMENT):
+        async def _handle_propose_sensor_assignment(call: ServiceCall) -> dict:
+            return await _async_propose_sensor_assignment(hass, call.data.get(ATTR_CONFIG_ENTRY_ID))
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_PROPOSE_SENSOR_ASSIGNMENT, _handle_propose_sensor_assignment,
+            schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): str}),
+            supports_response=SupportsResponse.ONLY)
     if hass.services.has_service(DOMAIN, SERVICE_SYNC_PRODUCTION):
         return
 
@@ -235,6 +281,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         telemetry_production = _telemetry_carries_production(control)
         _sync_production_issues(hass, entry, energy_entity, power_entity,
                                 telemetry_production=telemetry_production)
+        _sync_assignment_issue(hass, entry, control)
 
         # Tracker i reconciler przed platformami — sensory diagnostyczne czytają je przy setupie.
         if telemetry_production:
@@ -413,6 +460,47 @@ def _sync_production_issues(hass: HomeAssistant, entry: ConfigEntry, energy_enti
         ir.async_delete_issue(hass, DOMAIN, mapping_issue_id)
 
 
+def _assignment_issue_id(entry: ConfigEntry) -> str:
+    return f"sensor_assignment_missing_{entry.entry_id}"
+
+
+def _assignment_missing(entry: ConfigEntry, control: ControlRuntime | None) -> bool:
+    """Wpis sparowany, bez rozpoznanego falownika i bez połączenia bezpośredniego, a mapa nie ma mocy PV.
+
+    Wybór profilu (`control.choice`) powstaje przy składaniu sterowania z rejestrów urządzeń i wpisów,
+    które HA wczytuje przed integracjami — w tym miejscu setupu jest już rozstrzygnięty. Bez sterowania
+    (nieudane złożenie) nie wiadomo, czy falownik rozpoznano, więc zgłoszenia nie ma.
+    """
+    if control is None or not entry.data.get(CONF_BACKEND):
+        return False
+    if not no_inverter_integration(entry.options, control):
+        return False
+    return not (entry.options.get(OPT_TELEMETRY_MAP) or {}).get("pv_power_w")
+
+
+def _sync_assignment_issue(hass: HomeAssistant, entry: ConfigEntry, control: ControlRuntime | None) -> None:
+    """Zgłoszenie „wskaż czujniki”: dane na żywo nie płyną bez rozpoznanego falownika i mapy czujników.
+
+    Tylko zgłoszenie z propozycją do zatwierdzenia — nic nie zapisuje i nie dotyka sterowania.
+    Nigdy nie rzuca: błąd rejestru zgłoszeń nie może wywrócić setupu.
+    """
+    try:
+        if _assignment_missing(entry, control):
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                _assignment_issue_id(entry),
+                is_fixable=True,
+                severity=_ISSUE_WARNING,
+                translation_key="sensor_assignment_missing",
+                data={"entry_id": entry.entry_id},
+            )
+        else:
+            ir.async_delete_issue(hass, DOMAIN, _assignment_issue_id(entry))
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Volcast: sensor assignment repair could not be synced (%s)", type(err).__name__)
+
+
 async def _async_cleanup_failed_setup(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -437,6 +525,7 @@ async def _async_cleanup_failed_setup(
 
     async def _delete_mapping_issue() -> None:
         ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
+        ir.async_delete_issue(hass, DOMAIN, _assignment_issue_id(entry))
     steps.append(("repair", _delete_mapping_issue))
 
     cancelled: asyncio.CancelledError | None = None
@@ -583,10 +672,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, SERVICE_SYNC_PRODUCTION)
         if not hass.data[DOMAIN] and hass.services.has_service(DOMAIN, SERVICE_RESUME_CONTROL):
             hass.services.async_remove(DOMAIN, SERVICE_RESUME_CONTROL)
+        if not hass.data[DOMAIN] and hass.services.has_service(DOMAIN, SERVICE_PROPOSE_SENSOR_ASSIGNMENT):
+            hass.services.async_remove(DOMAIN, SERVICE_PROPOSE_SENSOR_ASSIGNMENT)
         # Na końcu i pod strażą — błąd rejestru zgłoszeń nie może pominąć zatrzymania trackera
         # ani wykonawcy.
         try:
             ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
+            ir.async_delete_issue(hass, DOMAIN, _assignment_issue_id(entry))
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Volcast: repair cleanup on unload failed (%s)", type(err).__name__)
     return unload_ok
@@ -597,7 +689,8 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
     Zmiana sterowania (sposób, profil, integracja falownika) najpierw oddaje falownik
     przez OBECNEGO wykonawcę. Zmiana samego czujnika zużycia domu nie przeładowuje
-    wpisu — uruchamia tylko jednorazowy import historii.
+    wpisu — uruchamia tylko jednorazowy import historii. Zmiana samego znaku baterii
+    też nie — działający nadawca telemetrii przejmuje ją od następnego odczytu.
     """
     pairing_only = hass.data.get(PAIRING_ONLY_UPDATE_KEY)
     if pairing_only and entry.entry_id in pairing_only:
@@ -609,7 +702,10 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
         changed = changed_option_keys(old, new)
         if changed and changed <= RELOAD_FREE_KEYS:
             control.options_at_setup = new
-            if new.get(OPT_LOAD_ENERGY):
+            telemetry = getattr(control, "telemetry", None)
+            if OPT_BATTERY_NEGATE in changed and telemetry is not None:
+                telemetry.set_battery_negate(bool(new.get(OPT_BATTERY_NEGATE)))
+            if OPT_LOAD_ENERGY in changed and new.get(OPT_LOAD_ENERGY):
                 entry.async_create_background_task(
                     hass, async_import_history_once(
                         hass, control.cloud, control.executor, load_entity=new[OPT_LOAD_ENERGY],
@@ -635,5 +731,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # Zgłoszenie wpisu nie może przeżyć wpisu (np. po nieudanym setupie nie było unloadu).
     try:
         ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
+        ir.async_delete_issue(hass, DOMAIN, _assignment_issue_id(entry))
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Volcast: repair cleanup on removal failed (%s)", type(err).__name__)

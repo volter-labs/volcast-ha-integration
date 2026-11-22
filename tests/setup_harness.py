@@ -77,7 +77,7 @@ class _Services:
     def has_service(self, domain, service) -> bool:
         return (domain, service) in self.registered
 
-    def async_register(self, domain, service, handler, schema=None) -> None:
+    def async_register(self, domain, service, handler, schema=None, supports_response=None) -> None:
         self.registered[(domain, service)] = handler
 
     def async_remove(self, domain, service) -> None:

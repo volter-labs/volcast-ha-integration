@@ -70,7 +70,7 @@
       "single_instance_allowed": "Volcast este deja configurat aici, iar detectarea instalației rulează deja ca parte a acestuia.",
       "cannot_connect": "Serviciul de asociere Volcast nu poate fi contactat. Verifică conexiunea la internet și încearcă din nou.",
       "pairing_expired": "Cererea de asociere a expirat sau a fost anulată înainte de confirmare. Începe din nou și confirmă în 10 minute.",
-      "client_outdated": "Această versiune a integrării Volcast este prea veche pentru a te conecta la contul tău (minimă {min_version}, cea mai recentă {latest_version}). Actualizează Volcast în HACS, repornește Home Assistant și încearcă din nou.",
+      "client_outdated": "Această versiune a integrării Volcast este prea veche pentru a te conecta la contul tău (minimă {min_version}, cea mai recentă {latest_version}). Actualizează Volcast în HACS sau în Marketplace-ul Home Assistant, repornește Home Assistant și încearcă din nou.",
       "pairing_disabled": "Asocierea nu este disponibilă acum. Încearcă mai târziu sau conectează-te cu o cheie API.",
       "pairing_failed": "Asocierea nu s-a finalizat. Începe din nou; dacă continuă să eșueze, conectează-te cu o cheie API.",
       "paired_existing": "Intrarea ta Volcast existentă este acum conectată la contul tău.",
@@ -81,10 +81,88 @@
       "converted_existing": "Intrarea ta doar cu detectare folosește acum contul tău Volcast."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": {
+      "message": "Rețea"
+    },
+    "assignment_quantity_battery": {
+      "message": "Baterie"
+    },
+    "assignment_sign_recommend_on": {
+      "message": "{quantity}: recomandat - activează \"{option}\""
+    },
+    "assignment_sign_recommend_off": {
+      "message": "{quantity}: recomandat - dezactivează \"{option}\""
+    },
+    "assignment_sign_match": {
+      "message": "{quantity}: corespunde setării actuale"
+    },
+    "assignment_sign_unknown": {
+      "message": "{quantity}: nu a putut fi evaluat - {reason}"
+    },
+    "assignment_note": {
+      "message": "Notă: {text}"
+    },
+    "assignment_reason_unknown": {
+      "message": "nu a putut fi evaluat"
+    },
+    "assignment_reason_no_sensor": {
+      "message": "nu este selectat niciun senzor pentru el"
+    },
+    "assignment_reason_too_few_samples": {
+      "message": "sunt prea puține citiri înregistrate (sunt necesare câteva ore de date)"
+    },
+    "assignment_reason_grid_idle": {
+      "message": "în perioada înregistrată nu a existat un import sau un export clar din rețea"
+    },
+    "assignment_reason_battery_idle": {
+      "message": "bateria a fost inactivă în perioada înregistrată (nicio încărcare sau descărcare clară)"
+    },
+    "assignment_reason_no_load_sensor": {
+      "message": "este necesar un senzor pentru puterea consumului casei ca să comparăm citirile"
+    },
+    "assignment_reason_ambiguous": {
+      "message": "citirile nu indică clar un singur semn"
+    },
+    "assignment_excluded_load_derived": {
+      "message": "senzorul consumului casei este calculat din alți senzori, deci nu poate confirma semnul"
+    },
+    "assignment_excluded_load_state_only": {
+      "message": "senzorul consumului casei nu are un ID unic în Home Assistant, deci nu poate fi verificat"
+    },
+    "assignment_excluded_load_unverified": {
+      "message": "senzorul consumului casei nu a putut fi verificat acum"
+    },
+    "assignment_note_recorder_unavailable": {
+      "message": "istoricul nu este disponibil, s-au folosit citirile curente"
+    },
+    "assignment_note_no_statistics": {
+      "message": "nu s-a găsit un istoric înregistrat, s-au folosit citirile curente"
+    },
+    "assignment_note_recorder_error": {
+      "message": "istoricul nu a putut fi citit, s-au folosit citirile curente"
+    },
+    "assignment_note_registry_unavailable": {
+      "message": "registrul entităților nu este disponibil"
+    },
+    "assignment_note_failed": {
+      "message": "propunerea nu a putut fi pregătită"
+    },
+    "assignment_candidates_heading": {
+      "message": "Mai mulți senzori se potrivesc acestor câmpuri, alege unul:"
+    },
+    "assignment_sign_heading": {
+      "message": "Verificarea semnului puterii (din ultimele 24 de ore de date înregistrate sau din citirile curente):"
+    },
+    "account_connection_hint": {
+      "message": "Datele în timp real și atribuirea senzorilor instalației necesită o conexiune la contul tău Volcast. Ca să le folosești, adaugă din nou integrarea și alege conectarea cu contul."
+    }
+  },
   "options": {
     "step": {
       "init": {
         "title": "Opțiuni Volcast",
+        "description": "{account_hint}",
         "data": {
           "update_interval": "Interval de actualizare (minute)",
           "peak_threshold": "Prag de producție maximă (%)",
@@ -137,7 +215,7 @@
       },
       "details": {
         "title": "Detalii instalație",
-        "description": "Opțional. Alege senzori pentru valorile pe care Volcast nu le găsește prin integrarea invertorului și corectează datele instalației.",
+        "description": "Opțional. Alege senzori pentru valorile pe care Volcast nu le găsește prin integrarea invertorului și corectează datele instalației.\n\nSenzorii sugerați de Volcast sunt doar o propunere bazată pe senzorii tăi din Home Assistant, așa că verifică mai întâi fiecare. Nimic nu se salvează până nu trimiți; senzorii sugeriți se salvează atunci, iar golirea unui câmp îl lasă neatribuit. Volcast așteaptă ca puterea bateriei să fie pozitivă la descărcare și puterea rețelei pozitivă la import.\n\n{candidates}\n\n{sign_check}",
         "data": {
           "soc": "Starea de încărcare a bateriei",
           "pv_power_w": "Putere FV",
@@ -148,6 +226,7 @@
           "grid_import_total_kwh": "Import din rețea total",
           "grid_export_total_kwh": "Export în rețea total",
           "grid_power_negate": "Senzorul rețelei arată exportul ca pozitiv",
+          "battery_power_negate": "Senzorul bateriei arată descărcarea ca negativă",
           "rated_power_w": "Puterea nominală a invertorului (W)",
           "battery_capacity_kwh": "Capacitatea bateriei (kWh)",
           "load_energy_entity": "Senzor de energie pentru consumul casei (kWh)",
@@ -157,6 +236,7 @@
         },
         "data_description": {
           "grid_power_negate": "Activează când senzorul rețelei este negativ la import.",
+          "battery_power_negate": "Activează când senzorul bateriei este negativ la descărcare. Se aplică doar senzorului de baterie ales aici.",
           "rated_power_w": "Între 1000 și 30000 W.",
           "load_energy_entity": "Folosit o singură dată pentru a trimite istoricul consumului către Volcast.",
           "direct_search": "Citește doar identificarea invertorului; nu se scrie nimic.",
@@ -400,7 +480,7 @@
     },
     "update_available": {
       "title": "Este disponibilă o actualizare Volcast",
-      "description": "Volcast {latest_version} este disponibil (ai {current_version}). Actualizează Volcast în HACS și repornește Home Assistant pentru a primi ultimele corecturi."
+      "description": "Volcast {latest_version} este disponibil (ai {current_version}). Actualizează Volcast în HACS sau în Marketplace-ul Home Assistant și repornește Home Assistant pentru a primi ultimele corecturi."
     },
     "foreign_control": {
       "title": "Controlul invertorului de către Volcast este în pauză",
@@ -476,6 +556,40 @@
       "title": "Volcast nu a putut porni conexiunea directă la invertor",
       "description": "Conexiunea directă la invertor nu a putut porni din cauza unei erori neașteptate. Volcast reîncearcă de câteva ori; până se conectează, nu poate modifica sau readuce setările invertorului. Dacă persistă, reîncarcă Volcast și verifică jurnalele Home Assistant."
     },
+    "sensor_assignment_missing": {
+      "title": "Volcast trebuie să știe ce senzori să folosească",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Alege senzorii invertorului",
+            "description": "Volcast nu a recunoscut o integrare de invertor, așa că datele în timp real nu circulă până nu alegi senzorii. Mai jos este o propunere bazată pe senzorii tăi din Home Assistant - verifică mai întâi fiecare senzor. Nimic nu se salvează până nu trimiți, iar setările invertorului nu se schimbă. Volcast așteaptă ca puterea bateriei să fie pozitivă la descărcare și puterea rețelei pozitivă la import.\n\n{candidates}\n\n{sign_check}",
+            "data": {
+              "soc": "Starea de încărcare a bateriei",
+              "pv_power_w": "Putere FV",
+              "battery_power_w": "Puterea bateriei",
+              "grid_power_w": "Puterea rețelei",
+              "load_power_w": "Puterea consumului casei",
+              "pv_energy_total_kwh": "Energie FV totală",
+              "grid_import_total_kwh": "Import din rețea total",
+              "grid_export_total_kwh": "Export în rețea total",
+              "grid_power_negate": "Senzorul rețelei arată exportul ca pozitiv",
+              "battery_power_negate": "Senzorul bateriei arată descărcarea ca negativă"
+            },
+            "data_description": {
+              "grid_power_negate": "Activează când senzorul rețelei este negativ la import.",
+              "battery_power_negate": "Activează când senzorul bateriei este negativ la descărcare. Se aplică doar senzorului de baterie ales aici."
+            }
+          }
+        },
+        "error": {
+          "pv_power_required": "Alege senzorul puterii FV. Volcast are nevoie de el pentru datele în timp real."
+        },
+        "abort": {
+          "not_loaded": "Volcast nu rulează pentru această intrare. Reîncarcă integrarea și încearcă din nou.",
+          "inverter_recognised": "Între timp, Volcast a recunoscut invertorul, așa că nu mai trebuie aleși senzori. Reîncarcă integrarea."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Unele setări ale invertorului nu sunt disponibile pentru Volcast",
       "description": "Volcast nu poate folosi aceste setări ale invertorului deoarece entitățile lor lipsesc, sunt dezactivate sau indisponibile: {entities}. Controlul continuă fără ele, iar planul Volcast nu se mai bazează pe ele. Când entitățile devin din nou disponibile, Volcast le folosește automat."
@@ -547,18 +661,28 @@
       "description": "Invertorul are propriul mod de lucru sau program (de exemplu Eco sau un program tarifar setat în aplicația producătorului) care poate încărca bateria din rețea în afara planului Volcast. Dezactivați acel mod sau program în aplicația producătorului invertorului și lăsați activ modul general (standard). Nu opriți invertorul în sine."
     },
     "brand_profile_ready": {
-      "title": "Este disponibil un profil de test pentru invertorul tău",
+      "title": "Este disponibil un profil nou pentru invertorul tău",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, am înțeles",
-            "description": "Volcast a primit un profil de test nou care se potrivește cu această instalație: {label} ({profile}). După reîncărcarea integrării, Volcast îl poate folosi pentru a recunoaște invertorul și a-i citi datele. Volcast nu controlează niciodată invertorul cu un profil primit în acest mod. Selectează Remediază pentru a închide această notificare."
+            "description": "Volcast a primit un profil nou care se potrivește cu această instalație: {label} ({profile}). După reîncărcarea integrării, Volcast îl poate folosi pentru a recunoaște invertorul și a-i citi datele. Un profil încă în testare nu este folosit pentru nimic altceva; controlul invertorului necesită un profil verificat și acordul tău. Selectează Remediază pentru a închide această notificare."
           }
         }
       }
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Propune atribuirea senzorilor",
+      "description": "Returnează o propunere cu senzorii care ar trebui folosiți pentru instalația ta și rezultatul verificării semnului. Nu modifică nimic; aplicarea necesită aprobarea ta în opțiunile integrării.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Intrare",
+          "description": "Intrarea Volcast de verificat. Lasă necompletat dacă există o singură intrare asociată contului."
+        }
+      }
+    },
     "sync_production": {
       "name": "Sincronizează producția",
       "description": "Forțează sincronizarea producției FV orare către Volcast folosind statisticile recorder din Home Assistant. Completează golurile lăsate de indisponibilitatea HA (de ex. o actualizare de sistem). Fără dată, sincronizează ieri și azi.",

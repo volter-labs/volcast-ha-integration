@@ -41,6 +41,8 @@ MODE_DISCOVERY_ONLY = "discovery_only"
 
 SERVICE_SYNC_PRODUCTION = "sync_production"
 SERVICE_RESUME_CONTROL = "resume_control"
+SERVICE_PROPOSE_SENSOR_ASSIGNMENT = "propose_sensor_assignment"
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_DATE = "date"
 
 # Wykrywanie instalacji (tylko odczyt) — sygnał po nowym raporcie i limit czasu przebiegu
@@ -63,6 +65,9 @@ OPT_INVERTER_DOMAIN = "inverter_domain"
 OPT_ENTITY_MAP = "entity_map"
 OPT_TELEMETRY_MAP = "telemetry_map"
 OPT_GRID_NEGATE = "grid_power_negate"
+# Odwrócenie znaku baterii — tylko czujnik wskazany ręcznie (`OPT_TELEMETRY_MAP`) i tylko w telemetrii;
+# czujnik z profilu i pętla sterowania nigdy go nie widzą. Brak klucza = wyłączone (bez migracji).
+OPT_BATTERY_NEGATE = "battery_power_negate"
 OPT_RATED_POWER_W = "rated_power_w"
 OPT_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"
 OPT_LOAD_ENERGY = "load_energy_entity"

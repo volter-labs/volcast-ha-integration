@@ -107,7 +107,7 @@ def _safe_label(raw: Any, fallback: str) -> str:
 def async_profile_ready_issues(hass: HomeAssistant, ids, profiles, *, verified_ids=None) -> list[str]:
     """Naprawa informacyjna dla NOWYCH profili z feedu pasujących do tej instalacji (kandydat z wykrywania,
     marka producenta urządzenia — całe słowo — albo marka profilu wybranego we wpisie). Pomija marki, którymi
-    wpis już steruje profilem zweryfikowanym. Niczego nie włącza (profil z feedu jest tylko do odczytu)."""
+    wpis już steruje profilem zweryfikowanym. Niczego nie włącza (zapis wymaga profilu sprawdzonego z certyfikatem i zgody właściciela)."""
     verified = packaged_verified_ids() if verified_ids is None else frozenset(verified_ids)
     candidates, makers, brands, covered = _install_hints(hass, verified)
     created: list[str] = []

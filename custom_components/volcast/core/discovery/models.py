@@ -23,7 +23,7 @@ class DeviceSnap:
 @dataclass(frozen=True)
 class EntitySnap:
     entity_id: str
-    platform: str
+    platform: str | None      # None = encja znana tylko z maszyny stanów (bez wpisu w rejestrze)
     unique_id: str
     device_id: str | None
     config_entry_id: str | None

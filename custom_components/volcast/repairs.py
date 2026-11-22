@@ -5,17 +5,24 @@ i pisało plan od nowa — zbędne zapisy NVM); najbliższy cykl od razu wykonuj
 Wpis już rozładowany nie ma czego wznawiać — naprawa tylko zamyka zgłoszenie. Falownik
 wciąż w trybie spoza profilu: zapisy i tak stoją, więc naprawa się przerywa (zgłoszenie
 zostaje) i mówi to właścicielowi.
+
+Mapa czujników (`sensor_assignment_missing_`): formularz z propozycją tych samych pól co krok opcji
+„Installation details” (kod wspólny w `config_flow`). Do zatwierdzenia nic się nie zapisuje; zapis
+zmienia tylko opcje mapy (reszta zostaje), a przeładowanie wpisu robi istniejący słuchacz opcji.
+Naprawa nie dotyka sterowania.
 """
 from __future__ import annotations
 
 from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
+import voluptuous as vol
 
-from .const import DOMAIN
-from .control.runtime import async_resume_control
+from .const import DOMAIN, OPT_TELEMETRY_MAP
+from .control.runtime import async_no_inverter_integration_now, async_resume_control
 
 _FOREIGN_PREFIX = "foreign_control_"
 _CONFLICT_PREFIX = "controller_conflict_"
 _STOPPED_PREFIX = "verification_stopped_"
+_ASSIGNMENT_PREFIX = "sensor_assignment_missing_"
 
 
 class ResumeControlFlow(ConfirmRepairFlow):
@@ -72,6 +79,52 @@ class ControllerConflictFlow(RepairsFlow):
         return await self._choose("own_ems")
 
 
+class SensorAssignmentFlow(RepairsFlow):
+    """Brak rozpoznanego falownika: formularz mapy czujników z propozycją do sprawdzenia i zatwierdzenia."""
+
+    def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
+
+    def _entry(self):
+        """Wpis, który jest wczytany — rozładowany albo usunięty nie ma czego mapować."""
+        loaded = (getattr(self.hass, "data", None) or {}).get(DOMAIN, {})
+        if self._entry_id not in loaded:
+            return None
+        return self.hass.config_entries.async_get_entry(self._entry_id)
+
+    async def async_step_init(self, user_input: dict[str, str] | None = None):
+        return await self.async_step_assign()
+
+    async def async_step_assign(self, user_input: dict | None = None):
+        # Import na żądanie: formularz mapy jest wspólny z krokiem opcji, a pozostałe naprawy go nie potrzebują.
+        from .config_flow import async_load_assignment, merge_options, sensor_map_fields, sensor_map_patch
+        entry = self._entry()
+        if entry is None:
+            return self.async_abort(reason="not_loaded")
+        errors: dict[str, str] = {}
+        shown_options = entry.options
+        if user_input is not None:
+            # Naprawa mogła zostać otwarta przed rozpoznaniem falownika (profil dostarczony po starcie albo
+            # integracja falownika dodana po setupie) — ręczna mapa zasłoniłaby po przeładowaniu profil, więc przy
+            # zatwierdzeniu sprawdzamy to samo co przy podpowiedzi, z wyborem profilu liczonym na żywo.
+            control = ((getattr(self.hass, "data", None) or {}).get(DOMAIN, {}).get(self._entry_id) or {}).get("control")
+            if not await async_no_inverter_integration_now(self.hass, entry, control):
+                return self.async_abort(reason="inverter_recognised")
+            patch = sensor_map_patch(user_input)
+            options = merge_options(entry.options, patch)
+            # Bez mocy PV zgłoszenie wróciłoby po przeładowaniu — formularz zostaje, nic nie jest zapisane.
+            if patch[OPT_TELEMETRY_MAP].get("pv_power_w"):
+                self.hass.config_entries.async_update_entry(entry, options=options)
+                return self.async_create_entry(data={})
+            errors["base"] = "pv_power_required"
+            shown_options = options        # to, co użytkownik już wybrał, zostaje w polach
+        assignment, placeholders = await async_load_assignment(self.hass, entry)
+        return self.async_show_form(
+            step_id="assign", data_schema=vol.Schema(sensor_map_fields(shown_options, assignment)),
+            errors=errors,
+            description_placeholders=placeholders or {"candidates": "", "sign_check": ""})
+
+
 async def async_create_fix_flow(hass, issue_id: str, data: dict | None) -> RepairsFlow:
     if issue_id.startswith(_FOREIGN_PREFIX):
         entry_id = (data or {}).get("entry_id") or issue_id[len(_FOREIGN_PREFIX):]
@@ -80,4 +133,6 @@ async def async_create_fix_flow(hass, issue_id: str, data: dict | None) -> Repai
         return ControllerConflictFlow(str((data or {}).get("entry_id") or issue_id[len(_CONFLICT_PREFIX):]))
     if issue_id.startswith(_STOPPED_PREFIX):
         return RetryVerificationFlow(str((data or {}).get("entry_id") or issue_id[len(_STOPPED_PREFIX):]))
+    if issue_id.startswith(_ASSIGNMENT_PREFIX):
+        return SensorAssignmentFlow(str((data or {}).get("entry_id") or issue_id[len(_ASSIGNMENT_PREFIX):]))
     return ConfirmRepairFlow()

@@ -1,0 +1,259 @@
+{
+  "_note": "Two inverters of the same brand with device-prefixed entity ids; only inverter A has a battery. Synthetic.",
+  "config_entries": [
+    {
+      "entry_id": "entry-a",
+      "domain": "solarman",
+      "title": "Inverter A",
+      "host": "192.0.2.61"
+    },
+    {
+      "entry_id": "entry-b",
+      "domain": "solarman",
+      "title": "Inverter B",
+      "host": "192.0.2.62"
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-a",
+      "manufacturer": "Deye",
+      "model": "SUN-10K-SG04LP3",
+      "name": "Inverter A",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "solarman",
+          "DEVICE-A"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-a"
+      ]
+    },
+    {
+      "id": "device-b",
+      "manufacturer": "Deye",
+      "model": "SUN-8K-G",
+      "name": "Inverter B",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "solarman",
+          "DEVICE-B"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-b"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "sensor.inverter_a_pv_power",
+      "platform": "solarman",
+      "unique_id": "SN0001_pv_power",
+      "device_id": "device-a",
+      "config_entry_id": "entry-a",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "PV Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_a_battery_power",
+      "platform": "solarman",
+      "unique_id": "SN0001_battery_power",
+      "device_id": "device-a",
+      "config_entry_id": "entry-a",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Battery Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_a_battery_soc",
+      "platform": "solarman",
+      "unique_id": "SN0001_battery_soc",
+      "device_id": "device-a",
+      "config_entry_id": "entry-a",
+      "device_class": "battery",
+      "unit": "%",
+      "translation_key": null,
+      "original_name": "Battery SOC",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_a_grid_power",
+      "platform": "solarman",
+      "unique_id": "SN0001_grid_power",
+      "device_id": "device-a",
+      "config_entry_id": "entry-a",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Grid Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_a_load_power",
+      "platform": "solarman",
+      "unique_id": "SN0001_load_power",
+      "device_id": "device-a",
+      "config_entry_id": "entry-a",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Load Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_b_pv_power",
+      "platform": "solarman",
+      "unique_id": "SN0001_pv_power",
+      "device_id": "device-b",
+      "config_entry_id": "entry-b",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "PV Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_b_grid_power",
+      "platform": "solarman",
+      "unique_id": "SN0001_grid_power",
+      "device_id": "device-b",
+      "config_entry_id": "entry-b",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Grid Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_b_load_power",
+      "platform": "solarman",
+      "unique_id": "SN0001_load_power",
+      "device_id": "device-b",
+      "config_entry_id": "entry-b",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Load Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    }
+  ],
+  "states": [
+    {
+      "entity_id": "sensor.inverter_a_pv_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "PV Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_a_battery_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Battery Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_a_battery_soc",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Battery SOC",
+        "device_class": "battery",
+        "unit_of_measurement": "%",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_a_grid_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Grid Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_a_load_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Load Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_b_pv_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "PV Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_b_grid_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Grid Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.inverter_b_load_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Load Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    }
+  ]
+}

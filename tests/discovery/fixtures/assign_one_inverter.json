@@ -1,0 +1,450 @@
+{
+  "_note": "One hybrid inverter of a known integration with legacy entity names; string and phase sensors, daily counters, a disabled load sensor and an entity of this integration. Synthetic.",
+  "config_entries": [
+    {
+      "entry_id": "entry-inv",
+      "domain": "goodwe",
+      "title": "GoodWe",
+      "host": "192.0.2.50"
+    }
+  ],
+  "devices": [
+    {
+      "id": "device-inv",
+      "manufacturer": "GoodWe",
+      "model": "GW10K-ET",
+      "name": "GoodWe GW10K-ET",
+      "sw_version": null,
+      "hw_version": null,
+      "serial_number": null,
+      "identifiers": [
+        [
+          "goodwe",
+          "DEVICE-INV"
+        ]
+      ],
+      "config_entry_ids": [
+        "entry-inv"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "sensor.pv_power",
+      "platform": "goodwe",
+      "unique_id": "SN0001_pv_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "PV Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.pv1_power",
+      "platform": "goodwe",
+      "unique_id": "SN0001_pv1_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "PV1 Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.pv2_power",
+      "platform": "goodwe",
+      "unique_id": "SN0001_pv2_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "PV2 Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_power",
+      "platform": "goodwe",
+      "unique_id": "SN0001_battery_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Battery Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.meter_active_power_total",
+      "platform": "goodwe",
+      "unique_id": "SN0001_meter_active_power_total",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Meter Active Power Total",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.on_grid_l1_power",
+      "platform": "goodwe",
+      "unique_id": "SN0001_on_grid_l1_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "On-grid L1 Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.active_power",
+      "platform": "goodwe",
+      "unique_id": "SN0001_active_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Active Power",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.house_consumption",
+      "platform": "goodwe",
+      "unique_id": "SN0001_house_consumption",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "House Consumption",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.load_power",
+      "platform": "goodwe",
+      "unique_id": "SN0001_load_power",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "power",
+      "unit": "W",
+      "translation_key": null,
+      "original_name": "Load Power",
+      "disabled": true,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_state_of_charge",
+      "platform": "goodwe",
+      "unique_id": "SN0001_battery_state_of_charge",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "battery",
+      "unit": "%",
+      "translation_key": null,
+      "original_name": "Battery State of Charge",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_temperature",
+      "platform": "goodwe",
+      "unique_id": "SN0001_battery_temperature",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "temperature",
+      "unit": "°C",
+      "translation_key": null,
+      "original_name": "Battery Temperature",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.total_pv_generation",
+      "platform": "goodwe",
+      "unique_id": "SN0001_total_pv_generation",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Total PV Generation",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.today_s_pv_generation",
+      "platform": "goodwe",
+      "unique_id": "SN0001_today_s_pv_generation",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Today's PV Generation",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.total_energy_import",
+      "platform": "goodwe",
+      "unique_id": "SN0001_total_energy_import",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Total Energy (import)",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.total_energy_export",
+      "platform": "goodwe",
+      "unique_id": "SN0001_total_energy_export",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Total Energy (export)",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.today_energy_import",
+      "platform": "goodwe",
+      "unique_id": "SN0001_today_energy_import",
+      "device_id": "device-inv",
+      "config_entry_id": "entry-inv",
+      "device_class": "energy",
+      "unit": "kWh",
+      "translation_key": null,
+      "original_name": "Today Energy (import)",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.volcast_battery_soc",
+      "platform": "volcast",
+      "unique_id": "SN0001_volcast_battery_soc",
+      "device_id": null,
+      "config_entry_id": null,
+      "device_class": "battery",
+      "unit": "%",
+      "translation_key": null,
+      "original_name": "Volcast battery SoC",
+      "disabled": false,
+      "capabilities": {
+        "state_class": "measurement"
+      }
+    }
+  ],
+  "states": [
+    {
+      "entity_id": "sensor.pv_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "PV Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.pv1_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "PV1 Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.pv2_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "PV2 Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Battery Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.meter_active_power_total",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Meter Active Power Total",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.on_grid_l1_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "On-grid L1 Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.active_power",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Active Power",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.house_consumption",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "House Consumption",
+        "device_class": "power",
+        "unit_of_measurement": "W",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_state_of_charge",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Battery State of Charge",
+        "device_class": "battery",
+        "unit_of_measurement": "%",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.battery_temperature",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Battery Temperature",
+        "device_class": "temperature",
+        "unit_of_measurement": "°C",
+        "state_class": "measurement"
+      }
+    },
+    {
+      "entity_id": "sensor.total_pv_generation",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Total PV Generation",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.today_s_pv_generation",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Today's PV Generation",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.total_energy_import",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Total Energy (import)",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.total_energy_export",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Total Energy (export)",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.today_energy_import",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Today Energy (import)",
+        "device_class": "energy",
+        "unit_of_measurement": "kWh",
+        "state_class": "total_increasing"
+      }
+    },
+    {
+      "entity_id": "sensor.volcast_battery_soc",
+      "state": "0",
+      "attributes": {
+        "friendly_name": "Volcast battery SoC",
+        "device_class": "battery",
+        "unit_of_measurement": "%",
+        "state_class": "measurement"
+      }
+    }
+  ]
+}

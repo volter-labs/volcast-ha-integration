@@ -1,5 +1,14 @@
 resume_control:
 
+propose_sensor_assignment:
+  fields:
+    config_entry_id:
+      required: false
+      example: "1a2b3c4d5e6f"
+      selector:
+        config_entry:
+          integration: volcast
+
 sync_production:
   fields:
     date:

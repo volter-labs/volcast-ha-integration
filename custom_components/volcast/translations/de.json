@@ -70,7 +70,7 @@
       "single_instance_allowed": "Volcast ist hier bereits eingerichtet, und die Anlagenerkennung läuft bereits als Teil davon.",
       "cannot_connect": "Der Volcast-Kopplungsdienst ist nicht erreichbar. Prüfe deine Internetverbindung und versuche es erneut.",
       "pairing_expired": "Die Kopplungsanfrage ist abgelaufen oder wurde vor der Bestätigung abgebrochen. Starte erneut und bestätige innerhalb von 10 Minuten.",
-      "client_outdated": "Diese Version der Volcast-Integration ist zu alt, um sich mit deinem Konto zu verbinden (mindestens {min_version}, neueste {latest_version}). Aktualisiere Volcast in HACS, starte Home Assistant neu und versuche es erneut.",
+      "client_outdated": "Diese Version der Volcast-Integration ist zu alt, um sich mit deinem Konto zu verbinden (mindestens {min_version}, neueste {latest_version}). Aktualisiere Volcast in HACS oder im Home-Assistant-Marketplace, starte Home Assistant neu und versuche es erneut.",
       "pairing_disabled": "Die Kopplung ist derzeit nicht verfügbar. Versuche es später erneut oder verbinde dich mit einem API-Schlüssel.",
       "pairing_failed": "Die Kopplung wurde nicht abgeschlossen. Starte erneut; falls es weiterhin fehlschlägt, verbinde dich mit einem API-Schlüssel.",
       "paired_existing": "Dein vorhandener Volcast-Eintrag ist jetzt mit deinem Konto verbunden.",
@@ -81,10 +81,88 @@
       "converted_existing": "Dein Eintrag nur mit Erkennung nutzt jetzt dein Volcast-Konto."
     }
   },
+  "exceptions": {
+    "assignment_quantity_grid": {
+      "message": "Netz"
+    },
+    "assignment_quantity_battery": {
+      "message": "Batterie"
+    },
+    "assignment_sign_recommend_on": {
+      "message": "{quantity}: empfohlen - \"{option}\" einschalten"
+    },
+    "assignment_sign_recommend_off": {
+      "message": "{quantity}: empfohlen - \"{option}\" ausschalten"
+    },
+    "assignment_sign_match": {
+      "message": "{quantity}: entspricht der aktuellen Einstellung"
+    },
+    "assignment_sign_unknown": {
+      "message": "{quantity}: konnte nicht bewertet werden - {reason}"
+    },
+    "assignment_note": {
+      "message": "Hinweis: {text}"
+    },
+    "assignment_reason_unknown": {
+      "message": "es konnte nicht bewertet werden"
+    },
+    "assignment_reason_no_sensor": {
+      "message": "dafür ist kein Sensor ausgewählt"
+    },
+    "assignment_reason_too_few_samples": {
+      "message": "es gibt zu wenige aufgezeichnete Messwerte (es werden einige Stunden Daten benötigt)"
+    },
+    "assignment_reason_grid_idle": {
+      "message": "im aufgezeichneten Zeitraum gab es keinen eindeutigen Netzbezug oder keine Netzeinspeisung"
+    },
+    "assignment_reason_battery_idle": {
+      "message": "der Akku war im aufgezeichneten Zeitraum inaktiv (kein eindeutiges Laden oder Entladen)"
+    },
+    "assignment_reason_no_load_sensor": {
+      "message": "zum Vergleich der Messwerte wird ein Sensor für die Hausverbrauchsleistung benötigt"
+    },
+    "assignment_reason_ambiguous": {
+      "message": "die Messwerte deuten nicht eindeutig auf ein Vorzeichen hin"
+    },
+    "assignment_excluded_load_derived": {
+      "message": "der Sensor für die Hausverbrauchsleistung wird aus anderen Sensoren berechnet und kann daher das Vorzeichen nicht bestätigen"
+    },
+    "assignment_excluded_load_state_only": {
+      "message": "der Sensor für die Hausverbrauchsleistung hat in Home Assistant keine eindeutige ID und kann daher nicht geprüft werden"
+    },
+    "assignment_excluded_load_unverified": {
+      "message": "der Sensor für die Hausverbrauchsleistung konnte jetzt nicht geprüft werden"
+    },
+    "assignment_note_recorder_unavailable": {
+      "message": "der Verlauf ist nicht verfügbar, es wurden aktuelle Messwerte verwendet"
+    },
+    "assignment_note_no_statistics": {
+      "message": "kein aufgezeichneter Verlauf gefunden, es wurden aktuelle Messwerte verwendet"
+    },
+    "assignment_note_recorder_error": {
+      "message": "der Verlauf konnte nicht gelesen werden, es wurden aktuelle Messwerte verwendet"
+    },
+    "assignment_note_registry_unavailable": {
+      "message": "das Entitätsregister ist nicht verfügbar"
+    },
+    "assignment_note_failed": {
+      "message": "der Vorschlag konnte nicht vorbereitet werden"
+    },
+    "assignment_candidates_heading": {
+      "message": "Mehrere Sensoren passen zu diesen Feldern, wähle einen aus:"
+    },
+    "assignment_sign_heading": {
+      "message": "Prüfung des Leistungsvorzeichens (aus den letzten 24 Stunden aufgezeichneter Daten oder aus aktuellen Messwerten):"
+    },
+    "account_connection_hint": {
+      "message": "Live-Daten und die Zuordnung der Anlagensensoren benötigen eine Verbindung zu deinem Volcast-Konto. Füge dazu die Integration erneut hinzu und wähle die Verbindung mit deinem Konto."
+    }
+  },
   "options": {
     "step": {
       "init": {
         "title": "Volcast-Optionen",
+        "description": "{account_hint}",
         "data": {
           "update_interval": "Aktualisierungsintervall (Minuten)",
           "peak_threshold": "Schwellenwert für Spitzenerzeugung (%)",
@@ -137,7 +215,7 @@
       },
       "details": {
         "title": "Anlagendetails",
-        "description": "Optional. Wähle Sensoren für die Messwerte, die Volcast über die Wechselrichter-Integration nicht findet, und korrigiere die Anlagendaten.",
+        "description": "Optional. Wähle Sensoren für die Messwerte, die Volcast über die Wechselrichter-Integration nicht findet, und korrigiere die Anlagendaten.\n\nVon Volcast vorgeschlagene Sensoren sind nur ein Vorschlag auf Basis deiner Home-Assistant-Sensoren, prüfe daher zuerst jeden einzelnen. Nichts wird gespeichert, bevor du absendest; die vorgeschlagenen Sensoren werden dann gespeichert, und ein geleertes Feld bleibt unzugewiesen. Volcast erwartet, dass die Batterieleistung beim Entladen positiv und die Netzleistung beim Bezug positiv ist.\n\n{candidates}\n\n{sign_check}",
         "data": {
           "soc": "Ladezustand der Batterie",
           "pv_power_w": "PV-Leistung",
@@ -148,6 +226,7 @@
           "grid_import_total_kwh": "Netzbezug gesamt",
           "grid_export_total_kwh": "Netzeinspeisung gesamt",
           "grid_power_negate": "Netzsensor zeigt Einspeisung als positiv",
+          "battery_power_negate": "Batteriesensor zeigt Entladen als negativ an",
           "rated_power_w": "Nennleistung des Wechselrichters (W)",
           "battery_capacity_kwh": "Batteriekapazität (kWh)",
           "load_energy_entity": "Energiesensor für den Hausverbrauch (kWh)",
@@ -157,6 +236,7 @@
         },
         "data_description": {
           "grid_power_negate": "Aktivieren, wenn dein Netzsensor beim Bezug negativ ist.",
+          "battery_power_negate": "Aktivieren, wenn dein Batteriesensor beim Entladen negativ ist. Gilt nur für den hier ausgewählten Batteriesensor.",
           "rated_power_w": "Zwischen 1000 und 30000 W.",
           "load_energy_entity": "Wird einmalig verwendet, um deinen Verbrauchsverlauf an Volcast zu senden.",
           "direct_search": "Liest nur die Kennung des Wechselrichters; es wird nichts geschrieben.",
@@ -400,7 +480,7 @@
     },
     "update_available": {
       "title": "Ein Volcast-Update ist verfügbar",
-      "description": "Volcast {latest_version} ist verfügbar (du hast {current_version}). Aktualisiere Volcast in HACS und starte Home Assistant neu, um die neuesten Korrekturen zu erhalten."
+      "description": "Volcast {latest_version} ist verfügbar (du hast {current_version}). Aktualisiere Volcast in HACS oder im Home-Assistant-Marketplace und starte Home Assistant neu, um die neuesten Korrekturen zu erhalten."
     },
     "foreign_control": {
       "title": "Wechselrichter-Steuerung durch Volcast pausiert",
@@ -476,6 +556,40 @@
       "title": "Volcast konnte die direkte Wechselrichter-Verbindung nicht starten",
       "description": "Die Direktverbindung zum Wechselrichter konnte wegen eines unerwarteten Fehlers nicht gestartet werden. Volcast versucht es einige Male erneut; bis die Verbindung steht, kann es Wechselrichter-Einstellungen weder ändern noch zurücksetzen. Falls das so bleibt, lade Volcast neu und prüfe die Home-Assistant-Logs."
     },
+    "sensor_assignment_missing": {
+      "title": "Volcast muss wissen, welche Sensoren verwendet werden sollen",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Wähle die Wechselrichter-Sensoren",
+            "description": "Volcast hat keine Wechselrichter-Integration erkannt, daher fließen keine Live-Daten, bis du die Sensoren auswählst. Unten steht ein Vorschlag auf Basis deiner Home-Assistant-Sensoren - prüfe zuerst jeden Sensor. Nichts wird gespeichert, bevor du absendest, und die Wechselrichter-Einstellungen werden nicht geändert. Volcast erwartet, dass die Batterieleistung beim Entladen positiv und die Netzleistung beim Bezug positiv ist.\n\n{candidates}\n\n{sign_check}",
+            "data": {
+              "soc": "Ladezustand der Batterie",
+              "pv_power_w": "PV-Leistung",
+              "battery_power_w": "Batterieleistung",
+              "grid_power_w": "Netzleistung",
+              "load_power_w": "Hausverbrauchsleistung",
+              "pv_energy_total_kwh": "PV-Energie gesamt",
+              "grid_import_total_kwh": "Netzbezug gesamt",
+              "grid_export_total_kwh": "Netzeinspeisung gesamt",
+              "grid_power_negate": "Netzsensor zeigt Einspeisung als positiv",
+              "battery_power_negate": "Batteriesensor zeigt Entladen als negativ an"
+            },
+            "data_description": {
+              "grid_power_negate": "Aktivieren, wenn dein Netzsensor beim Bezug negativ ist.",
+              "battery_power_negate": "Aktivieren, wenn dein Batteriesensor beim Entladen negativ ist. Gilt nur für den hier ausgewählten Batteriesensor."
+            }
+          }
+        },
+        "error": {
+          "pv_power_required": "Wähle den Sensor für die PV-Leistung. Volcast benötigt ihn für Live-Daten."
+        },
+        "abort": {
+          "not_loaded": "Volcast läuft für diesen Eintrag nicht. Lade die Integration neu und versuche es erneut.",
+          "inverter_recognised": "Volcast hat den Wechselrichter inzwischen erkannt, daher müssen keine Sensoren ausgewählt werden. Lade die Integration neu."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Einige Wechselrichter-Einstellungen sind für Volcast nicht verfügbar",
       "description": "Volcast kann diese Wechselrichter-Einstellungen nicht verwenden, weil ihre Entitäten fehlen, deaktiviert oder nicht verfügbar sind: {entities}. Die Steuerung läuft ohne sie weiter, und der Volcast-Plan verlässt sich nicht mehr auf sie. Sobald die Entitäten wieder verfügbar sind, nutzt Volcast sie automatisch."
@@ -547,18 +661,28 @@
       "description": "Der Wechselrichter hat einen eigenen Arbeitsmodus oder Zeitplan (z. B. Eco oder ein Tarifzeitplan aus der App des Herstellers), der den Akku außerhalb des Volcast-Plans aus dem Netz laden kann. Schalten Sie diesen Modus oder Zeitplan in der Wechselrichter-App des Herstellers aus und lassen Sie den allgemeinen (Standard-)Modus aktiv. Schalten Sie nicht den Wechselrichter selbst aus."
     },
     "brand_profile_ready": {
-      "title": "Ein Testprofil für Ihren Wechselrichter ist verfügbar",
+      "title": "Ein neues Profil für Ihren Wechselrichter ist verfügbar",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "OK, verstanden",
-            "description": "Volcast hat ein neues Testprofil erhalten, das zu dieser Installation passt: {label} ({profile}). Nach dem Neuladen der Integration kann Volcast es verwenden, um den Wechselrichter zu erkennen und seine Daten zu lesen. Mit einem auf diesem Weg erhaltenen Profil steuert Volcast den Wechselrichter nie. Wählen Sie Beheben, um diesen Hinweis zu schließen."
+            "description": "Volcast hat ein neues Profil erhalten, das zu dieser Installation passt: {label} ({profile}). Nach dem Neuladen der Integration kann Volcast es verwenden, um den Wechselrichter zu erkennen und seine Daten zu lesen. Ein Profil, das sich noch in der Testphase befindet, wird für nichts weiter verwendet; die Steuerung des Wechselrichters erfordert ein verifiziertes Profil und deine Zustimmung. Wähle Beheben, um diesen Hinweis zu schließen."
           }
         }
       }
     }
   },
   "services": {
+    "propose_sensor_assignment": {
+      "name": "Sensorzuordnung vorschlagen",
+      "description": "Gibt einen Vorschlag zurück, welche Sensoren für deine Anlage verwendet werden sollen, sowie das Ergebnis der Vorzeichenprüfung. Es wird nichts geändert; die Übernahme erfordert deine Zustimmung in den Integrationsoptionen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Eintrag",
+          "description": "Der zu prüfende Volcast-Eintrag. Leer lassen, wenn nur ein Eintrag mit deinem Konto verbunden ist."
+        }
+      }
+    },
     "sync_production": {
       "name": "Erzeugung synchronisieren",
       "description": "Erzwingt die Synchronisierung der stündlichen PV-Erzeugung mit Volcast anhand der Recorder-Statistiken von Home Assistant. Füllt Lücken durch Ausfallzeiten von HA (z. B. ein Systemupdate). Ohne Datum werden gestern und heute synchronisiert.",
