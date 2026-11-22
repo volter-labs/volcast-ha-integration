@@ -674,6 +674,9 @@ def test_repair_texts_present_in_every_language(path):
         # mówi tylko, że profil testowy służy do rozpoznania i odczytu, a sterowanie wymaga więcej.
         assert "never controls" not in confirm["description"]
         assert "verified profile and your consent" in confirm["description"]
+        # Nowy profil z feedu bywa też sprawdzony (z certyfikatem) — nazwa „testowy" nie może być stała.
+        assert "test profile" not in issue["title"].lower() and "test profile" not in confirm["description"].lower()
+        assert confirm["description"].count("recognise the inverter and read its data") == 1
 
 
 # --- złożenie sterowania: feed z magazynu przed odczytem profili, sprawdzenie w fetcherze ----------
