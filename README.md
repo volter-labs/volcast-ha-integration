@@ -57,7 +57,7 @@ To go back: menu **⋮ → Install another version**, pick the stable version (1
 1. If you enabled inverter control, turn off the Volcast control switch (or set **Options → Inverter control → Off**) and confirm the inverter is back in its normal mode. The stable version has no control logic, and a Home Assistant restart never undoes a write on its own.
 2. Delete any "Discovery only (no account)" Volcast entry; the stable version cannot load it.
 
-After going back with a paired account, the connection to your account stays, but the 2.0 entities (plan, status, control, discovery) are unavailable and live data in the app stops. Updating to the beta again needs no new pairing; live data returns within a few minutes. Turning off the control switch also withdraws your control consent on the account.
+After going back with a paired account, the connection to your account stays, but the 2.0 entities (plan, status, control, discovery) are unavailable and live data in the app stops. Updating to the beta again needs no new pairing; live data returns within a few minutes. Turning off the control switch returns the inverter to its previous settings and, where the Volcast cloud mirrors consent for your plan, also withdraws your control consent on the account (otherwise it only switches control off in Home Assistant).
 
 ## Connect your account (pairing)
 
@@ -69,7 +69,7 @@ After going back with a paired account, the connection to your account stays, bu
 
 The pairing request expires after 10 minutes; start again if it runs out. The **Control** switch starts off, and nothing controls your inverter until you also agree in the app.
 
-Other setup modes: **Connect with API key** is the forecast-only setup of the stable line (needs the Forecast tier); **Discovery only (no account)** runs a read-only scan of your installation without any account (see [Privacy and diagnostics](#privacy-and-diagnostics)). An API-key or discovery-only entry can be converted to a paired one later.
+Other setup modes: **Connect with API key** gives the forecast and production tracking only, as in the stable line (needs the Forecast tier); there is no live data, plan or control for such an entry until you convert it to a paired one; **Discovery only (no account)** runs a read-only scan of your installation without any account (see [Privacy and diagnostics](#privacy-and-diagnostics)). An API-key or discovery-only entry can be converted to a paired one later.
 
 During pairing, Home Assistant shares the inverter's make and model, rated power, the list of settings Volcast could control, and the price entity id if a usable price sensor was found. Serial numbers and local addresses stay in Home Assistant. Once paired, the integration also sends:
 
@@ -95,7 +95,7 @@ Nothing is saved until you submit, and the inverter settings are never changed b
 
 **Signs.** Volcast expects battery power to be **positive while discharging** and grid power to be **positive while importing**. If a sensor is the other way round, turn on **Battery sensor shows discharging as negative** or **Grid sensor shows export as positive** in the same form. The battery option applies only to a battery sensor you chose there.
 
-**Sign check.** The form compares your sensors over the last 24 hours of recorder statistics (current readings if there is no history) and says whether a sign looks wrong. It needs a house load sensor assigned; without one there is no recommendation (a battery-free installation's grid sign can still be judged from idle night readings). It is a recommendation: you decide.
+**Sign check.** The form compares your sensors over the last 24 hours of recorder statistics (current readings if there is no history) and says whether a sign looks wrong. It works only when a house load sensor is assigned, because it checks that PV + grid + battery adds up to the house consumption; without one there is no recommendation, for the grid or the battery. A house load sensor that Home Assistant calculates from other sensors (a template, a sum or a group helper) is not used for the check, because it would always add up. It is a recommendation: you decide.
 
 **For automations**, the read-only action `volcast.propose_sensor_assignment` returns the same proposal and sign check and changes nothing. `config_entry_id` is optional when only one entry is paired. As the actions of an automation or script:
 
