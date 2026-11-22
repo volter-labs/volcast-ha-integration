@@ -665,6 +665,25 @@ def no_inverter_integration(options: Mapping, control) -> bool:
     return getattr(control, "direct", None) is None and not isinstance(options.get(OPT_DIRECT_TARGET), Mapping)
 
 
+async def async_no_inverter_integration_now(hass, entry, control) -> bool:
+    """`no_inverter_integration` plus wybór profilu liczony NA ŻYWO z bieżących rejestrów (`_choice_for`).
+
+    `control.choice` jest stały od setupu, a integrację falownika można doinstalować bez przeładowania wpisu —
+    wtedy ręczna mapa zapisana z podpowiedzi zasłoniłaby po przeładowaniu rozpoznany profil. Wynik służy
+    wyłącznie podpowiedzi czujników i zapisowi mapy z naprawy; `control.choice` (sterowanie) zostaje bez zmian.
+    Każdy błąd wyliczenia = fałsz (bez podpowiedzi i bez zapisu).
+    """
+    if not no_inverter_integration(entry.options, control):
+        return False
+    try:
+        profiles = await hass.async_add_executor_job(ds.load_profiles)
+        live = _choice_for(hass, entry, profiles)
+    except Exception as err:  # noqa: BLE001 — niepewność = jak rozpoznany falownik
+        _LOGGER.debug("Volcast: live inverter profile check failed (%s)", type(err).__name__)
+        return False
+    return live is None or not live.integration_domain
+
+
 async def async_control_change_allowed(runtime, old: Mapping, new: Mapping) -> bool:
     """Czy zmianę opcji wolno zapisać: najpierw powrót przez obecnego wykonawcę (`async_restore_if_control_changed`).
 

@@ -231,6 +231,7 @@ def _assignment_world(monkeypatch, entries, *, controls=None):
         e.entry_id: {"control": (controls or {}).get(e.entry_id, SimpleNamespace(choice=None, direct=None))}
         for e in entries
     }
+    hass.registry = oa.live_registry(monkeypatch, hass)     # domyślnie: w rejestrach nie ma falownika
     return hass
 
 
@@ -338,4 +339,25 @@ async def test_propose_not_applicable_with_recognised_inverter_returns_empty_pro
     assert out["applicable"] is False
     assert out["proposal"] == {"fields": {}, "chosen": {}}
     assert "flags" in out and "sign_check" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live", ["integration_added", "choice_fails"])
+async def test_propose_not_applicable_when_the_live_choice_recognises_or_fails(monkeypatch, live):
+    import tests.test_options_assignment as oa
+    from custom_components.volcast.control import runtime as rt_mod
+
+    entry = _entry()
+    hass = _assignment_world(monkeypatch, [entry])
+    assert (await _propose_handler(hass)(_FakeServiceCall()))["applicable"] is True    # przed: podpowiedź
+    if live == "integration_added":
+        hass.registry.devices["gw"] = oa.GW_DEVICE           # integracja falownika dodana bez przeładowania
+    else:
+        def boom():
+            raise RuntimeError("profiles unreadable")
+        monkeypatch.setattr(rt_mod.ds, "load_profiles", boom)
+    out = await _propose_handler(hass)(_FakeServiceCall())
+    assert out["applicable"] is False
+    assert out["proposal"] == {"fields": {}, "chosen": {}}
+    assert hass.data["volcast"]["e1"]["control"].choice is None
 

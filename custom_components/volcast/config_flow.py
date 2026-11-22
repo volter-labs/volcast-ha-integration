@@ -33,7 +33,7 @@ except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w for
 
 from .cloud.client import Backend, ClientOutdated, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control import direct_search as ds
-from .control.runtime import async_control_change_allowed, no_inverter_integration, async_direct_search, map_entities, mapped_with_overrides
+from .control.runtime import async_control_change_allowed, async_no_inverter_integration_now, async_direct_search, map_entities, mapped_with_overrides
 from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_pv_power
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.select import ProfileChoice
@@ -585,7 +585,8 @@ async def async_assignment_result(hass, entry) -> tuple[AssignmentResult, bool]:
     kandydatów; ocena znaku tylko dla czujników, które użytkownik już zapisał.
     """
     control = ((getattr(hass, "data", None) or {}).get(DOMAIN, {}).get(entry.entry_id) or {}).get("control")
-    suggest = no_inverter_integration(entry.options, control)
+    # Wybór profilu na żywo: integracja falownika mogła zostać dodana po setupie wpisu.
+    suggest = await async_no_inverter_integration_now(hass, entry, control)
     if suggest:
         return await async_propose(hass, entry), True
     # Bez podpowiedzi kandydaci nie wchodzą ani do propozycji, ani do źródeł oceny znaku.

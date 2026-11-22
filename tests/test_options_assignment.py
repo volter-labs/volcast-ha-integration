@@ -44,6 +44,31 @@ def _flat(overrides=None):
 
 
 NO_INVERTER = SimpleNamespace(choice=None, direct=None)
+GW_DEVICE = SimpleNamespace(id="gw", manufacturer="GoodWe", model="GW8KN-ET", name="Inverter", sw_version=None,
+                            serial_number=None, identifiers=set(), config_entries={"gw_entry"}, disabled_by=None)
+
+
+def live_registry(monkeypatch, hass, devices=(), profiles=None):
+    """Bieżące rejestry HA dla wyboru profilu liczonego na żywo: urządzenia (mutowalne `reg.devices`),
+    wpisy integracji falowników (`gw_entry` → `goodwe`) i profile (domyślnie wbudowany GoodWe ET)."""
+    from custom_components.volcast.control import runtime as rt_mod
+    from custom_components.volcast.core.profile import load_builtin
+
+    reg = SimpleNamespace(devices={d.id: d for d in devices})
+    monkeypatch.setattr(rt_mod.dr, "async_get", lambda h: reg)
+    profs = [load_builtin("goodwe-et")] if profiles is None else list(profiles)
+    monkeypatch.setattr(rt_mod.ds, "load_profiles", lambda: list(profs))
+
+    async def job(fn, *args):
+        return fn(*args)
+    hass.async_add_executor_job = job
+    ce = getattr(hass, "config_entries", None)
+    if ce is None:
+        ce = hass.config_entries = SimpleNamespace()
+    prev = getattr(ce, "async_get_entry", None)
+    ce.async_get_entry = lambda i: SimpleNamespace(domain="goodwe") if i == "gw_entry" \
+        else (prev(i) if prev is not None else None)
+    return reg
 
 
 def _flow(monkeypatch, result, calls=None, translations=None, runtime=NO_INVERTER, **kw):
@@ -62,6 +87,7 @@ def _flow(monkeypatch, result, calls=None, translations=None, runtime=NO_INVERTE
         return result
     monkeypatch.setattr(cf, "async_propose", fake)
     f = base.flow(runtime=runtime, **kw)
+    f.registry = live_registry(monkeypatch, f.hass)        # domyślnie: w rejestrach nie ma falownika
     shown = {}
     f.async_show_form = lambda **k: shown.update(k) or {"type": "form", "step_id": k["step_id"]}
     return f, shown
@@ -342,3 +368,59 @@ def test_pending_profile_choice_suppresses_sensor_suggestion(announced, expected
 
     control = SimpleNamespace(choice=None, direct=None, announced_choice=announced)
     assert no_inverter_integration({}, control) is expected
+
+
+# --- integracja falownika doinstalowana po setupie: wybór profilu liczony na żywo -------------------
+
+_SUGGESTED = {"pv_power_w": "sensor.gw_pv", "soc": "sensor.gw_soc"}
+
+
+def test_live_choice_recognises_the_goodwe_device(monkeypatch):
+    """Założenie testów niżej: ten sam wybór co przy składaniu sterowania rozpoznaje dodane urządzenie."""
+    from custom_components.volcast.control import runtime as rt_mod
+
+    hass = SimpleNamespace()
+    live_registry(monkeypatch, hass, devices=[GW_DEVICE])
+    choice = rt_mod._choice_for(hass, SimpleNamespace(options={}), rt_mod.ds.load_profiles())
+    assert choice is not None and choice.integration_domain == "goodwe"
+
+
+def test_details_form_does_not_suggest_once_an_inverter_integration_appears(monkeypatch):
+    f, shown = _flow(monkeypatch, _result(chosen=_SUGGESTED))
+    f.registry.devices["gw"] = GW_DEVICE                 # integracja dodana po setupie, bez przeładowania wpisu
+    asyncio.run(f.async_step_details())
+    assert _no_hint_for_every_field(shown)
+    assert shown["description_placeholders"] == {"candidates": "", "sign_check": ""}
+
+
+def test_details_form_does_not_suggest_when_the_live_choice_fails(monkeypatch):
+    from custom_components.volcast.control import runtime as rt_mod
+
+    f, shown = _flow(monkeypatch, _result(chosen=_SUGGESTED))
+
+    def boom(hass):
+        raise RuntimeError("device registry unavailable")
+    monkeypatch.setattr(rt_mod.dr, "async_get", boom)      # krok sam wczytuje profile wcześniej — psuje się rejestr
+    asyncio.run(f.async_step_details())
+    assert _no_hint_for_every_field(shown)
+
+
+def test_details_form_still_suggests_without_an_inverter_integration(monkeypatch):
+    f, shown = _flow(monkeypatch, _result(chosen=_SUGGESTED))
+    # urządzenie spoza integracji falownika (nie pasuje do żadnego profilu) nie wyłącza podpowiedzi
+    f.registry.devices["meter"] = SimpleNamespace(**{**vars(GW_DEVICE), "id": "meter", "manufacturer": "Acme",
+                                                     "model": "Meter", "config_entries": {"other"}})
+    asyncio.run(f.async_step_details())
+    assert _suggested(shown["data_schema"], "pv_power_w") == "sensor.gw_pv"
+
+
+def test_opening_the_form_leaves_the_control_choice_unchanged(monkeypatch):
+    from custom_components.volcast.control import runtime as rt_mod
+
+    rt = rt_mod.ControlRuntime(None, None, None, None, None, {}, None)
+    f, shown = _flow(monkeypatch, _result(chosen=_SUGGESTED), runtime=rt)
+    f.registry.devices["gw"] = GW_DEVICE
+    asyncio.run(f.async_step_details())
+    assert _no_hint_for_every_field(shown)
+    # wybór na żywo służy tylko podpowiedzi — sterowanie dalej widzi wybór z chwili setupu
+    assert rt.choice is None and rt.announced_choice is None and rt.mapped == {}
