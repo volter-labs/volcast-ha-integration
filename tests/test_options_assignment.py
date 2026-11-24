@@ -424,3 +424,18 @@ def test_opening_the_form_leaves_the_control_choice_unchanged(monkeypatch):
     assert _no_hint_for_every_field(shown)
     # wybór na żywo służy tylko podpowiedzi — sterowanie dalej widzi wybór z chwili setupu
     assert rt.choice is None and rt.announced_choice is None and rt.mapped == {}
+
+
+def test_deye_through_solarman_is_recognised_so_no_sensor_suggestion():
+    """Deye trójfazowy przez integrację Solarman ma rozpoznany profil — bez zgłoszenia i podpowiedzi czujników."""
+    from custom_components.volcast.control.runtime import no_inverter_integration
+    from custom_components.volcast.core.control.select import InverterHint, select_profile
+    from custom_components.volcast.core.profile import load_builtin
+
+    profiles = [load_builtin(p) for p in ("deye-sg", "sofar-hyd", "solis-hybrid")]
+    choice = select_profile([InverterHint("solarman", "Deye", "SG0*LP3")], profiles)
+    assert choice.integration_domain == "solarman"
+    control = SimpleNamespace(choice=choice, direct=None, announced_choice=None)
+    assert no_inverter_integration({}, control) is False
+    # kontrola: bez rozpoznanego wyboru podpowiedź czujników nadal działa
+    assert no_inverter_integration({}, SimpleNamespace(choice=None, direct=None, announced_choice=None)) is True
