@@ -590,3 +590,24 @@ async def test_success_resets_grace_window():
     await _run_update(coord, RetryResult(success=True, status=200, data={}, attempts=1))
     assert coord.consecutive_failures == 0
     assert await _run_update(coord, _TRANSIENT) is coord.data
+
+
+class TestAttribution:
+    """Atrybucja źródła danych z odpowiedzi API (tylko gdy serwer ją poda)."""
+
+    def test_attribution_read_verbatim(self):
+        raw = _make_api_response()
+        raw["attribution"] = "  Weather data: Open-Meteo (CC BY 4.0); © 2024-6 Google LLC  "
+        assert _parse_response(raw, FakeHass()).attribution == raw["attribution"]
+
+    def test_default_attribution_when_missing(self):
+        assert _parse_response(_make_api_response(), FakeHass()).attribution == "Weather: Open-Meteo"
+
+    @pytest.mark.parametrize("value", ["", "   ", 5, None, {"a": 1}, ["text"]])
+    def test_unusable_attribution_gives_default(self, value):
+        raw = _make_api_response()
+        raw["attribution"] = value
+        assert _parse_response(raw, FakeHass()).attribution == "Weather: Open-Meteo"
+
+    def test_error_data_has_default_attribution(self):
+        assert _error_data("Premium required").attribution == "Weather: Open-Meteo"

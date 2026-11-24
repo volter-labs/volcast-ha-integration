@@ -46,3 +46,13 @@ def test_healthy_off_during_grace_window():
     assert sensor.is_on is False
     coord.consecutive_failures = 0
     assert sensor.is_on is True
+
+
+def test_peak_attribution_follows_forecast_data():
+    from custom_components.volcast.coordinator import DEFAULT_ATTRIBUTION
+
+    data = make_sample_data()
+    assert _peak_sensor(FakeCoordinator(data)).attribution == DEFAULT_ATTRIBUTION
+    data.attribution = "Weather data: Open-Meteo (CC BY 4.0); includes experimental data."
+    assert _peak_sensor(FakeCoordinator(data)).attribution == data.attribution
+    assert _peak_sensor(FakeCoordinator(None)).attribution == DEFAULT_ATTRIBUTION

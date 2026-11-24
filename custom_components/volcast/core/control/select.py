@@ -11,9 +11,10 @@ zawężamy po tekście urządzenia HA: marka z id profilu w producencie, potem
 Gdy nadal zostaje więcej niż jeden — ta wskazówka nie wybiera nic (`ambiguous_profiles`),
 bo zły id profilu w chmurze jest gorszy niż brak profilu.
 
-Profil bez `identify.model_regex` (identyfikacja po rejestrze) trafia wyłącznie do gałęzi 2. Wyjątek: profil
-„tylko encje” — gałąź 1 przyjmuje jego wpis integracji z `model_regex` pasującym do „producent model”
-(`_entity_match`), z modelem urządzenia i bez; profile rejestrowe dla urządzenia bez modelu zostają przy gałęzi 2.
+Profil bez `identify.model_regex` (identyfikacja po rejestrze albo profil „tylko encje”) trafia do gałęzi 1
+tylko przez wpis integracji z `model_regex` pasującym do „producent model” (`_entity_match`), z modelem
+urządzenia i bez; bez takiego wpisu zostaje w gałęzi 2. Profile rejestrowe z `identify.model_regex` dla
+urządzenia bez modelu zostają przy gałęzi 2.
 """
 from __future__ import annotations
 
@@ -87,12 +88,15 @@ def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
 
 
 def _entity_match(p: Profile, hint: InverterHint) -> bool:
-    """Profil „tylko encje” (bez `identify.model_regex`): domena + wzorzec `ha.integrations[].model_regex` na
-    „producent model”, z modelem i bez. Profil rejestrowy: domena + model zgodny z `identify.model_regex`;
-    urządzenie bez modelu zostaje dla niego podglądem (draft z niepotwierdzoną mapą encji)."""
+    """Profil „tylko encje” (także z feedu) albo rejestrowy Z PACZKI bez `identify.model_regex` (rozpoznawany po
+    rejestrze typu urządzenia): domena + wzorzec `ha.integrations[].model_regex` na „producent model”, z modelem
+    i bez; wpis integracji bez wzorca nie daje ścieżki encji. Profil rejestrowy z feedu bez
+    `identify.model_regex` nie ma kontroli szerokości wzorca integracji (ta jest tylko dla „tylko encje”),
+    więc jak dotąd idzie przez `_model_ok`. Profil rejestrowy z `identify.model_regex`: domena + model
+    zgodny z tym wzorcem; urządzenie bez modelu zostaje dla niego podglądem (draft z niepotwierdzoną mapą encji)."""
     if hint.domain not in _domains(p):
         return False
-    if entities_only(p):
+    if entities_only(p) or (is_packaged(p) and not (p.raw.get("identify") or {}).get("model_regex")):
         return _ha_text_ok(p, hint)
     return _model_ok(p, hint.model)
 

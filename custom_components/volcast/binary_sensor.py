@@ -17,7 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD, DOMAIN
-from .coordinator import VolcastCoordinator
+from .coordinator import DEFAULT_ATTRIBUTION, VolcastCoordinator
 
 
 async def async_setup_entry(
@@ -80,6 +80,12 @@ class VolcastPeakProductionSensor(
         Energy Dashboard; stan zdrowia raportuje `integration_healthy`.
         """
         return self.coordinator.data is not None
+
+    @property
+    def attribution(self) -> str:
+        """Atrybucja źródła danych prognozy — ten sam tekst co na czujnikach prognozy."""
+        data = self.coordinator.data
+        return data.attribution if data is not None else DEFAULT_ATTRIBUTION
 
     @property
     def is_on(self) -> bool | None:

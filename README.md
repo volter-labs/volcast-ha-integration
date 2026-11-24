@@ -119,7 +119,7 @@ Profiles are data files that describe how to read, and where verified, control a
 | Prepared, read-only until first tests | Deye SUN-xK-SG, FoxESS H1-G2/AC1-G2/P1, Huawei SUN2000, Sungrow SH, SolaX X1/X3-Hybrid, Sofar HYD, Solis hybrid, SolarEdge StorEdge, Fronius GEN24 | Reading and a trial that never writes; no control |
 | Any other inverter visible in Home Assistant | Anything with sensors for power and state of charge | Reading, after you assign the sensors |
 
-Control is enabled for a brand after its tests, and only when you ask for it (see [Inverter control](#inverter-control)). Profiles that arrive after the release are read-only drafts until verified. The prepared brands use the integrations `foxess_modbus`, `fronius`, `huawei_solar`, `solarman`, `solax_modbus`, `solaredge_modbus` or a Modbus connection; their profiles only map readings from those integrations.
+Control is enabled for a brand after its tests, and only when you ask for it (see [Inverter control](#inverter-control)). Profiles that arrive after the release are read-only drafts until verified. The prepared brands use the integrations `foxess_modbus`, `fronius`, `huawei_solar`, `solarman`, `solax_modbus`, `solaredge_modbus` or a Modbus connection; their profiles only map readings from those integrations. Deye three-phase hybrids (SG04LP3, SG01HP3) are read through the Solarman integration (davidrapan/ha-solarman); this stays read-only.
 
 Some integrations are described by a sensors-only profile: Volcast reads state of charge and PV, load, grid and battery power from them and never writes; control is not offered for them. Such profiles can arrive without an update; when one becomes your chosen profile a repair notice appears, and reading starts after you confirm it and reload Volcast (or restart Home Assistant). In entity mode, if the source reports identical load and grid values for 30 minutes, Volcast stops sending readings until a value changes.
 
@@ -188,6 +188,10 @@ The forecast engine is the same on both lines: the model, calibration, sensors, 
 - **Peak production alert** — binary sensor for automations (configurable threshold)
 - **UI-based setup** — no YAML needed: connect your Volcast account (or paste an API key) and select your sensors
 - **Key sanity check at setup** — a pasted key that is not a real Volcast key (for example the shortened preview shown in the app) is rejected instantly with a clear hint, before any network call
+
+### Data sources
+
+When the forecast uses a licensed weather data source, the server sends the credit text that the license requires, and the forecast sensors show it unchanged in the standard `attribution` attribute. When the server sends no such text, they show "Weather: Open-Meteo" (Open-Meteo data, CC BY 4.0).
 
 ### Resilience & Reconciliation
 

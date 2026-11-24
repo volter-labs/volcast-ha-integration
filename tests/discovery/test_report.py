@@ -471,8 +471,8 @@ def test_ambiguous_profile_surfaces_in_report_and_sensor_attributes():
     from custom_components.volcast.core.profile import builtin_ids, load_builtin
     profiles = [load_builtin(i) for i in builtin_ids()]
     r = _report(classification=_solarman_cls("Solarman", None), profiles=profiles)
-    assert r["inverters"][0]["profile_candidates"] == ["sofar-hyd", "solis-hybrid"]
-    assert compact_attributes(r)["inverters"][0]["profile_candidates"] == ["sofar-hyd", "solis-hybrid"]
+    assert r["inverters"][0]["profile_candidates"] == ["deye-sg", "sofar-hyd", "solis-hybrid"]
+    assert compact_attributes(r)["inverters"][0]["profile_candidates"] == ["deye-sg", "sofar-hyd", "solis-hybrid"]
     # Tekst urządzenia rozstrzyga — wtedy nie ma czego zgłaszać.
     clear = _report(classification=_solarman_cls("Ginlong", "S6-EH1P"), profiles=profiles)
     assert "profile_candidates" not in clear["inverters"][0]

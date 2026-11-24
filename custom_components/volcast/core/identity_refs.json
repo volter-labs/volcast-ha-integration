@@ -1,6 +1,8 @@
 {
  "deye-sg": {
-  "domains": [],
+  "domains": [
+   "solarman"
+  ],
   "holding": {
    "0": 1280,
    "146": 255,
