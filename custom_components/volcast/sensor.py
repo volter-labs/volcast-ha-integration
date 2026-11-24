@@ -21,7 +21,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .coordinator import VolcastCoordinator, VolcastData
+from .coordinator import DEFAULT_ATTRIBUTION, VolcastCoordinator, VolcastData
 from .control.direct_sensors import direct_sensors
 from .control_entities import (VolcastControlStatusSensor, VolcastPlanSensor,
                                VolcastPlanSummarySensor, VolcastPriceSensor)
@@ -136,10 +136,10 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
         return self.coordinator.data
 
     @property
-    def attribution(self) -> str | None:
-        """Atrybucja źródła danych podana przez API (HA pokazuje ją przy encji); brak pola = brak atrybucji."""
+    def attribution(self) -> str:
+        """Atrybucja źródła danych z API (HA pokazuje ją przy encji); bez danych — domyślna."""
         data = self._data
-        return data.attribution if data is not None else None
+        return data.attribution if data is not None else DEFAULT_ATTRIBUTION
 
     def _get_tz(self):
         """Return HA configured timezone."""

@@ -31,6 +31,9 @@ from .core.profile_feed import ProfileFeedUpdater, packaged_verified_ids
 from .http_retry import RETRIABLE_STATUSES, http_with_retry
 
 _LOGGER = logging.getLogger(__name__)
+
+# Źródło pogody, gdy API nie podało własnego opisu (dane Open-Meteo, CC BY 4.0).
+DEFAULT_ATTRIBUTION = "Weather: Open-Meteo"
 # Feed profili jest wspólny dla wszystkich wpisów — osobny klucz w hass.data (nie pod DOMAIN,
 # gdzie leżą wyłącznie wpisy).
 PROFILE_FEED_DATA = "volcast_profile_feed"
@@ -195,8 +198,8 @@ class VolcastData:
     production_source: str | None = None
     production_source_detail: str | None = None
     calibration: dict[str, Any] | None = None
-    # Tekst atrybucji źródła danych z API (pole top-level) — tylko gdy serwer go poda; wymagany licencją, bez zmian
-    attribution: str | None = None
+    # Atrybucja źródła danych: tekst z API (pole top-level) bez zmian, a bez niego domyślna
+    attribution: str = DEFAULT_ATTRIBUTION
 
 
 class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
@@ -469,9 +472,9 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
     )
 
 
-def _attribution(value: Any) -> str | None:
-    """Atrybucja z odpowiedzi API: niepusty tekst przekazujemy dosłownie, w innym razie brak."""
-    return value if isinstance(value, str) and value.strip() else None
+def _attribution(value: Any) -> str:
+    """Atrybucja z odpowiedzi API: niepusty tekst przekazujemy dosłownie, w innym razie domyślna."""
+    return value if isinstance(value, str) and value.strip() else DEFAULT_ATTRIBUTION
 
 
 def _build_wh_hours(

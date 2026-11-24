@@ -600,14 +600,14 @@ class TestAttribution:
         raw["attribution"] = "  Weather data: Open-Meteo (CC BY 4.0); © 2024-6 Google LLC  "
         assert _parse_response(raw, FakeHass()).attribution == raw["attribution"]
 
-    def test_no_attribution_when_missing(self):
-        assert _parse_response(_make_api_response(), FakeHass()).attribution is None
+    def test_default_attribution_when_missing(self):
+        assert _parse_response(_make_api_response(), FakeHass()).attribution == "Weather: Open-Meteo"
 
     @pytest.mark.parametrize("value", ["", "   ", 5, None, {"a": 1}])
-    def test_unusable_attribution_is_ignored(self, value):
+    def test_unusable_attribution_gives_default(self, value):
         raw = _make_api_response()
         raw["attribution"] = value
-        assert _parse_response(raw, FakeHass()).attribution is None
+        assert _parse_response(raw, FakeHass()).attribution == "Weather: Open-Meteo"
 
-    def test_error_data_has_no_attribution(self):
-        assert _error_data("Premium required").attribution is None
+    def test_error_data_has_default_attribution(self):
+        assert _error_data("Premium required").attribution == "Weather: Open-Meteo"

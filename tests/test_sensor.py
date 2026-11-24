@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from custom_components.volcast.control_entities import VolcastPriceSensor
+from custom_components.volcast.coordinator import DEFAULT_ATTRIBUTION
 from custom_components.volcast.sensor import VolcastBaseSensor, VolcastEnergyTodaySensor
 from tests.conftest import make_sample_data
 from tests.test_sensor_attributes import _make_sensor
@@ -17,14 +18,14 @@ def test_attribution_follows_coordinator_data():
     assert sensor.attribution == TEXT
 
 
-def test_no_attribution_when_not_served():
+def test_default_attribution_when_not_served():
     sensor = _make_sensor(VolcastEnergyTodaySensor, make_sample_data())
-    assert sensor.attribution is None
+    assert sensor.attribution == DEFAULT_ATTRIBUTION == "Weather: Open-Meteo"
 
 
-def test_no_attribution_without_data():
+def test_default_attribution_without_data():
     sensor = _make_sensor(VolcastEnergyTodaySensor, None)
-    assert sensor.attribution is None
+    assert sensor.attribution == DEFAULT_ATTRIBUTION
 
 
 def test_non_forecast_sensors_do_not_get_attribution():

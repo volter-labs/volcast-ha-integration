@@ -191,7 +191,7 @@ The forecast engine is the same on both lines: the model, calibration, sensors, 
 
 ### Data sources
 
-When the forecast uses a licensed weather data source, the server sends the credit text that the license requires, and the forecast sensors show it unchanged in the standard `attribution` attribute. When the server sends no such text, the sensors have no attribution.
+When the forecast uses a licensed weather data source, the server sends the credit text that the license requires, and the forecast sensors show it unchanged in the standard `attribution` attribute. When the server sends no such text, they show "Weather: Open-Meteo" (Open-Meteo data, CC BY 4.0).
 
 ### Resilience & Reconciliation
 
