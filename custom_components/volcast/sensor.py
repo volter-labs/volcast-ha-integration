@@ -135,6 +135,12 @@ class VolcastBaseSensor(CoordinatorEntity[VolcastCoordinator], SensorEntity):
         """Shortcut to coordinator data."""
         return self.coordinator.data
 
+    @property
+    def attribution(self) -> str | None:
+        """Atrybucja źródła danych podana przez API (HA pokazuje ją przy encji); brak pola = brak atrybucji."""
+        data = self._data
+        return data.attribution if data is not None else None
+
     def _get_tz(self):
         """Return HA configured timezone."""
         return dt_util.get_default_time_zone()

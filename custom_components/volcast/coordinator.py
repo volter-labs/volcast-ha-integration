@@ -195,6 +195,8 @@ class VolcastData:
     production_source: str | None = None
     production_source_detail: str | None = None
     calibration: dict[str, Any] | None = None
+    # Tekst atrybucji źródła danych z API (pole top-level) — tylko gdy serwer go poda; wymagany licencją, bez zmian
+    attribution: str | None = None
 
 
 class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
@@ -461,9 +463,15 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         submit_url=attrs.get("submit_url", ""),
         production_source=attrs.get("production_source"),
         production_source_detail=attrs.get("production_source_detail"),
+        attribution=_attribution(raw.get("attribution")),
         # kubełki mogą mieć samples: null — przekazujemy bez ingerencji
         calibration=attrs.get("calibration"),
     )
+
+
+def _attribution(value: Any) -> str | None:
+    """Atrybucja z odpowiedzi API: niepusty tekst przekazujemy dosłownie, w innym razie brak."""
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _build_wh_hours(
