@@ -59,7 +59,52 @@
                    "max_direction_changes_per_hour": 0, "max_state_age_s": 300,
                    "nvm_budget": {"window_h": 24, "per_key": 48, "total": 400}},
   "limits": {"battery_temp_c": {"min": -10, "max": 55}, "rated_power_register": "rated_power_w"},
-  "ha": {"integrations": []},
+  "ha": {
+    "integrations": [
+      {
+        "domain": "solarman",
+        "ems": false,
+        "status": "draft",
+        "model_regex": [
+          "^Deye SG0\\*(LP3|HP3)$"
+        ],
+        "entities": {
+          "soc": {
+            "domain": "sensor",
+            "unique_id_regex": "^[0-9a-z_]+_battery_sensor$"
+          },
+          "battery_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[0-9a-z_]+_battery_power_sensor$"
+          },
+          "battery_temp_c": {
+            "domain": "sensor",
+            "unique_id_regex": "^[0-9a-z_]+_battery_temperature_sensor$"
+          },
+          "pv_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[0-9a-z_]+_pv_power_sensor$"
+          },
+          "grid_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[0-9a-z_]+_grid_power_sensor$"
+          },
+          "load_power_w": {
+            "domain": "sensor",
+            "unique_id_regex": "^[0-9a-z_]+_load_power_sensor$"
+          },
+          "grid_import_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^[0-9a-z_]+_total_energy_import_sensor$"
+          },
+          "grid_export_total_kwh": {
+            "domain": "sensor",
+            "unique_id_regex": "^[0-9a-z_]+_total_energy_export_sensor$"
+          }
+        }
+      }
+    ]
+  },
   "capabilities": {
     "force_charge_from_grid": true, "sell_from_battery": false, "force_discharge": false,
     "standby": true, "set_power_w": true, "limit_export": false, "set_soc_floor": true,

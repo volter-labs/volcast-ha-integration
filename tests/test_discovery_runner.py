@@ -420,7 +420,7 @@ async def test_ambiguous_profile_reported_for_unbranded_solarman(make_hass):
     hass = make_hass(devices=[dev], entities=[ent], entries=[entry], states={}, components={"recorder"})
     with _ok_probe():
         rep = await DiscoveryRunner(hass, "v1", "2.0.0b1").async_run()
-    assert rep["inverters"][0]["profile_candidates"] == ["sofar-hyd", "solis-hybrid"]
+    assert rep["inverters"][0]["profile_candidates"] == ["deye-sg", "sofar-hyd", "solis-hybrid"]
     assert rep["errors"] == []
 
 

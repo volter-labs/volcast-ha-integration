@@ -40,7 +40,7 @@ def test_ambiguous_hint_does_not_block_a_clear_one():
     hints = [InverterHint("solarman", None, None), InverterHint("goodwe", "GoodWe", "GW8KN-ET")]
     c = select_profile(hints, ALL)
     assert (c.profile.id, c.integration_domain) == ("goodwe-et", "goodwe")
-    assert ambiguous_profiles(hints, ALL) == {"solarman": ("sofar-hyd", "solis-hybrid")}
+    assert ambiguous_profiles(hints, ALL) == {"solarman": ("deye-sg", "sofar-hyd", "solis-hybrid")}
 
 
 def test_goodwe_selection_unchanged_with_all_profiles():
