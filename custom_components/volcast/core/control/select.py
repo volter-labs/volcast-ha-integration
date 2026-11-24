@@ -88,13 +88,15 @@ def _narrow(cands: list[Profile], hint: InverterHint) -> list[Profile]:
 
 
 def _entity_match(p: Profile, hint: InverterHint) -> bool:
-    """Profil bez `identify.model_regex` („tylko encje” albo rejestrowy rozpoznawany po rejestrze typu
-    urządzenia): domena + wzorzec `ha.integrations[].model_regex` na „producent model”, z modelem i bez; wpis
-    integracji bez wzorca nie daje ścieżki encji. Profil rejestrowy z `identify.model_regex`: domena + model
+    """Profil „tylko encje” (także z feedu) albo rejestrowy Z PACZKI bez `identify.model_regex` (rozpoznawany po
+    rejestrze typu urządzenia): domena + wzorzec `ha.integrations[].model_regex` na „producent model”, z modelem
+    i bez; wpis integracji bez wzorca nie daje ścieżki encji. Profil rejestrowy z feedu bez
+    `identify.model_regex` nie ma kontroli szerokości wzorca integracji (ta jest tylko dla „tylko encje”),
+    więc jak dotąd idzie przez `_model_ok`. Profil rejestrowy z `identify.model_regex`: domena + model
     zgodny z tym wzorcem; urządzenie bez modelu zostaje dla niego podglądem (draft z niepotwierdzoną mapą encji)."""
     if hint.domain not in _domains(p):
         return False
-    if entities_only(p) or not (p.raw.get("identify") or {}).get("model_regex"):
+    if entities_only(p) or (is_packaged(p) and not (p.raw.get("identify") or {}).get("model_regex")):
         return _ha_text_ok(p, hint)
     return _model_ok(p, hint.model)
 

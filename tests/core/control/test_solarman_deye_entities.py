@@ -162,3 +162,21 @@ def test_entity_path_never_verifies_control(profile):
     from custom_components.volcast.core.control.select import control_verified
     choice = _choice("Deye", "SG0*LP3")
     assert control_verified(choice.profile, choice.integration_domain) is False
+
+
+def test_feed_register_profile_without_identify_regex_gets_no_entity_path():
+    """Profil rejestrowy z feedu bez `identify.model_regex` nie wchodzi na ścieżkę encji szerokim wzorcem integracji."""
+    import json
+    from pathlib import Path
+
+    from custom_components.volcast.core.profile import profile_from_dict
+
+    raw = json.loads((Path(__file__).parents[3] / "custom_components" / "volcast" / "profiles" / "deye-sg.json").read_text())
+    raw["id"] = "afore-hybrid"
+    for integ in raw["ha"]["integrations"]:
+        integ["model_regex"] = ["(?i)r"]
+    feed = profile_from_dict(raw)             # domyślne pochodzenie: feed
+    choice = select_profile([InverterHint(DOMAIN, "Afore", "Stick Logger")], [feed])
+    assert choice is None or choice.integration_domain is None
+    # ten sam kształt z paczki zachowuje ścieżkę encji (Deye)
+    assert _choice("Deye", "SG0*LP3").integration_domain == DOMAIN
