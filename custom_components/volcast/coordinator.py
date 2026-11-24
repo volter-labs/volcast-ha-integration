@@ -27,6 +27,13 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_ATTRIBUTION = "Weather: Open-Meteo"
 
 
+def _clean_attribution(value: Any) -> str:
+    """Tekst z API tylko gdy to niepusty napis (pokazywany bez zmian), inaczej domyślny."""
+    if isinstance(value, str) and value.strip():
+        return value
+    return DEFAULT_ATTRIBUTION
+
+
 @dataclass
 class DailyForecast:
     """Single day forecast."""
@@ -316,7 +323,7 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         nowcast_ratio=attrs.get("nowcast_ratio"),
         submit_url=attrs.get("submit_url", ""),
         # Pole top-level, obecne tylko przy licencjonowanym źródle pogody.
-        attribution=raw.get("attribution") or DEFAULT_ATTRIBUTION,
+        attribution=_clean_attribution(raw.get("attribution")),
     )
 
 

@@ -17,7 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_PEAK_THRESHOLD, DEFAULT_PEAK_THRESHOLD, DOMAIN
-from .coordinator import VolcastCoordinator
+from .coordinator import DEFAULT_ATTRIBUTION, VolcastCoordinator
 
 
 async def async_setup_entry(
@@ -68,6 +68,12 @@ class VolcastPeakProductionSensor(
             "model": "PV Forecast",
             "entry_type": "service",
         }
+
+    @property
+    def attribution(self) -> str:
+        """Atrybucja źródła danych prognozy (to samo źródło co czujniki prognozy)."""
+        data = self.coordinator.data
+        return data.attribution if data is not None else DEFAULT_ATTRIBUTION
 
     @property
     def is_on(self) -> bool | None:

@@ -463,5 +463,16 @@ class TestAttribution:
         raw["attribution"] = ""
         assert _parse_response(raw, FakeHass()).attribution == "Weather: Open-Meteo"
 
+    @pytest.mark.parametrize("value", [42, ["a"], {"a": 1}, "   ", "\n\t"])
+    def test_attribution_invalid_value_falls_back(self, value):
+        raw = _make_api_response()
+        raw["attribution"] = value
+        assert _parse_response(raw, FakeHass()).attribution == "Weather: Open-Meteo"
+
+    def test_attribution_text_kept_unstripped(self):
+        raw = _make_api_response()
+        raw["attribution"] = " Weather data: X "
+        assert _parse_response(raw, FakeHass()).attribution == " Weather data: X "
+
     def test_error_data_has_default_attribution(self):
         assert _error_data("Premium required").attribution == "Weather: Open-Meteo"
