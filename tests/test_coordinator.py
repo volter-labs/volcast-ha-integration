@@ -454,14 +454,14 @@ class TestAttribution:
         result = _parse_response(raw, FakeHass())
         assert result.attribution == raw["attribution"]
 
-    def test_attribution_none_when_missing(self):
+    def test_attribution_default_when_missing(self):
         result = _parse_response(_make_api_response(), FakeHass())
-        assert result.attribution is None
+        assert result.attribution == "Weather: Open-Meteo"
 
-    def test_attribution_none_when_empty(self):
+    def test_attribution_default_when_empty(self):
         raw = _make_api_response()
         raw["attribution"] = ""
-        assert _parse_response(raw, FakeHass()).attribution is None
+        assert _parse_response(raw, FakeHass()).attribution == "Weather: Open-Meteo"
 
-    def test_error_data_has_no_attribution(self):
-        assert _error_data("Premium required").attribution is None
+    def test_error_data_has_default_attribution(self):
+        assert _error_data("Premium required").attribution == "Weather: Open-Meteo"

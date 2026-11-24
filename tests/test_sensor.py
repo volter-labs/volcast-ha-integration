@@ -14,11 +14,18 @@ def test_attribution_follows_coordinator_data():
     assert sensor.attribution == data.attribution
 
 
-def test_attribution_none_when_not_served():
+def test_attribution_default_when_not_served():
     sensor = _make_sensor(VolcastEnergyTodaySensor, make_sample_data())
-    assert sensor.attribution is None
+    assert sensor.attribution == "Weather: Open-Meteo"
 
 
-def test_attribution_none_without_data():
+def test_attribution_default_without_data():
     sensor = _make_sensor(VolcastEnergyTodaySensor, None)
-    assert sensor.attribution is None
+    assert sensor.attribution == "Weather: Open-Meteo"
+
+
+def test_non_forecast_sensors_have_no_attribution():
+    from custom_components.volcast.sensor import LastReconciliationSensor, SubmitQueueDepthSensor
+
+    for cls in (SubmitQueueDepthSensor, LastReconciliationSensor):
+        assert getattr(cls, "attribution", None) is None

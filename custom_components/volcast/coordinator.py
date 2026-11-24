@@ -23,6 +23,9 @@ from .http_retry import http_with_retry
 
 _LOGGER = logging.getLogger(__name__)
 
+# Źródło pogody, gdy API nie podało własnego opisu (np. bez licencjonowanego źródła).
+DEFAULT_ATTRIBUTION = "Weather: Open-Meteo"
+
 
 @dataclass
 class DailyForecast:
@@ -73,8 +76,8 @@ class VolcastData:
     nowcast_applied: bool = False
     nowcast_ratio: float | None = None
     submit_url: str = ""
-    # Tekst atrybucji z API (licencja źródła); None, gdy serwer go nie podał.
-    attribution: str | None = None
+    # Tekst atrybucji z API (bez zmian); domyślnie źródło Open-Meteo.
+    attribution: str = DEFAULT_ATTRIBUTION
 
 
 class VolcastCoordinator(DataUpdateCoordinator[VolcastData]):
@@ -313,7 +316,7 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         nowcast_ratio=attrs.get("nowcast_ratio"),
         submit_url=attrs.get("submit_url", ""),
         # Pole top-level, obecne tylko przy licencjonowanym źródle pogody.
-        attribution=raw.get("attribution") or None,
+        attribution=raw.get("attribution") or DEFAULT_ATTRIBUTION,
     )
 
 

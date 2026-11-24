@@ -268,7 +268,7 @@ automation:
 
 ## Data sources
 
-Forecasts are built from weather data provided by [Open-Meteo](https://open-meteo.com/) (licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). When the forecast uses a source that requires a credit, the forecast sensors show the text supplied by the server, unchanged, in the standard `attribution` attribute.
+Forecasts are built from weather data provided by [Open-Meteo](https://open-meteo.com/) (licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). The forecast sensors show this source ("Weather: Open-Meteo") in the standard `attribution` attribute. When the server supplies its own attribution text, the sensors show that text instead, unchanged.
 
 Where applicable, forecasts also include experimental data from Google WeatherNext 3. Required credit:
 
