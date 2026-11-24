@@ -603,7 +603,7 @@ class TestAttribution:
     def test_default_attribution_when_missing(self):
         assert _parse_response(_make_api_response(), FakeHass()).attribution == "Weather: Open-Meteo"
 
-    @pytest.mark.parametrize("value", ["", "   ", 5, None, {"a": 1}])
+    @pytest.mark.parametrize("value", ["", "   ", 5, None, {"a": 1}, ["text"]])
     def test_unusable_attribution_gives_default(self, value):
         raw = _make_api_response()
         raw["attribution"] = value

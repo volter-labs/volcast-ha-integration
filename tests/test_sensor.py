@@ -30,8 +30,18 @@ def test_default_attribution_without_data():
 
 def test_non_forecast_sensors_do_not_get_attribution():
     """Czujniki ceny i sterowania oraz dane na żywo nie dziedziczą po bazie czujników prognozy."""
+    from custom_components.volcast.binary_sensor import IntegrationHealthyBinarySensor
+    from custom_components.volcast.button import VolcastSyncButton
     from custom_components.volcast.control.direct_sensors import DirectSensor
-    from custom_components.volcast.control_entities import VolcastControlStatusSensor, VolcastPlanSensor
+    from custom_components.volcast.control_entities import (
+        VolcastControlStatusSensor, VolcastControlSwitch, VolcastPlanSensor)
+    from custom_components.volcast.discovery_entities import VolcastDiscoverySensor
+    from custom_components.volcast.verification_entities import VolcastVerificationSensor
 
-    for cls in (VolcastPriceSensor, VolcastControlStatusSensor, VolcastPlanSensor, DirectSensor):
+    # na żywo (DirectSensor), sterowanie, wykrywanie, ceny, zdrowie, weryfikacja, przycisk
+    for cls in (DirectSensor, VolcastControlStatusSensor, VolcastPlanSensor, VolcastControlSwitch,
+                VolcastDiscoverySensor, VolcastPriceSensor, IntegrationHealthyBinarySensor,
+                VolcastVerificationSensor, VolcastSyncButton):
+        assert "attribution" not in vars(cls), cls
+        assert getattr(cls, "_attr_attribution", None) is None, cls
         assert not issubclass(cls, VolcastBaseSensor), cls
