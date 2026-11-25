@@ -76,6 +76,28 @@ PAIRED_PLATFORMS: list[Platform] = [*PLATFORMS, Platform.SWITCH]
 DATA_PLATFORMS = "platforms"
 
 
+def _async_remove_orphaned_diagnostics(
+    hass: HomeAssistant, entry: ConfigEntry, *, tracker_present: bool, reconciler_present: bool
+) -> None:
+    """Usuń z rejestru encji diagnostyczne, których źródło (tracker, reconciler) nie powstało.
+
+    Wpisy z wcześniejszych konfiguracji zostawały jako „niedostępne". Tylko dwa unique_id tego
+    wpisu; gdy tracker lub reconciler wróci, platforma `sensor` tworzy encję od nowa.
+    """
+    orphaned = []
+    if not tracker_present:
+        orphaned.append(f"{entry.entry_id}_submit_queue_depth")
+    if not reconciler_present:
+        orphaned.append(f"{entry.entry_id}_last_reconciliation")
+    if not orphaned:
+        return
+    registry = er.async_get(hass)
+    for unique_id in orphaned:
+        entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if entity_id:
+            registry.async_remove(entity_id)
+
+
 async def _async_forward_platforms(hass: HomeAssistant, entry: ConfigEntry, platforms: list) -> None:
     """Przekaż platformy i zapamiętaj ich listę dla `async_unload_entry`."""
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
@@ -312,6 +334,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.info(
                 "Reconciler not started — energy_entity not configured (or tracker missing)"
             )
+
+        _async_remove_orphaned_diagnostics(
+            hass, entry, tracker_present=tracker is not None,
+            reconciler_present=bool(tracker is not None and energy_entity),
+        )
 
         await _async_forward_platforms(hass, entry, PAIRED_PLATFORMS if control else PLATFORMS)
     except BaseException:
