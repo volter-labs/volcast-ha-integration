@@ -443,3 +443,36 @@ class TestForecastHistory:
         merged = coord.get_solar_forecast_wh_hours()
         assert merged is not None
         assert 3800 in merged.values()
+
+
+class TestAttribution:
+    """Źródło danych pogodowych z odpowiedzi API."""
+
+    def test_attribution_read_from_response(self):
+        raw = _make_api_response()
+        raw["attribution"] = "Weather data: Open-Meteo (CC BY 4.0); includes experimental data."
+        result = _parse_response(raw, FakeHass())
+        assert result.attribution == raw["attribution"]
+
+    def test_attribution_default_when_missing(self):
+        result = _parse_response(_make_api_response(), FakeHass())
+        assert result.attribution == "Weather: Open-Meteo"
+
+    def test_attribution_default_when_empty(self):
+        raw = _make_api_response()
+        raw["attribution"] = ""
+        assert _parse_response(raw, FakeHass()).attribution == "Weather: Open-Meteo"
+
+    @pytest.mark.parametrize("value", [42, ["a"], {"a": 1}, "   ", "\n\t"])
+    def test_attribution_invalid_value_falls_back(self, value):
+        raw = _make_api_response()
+        raw["attribution"] = value
+        assert _parse_response(raw, FakeHass()).attribution == "Weather: Open-Meteo"
+
+    def test_attribution_text_kept_unstripped(self):
+        raw = _make_api_response()
+        raw["attribution"] = " Weather data: X "
+        assert _parse_response(raw, FakeHass()).attribution == " Weather data: X "
+
+    def test_error_data_has_default_attribution(self):
+        assert _error_data("Premium required").attribution == "Weather: Open-Meteo"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -488,6 +489,103 @@ class TestSubmitWithHttpRetry:
         )
 
 
+class TestGapCoveredHours:
+    """Odczyt z `covers_from` oznacza jako dostarczone cala objeta rozpietosc godzin."""
+
+    @staticmethod
+    def _span_reading(date: str, hour: int, from_date: str, from_hour: int) -> dict:
+        return {
+            "date": date,
+            "hour": hour,
+            "actual_kwh": 4.0,
+            "covers_from": {"date": from_date, "hour": from_hour},
+        }
+
+    @pytest.mark.asyncio
+    async def test_accepted_span_marks_every_covered_hour(self):
+        from custom_components.volcast.http_retry import RetryResult
+        from custom_components.volcast.production import _utcnow_date
+
+        today = _utcnow_date().isoformat()
+        tracker = _make_tracker(store=_FakeStore(), accepted_store=_FakeStore())
+        result = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 1, "rejected": 0, "rejections": []},
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit([self._span_reading(today, 13, today, 10)])
+
+        assert tracker._accepted[today] == [10, 11, 12, 13]
+        # przetrwa restart (ten sam Store)
+        tracker2 = _make_tracker(accepted_store=tracker._accepted_store)
+        assert (await tracker2._load_accepted_store())[today] == [10, 11, 12, 13]
+
+    @pytest.mark.asyncio
+    async def test_span_crossing_midnight_uses_right_date_per_hour(self):
+        from custom_components.volcast.http_retry import RetryResult
+        from custom_components.volcast.production import _utcnow_date
+
+        today = _utcnow_date()
+        yesterday = (today - timedelta(days=1)).isoformat()
+        today = today.isoformat()
+        tracker = _make_tracker(store=_FakeStore(), accepted_store=_FakeStore())
+        result = RetryResult(
+            success=True, status=200, attempts=1,
+            data={"accepted": 1, "rejected": 0, "rejections": []},
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit([self._span_reading(today, 1, yesterday, 22)])
+
+        assert tracker._accepted[yesterday] == [22, 23]
+        assert tracker._accepted[today] == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_rejected_span_marks_nothing(self):
+        from custom_components.volcast.http_retry import RetryResult
+        from custom_components.volcast.production import _utcnow_date
+
+        today = _utcnow_date().isoformat()
+        tracker = _make_tracker(store=_FakeStore(), accepted_store=_FakeStore())
+        result = RetryResult(
+            success=True, status=200, attempts=1,
+            data={
+                "accepted": 0,
+                "rejected": 1,
+                "rejections": [{"date": today, "hour": 13, "reason": "invalid_value"}],
+            },
+        )
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            await tracker._async_submit([self._span_reading(today, 13, today, 10)])
+
+        assert tracker._accepted.get(today, []) == []
+
+    @pytest.mark.asyncio
+    async def test_failed_send_marks_nothing(self):
+        from custom_components.volcast.http_retry import RetryResult
+        from custom_components.volcast.production import _utcnow_date
+
+        today = _utcnow_date().isoformat()
+        tracker = _make_tracker(store=_FakeStore(), accepted_store=_FakeStore())
+        result = RetryResult(success=False, status=500, attempts=3, data=None)
+        with _patch_http_with_retry(result), patch(
+            "custom_components.volcast.production.async_get_clientsession",
+            return_value=MagicMock(),
+        ):
+            ok = await tracker._async_submit([self._span_reading(today, 13, today, 10)])
+
+        assert ok is False
+        assert tracker._accepted.get(today, []) == []
+
+
 class TestBatchCap:
     """Backend odrzuca >24 odczyty kodem 400, a 400 nie jest retriable.
 
@@ -826,3 +924,233 @@ class TestChargePowerCarryOver:
         reading = submitted[-1][0]
         assert reading["battery_charge_power_avg"] == 600.0
         assert reading["battery_charge_power_max"] == 800.0
+
+
+# ---------------------------------------------------------------------------
+# Silent counter entity: energy accumulated during a gap must not be lost
+# ---------------------------------------------------------------------------
+
+class _GapHarness:
+    """Drives a tracker through a scripted day with a controllable clock."""
+
+    def __init__(self, monkeypatch, baseline_store=None, day=(2026, 9, 14)):
+        from zoneinfo import ZoneInfo
+        self.monkeypatch = monkeypatch
+        self.tz = ZoneInfo("Europe/Warsaw")
+        self.day = day
+        self.baseline_store = baseline_store if baseline_store is not None else _FakeStore()
+        self.submitted: list[dict] = []
+        self.clock = None
+        self.tracker = None
+
+    def at(self, hour: int, minute: int = 0, day_offset: int = 0):
+        from datetime import datetime, timedelta
+        y, m, d = self.day
+        self.clock = datetime(y, m, d, hour, minute, tzinfo=self.tz) + timedelta(days=day_offset)
+
+    async def boot(self):
+        self.tracker = _make_tracker(baseline_store=self.baseline_store)
+        self.tracker._capacity_kwp = 6.0
+        self.monkeypatch.setattr(self.tracker, "_get_local_now", lambda: self.clock)
+        self.tracker._async_submit = AsyncMock(
+            side_effect=lambda r: self.submitted.extend(r) or True
+        )
+        await self.tracker.async_start()
+
+    def energy(self, value: float):
+        self.tracker._async_state_changed(_ev("sensor.pv_energy", value))
+
+    async def tick(self):
+        await self.tracker._async_check_flush(None)
+
+    def reading(self, hour: int) -> dict:
+        found = [r for r in self.submitted if r["hour"] == hour]
+        assert found, f"hour {hour} was not submitted: {self.submitted}"
+        return found[-1]
+
+
+class TestGapRecovery:
+    """Counter silent for hours, then returns with a jump: the total survives."""
+
+    async def _normal_hour_then_silence(self, h: _GapHarness):
+        h.at(8, 10)
+        await h.boot()
+        h.energy(100.0)
+        h.at(8, 55)
+        h.energy(100.8)
+        h.at(9, 5)
+        await h.tick()  # flush hour 8 -> 0.8 kWh
+
+    async def _silent_ticks(self, h: _GapHarness, hours=(9, 10, 11, 12)):
+        for hh in hours:
+            h.at(hh, 5)
+            await h.tick()
+
+    @pytest.mark.asyncio
+    async def test_silent_gap_total_is_recovered(self, monkeypatch):
+        h = _GapHarness(monkeypatch)
+        await self._normal_hour_then_silence(h)
+        await self._silent_ticks(h)
+        h.at(12, 20)
+        h.energy(103.4)  # counter returns with the jump
+        h.at(12, 55)
+        h.energy(103.4)
+        h.at(13, 5)
+        await h.tick()
+
+        assert h.reading(8)["actual_kwh"] == pytest.approx(0.8, abs=1e-4)
+        r12 = h.reading(12)
+        assert r12["actual_kwh"] == pytest.approx(2.6, abs=1e-4)
+        assert r12["covers_from"] == {"date": "2026-09-14", "hour": 9}
+        assert "covers_from" not in h.reading(8)
+        total = sum(r["actual_kwh"] for r in h.submitted)
+        assert total == pytest.approx(3.4, abs=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_restart_during_gap_keeps_state(self, monkeypatch):
+        store = _FakeStore()
+        h = _GapHarness(monkeypatch, baseline_store=store)
+        await self._normal_hour_then_silence(h)
+        h.at(10, 5)
+        await h.tick()
+        # HA restarts in the middle of the gap: new instance, same Store.
+        h.at(10, 30)
+        await h.boot()
+        await self._silent_ticks(h, hours=(11, 12))
+        h.at(12, 20)
+        h.energy(103.4)
+        h.at(12, 55)
+        h.energy(103.4)
+        h.at(13, 5)
+        await h.tick()
+
+        r12 = h.reading(12)
+        assert r12["actual_kwh"] == pytest.approx(2.6, abs=1e-4)
+        assert r12["covers_from"] == {"date": "2026-09-14", "hour": 9}
+
+    @pytest.mark.asyncio
+    async def test_restart_before_last_hour_flushed_covers_that_hour(self, monkeypatch):
+        store = _FakeStore()
+        h = _GapHarness(monkeypatch, baseline_store=store)
+        h.at(8, 10)
+        await h.boot()
+        h.energy(100.0)
+        h.at(8, 40)
+        h.energy(100.5)
+        h.at(8, 50)
+        await h.tick()  # persists state; hour 8 not flushed yet
+        # HA down across the flush of hour 8, back at 12:20 with a new instance.
+        h.at(12, 20)
+        await h.boot()
+        h.energy(103.4)
+        h.at(12, 55)
+        h.energy(103.4)
+        h.at(13, 5)
+        await h.tick()
+
+        r12 = h.reading(12)
+        assert r12["covers_from"] == {"date": "2026-09-14", "hour": 8}
+        assert r12["actual_kwh"] == pytest.approx(3.4, abs=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_counter_reset_after_gap_is_not_recovered(self, monkeypatch):
+        h = _GapHarness(monkeypatch)
+        await self._normal_hour_then_silence(h)
+        await self._silent_ticks(h)
+        h.at(12, 20)
+        h.energy(2.0)  # lower than the last known value: counter was reset
+        h.at(12, 55)
+        h.energy(2.5)
+        h.at(13, 5)
+        await h.tick()
+
+        r12 = h.reading(12)
+        assert "covers_from" not in r12
+        assert r12["actual_kwh"] == pytest.approx(0.5, abs=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_gap_longer_than_36h_has_no_covers_from(self, monkeypatch):
+        h = _GapHarness(monkeypatch)
+        await self._normal_hour_then_silence(h)
+        h.at(12, 20, day_offset=2)
+        h.energy(110.0)
+        h.at(12, 55, day_offset=2)
+        h.energy(110.4)
+        h.at(13, 5, day_offset=2)
+        await h.tick()
+
+        r12 = h.reading(12)
+        assert "covers_from" not in r12
+        assert r12["actual_kwh"] == pytest.approx(0.4, abs=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_capacity_check_scales_with_hours_covered(self, monkeypatch):
+        h = _GapHarness(monkeypatch)
+        await self._normal_hour_then_silence(h)
+        await self._silent_ticks(h)
+        # 4 hours covered (9..12): 20 kWh is plausible for 6 kWp x 1.2 x 4 = 28.8,
+        # although it would exceed the single-hour limit of 7.2.
+        h.at(12, 20)
+        h.energy(120.8)
+        h.at(12, 55)
+        h.energy(120.8)
+        h.at(13, 5)
+        await h.tick()
+        assert h.reading(12)["actual_kwh"] == pytest.approx(20.0, abs=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_implausible_jump_after_gap_is_still_rejected(self, monkeypatch):
+        h = _GapHarness(monkeypatch)
+        await self._normal_hour_then_silence(h)
+        await self._silent_ticks(h)
+        h.at(12, 20)
+        h.energy(160.8)  # 60 kWh in 4 hours from 6 kWp
+        h.at(12, 55)
+        h.energy(160.8)
+        h.at(13, 5)
+        await h.tick()
+        assert not [r for r in h.submitted if r["hour"] == 12]
+
+    @pytest.mark.asyncio
+    async def test_no_gap_payload_has_no_covers_from(self, monkeypatch):
+        h = _GapHarness(monkeypatch)
+        h.at(12, 10)
+        await h.boot()
+        h.energy(100.0)
+        h.at(12, 55)
+        h.energy(101.0)
+        h.at(13, 1)
+        h.energy(101.1)  # normal rollover: previous bucket carries the counter
+        h.at(13, 5)
+        await h.tick()
+        h.at(13, 58)
+        h.energy(102.0)
+        h.at(14, 5)
+        await h.tick()
+
+        assert set(h.reading(12)) == {"date", "hour", "actual_kwh", "data_method"}
+        r13 = h.reading(13)
+        assert set(r13) == {"date", "hour", "actual_kwh", "data_method"}
+        assert r13["actual_kwh"] == pytest.approx(1.0, abs=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_restart_after_recovery_keeps_covers_from(self, monkeypatch):
+        store = _FakeStore()
+        h = _GapHarness(monkeypatch, baseline_store=store)
+        await self._normal_hour_then_silence(h)
+        await self._silent_ticks(h)
+        h.at(12, 20)
+        h.energy(103.4)  # recovery happens here
+        h.at(12, 25)
+        await h.tick()  # state persisted, including covers_from
+        # HA restarts within the recovered hour.
+        h.at(12, 30)
+        await h.boot()
+        h.at(12, 55)
+        h.energy(103.6)
+        h.at(13, 5)
+        await h.tick()
+
+        r12 = h.reading(12)
+        assert r12["covers_from"] == {"date": "2026-09-14", "hour": 9}
+        assert r12["actual_kwh"] == pytest.approx(2.8, abs=1e-4)
