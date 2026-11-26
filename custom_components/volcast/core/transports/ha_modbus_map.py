@@ -14,8 +14,11 @@ na ile się da, wyłącznie publicznymi cechami: encje `sensor.*` bez wpisu w re
 `hass.data` nie ma po stronie wtyczki), więc to tylko wskazówka dla użytkownika: „dodaj `unique_id`”.
 Wykrycie jest „best effort” — zmiana wewnętrzności HA daje pustą listę, nie błąd.
 
-Poll blok zawierający niezmapowany rejestr kończy się w całości błędem (patrz `ha_modbus`), dlatego raport
-podaje też ciągłe zakresy w pełni zmapowanych, użytecznych adresów (`mapped_ranges`).
+Poll blok zawierający niezmapowany rejestr kończy się w całości błędem (patrz `ha_modbus`), a plan odczytu
+scala klucze przez dziury (do 16 słów). Dlatego „wymagane” to słowa BLOKÓW, które czytnik naprawdę woła
+(`read_plan(profile)` + `modbus.identify_reads`), nie same pola profilu: `ok` gwarantuje czytelność każdego
+bloku. `blocks` mówi per blok, których słów brakuje; `mapped_ranges` to bloki w pełni czytelne.
+Bloki spoza obsługi transportu (rejestry input `fc: 4`, własny `unit_id`) są zgłaszane jako nieobsługiwane.
 
 Prywatność: `telemetry()` zawiera wyłącznie adresy i przyczyny (stałe z `ha_modbus`) oraz liczniki — nigdy
 entity_id ani nazwę huba. Pełny raport (`UnsupportedEntry.entity_id`, `unregistered_sensors`) jest dla UI
@@ -23,15 +26,19 @@ kreatora (lokalnie).
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from ..modbus.blocks import _named_runs
+from ..modbus.blocks import block_fc, block_unit, read_plan
+from ..registers import FC_HOLDING
 from .ha_modbus import CHECK_FAILED, MODBUS_DOMAIN, bus_sensor_problem
 
 UNIQUE_ID_PREFIX = "volcast_reg_"
 _MAX_ADDR = 0xFFFF
+
+UNSUPPORTED_INPUT_REGISTERS = "input_registers_unsupported"   # `fc: 4` — transport czyta tylko holding
+UNSUPPORTED_UNIT_OVERRIDE = "unit_override_unsupported"       # blok z własnym `unit_id`
 
 SensorCheck = Callable[[str], "str | None"]
 
@@ -44,20 +51,35 @@ class UnsupportedEntry:
 
 
 @dataclass(frozen=True)
+class BlockStatus:
+    start: int
+    count: int
+    missing: tuple[int, ...]       # słowa bloku bez (użytecznej) encji
+    cause: str | None = None       # blok poza obsługą transportu (`UNSUPPORTED_*`)
+
+    @property
+    def readable(self) -> bool:
+        return not self.missing and self.cause is None
+
+
+@dataclass(frozen=True)
 class MapReport:
     registers: Mapping[int, str]                # adres → entity_id (wszystkie zmapowane, także nieobsługiwane)
     required: tuple[int, ...]
     missing: tuple[int, ...]                    # wymagane bez żadnej encji (posortowane)
     unsupported: tuple[UnsupportedEntry, ...]   # zmapowane, ale transport ich nie przyjmie
-    duplicates: tuple[int, ...]                 # adres z kilkoma encjami (niejednoznaczny, wyłączony z mapy)
-    mapped_ranges: tuple[tuple[int, int], ...]  # (start, liczba) ciągłych, użytecznych adresów
+    duplicates: tuple[int, ...]                 # adresy niejednoznaczne (kilka encji na adres albo jedna encja
+                                                # na kilka adresów) — wyłączone z mapy
+    blocks: tuple[BlockStatus, ...]             # bloki odczytu, które czytnik woła (poll + identyfikacja)
+    mapped_ranges: tuple[tuple[int, int], ...]  # (start, liczba) bloków w pełni czytelnych
     unregistered_sensors: tuple[str, ...]       # czujniki YAML `modbus` bez `unique_id` (wskazówka, lokalnie)
     invalid_entries: int = 0                    # wpisy jawnej mapy odrzucone (zły adres/encja)
     registry_available: bool = True
 
     @property
     def ok(self) -> bool:
-        return self.registry_available and not (self.missing or self.unsupported)
+        return (self.registry_available and not (self.missing or self.unsupported)
+                and all(b.readable for b in self.blocks))
 
     def telemetry(self) -> dict[str, Any]:
         """Adresy, przyczyny i liczniki — bez entity_id."""
@@ -67,18 +89,25 @@ class MapReport:
             "unsupported": [{"addr": u.addr, "cause": u.cause} for u in self.unsupported],
             "duplicates": list(self.duplicates),
             "ranges": [list(r) for r in self.mapped_ranges],
+            "blocks": [{"start": b.start, "count": b.count, "missing": list(b.missing),
+                        "cause": b.cause} for b in self.blocks],
             "unregistered_count": len(self.unregistered_sensors),
             "invalid_entries": self.invalid_entries,
             "registry_available": self.registry_available,
         }
 
 
+def _plan(profile) -> list[tuple[int, int, int, int | None]]:
+    """Bloki odczytu, które czytnik woła: (start, liczba, fc, unit) — poll + identyfikacja."""
+    out = [(b[0], b[1], block_fc(b), block_unit(b)) for b in read_plan(profile)]
+    out += [(b[0], b[1], block_fc(b), block_unit(b)) for b in profile.modbus.identify_reads]
+    return out
+
+
 def required_addresses(profile) -> frozenset[int]:
-    """Wszystkie słowa, których profil potrzebuje: odczyt, zapis, pola TOU i identyfikacja."""
-    out: set[int] = set()
-    for _key, start, count, _fc, _unit in _named_runs(profile, include_identify=True):
-        out.update(range(start, start + count))
-    return frozenset(out)
+    """Słowa wszystkich bloków odczytu (poll z dziurami scalonymi przez plan + identyfikacja). Rejestry zapisu
+    są w planie (odczyt zwrotny i obraz TOU), więc nie trzeba ich dodawać osobno."""
+    return frozenset(a for start, n, _fc, _u in _plan(profile) for a in range(start, start + n))
 
 
 def registers_from_explicit(explicit: Mapping[Any, Any]) -> tuple[dict[int, str], int]:
@@ -86,12 +115,14 @@ def registers_from_explicit(explicit: Mapping[Any, Any]) -> tuple[dict[int, str]
     out: dict[int, str] = {}
     bad = 0
     for k, v in explicit.items():
-        try:
+        if type(k) is int:
+            addr = k
+        elif isinstance(k, str) and k.isascii() and k.isdigit():
             addr = int(k)
-        except (TypeError, ValueError):
+        else:
             bad += 1
             continue
-        if isinstance(k, bool) or not 0 <= addr <= _MAX_ADDR or not isinstance(v, str) or not v:
+        if not 0 <= addr <= _MAX_ADDR or not isinstance(v, str) or not v:
             bad += 1
             continue
         out[addr] = v
@@ -108,14 +139,17 @@ def _addr_from_unique_id(uid: Any) -> int | None:
     if not isinstance(uid, str) or not uid.startswith(UNIQUE_ID_PREFIX):
         return None
     tail = uid[len(UNIQUE_ID_PREFIX):]
-    if not (tail.isascii() and tail.isdigit()) or len(tail) > 5 or int(tail) > _MAX_ADDR:
+    if (not (tail.isascii() and tail.isdigit()) or len(tail) > 5 or (len(tail) > 1 and tail[0] == "0")
+            or int(tail) > _MAX_ADDR):
         return None
     return int(tail)
 
 
 def registers_from_registry(hass) -> tuple[dict[int, str], tuple[int, ...]]:
     """(mapa, adresy niejednoznaczne). Czujniki `sensor` platformy `modbus` z `unique_id` `volcast_reg_<adres>`;
-    adres z dwiema encjami (np. dwa huby) jest wyłączony z mapy. Brak rejestru encji → pusta mapa."""
+    adres z dwiema encjami jest wyłączony z mapy
+    (rejestr HA pilnuje unikalności `unique_id`, więc to obrona; zapis z zerami wiodącymi odrzucamy).
+    Konwencja nie wiąże czujnika z hubem ani adresem urządzenia — jeden falownik na konwencję. Brak rejestru encji → pusta mapa."""
     registry = _registry(hass)
     entities = getattr(registry, "entities", None)
     if registry is None or entities is None:
@@ -157,19 +191,6 @@ def unregistered_modbus_sensors(hass) -> tuple[str, ...]:
         return ()
 
 
-def fully_mapped_ranges(registers: Iterable[int], exclude: Iterable[int] = ()) -> list[tuple[int, int]]:
-    """Maksymalne ciągłe zakresy (start, liczba) zmapowanych adresów, bez `exclude`."""
-    skip = set(exclude)
-    addrs = sorted(a for a in set(registers) if a not in skip)
-    out: list[tuple[int, int]] = []
-    for a in addrs:
-        if out and out[-1][0] + out[-1][1] == a:
-            out[-1] = (out[-1][0], out[-1][1] + 1)
-        else:
-            out.append((a, 1))
-    return out
-
-
 def build_register_map(hass, profile, *, explicit: Mapping[Any, Any] | None = None,
                        sensor_check: SensorCheck | None = None) -> MapReport:
     """Mapa (jawna albo z rejestru encji) + walidacja względem `profile`."""
@@ -182,6 +203,13 @@ def build_register_map(hass, profile, *, explicit: Mapping[Any, Any] | None = No
     else:
         registers, duplicates = registers_from_registry(hass)
         available = _registry(hass) is not None
+    # ta sama encja pod kilkoma adresami = błąd (np. copy-paste w kreatorze): zrzut TOU byłby fałszywy
+    owners: dict[str, list[int]] = {}
+    for a, e in registers.items():
+        owners.setdefault(e, []).append(a)
+    shared = sorted(a for addrs in owners.values() if len(addrs) > 1 for a in addrs)
+    registers = {a: e for a, e in registers.items() if a not in set(shared)}
+    duplicates = tuple(sorted(set(duplicates) | set(shared)))
     required = sorted(required_addresses(profile))
     bad: list[UnsupportedEntry] = []
     for addr in sorted(registers):
@@ -191,13 +219,21 @@ def build_register_map(hass, profile, *, explicit: Mapping[Any, Any] | None = No
             why = f"{CHECK_FAILED}: {type(err).__name__}"
         if why is not None:
             bad.append(UnsupportedEntry(addr, registers[addr], why))
+    bad_addrs = {u.addr for u in bad}
+    blocks = []
+    for start, n, fc, unit in _plan(profile):
+        cause = (UNSUPPORTED_INPUT_REGISTERS if fc != FC_HOLDING
+                 else UNSUPPORTED_UNIT_OVERRIDE if unit is not None else None)
+        miss = tuple(a for a in range(start, start + n) if a not in registers or a in bad_addrs)
+        blocks.append(BlockStatus(start, n, miss, cause))
     return MapReport(
         registers=dict(registers),
         required=tuple(required),
         missing=tuple(a for a in required if a not in registers),
         unsupported=tuple(bad),
         duplicates=duplicates,
-        mapped_ranges=tuple(fully_mapped_ranges(registers, exclude={u.addr for u in bad})),
+        blocks=tuple(blocks),
+        mapped_ranges=tuple((b.start, b.count) for b in blocks if b.readable),
         unregistered_sensors=unregistered_modbus_sensors(hass) if explicit is None else (),
         invalid_entries=invalid,
         registry_available=available,
