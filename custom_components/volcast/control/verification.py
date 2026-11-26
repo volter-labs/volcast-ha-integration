@@ -5,11 +5,12 @@ Krok drabiny (`async_step`) idzie po każdym cyklu wykonawcy (sygnał `SIGNAL_CO
 
 * 1 identyfikacja — tryb bezpośredni: tożsamość urządzenia pod adresem potwierdzona w cyklu wykonawcy;
   encje: encja trybu z odczytem (szczebel trywialny);
-* 2 odczyt — czytelny tryb z profilu i SoC;
+* 2 odczyt — czytelny tryb z profilu i SoC; model okien czasowych (bez rejestru trybu): SoC i komplet
+  bloku programów z włącznikiem (`tou_block_keys`) — to samo, bez czego cykl okien nie decyduje;
 * 3 próba bez zapisu — „co bym zapisał” z decyzji wykonawcy (każda nowa decyzja z zapisami raz), obcy
   zapis = stop: encje — zmiana stanu encji klucza zapisu z aktorem (użytkownik, automatyzacja), nie
   z naszym kontekstem; bezpośrednio — drugi klient na łączu (`ContentionMonitor`, `conn.conflict`) albo
-  zmiana rejestru zapisu bez naszego zapisu;
+  zmiana rejestru zapisu bez naszego zapisu (okna czasowe: pola programów i włącznik);
 * 4 zapis kontrolny — `executor.async_control_write` (ponowny zapis bieżącego trybu, odczyt zwrotny);
 * 5 okno próbne — plan zastępczy wykonawcy (jeden slot ładowania z sieci `window_power_w`, ta sama
   ścieżka zapisu i `apply_guards`), pomiar mocy ładowania i SoC z odczytu po każdym cyklu; po oknie
@@ -51,7 +52,9 @@ from ..core.control.cycle import DRY_RUN, WRITE
 from ..core.control.ladder import (RUNG_CONTROL_WRITE, RUNG_IDENTIFY, RUNG_READ, RUNG_TRIAL, RUNG_WINDOW,
                                    RUNNING, STOPPED, VERIFIED, WAITING, Ladder, LadderParams, device_key)
 from ..core.control.select import control_verified
+from ..core.control.tou_cycle import EN_KEY
 from ..core.engines.mode_setpoint import SLOT_POWER_KINDS
+from ..core.params import TOU_FIELDS
 from ..core.profile import direct_verified, is_packaged, writes_allowed
 from ..core.slot import Action, Fallback, Schedule, Slot
 
@@ -85,6 +88,18 @@ def writing_supported(profile, kind: str) -> bool:
     if profile.control_model == "time_window":
         return kind == "direct" and ((write.get("tou_program") or {}).get("soc") or {}).get("addr") is not None
     return "mode" in write
+
+
+def tou_block_keys(profile) -> frozenset[str]:
+    """Klucze odczytu bloku okien czasowych (konwencja `Params.flatten`): pola każdego programu i włącznik.
+    Pusty zbiór dla profilu bez programów albo bez słowa włącznika."""
+    if profile is None or profile.control_model != "time_window":
+        return frozenset()
+    write = profile.raw.get("write") or {}
+    count = int((write.get("tou_program") or {}).get("count") or 0)
+    if count <= 0 or "tou_enable" not in write:
+        return frozenset()
+    return frozenset({f"tou.{i}.{f}" for i in range(1, count + 1) for f in TOU_FIELDS} | {EN_KEY})
 
 
 def window_capable(profile) -> bool:
@@ -375,13 +390,27 @@ class VerificationRunner:
             return bool(self._ex.io.identity_confirmed())
         return rd.raw_mode is not None and rd.raw_mode not in _NO_STATE
 
-    @staticmethod
-    def _readable(rd) -> bool:
-        return isinstance(rd.readings.get("mode"), str) and _number(rd.readings.get("soc")) is not None
+    def _readable(self, rd) -> bool:
+        """Odczyt wystarczający do sterowania: SoC i stan, z którego decyduje cykl. Model okien czasowych nie
+        ma rejestru trybu — stan to komplet programów z włącznikiem (cykl bez niego: `tou_unreadable`); tryb
+        wyprowadzony z bitu włącznika nic by tu nie dał, a wpuściłby obcy klucz `mode` do ścieżek trybu."""
+        if _number(rd.readings.get("soc")) is None:
+            return False
+        profile = self._ex.profile
+        if profile is not None and profile.control_model == "time_window":
+            keys = tou_block_keys(profile)
+            return bool(keys) and all(_number(rd.readings.get(k)) is not None for k in keys)
+        return isinstance(rd.readings.get("mode"), str)
 
     def _write_keys(self) -> set[str]:
+        """Klucze odczytu pilnowane w próbie (obcy zapis). Okna czasowe: klucze zapisu profilu
+        (`tou_program`, `tou_enable`) nie są kluczami odczytu — pilnujemy pól programów i włącznika."""
         profile = self._ex.profile
-        return set((profile.raw.get("write") or {}) if profile is not None else ())
+        if profile is None:
+            return set()
+        if profile.control_model == "time_window":
+            return set(tou_block_keys(profile))
+        return set(profile.raw.get("write") or {})
 
     def _observe_trial(self, lad: Ladder, rd, now) -> None:
         flat = would_write_flat(self._ex.last_decision)
