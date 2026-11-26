@@ -2,6 +2,7 @@
 odczyt z obrazu rejestrów składanego z jego SUROWYCH czujników (atrapy hass, bez sieci)."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -87,15 +88,41 @@ class FakeBus:
     def __init__(self) -> None:
         self.listeners: list[tuple[str, object]] = []
 
-    def async_listen(self, event_type, listener):
-        item = (event_type, listener)
+    def async_listen(self, event_type, listener, event_filter=None):
+        # HA: słuchacz bez `@callback` dostałby zadanie na każde zdarzenie — wymagamy oznaczenia
+        assert getattr(listener, "_hass_callback", False) and getattr(event_filter, "_hass_callback", False)
+        item = (event_type, listener, event_filter)
         self.listeners.append(item)
         return lambda: self.listeners.remove(item)
 
     async def fire(self, event, event_type="call_service") -> None:
-        for et, cb in list(self.listeners):
-            if et == event_type:
-                await cb(event)
+        for et, cb, flt in list(self.listeners):
+            if et == event_type and (flt is None or flt(event.data)):
+                cb(event)
+
+
+class ModbusRegisterSensor:                         # kształt czujnika bazowego HA: czyta przez `_hub`
+    _hub = object()
+
+
+class SlaveSensor:                                  # `slave_count`/`virtual_count`: encja koordynatora
+    coordinator = object()
+
+
+class FakeRegistry:
+    def __init__(self) -> None:
+        self.entries: dict[str, SimpleNamespace] = {}
+
+    def async_get(self, entity_id):
+        return self.entries.get(entity_id)
+
+
+class FakeComponent:
+    def __init__(self) -> None:
+        self.entities: dict[str, object] = {}
+
+    def get_entity(self, entity_id):
+        return self.entities.get(entity_id)
 
 
 class FakeStates:
@@ -116,9 +143,12 @@ class Inverter:
     def __init__(self, clock: FakeClock, registers: dict[int, int], *, schema=SCHEMA_SLAVE) -> None:
         self.clock = clock
         self.bank = dict(registers)
-        self.hass = SimpleNamespace(states=FakeStates(), services=None, bus=FakeBus(), late_events=False)
+        self.hass = SimpleNamespace(states=FakeStates(), services=None, bus=FakeBus(), late_events=False,
+                                    data={"entity_registry": FakeRegistry(), "sensor": FakeComponent()})
         self.hass.services = FakeServices(self.hass)
         self.entities = {a: f"sensor.volcast_reg_{a}" for a in registers}
+        for eid in self.entities.values():
+            self.add_entity(eid)
         self.drop_writes = False                    # HA połyka błąd magistrali — usługa wraca bez błędu
         self.refresh_on_request = True
         self.hass.services.handlers[("modbus", "write_register")] = self._write
@@ -126,6 +156,10 @@ class Inverter:
         self.hass.services.handlers[("homeassistant", "update_entity")] = self._update
         for a in registers:
             self.refresh(a)
+
+    def add_entity(self, eid: str, *, platform: str = "modbus", entity=None) -> None:
+        self.hass.data["entity_registry"].entries[eid] = SimpleNamespace(platform=platform)
+        self.hass.data["sensor"].entities[eid] = entity if entity is not None else ModbusRegisterSensor()
 
     def utcnow(self) -> datetime:
         return datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=self.clock.now)
@@ -481,7 +515,7 @@ def test_protocol_shape(inv, clock):
 
 
 @pytest.mark.parametrize("kw", [
-    {"hub": ""}, {"hub": 5}, {"device_address": 0}, {"device_address": 256}, {"device_address": True},
+    {"hub": ""}, {"hub": 5}, {"device_address": 0}, {"device_address": 248}, {"device_address": True},
     {"registers": {-1: "sensor.a"}}, {"registers": {65536: "sensor.a"}}, {"registers": {1: "nodot"}},
     {"registers": {1: ""}}, {"readback_timeout_s": 0}, {"readback_poll_s": -1}, {"conflict_hold_s": 0},
     {"write_timeout_s": float("nan")},
@@ -597,6 +631,7 @@ async def test_foreign_write_to_our_device_raises_conflict_until_hold_expires(in
     {"address": 146, "value": 1, "slave": UNIT},               # hub domyślny `modbus_hub`
     {"hub": HUB, "slave": UNIT + 1, "address": 146, "value": 1},
     {"hub": HUB, "unit": UNIT + 1, "address": 146, "value": 1},
+    {"hub": HUB, "slave": 200, "address": 146, "value": 1},
 ])
 async def test_writes_to_other_hubs_or_devices_are_not_conflicts(inv, clock, data):
     t = _transport(inv, clock)
@@ -611,6 +646,7 @@ async def test_writes_to_other_hubs_or_devices_are_not_conflicts(inv, clock, dat
     {"hub": HUB, "address": 146, "value": 1},                  # adres urządzenia domyślnie 1
     {"hub": HUB, "unit": "x", "address": 146, "value": 1},     # nieustalony → fail-closed
     {"hub": HUB, "device_address": UNIT, "address": 146, "value": 1},
+    {"hub": HUB, "slave": 0, "address": 146, "value": 1},      # rozgłoszenie dociera do falownika
 ])
 async def test_default_or_unparsable_device_address_counts_as_ours(inv, clock, data):
     t = _transport(inv, clock)
@@ -634,15 +670,13 @@ async def test_own_writes_are_never_conflicts(inv, clock, late):
 
 
 @pytest.mark.asyncio
-async def test_identical_copy_of_own_write_soon_after_is_own_later_is_foreign(inv, clock):
+async def test_identical_foreign_payload_right_after_own_write_is_still_foreign(inv, clock):
     t = _transport(inv, clock)
     with pytest.raises(WriteUnconfirmed):
         await t.write(146, [0xFF], function=FC_WRITE_MULTIPLE)
-    await _foreign(inv, {"hub": HUB, "slave": UNIT, "address": 146, "value": [0xFF]})
     assert t.conflict is False
-    clock.advance(60.0)
     await _foreign(inv, {"hub": HUB, "slave": UNIT, "address": 146, "value": [0xFF]})
-    assert t.conflict is True
+    assert t.conflict is True                       # własny = wyłącznie ten sam obiekt danych
 
 
 @pytest.mark.asyncio
@@ -652,3 +686,177 @@ async def test_close_stops_listening(inv, clock):
     assert inv.hass.bus.listeners == []
     await _foreign(inv, {"hub": HUB, "slave": UNIT, "address": 146, "value": 1})
     assert t.conflict is False
+
+
+# ── warunek mapy: tylko czujniki bazowe platformy `modbus` ─────────────────
+
+
+def _updates(inv) -> list:
+    return [c[2] for c in inv.hass.services.calls if c[:2] == ("homeassistant", "update_entity")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform,entity", [
+    ("modbus", SlaveSensor()),                      # slave_count / virtual_count
+    ("template", ModbusRegisterSensor()),           # encja innej integracji
+    ("modbus", None),                               # brak w komponencie `sensor`
+])
+async def test_non_bus_entities_are_missing_and_never_refreshed(inv, clock, platform, entity):
+    t = _transport(inv, clock)
+    eid = inv.entities[149]
+    inv.add_entity(eid, platform=platform, entity=entity)
+    if entity is None:
+        del inv.hass.data["sensor"].entities[eid]
+    with pytest.raises(WriteUnconfirmed):
+        await t.write(148, [1, 2, 3], function=FC_WRITE_MULTIPLE)
+    with pytest.raises(MissingRegister) as err:
+        await t.read(148, 3)
+    assert err.value.addrs == (149,) and _updates(inv) == []
+    assert t.image_at_mono([149]) is None
+
+
+@pytest.mark.asyncio
+async def test_unregistered_or_non_sensor_entity_is_missing(clock):
+    inv = Inverter(clock, {146: 1, 147: 2})
+    del inv.hass.data["entity_registry"].entries[inv.entities[146]]
+    t = _transport(inv, clock, registers={146: inv.entities[146], 147: "number.volcast_reg_147"})
+    inv.add_entity("number.volcast_reg_147")
+    inv.hass.states.set("number.volcast_reg_147", "2", inv.utcnow())
+    with pytest.raises(MissingRegister) as err:
+        await t.read(146, 2)
+    assert err.value.addrs == (146, 147)
+
+
+@pytest.mark.asyncio
+async def test_no_entity_registry_fails_closed(inv, clock):
+    inv.hass.data = {}
+    t = _transport(inv, clock)
+    with pytest.raises(MissingRegister):
+        await t.read(146, 1)
+
+
+@pytest.mark.asyncio
+async def test_injected_bus_entity_check_replaces_the_default(inv, clock):
+    inv.hass.data = {}
+    cfg = HaModbusConfig(hub=HUB, device_address=UNIT, registers=inv.entities)
+    seen = []
+    t = HaModbusTransport(inv.hass, cfg, clock=clock, sleep=clock.sleep, utcnow=inv.utcnow,
+                          bus_entity=lambda eid: seen.append(eid) or eid != inv.entities[149])
+    assert await t.read(146, 1) == [0xFE]
+    with pytest.raises(MissingRegister):
+        await t.read(149, 1)
+    assert set(seen) == {inv.entities[146], inv.entities[149]}
+
+
+# ── wywołanie HA nigdy nie jest anulowane ─────────────────────────────────
+
+
+class _Blocking:
+    def __init__(self, inv) -> None:
+        self.inv = inv
+        self.release = asyncio.Event()
+        self.started = asyncio.Event()
+        self.cancelled = False
+        self.finished = False
+
+    async def __call__(self, data) -> None:
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        await Inverter._write(self.inv, data)
+        self.finished = True
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_does_not_cancel_the_ha_call_and_marks_pending_on_completion(inv, clock):
+    t = _transport(inv, clock, write_timeout_s=0.05, readback_timeout_s=5.0, readback_poll_s=1.0)
+    ha = _Blocking(inv)
+    inv.hass.services.handlers[("modbus", "write_register")] = ha
+    inv.refresh_on_request = False
+    with pytest.raises(WriteUnconfirmed):
+        await t.write(146, [0xFF], function=FC_WRITE_MULTIPLE)
+    assert ha.started.is_set() and not ha.cancelled and not ha.finished
+    with pytest.raises(RequestTimeout):
+        await t.read(146, 1)                       # w toku: stary stan nie jest odczytem zwrotnym
+    inv.refresh(146)                                # odpytanie PRZED końcem wywołania HA
+    ha.release.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert ha.finished and not ha.cancelled
+    with pytest.raises(RequestTimeout):
+        await t.read(146, 1)                       # stempel sprzed końca zapisu — nadal nieświeży
+    inv.refresh(146)
+    assert await t.read(146, 1) == [0xFF]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_caller_does_not_cancel_the_ha_call(inv, clock):
+    t = _transport(inv, clock, readback_timeout_s=5.0, readback_poll_s=1.0)
+    ha = _Blocking(inv)
+    inv.hass.services.handlers[("modbus", "write_register")] = ha
+    inv.refresh_on_request = False
+    task = asyncio.ensure_future(t.write(146, [0xFF], function=FC_WRITE_MULTIPLE))
+    await ha.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not ha.cancelled
+    with pytest.raises(RequestTimeout):
+        await t.read(146, 1)                       # zapis w toku od anulowania
+    ha.release.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert ha.finished and not ha.cancelled
+    inv.refresh(146)
+    assert await t.read(146, 1) == [0xFF]
+
+
+@pytest.mark.asyncio
+async def test_late_rejection_after_timeout_leaves_no_pending_write(inv, clock):
+    t = _transport(inv, clock, write_timeout_s=0.05, readback_timeout_s=5.0, readback_poll_s=1.0)
+    inv.refresh_on_request = False
+    release = asyncio.Event()
+
+    async def _late_reject(_data):
+        await release.wait()
+        raise KeyError("hub")                       # HA 2026.5: nieznany hub
+    inv.hass.services.handlers[("modbus", "write_register")] = _late_reject
+    with pytest.raises(WriteUnconfirmed):
+        await t.write(146, [0xFF], function=FC_WRITE_MULTIPLE)
+    clock.advance(1.0)
+    inv.refresh(146)                                # odpytanie po limicie, przed odrzuceniem
+    release.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    # odrzucenie przed wykonaniem nie odnawia zapisu w toku — odpytanie po limicie wystarcza
+    assert await t.read(146, 1) == [0xFE] and clock.sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_hub_key_error_is_link_down(inv, clock):
+    t = _transport(inv, clock)
+
+    async def _unknown_hub(_data):
+        raise KeyError("hub")
+    inv.hass.services.handlers[("modbus", "write_register")] = _unknown_hub
+    with pytest.raises(LinkDown):
+        await t.write(146, [0xFF], function=FC_WRITE_MULTIPLE)
+
+
+@pytest.mark.asyncio
+async def test_device_address_preferred_over_deprecated_slave_alias(clock):
+    schema = vol.Schema({
+        vol.Optional("hub", default="modbus_hub"): str,
+        vol.Exclusive("device_address", "unit"): int,
+        vol.Exclusive("slave", "unit"): int,
+        vol.Required("address"): int,
+        vol.Required("value"): vol.Any(int, [int]),
+    })
+    inv = Inverter(clock, {146: 0xFE}, schema=schema)
+    t = _transport(inv, clock)
+    with pytest.raises(WriteUnconfirmed):
+        await t.write(146, [0xFF], function=FC_WRITE_MULTIPLE)
+    assert "device_address" in inv.hass.services.writes()[0] and "slave" not in inv.hass.services.writes()[0]

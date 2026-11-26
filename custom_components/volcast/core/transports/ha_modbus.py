@@ -11,14 +11,21 @@ Nazwa parametru adresu urządzenia w usłudze (źródło: `homeassistant/compone
 * HA 2022.4 … dev (2026-11; sprawdzone m.in. 2023.1, 2025.1, 2026.5.4, 2026.10.4) — `slave` albo
   `unit` (wykluczające się, domyślnie 1). `device_address` to w HA 2026.x tylko klucz konfiguracji YAML
   czujnika, NIE pole usługi (schemat usługi jest ścisły — nieznany klucz to `vol.Invalid`).
-Nazwę bierzemy ze schematu zarejestrowanej usługi (`slave` → `device_address` → `unit`); bez schematu
-`slave` (minimalna wersja HA wtyczki to 2024.4).
+Nazwę bierzemy ze schematu zarejestrowanej usługi (`device_address` → `slave` → `unit` — nowsza nazwa
+przed przestarzałym aliasem); bez schematu `slave` (minimalna wersja HA wtyczki to 2024.4).
 
 HA nie zwraca wyniku magistrali: `ModbusHub.async_pb_call` loguje błąd i zwraca None, usługa kończy
 się bez wyjątku. Zakończenie usługi NIE potwierdza zapisu, więc `write` zawsze kończy się
 `WriteUnconfirmed` (dla pisarza: „brak echa, zapis mógł dojść”) — rozstrzyga wyłącznie odczyt zwrotny
 (= zamówiona → OK, inna → ERROR; nigdy DENIED z ciszy magistrali). Odrzucenie przed wykonaniem
-(brak usługi, nieznany hub, zły schemat) to `LinkDown` — nic nie wysłano, brak zapisu w toku.
+(brak usługi, zły schemat — `vol.Invalid`, nieznany hub — w HA 2026.5 `KeyError` z `hub_collect`,
+w nowszych `ServiceValidationError`) to `LinkDown` — nic nie wysłano, brak zapisu w toku. `on_send`
+(budżet NVM) liczy się tuż przed wywołaniem, także gdy HA potem je odrzuci (ostrożnie: za dużo, nie za mało).
+Wywołania HA NIGDY nie przerywamy (anulowanie w środku transakcji pymodbus na hubie użytkownika zostawia
+spóźnioną odpowiedź dla jego następnego odczytu): czekamy na nie pod `asyncio.shield` najwyżej
+`write_timeout_s` (domyślnie 60 s ≥ najgorszy przypadek HA: `timeout` 3 s × (1 + `retries` 3) = 12 s
+plus kolejka na zamku huba). Po naszym limicie albo anulowaniu wołającego wywołanie HA biegnie dalej,
+a zapis w toku jest oznaczany od razu i ponownie, gdy wywołanie się skończy.
 
 Odczyt — obraz rejestrów z SUROWYCH czujników użytkownika, mapa {adres → entity_id} (holding, FC 3,
 adres urządzenia huba). Brak w mapie, brak encji, `unavailable`/`unknown`, stan nieliczbowy albo
@@ -35,6 +42,13 @@ zapisu nie dostanie stempla późniejszego niż T. Odczyt nieświeżego rejestru
 (`homeassistant.update_entity`, bez czekania) i czeka do terminu `readback_timeout_s` liczonego od
 zapisu; po terminie `RequestTimeout` (odczyt zwrotny nieznany, nie sukces). Rejestry niezapisane
 czytamy od razu, bez względu na wiek.
+
+WARUNEK mapy: wyłącznie czujniki bazowe platformy `modbus` (`sensor.*`), jeden na rejestr, które same
+czytają swój rejestr przez hub. Czujniki `slave_count`/`virtual_count` (`SlaveSensor`, encja koordynatora)
+i encje innych integracji odrzucamy jak brak rejestru: `update_entity` przepisuje ich stary stan z nowym
+stemplem bez odczytu magistrali (fałszywa świeżość, a dla `SlaveSensor` traceback w logu HA). Sprawdzenie
+— `bus_entity(entity_id)` wstrzyknięte przez warstwę HA; domyślne (`default_bus_entity`) czyta rejestr encji
+i komponent `sensor` z `hass.data` bez importu HA.
 
 Podpięcie pod połączenie trybu bezpośredniego (ten sam `kind == "direct"`, inny transport):
 * tożsamość — rejestry identyfikacji (Deye: 0, 3–7, 20–21) czytane zwykłym `read`, gdy są w mapie;
@@ -69,19 +83,18 @@ HA_MODBUS_KIND = "ha_modbus"
 MODBUS_DOMAIN = "modbus"
 WRITE_SERVICE = "write_register"
 # Kolejność preferencji nazwy parametru adresu urządzenia (gdy schemat usługi ją deklaruje).
-UNIT_PARAMS = ("slave", "device_address", "unit")
+UNIT_PARAMS = ("device_address", "slave", "unit")
 DEFAULT_UNIT_PARAM = "slave"
 
 # Blok TOU w naszym fragmencie YAML odpytywany co 30 s; prośba o odświeżenie zwykle wystarcza od
 # razu, inaczej naturalne odpytanie — dwa okresy + zapas.
 DEFAULT_READBACK_TIMEOUT_S = 65.0
 DEFAULT_READBACK_POLL_S = 0.5
-DEFAULT_WRITE_TIMEOUT_S = 10.0
+DEFAULT_WRITE_TIMEOUT_S = 60.0       # ≥ 3 s × (1 + 3 ponowień) HA + kolejka na zamku huba
 # Obcy zapis na naszym urządzeniu trzyma `conflict` tyle, co `CLEAR_AFTER_S` monitora rywalizacji.
 DEFAULT_CONFLICT_HOLD_S = 1800.0
-# Własny zapis rozpoznany po tożsamości słownika danych usługi (HA przekazuje go do zdarzenia
-# `call_service` bez kopii); zapasowo po równości danych w tym oknie od naszego wywołania.
-OWN_MATCH_S = 5.0
+# Własny zapis rozpoznany WYŁĄCZNIE po tożsamości słownika danych usługi (HA przekazuje go do zdarzenia
+# `call_service` bez kopii, `core.py` `ServiceRegistry.async_call`).
 _OWN_RECENT = 64
 EVENT_CALL_SERVICE = "call_service"
 DEFAULT_HUB = "modbus_hub"
@@ -91,8 +104,10 @@ _NO_VALUE = ("unavailable", "unknown", "")
 # Odrzucenie wywołania przed wykonaniem (nic nie poszło na magistralę) — po nazwie klasy w MRO, bo
 # rdzeń nie importuje HA (`test_core_no_ha_imports`): `ServiceValidationError` (w HA także
 # `ServiceNotFound`, nieznany hub, modbus niezaładowany) i `vol.Invalid` (schemat usługi). Sufiks —
-# atrapy testów HA nazywają się `_FakeServiceValidationError` itp.
+# atrapy testów HA nazywają się `_FakeServiceValidationError` itp. `KeyError` — nieznany hub w HA 2026.5
+# (`hub_collect[...]` przed jakimkolwiek wywołaniem magistrali).
 _NOT_SENT_SUFFIXES = ("ServiceNotFound", "ServiceValidationError")
+_NOT_SENT_EXACT = frozenset({"Invalid", "KeyError"})
 _U16_MAX = 0xFFFF
 _I16_MIN = -0x8000
 
@@ -147,8 +162,9 @@ def _pos(v) -> bool:
 
 
 def _unit_ok(v) -> bool:
-    # 0 = rozgłoszenie (zapis do wszystkich urządzeń na magistrali, bez odpowiedzi) — nigdy
-    return _int(v) and 1 <= v <= 255
+    # 0 = rozgłoszenie (zapis do wszystkich urządzeń na magistrali, bez odpowiedzi) — nigdy;
+    # 248–255 zarezerwowane w Modbus — adres pojedynczego urządzenia to 1..247
+    return _int(v) and 1 <= v <= 247
 
 
 def validate_ha_modbus_config(cfg: HaModbusConfig) -> None:
@@ -156,7 +172,7 @@ def validate_ha_modbus_config(cfg: HaModbusConfig) -> None:
     if not isinstance(cfg.hub, str) or not cfg.hub or cfg.hub != cfg.hub.strip():
         raise ValueError("hub name required")
     if not _unit_ok(cfg.device_address):
-        raise ValueError("device address must be 1..255")
+        raise ValueError("device address must be 1..247")
     if not isinstance(cfg.registers, Mapping):
         raise ValueError("register map required")
     for addr, eid in cfg.registers.items():
@@ -220,7 +236,32 @@ def _fresh(state, written: datetime) -> bool:
 
 def _not_sent(err: BaseException) -> bool:
     """Czy HA odrzucił wywołanie przed wykonaniem (brak usługi, nieznany hub, zły schemat)."""
-    return any(c.__name__ == "Invalid" or c.__name__.endswith(_NOT_SENT_SUFFIXES) for c in type(err).__mro__)
+    return any(c.__name__ in _NOT_SENT_EXACT or c.__name__.endswith(_NOT_SENT_SUFFIXES)
+               for c in type(err).__mro__)
+
+
+def default_bus_entity(hass, entity_id: str) -> bool:
+    """Czy encja to czujnik bazowy platformy `modbus`, który sam czyta rejestr przez hub (nie
+    `SlaveSensor` z `slave_count`/`virtual_count`, nie encja innej integracji). Bez importu HA: rejestr
+    encji (`hass.data["entity_registry"]`) i komponent `sensor` (`hass.data["sensor"]`); czegokolwiek
+    brak → False (fail-closed). Opiera się na budowie encji HA 2024.4–2026.x: czujnik bazowy ma `_hub`,
+    `SlaveSensor` jest encją koordynatora (`coordinator`)."""
+    if not isinstance(entity_id, str) or not entity_id.startswith("sensor."):
+        return False
+    data = getattr(hass, "data", None)
+    if not isinstance(data, Mapping):
+        return False
+    try:
+        registry, component = data.get("entity_registry"), data.get("sensor")
+        entry = registry.async_get(entity_id) if registry is not None else None
+        if entry is None or getattr(entry, "platform", None) != MODBUS_DOMAIN or component is None:
+            return False
+        entity = component.get_entity(entity_id)
+    except Exception:  # noqa: BLE001 — introspekcja; niepewne = nie nasz czujnik
+        return False
+    if entity is None or type(entity).__name__ == "SlaveSensor":
+        return False
+    return getattr(entity, "_hub", None) is not None and not hasattr(entity, "coordinator")
 
 
 def _schema_fields(hass) -> frozenset[str] | None:
@@ -241,6 +282,15 @@ def _schema_fields(hass) -> frozenset[str] | None:
     return frozenset(str(getattr(k, "schema", k)) for k in inner)
 
 
+def _is_modbus_write(data) -> bool:
+    """Filtr zdarzenia `call_service`: zapis domeny `modbus` (rejestr albo cewka)."""
+    return isinstance(data, Mapping) and data.get("domain") == MODBUS_DOMAIN \
+        and data.get("service") in _FOREIGN_SERVICES
+
+
+_is_modbus_write._hass_callback = True  # type: ignore[attr-defined]
+
+
 # ── transport ─────────────────────────────────────────────────────────────
 
 
@@ -250,7 +300,8 @@ class HaModbusTransport:
     kind = HA_MODBUS_KIND
 
     def __init__(self, hass: Any, cfg: HaModbusConfig, *, clock: Callable[[], float] = time.monotonic,
-                 sleep: Sleep = asyncio.sleep, utcnow: Callable[[], datetime] = _utcnow) -> None:
+                 sleep: Sleep = asyncio.sleep, utcnow: Callable[[], datetime] = _utcnow,
+                 bus_entity: Callable[[str], bool] | None = None) -> None:
         validate_ha_modbus_config(cfg)
         self.hass = hass
         self.cfg = cfg
@@ -259,6 +310,8 @@ class HaModbusTransport:
         self._clock = clock
         self._sleep = sleep
         self._utcnow = utcnow
+        # warunek mapy (czujnik bazowy `modbus`) — warstwa HA może wstrzyknąć własne sprawdzenie
+        self._bus_entity = bus_entity if bus_entity is not None else (lambda eid: default_bus_entity(hass, eid))
         # zapisy w toku: adres → (czas zapisu UTC, termin odczytu zwrotnego na zegarze monotonicznym)
         self._pending: dict[int, tuple[datetime, float]] = {}
         self._closed = False
@@ -268,12 +321,14 @@ class HaModbusTransport:
         self.foreign_writes = 0
         self.last_foreign_write_mono: float | None = None
         self.last_foreign_write_addr: int | None = None
-        self._own: deque[tuple[dict, float]] = deque(maxlen=_OWN_RECENT)
+        self._own: deque[dict] = deque(maxlen=_OWN_RECENT)
         self._unsub: Callable[[], None] | None = None
         bus = getattr(hass, "bus", None)
         listen = getattr(bus, "async_listen", None)
         if callable(listen):
-            self._unsub = listen(EVENT_CALL_SERVICE, self._on_call_service)
+            # słuchacz synchroniczny (oznaczony jak `@callback`) z filtrem — bez zadania na KAŻDE
+            # wywołanie usługi w całym HA
+            self._unsub = listen(EVENT_CALL_SERVICE, self._on_call_service, event_filter=_is_modbus_write)
 
     # ── odczyt ──
 
@@ -313,8 +368,7 @@ class HaModbusTransport:
         bad: list[int] = []
         stale: list[int] = []
         for a in addrs:
-            eid = self._registers.get(a)
-            state = self.hass.states.get(eid) if eid is not None else None
+            state = self._sensor_state(a)
             w = _word(state)
             if w is None:
                 missing.append(a)
@@ -334,6 +388,13 @@ class HaModbusTransport:
         if bad:
             raise RegisterValueError(bad)
         return words, stale
+
+    def _sensor_state(self, addr: int):
+        """Stan czujnika rejestru albo None (brak w mapie, encja spoza warunku mapy, brak stanu)."""
+        eid = self._registers.get(addr)
+        if eid is None or not self._bus_entity(eid):
+            return None
+        return self.hass.states.get(eid)
 
     async def _request_refresh(self, addrs: list[int]) -> None:
         """Jedna prośba o odpytanie czujników (bez czekania); porażka = czekamy na zwykłe odpytanie."""
@@ -355,7 +416,9 @@ class HaModbusTransport:
 
         Zawsze kończy się wyjątkiem: `WriteUnconfirmed` (wywołano; wynik nieznany — odczyt zwrotny),
         `LinkDown` (odrzucone przed wykonaniem; nic nie wysłano) albo ValueError (złe żądanie, bez
-        wywołania). `on_send` (budżet NVM) — tuż przed wywołaniem usługi."""
+        wywołania). `on_send` (budżet NVM) — tuż przed wywołaniem usługi. Wywołania HA nie anulujemy
+        nigdy (`asyncio.shield`): po `write_timeout_s` — `WriteUnconfirmed`, po anulowaniu wołającego —
+        `CancelledError`; w obu przypadkach wywołanie HA kończy się samo, a jego koniec odnawia zapis w toku."""
         self._check_open()
         words = list(values)
         if function not in (FC_WRITE_SINGLE, FC_WRITE_MULTIPLE):
@@ -367,7 +430,7 @@ class HaModbusTransport:
         if not _int(addr) or addr < 0 or addr + len(words) > _U16_MAX + 1:
             raise ValueError("register range out of bounds")
         if unit is not None and not _unit_ok(unit):
-            raise ValueError("device address must be 1..255")
+            raise ValueError("device address must be 1..247")
         device = self.cfg.device_address if unit is None else unit
         services = self.hass.services
         if not services.has_service(MODBUS_DOMAIN, WRITE_SERVICE):
@@ -376,21 +439,41 @@ class HaModbusTransport:
                 "value": words if function == FC_WRITE_MULTIPLE else words[0]}
         if on_send is not None:
             on_send()
-        self._own.append((data, self._clock()))
+        self._own.append(data)
         self.stats.requests += 1
+        call = asyncio.ensure_future(services.async_call(MODBUS_DOMAIN, WRITE_SERVICE, data, blocking=True))
+        n = len(words)
         try:
-            await asyncio.wait_for(services.async_call(MODBUS_DOMAIN, WRITE_SERVICE, data, blocking=True),
-                                   self.cfg.write_timeout_s)
+            await asyncio.wait_for(asyncio.shield(call), self.cfg.write_timeout_s)
         except asyncio.CancelledError:
-            self._mark_written(addr, len(words), device)
+            if call.done() and not call.cancelled():
+                self._settled(call, addr, n, device)
+            else:
+                self._mark_written(addr, n, device)        # może jeszcze dojść — wywołanie HA biegnie dalej
+                call.add_done_callback(lambda c: self._settled(c, addr, n, device))
             raise
+        except asyncio.TimeoutError:
+            self._mark_written(addr, n, device)
+            call.add_done_callback(lambda c: self._settled(c, addr, n, device))
+            raise WriteUnconfirmed("modbus write still running after the write timeout") from None
         except Exception as err:  # noqa: BLE001 — klasyfikacja niżej; komunikat bez danych wywołania
             if _not_sent(err):
                 raise LinkDown(f"modbus write rejected: {type(err).__name__}") from None
-            self._mark_written(addr, len(words), device)
+            self._mark_written(addr, n, device)
             raise WriteUnconfirmed(f"modbus write outcome unknown: {type(err).__name__}") from None
-        self._mark_written(addr, len(words), device)
+        self._mark_written(addr, n, device)
         raise WriteUnconfirmed("modbus service does not report the bus result")
+
+    def _settled(self, call: asyncio.Future, addr: int, count: int, device: int) -> None:
+        """Koniec wywołania HA, na które już nie czekamy: zapis w toku od chwili końca (chyba że HA je
+        odrzucił przed wykonaniem). Wyjątek odebrany — bez ostrzeżenia „never retrieved”."""
+        if call.cancelled():
+            self._mark_written(addr, count, device)
+            return
+        err = call.exception()
+        if err is not None and _not_sent(err):
+            return
+        self._mark_written(addr, count, device)
 
     def _mark_written(self, addr: int, count: int, device: int) -> None:
         if device != self.cfg.device_address:
@@ -419,8 +502,8 @@ class HaModbusTransport:
         z UTC: teraz_mono − (teraz_utc − stempel), wiek ≥ 0. None — rejestr bez czujnika albo stempla."""
         stamps = []
         for a in addrs:
-            eid = self._registers.get(a)
-            stamp = _stamp(self.hass.states.get(eid)) if eid is not None else None
+            state = self._sensor_state(a)
+            stamp = _stamp(state) if state is not None else None
             if stamp is None:
                 return None
             stamps.append(stamp)
@@ -439,15 +522,17 @@ class HaModbusTransport:
         """Obcy zapis do naszego urządzenia na naszym hubie w ciągu `conflict_hold_s`.
 
         Widzimy wyłącznie wywołania usług `modbus.write_register`/`write_coil` w tym HA (automatyzacje,
-        skrypty, inne integracje wołające usługę). Zapisy z poza HA (aplikacja producenta przez tę samą
-        bramkę, drugi master na RS485) są niewidoczne — te łapie porównanie obrazu rejestrów z ostatnim
+        skrypty, inne integracje wołające usługę). Niewidoczne: encje zapisu platformy `modbus` (switch,
+        climate, fan, light, cover — piszą przez `hub.async_pb_call` bez usługi; łapie je statyczna
+        kontrola konfliktów) i zapisy spoza HA (aplikacja producenta przez tę samą bramkę, drugi master
+        na RS485) — te łapie porównanie obrazu rejestrów z ostatnim
         zapisem (wykrywanie obcych zmian) i statyczna kontrola konfliktów integracji."""
         last = self.last_foreign_write_mono
         return last is not None and self._clock() - last < self.cfg.conflict_hold_s
 
-    async def _on_call_service(self, event) -> None:
+    def _on_call_service(self, event) -> None:
         data = getattr(event, "data", None) or {}
-        if data.get("domain") != MODBUS_DOMAIN or data.get("service") not in _FOREIGN_SERVICES:
+        if not _is_modbus_write(data):
             return
         sdata = data.get("service_data")
         if not isinstance(sdata, Mapping) or self._is_own(sdata):
@@ -456,7 +541,8 @@ class HaModbusTransport:
             return
         device = next((sdata[k] for k in UNIT_PARAMS if k in sdata), 1)
         try:
-            ours = int(device) == self.cfg.device_address
+            # 0 = rozgłoszenie — dociera też do naszego falownika
+            ours = int(device) in (0, self.cfg.device_address)
         except (TypeError, ValueError):
             ours = True                        # adres nieustalony → fail-closed
         if not ours:
@@ -470,11 +556,10 @@ class HaModbusTransport:
                         self.last_foreign_write_addr)
 
     def _is_own(self, sdata: Mapping) -> bool:
-        now = self._clock()
-        for data, at in self._own:
-            if sdata is data or (now - at <= OWN_MATCH_S and sdata == data):
-                return True
-        return False
+        return any(sdata is data for data in self._own)
+
+    # HA uruchamia słuchacza oznaczonego jak `@callback` w pętli, bez zadania (rdzeń nie importuje HA)
+    _on_call_service._hass_callback = True  # type: ignore[attr-defined]
 
     # ── cykl życia ──
 
