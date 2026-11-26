@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten)",
           "control_direct": "Rechtstreeks via het lokale netwerk",
+          "control_hub": "Via een Modbus-hub van Home Assistant (ruwe sensoren)",
           "control_off": "Uit — alleen voorspelling en monitoring",
           "entity_map": "Omvormerentiteiten handmatig kiezen"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten) (aanbevolen)",
           "control_direct": "Rechtstreeks via het lokale netwerk",
+          "control_hub": "Via een Modbus-hub van Home Assistant (ruwe sensoren)",
           "control_off": "Uit — alleen voorspelling en monitoring",
           "entity_map": "Omvormerentiteiten handmatig kiezen"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten)",
           "control_direct": "Rechtstreeks via het lokale netwerk (aanbevolen)",
+          "control_hub": "Via een Modbus-hub van Home Assistant (ruwe sensoren)",
           "control_off": "Uit — alleen voorspelling en monitoring",
           "entity_map": "Omvormerentiteiten handmatig kiezen"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten)",
           "control_direct": "Rechtstreeks via het lokale netwerk (aanbevolen)",
+          "control_hub": "Via een Modbus-hub van Home Assistant (ruwe sensoren)",
           "control_off": "Uit — alleen voorspelling en monitoring",
           "entity_map": "Omvormerentiteiten handmatig kiezen"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Via de omvormerintegratie (entiteiten)",
           "control_direct": "Rechtstreeks via het lokale netwerk",
+          "control_hub": "Via een Modbus-hub van Home Assistant (ruwe sensoren)",
           "control_off": "Uit — alleen voorspelling en monitoring",
           "entity_map": "Omvormerentiteiten handmatig kiezen"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Deze prijsbron gebruiken?",
         "description": "Deze bron geeft een prijsprognose voor {hours} uur vooruit. De prijzen worden gelezen in {currency}. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag. Bevestig om deze prijsbron toch voor planning te gebruiken."
+      },
+      "control_hub": {
+        "title": "Omvormerbesturing via een Modbus-hub",
+        "description": "Volcast bestuurt de omvormer via de Modbus-hub die u al in Home Assistant gebruikt en leest ruwe registersensoren die u in YAML definieert. Kies de hub en voer het apparaatadres van de omvormer in. Het sensorsjabloon staat in de repository van de Volcast-integratie: {yaml_path}. Verstuur na het bewerken van de YAML en het herladen van Modbus opnieuw om nogmaals te controleren.\n\n{problems}",
+        "data": {
+          "hub": "Modbus-hub",
+          "unit_id": "Apparaatadres"
+        },
+        "data_description": {
+          "hub": "De hubnaam uit uw Modbus-configuratie.",
+          "unit_id": "Slave-adres van de omvormer op die hub (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,8 @@
       "no_ev_chargers": "Er is nog geen EV-lader gevonden. Voer eerst detectie uit en controleer of de integratie van de lader is ingesteld.",
       "no_price_sources": "Er is in Home Assistant geen bekende prijsintegratie gevonden. Kies een sensor bij Energieprijzen.",
       "price_source_invalid": "De instellingen van de prijsbron zijn niet meer geldig. Begin opnieuw.",
-      "price_sell_tomorrow": "De instellingen voor energieprijzen zijn opgeslagen. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag."
+      "price_sell_tomorrow": "De instellingen voor energieprijzen zijn opgeslagen. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag.",
+      "hub_unsupported": "Voor deze omvormer is er geen profiel voor besturing via een Modbus-hub."
     },
     "error": {
       "prices_not_usable": "Deze sensor levert op dit moment geen volledige prijsreeks.",
@@ -463,7 +481,11 @@
       "price_sell_unusable": "De verkoopzijde van deze bron heeft geen bruikbare prijsreeks.",
       "price_source_invalid": "Deze instellingen beschrijven geen bruikbare bron (controleer zone, eenheid en valuta).",
       "currency_conflict": "De valuta van de bron ({source_currency}) wijkt af van de valuta bij Energieprijzen ({option_currency}). Pas die valuta aan of wis haar.",
-      "currency_missing": "Geef de valuta op: deze bron vermeldt hem niet."
+      "currency_missing": "Geef de valuta op: deze bron vermeldt hem niet.",
+      "hub_invalid": "Voer de naam van een geconfigureerde Modbus-hub in.",
+      "unit_invalid": "Het apparaatadres moet tussen 1 en 247 liggen.",
+      "hub_map_incomplete": "De Modbus-sensoren komen niet overeen met het omvormerprofiel. Corrigeer de YAML, herlaad Modbus en verstuur opnieuw.",
+      "hub_identity_unreadable": "De omvormer kon niet worden herkend aan de hand van de sensoren. Controleer de registers en verstuur opnieuw."
     },
     "progress": {
       "direct_search": "Het lokale netwerk wordt doorzocht op de omvormer. Dit kan tot een minuut duren."

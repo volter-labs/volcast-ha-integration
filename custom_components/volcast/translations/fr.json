@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Via l'intégration de l'onduleur (entités)",
           "control_direct": "Directement via le réseau local",
+          "control_hub": "Via un hub Modbus de Home Assistant (capteurs bruts)",
           "control_off": "Désactivé — prévision et suivi uniquement",
           "entity_map": "Choisir manuellement les entités de l'onduleur"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Via l'intégration de l'onduleur (entités) (recommandé)",
           "control_direct": "Directement via le réseau local",
+          "control_hub": "Via un hub Modbus de Home Assistant (capteurs bruts)",
           "control_off": "Désactivé — prévision et suivi uniquement",
           "entity_map": "Choisir manuellement les entités de l'onduleur"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Via l'intégration de l'onduleur (entités)",
           "control_direct": "Directement via le réseau local (recommandé)",
+          "control_hub": "Via un hub Modbus de Home Assistant (capteurs bruts)",
           "control_off": "Désactivé — prévision et suivi uniquement",
           "entity_map": "Choisir manuellement les entités de l'onduleur"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Via l'intégration de l'onduleur (entités)",
           "control_direct": "Directement via le réseau local (recommandé)",
+          "control_hub": "Via un hub Modbus de Home Assistant (capteurs bruts)",
           "control_off": "Désactivé — prévision et suivi uniquement",
           "entity_map": "Choisir manuellement les entités de l'onduleur"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Via l'intégration de l'onduleur (entités)",
           "control_direct": "Directement via le réseau local",
+          "control_hub": "Via un hub Modbus de Home Assistant (capteurs bruts)",
           "control_off": "Désactivé — prévision et suivi uniquement",
           "entity_map": "Choisir manuellement les entités de l'onduleur"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Utiliser cette source de prix ?",
         "description": "Cette source fournit une prévision de prix sur {hours} h. Les prix sont lus en {currency}. La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille. Validez pour utiliser quand même cette source de prix dans la planification."
+      },
+      "control_hub": {
+        "title": "Pilotage de l'onduleur via un hub Modbus",
+        "description": "Volcast pilote l'onduleur via le hub Modbus que vous utilisez déjà dans Home Assistant et lit des capteurs de registres bruts que vous définissez en YAML. Choisissez le hub et saisissez l'adresse de l'appareil de l'onduleur. Le modèle de capteurs se trouve dans le dépôt de l'intégration Volcast : {yaml_path}. Après avoir modifié le YAML et rechargé Modbus, validez à nouveau pour revérifier.\n\n{problems}",
+        "data": {
+          "hub": "Hub Modbus",
+          "unit_id": "Adresse de l'appareil"
+        },
+        "data_description": {
+          "hub": "Le nom du hub dans votre configuration Modbus.",
+          "unit_id": "Adresse esclave de l'onduleur sur ce hub (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,8 @@
       "no_ev_chargers": "Aucune borne de recharge VE n'a encore été trouvée. Lancez d'abord la détection et vérifiez que l'intégration de la borne est configurée.",
       "no_price_sources": "Aucune intégration de prix connue n'a été trouvée dans Home Assistant. Choisissez un capteur dans Prix de l'énergie.",
       "price_source_invalid": "Les réglages de la source de prix ne sont plus valides. Recommencez.",
-      "price_sell_tomorrow": "Les réglages des prix de l'énergie sont enregistrés. La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille."
+      "price_sell_tomorrow": "Les réglages des prix de l'énergie sont enregistrés. La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille.",
+      "hub_unsupported": "Cet onduleur n'a pas de profil pour le pilotage via un hub Modbus."
     },
     "error": {
       "prices_not_usable": "Ce capteur ne fournit pas de série de prix complète pour le moment.",
@@ -463,7 +481,11 @@
       "price_sell_unusable": "Le côté vente de cette source n'a pas de série de prix exploitable.",
       "price_source_invalid": "Ces réglages ne décrivent pas une source exploitable (vérifiez la zone, l'unité et la devise).",
       "currency_conflict": "La devise de la source ({source_currency}) diffère de celle définie dans Prix de l'énergie ({option_currency}). Modifiez cette devise pour qu'elle corresponde, ou effacez-la.",
-      "currency_missing": "Indiquez la devise : cette source ne la précise pas."
+      "currency_missing": "Indiquez la devise : cette source ne la précise pas.",
+      "hub_invalid": "Saisissez le nom d'un hub Modbus configuré.",
+      "unit_invalid": "L'adresse de l'appareil doit être comprise entre 1 et 247.",
+      "hub_map_incomplete": "Les capteurs Modbus ne correspondent pas au profil de l'onduleur. Corrigez le YAML, rechargez Modbus et validez à nouveau.",
+      "hub_identity_unreadable": "L'onduleur n'a pas pu être identifié à partir des capteurs. Vérifiez les registres et validez à nouveau."
     },
     "progress": {
       "direct_search": "Recherche de l'onduleur sur le réseau local. Cela peut prendre jusqu'à une minute."

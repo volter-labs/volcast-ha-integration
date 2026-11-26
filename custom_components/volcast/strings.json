@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities) (recommended)",
           "control_direct": "Directly over the local network",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network (recommended)",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network (recommended)",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Use this price source?",
         "description": "This source provides a price forecast for {hours} h ahead. Prices are read in {currency}. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices. Submit to use this price source for planning anyway."
+      },
+      "control_hub": {
+        "title": "Inverter control through a Modbus hub",
+        "description": "Volcast controls the inverter through the Modbus hub you already use in Home Assistant and reads raw register sensors that you define in YAML. Choose the hub and enter the inverter's device address. The sensor template is in the Volcast integration repository: {yaml_path}. After editing the YAML and reloading Modbus, submit again to check again.\n\n{problems}",
+        "data": {
+          "hub": "Modbus hub",
+          "unit_id": "Device address"
+        },
+        "data_description": {
+          "hub": "The hub name from your Modbus configuration.",
+          "unit_id": "Slave address of the inverter on that hub (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,8 @@
       "no_ev_chargers": "No EV charger was found yet. Run discovery first and make sure the charger integration is set up.",
       "no_price_sources": "No known price integration was found in Home Assistant. Use Energy prices to pick a sensor.",
       "price_source_invalid": "The price source settings are no longer valid. Start again.",
-      "price_sell_tomorrow": "The energy price settings are saved. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices."
+      "price_sell_tomorrow": "The energy price settings are saved. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices.",
+      "hub_unsupported": "This inverter has no profile for control through a Modbus hub."
     },
     "error": {
       "prices_not_usable": "This sensor does not provide a complete price series right now.",
@@ -463,7 +481,11 @@
       "price_sell_unusable": "The sale side of this source has no usable price series.",
       "price_source_invalid": "These settings do not describe a usable source (check the zone, unit and currency).",
       "currency_conflict": "The source currency ({source_currency}) differs from the currency set under Energy prices ({option_currency}). Change that currency to match, or clear it.",
-      "currency_missing": "Enter the currency: this source does not state it."
+      "currency_missing": "Enter the currency: this source does not state it.",
+      "hub_invalid": "Enter the name of a configured Modbus hub.",
+      "unit_invalid": "The device address must be between 1 and 247.",
+      "hub_map_incomplete": "The Modbus sensors do not match the inverter profile. Fix the YAML, reload Modbus and submit again.",
+      "hub_identity_unreadable": "The inverter could not be identified from the sensors. Check the registers and submit again."
     },
     "progress": {
       "direct_search": "Searching the local network for the inverter. This can take up to a minute."

@@ -98,9 +98,9 @@ def test_paired_entry_shows_menu_without_default():
     r = asyncio.run(flow().async_step_init())
     assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices", "price_source", "ev_charger"]}
     c = asyncio.run(flow().async_step_control())
-    # trzy pozycje, żadnej domyślnej („Bezpośrednio” sprawdza dostępność dopiero po wyborze)
+    # cztery pozycje, żadnej domyślnej („Bezpośrednio” sprawdza dostępność dopiero po wyborze)
     assert c == {"type": "menu", "step_id": "control",
-                 "menu_options": ["control_entities", "control_direct", "control_off"]}
+                 "menu_options": ["control_entities", "control_direct", "control_hub", "control_off"]}
 
 
 def test_forecast_step_merges_options_keeps_control():
@@ -388,7 +388,7 @@ def test_strings_have_new_steps_and_errors():
         opts = json.loads((root / name).read_text(encoding="utf-8"))["options"]
         assert {"init", "forecast", "control", "details", "prices"} <= set(opts["step"])
         assert set(opts["step"]["init"]["menu_options"]) == {"forecast", "control", "details", "prices", "price_source", "ev_charger"}
-        assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_direct", "control_off", "entity_map"}
+        assert set(opts["step"]["control"]["menu_options"]) == {"control_entities", "control_direct", "control_hub", "control_off", "entity_map"}
         assert "entity_mode_unavailable" in opts["abort"] and "prices_not_usable" in opts["error"]
         assert "currency_invalid" in opts["error"]
         assert "verified" in opts["step"]["control"]["description"]

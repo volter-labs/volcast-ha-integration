@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity)",
           "control_direct": "Přímo přes místní síť",
+          "control_hub": "Přes hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuto — pouze předpověď a sledování",
           "entity_map": "Ručně vybrat entity střídače"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity) (doporučeno)",
           "control_direct": "Přímo přes místní síť",
+          "control_hub": "Přes hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuto — pouze předpověď a sledování",
           "entity_map": "Ručně vybrat entity střídače"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity)",
           "control_direct": "Přímo přes místní síť (doporučeno)",
+          "control_hub": "Přes hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuto — pouze předpověď a sledování",
           "entity_map": "Ručně vybrat entity střídače"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity)",
           "control_direct": "Přímo přes místní síť (doporučeno)",
+          "control_hub": "Přes hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuto — pouze předpověď a sledování",
           "entity_map": "Ručně vybrat entity střídače"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Přes integraci střídače (entity)",
           "control_direct": "Přímo přes místní síť",
+          "control_hub": "Přes hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuto — pouze předpověď a sledování",
           "entity_map": "Ručně vybrat entity střídače"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Použít tento zdroj cen?",
         "description": "Tento zdroj poskytuje předpověď cen na {hours} h dopředu. Ceny se čtou v {currency}. Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne. Potvrďte a tento zdroj cen se přesto použije pro plánování."
+      },
+      "control_hub": {
+        "title": "Řízení střídače přes hub Modbus",
+        "description": "Volcast řídí střídač přes hub Modbus, který už v Home Assistantu používáte, a čte surové senzory registrů, které si definujete v YAML. Vyberte hub a zadejte adresu zařízení střídače. Šablona senzorů je v repozitáři integrace Volcast: {yaml_path}. Po úpravě YAML a znovunačtení Modbus formulář odešlete znovu a zkontrolujte to ještě jednou.\n\n{problems}",
+        "data": {
+          "hub": "Hub Modbus",
+          "unit_id": "Adresa zařízení"
+        },
+        "data_description": {
+          "hub": "Název hubu z vaší konfigurace Modbus.",
+          "unit_id": "Slave adresa střídače na tomto hubu (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,8 @@
       "no_ev_chargers": "Nabíječka EV zatím nebyla nalezena. Nejprve spusťte zjišťování a ověřte, že je integrace nabíječky nastavená.",
       "no_price_sources": "V Home Assistantu nebyla nalezena žádná známá cenová integrace. Vyberte senzor v Cenách energie.",
       "price_source_invalid": "Nastavení zdroje cen už neplatí. Začněte znovu.",
-      "price_sell_tomorrow": "Nastavení cen energie je uloženo. Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne."
+      "price_sell_tomorrow": "Nastavení cen energie je uloženo. Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne.",
+      "hub_unsupported": "Pro tento střídač neexistuje profil řízení přes hub Modbus."
     },
     "error": {
       "prices_not_usable": "Tento senzor teď neposkytuje úplnou cenovou řadu.",
@@ -463,7 +481,11 @@
       "price_sell_unusable": "Prodejní strana tohoto zdroje nemá použitelnou řadu cen.",
       "price_source_invalid": "Toto nastavení nepopisuje použitelný zdroj (zkontrolujte zónu, jednotku a měnu).",
       "currency_conflict": "Měna zdroje ({source_currency}) se liší od měny nastavené v Cenách energie ({option_currency}). Změňte tu měnu tak, aby souhlasila, nebo ji vymažte.",
-      "currency_missing": "Zadejte měnu: tento zdroj ji neuvádí."
+      "currency_missing": "Zadejte měnu: tento zdroj ji neuvádí.",
+      "hub_invalid": "Zadejte název nakonfigurovaného hubu Modbus.",
+      "unit_invalid": "Adresa zařízení musí být v rozmezí 1 až 247.",
+      "hub_map_incomplete": "Senzory Modbus neodpovídají profilu střídače. Opravte YAML, znovu načtěte Modbus a odešlete znovu.",
+      "hub_identity_unreadable": "Střídač se nepodařilo rozpoznat ze senzorů. Zkontrolujte registry a odešlete znovu."
     },
     "progress": {
       "direct_search": "Vyhledávání střídače v místní síti. Může to trvat až minutu."

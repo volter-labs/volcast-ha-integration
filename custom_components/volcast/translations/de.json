@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten) (empfohlen)",
           "control_direct": "Direkt über das lokale Netzwerk",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk (empfohlen)",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk (empfohlen)",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Diese Preisquelle verwenden?",
         "description": "Diese Quelle liefert eine Preisprognose für {hours} h im Voraus. Die Preise werden in {currency} gelesen. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags. Bestätige, um diese Preisquelle trotzdem für die Planung zu nutzen."
+      },
+      "control_hub": {
+        "title": "Wechselrichtersteuerung über einen Modbus-Hub",
+        "description": "Volcast steuert den Wechselrichter über den Modbus-Hub, den Sie in Home Assistant bereits nutzen, und liest Rohwert-Sensoren für Register, die Sie in YAML definieren. Wählen Sie den Hub und geben Sie die Geräteadresse des Wechselrichters ein. Die Sensorvorlage liegt im Volcast-Integrations-Repository: {yaml_path}. Senden Sie nach dem Bearbeiten des YAML und dem Neuladen von Modbus erneut ab, um noch einmal zu prüfen.\n\n{problems}",
+        "data": {
+          "hub": "Modbus-Hub",
+          "unit_id": "Geräteadresse"
+        },
+        "data_description": {
+          "hub": "Der Hub-Name aus Ihrer Modbus-Konfiguration.",
+          "unit_id": "Slave-Adresse des Wechselrichters an diesem Hub (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,8 @@
       "no_ev_chargers": "Es wurde noch kein E-Auto-Ladegerät gefunden. Starte zuerst die Erkennung und stelle sicher, dass die Integration des Ladegeräts eingerichtet ist.",
       "no_price_sources": "In Home Assistant wurde keine bekannte Preisintegration gefunden. Wähle unter Energiepreise einen Sensor.",
       "price_source_invalid": "Die Einstellungen der Preisquelle sind nicht mehr gültig. Beginne neu.",
-      "price_sell_tomorrow": "Die Einstellungen der Energiepreise sind gespeichert. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags."
+      "price_sell_tomorrow": "Die Einstellungen der Energiepreise sind gespeichert. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags.",
+      "hub_unsupported": "Für diesen Wechselrichter gibt es kein Profil für die Steuerung über einen Modbus-Hub."
     },
     "error": {
       "prices_not_usable": "Dieser Sensor liefert derzeit keine vollständige Preisreihe.",
@@ -463,7 +481,11 @@
       "price_sell_unusable": "Die Verkaufsseite dieser Quelle hat keine brauchbare Preisreihe.",
       "price_source_invalid": "Diese Einstellungen beschreiben keine brauchbare Quelle (Zone, Einheit und Währung prüfen).",
       "currency_conflict": "Die Währung der Quelle ({source_currency}) weicht von der unter Energiepreise gesetzten ({option_currency}) ab. Ändere jene Währung passend oder leere sie.",
-      "currency_missing": "Gib die Währung an: Diese Quelle nennt sie nicht."
+      "currency_missing": "Gib die Währung an: Diese Quelle nennt sie nicht.",
+      "hub_invalid": "Geben Sie den Namen eines konfigurierten Modbus-Hubs ein.",
+      "unit_invalid": "Die Geräteadresse muss zwischen 1 und 247 liegen.",
+      "hub_map_incomplete": "Die Modbus-Sensoren passen nicht zum Wechselrichterprofil. Korrigieren Sie das YAML, laden Sie Modbus neu und senden Sie erneut ab.",
+      "hub_identity_unreadable": "Der Wechselrichter konnte anhand der Sensoren nicht erkannt werden. Prüfen Sie die Register und senden Sie erneut ab."
     },
     "progress": {
       "direct_search": "Das lokale Netzwerk wird nach dem Wechselrichter durchsucht. Das kann bis zu einer Minute dauern."

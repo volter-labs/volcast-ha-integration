@@ -1,0 +1,375 @@
+# Raw register sensors for Volcast control through an existing Home Assistant Modbus hub.
+#
+# Add the `sensors:` entries below to the hub you ALREADY use for the inverter (the same `name:` and the same
+# device address). Do NOT add a second `modbus:` hub or a second connection: two masters on one gateway
+# corrupt each other's requests.
+#
+# Rules Volcast checks:
+#   * `unique_id` is exactly `volcast_reg_<register address>` (this is how a sensor is matched to a register);
+#   * `input_type: holding`, `data_type: uint16`, one register per sensor;
+#   * no `scale`, `offset`, `precision` or `swap`: the sensor must report the raw 16-bit word, as an integer;
+#   * `slave` equals the device address you enter in Volcast.
+# Sensors you already have for the same registers must be replaced by (or renamed to) these raw ones.
+# Signed values are decoded by Volcast from the raw word, so keep `uint16` for every register.
+# The list covers every register the Deye SG read plan needs (51 registers); a block with one missing
+# register is not read at all.
+#
+# Replace `slave: 1` with your device address.
+sensors:
+  - name: "Volcast reg 0"
+    unique_id: volcast_reg_0
+    address: 0
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 3"
+    unique_id: volcast_reg_3
+    address: 3
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 4"
+    unique_id: volcast_reg_4
+    address: 4
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 5"
+    unique_id: volcast_reg_5
+    address: 5
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 6"
+    unique_id: volcast_reg_6
+    address: 6
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 7"
+    unique_id: volcast_reg_7
+    address: 7
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 20"
+    unique_id: volcast_reg_20
+    address: 20
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 21"
+    unique_id: volcast_reg_21
+    address: 21
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 146"
+    unique_id: volcast_reg_146
+    address: 146
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 147"
+    unique_id: volcast_reg_147
+    address: 147
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 148"
+    unique_id: volcast_reg_148
+    address: 148
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 149"
+    unique_id: volcast_reg_149
+    address: 149
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 150"
+    unique_id: volcast_reg_150
+    address: 150
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 151"
+    unique_id: volcast_reg_151
+    address: 151
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 152"
+    unique_id: volcast_reg_152
+    address: 152
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 153"
+    unique_id: volcast_reg_153
+    address: 153
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 154"
+    unique_id: volcast_reg_154
+    address: 154
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 155"
+    unique_id: volcast_reg_155
+    address: 155
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 156"
+    unique_id: volcast_reg_156
+    address: 156
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 157"
+    unique_id: volcast_reg_157
+    address: 157
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 158"
+    unique_id: volcast_reg_158
+    address: 158
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 159"
+    unique_id: volcast_reg_159
+    address: 159
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 160"
+    unique_id: volcast_reg_160
+    address: 160
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 161"
+    unique_id: volcast_reg_161
+    address: 161
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 162"
+    unique_id: volcast_reg_162
+    address: 162
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 163"
+    unique_id: volcast_reg_163
+    address: 163
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 164"
+    unique_id: volcast_reg_164
+    address: 164
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 165"
+    unique_id: volcast_reg_165
+    address: 165
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 166"
+    unique_id: volcast_reg_166
+    address: 166
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 167"
+    unique_id: volcast_reg_167
+    address: 167
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 168"
+    unique_id: volcast_reg_168
+    address: 168
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 169"
+    unique_id: volcast_reg_169
+    address: 169
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 170"
+    unique_id: volcast_reg_170
+    address: 170
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 171"
+    unique_id: volcast_reg_171
+    address: 171
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 172"
+    unique_id: volcast_reg_172
+    address: 172
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 173"
+    unique_id: volcast_reg_173
+    address: 173
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 174"
+    unique_id: volcast_reg_174
+    address: 174
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 175"
+    unique_id: volcast_reg_175
+    address: 175
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 176"
+    unique_id: volcast_reg_176
+    address: 176
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 177"
+    unique_id: volcast_reg_177
+    address: 177
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 534"
+    unique_id: volcast_reg_534
+    address: 534
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 535"
+    unique_id: volcast_reg_535
+    address: 535
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 587"
+    unique_id: volcast_reg_587
+    address: 587
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 588"
+    unique_id: volcast_reg_588
+    address: 588
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 589"
+    unique_id: volcast_reg_589
+    address: 589
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 590"
+    unique_id: volcast_reg_590
+    address: 590
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 591"
+    unique_id: volcast_reg_591
+    address: 591
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 625"
+    unique_id: volcast_reg_625
+    address: 625
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 653"
+    unique_id: volcast_reg_653
+    address: 653
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 672"
+    unique_id: volcast_reg_672
+    address: 672
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
+  - name: "Volcast reg 673"
+    unique_id: volcast_reg_673
+    address: 673
+    slave: 1
+    input_type: holding
+    data_type: uint16
+    scan_interval: 30
