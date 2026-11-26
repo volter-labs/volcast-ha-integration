@@ -457,7 +457,8 @@
       "no_price_sources": "No se encontró ninguna integración de precios conocida en Home Assistant. Elige un sensor en Precios de energía.",
       "price_source_invalid": "Los ajustes de la fuente de precios ya no son válidos. Empieza de nuevo.",
       "price_sell_tomorrow": "Los ajustes de precios de la energía están guardados. La fuente del precio de venta {source} aún no ofrece precios para mañana, aunque los precios de compra de mañana ya están disponibles. Hasta que los ofrezca, el plan de mañana se basará en los precios del día anterior.",
-      "hub_unsupported": "El perfil del inversor para el control mediante un hub Modbus no está disponible. Actualice la integración."
+      "hub_unsupported": "El perfil del inversor para el control mediante un hub Modbus no está disponible. Actualice la integración.",
+      "hub_check_control_off": "El control de Volcast se desactivó: la comprobación del hub Modbus falló ({problems}). Corrige la causa y ejecuta de nuevo el paso del hub Modbus."
     },
     "error": {
       "prices_not_usable": "Este sensor no proporciona ahora una serie de precios completa.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Falló la comprobación del hub Modbus",
+      "description": "Los valores leídos del hub Modbus no coinciden con tus sensores, o el dispositivo no es el inversor esperado ({problems}). El control de Volcast sigue desactivado. Corrige los sensores o la asignación de registros y ejecuta de nuevo el paso del hub Modbus en las opciones de la integración."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast no pudo comprobar del todo tu hub Modbus",
+      "description": "No se pudieron comparar las lecturas del hub con tus sensores para: {quantities} (sin sensor reciente o batería inactiva). El control se activó solo con la identificación del dispositivo. Asigna los sensores de potencia y carga de la batería en Installation details y ejecuta de nuevo el paso del hub Modbus mientras la batería se carga o descarga."
     }
   },
   "services": {

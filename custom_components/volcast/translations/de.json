@@ -457,7 +457,8 @@
       "no_price_sources": "In Home Assistant wurde keine bekannte Preisintegration gefunden. Wähle unter Energiepreise einen Sensor.",
       "price_source_invalid": "Die Einstellungen der Preisquelle sind nicht mehr gültig. Beginne neu.",
       "price_sell_tomorrow": "Die Einstellungen der Energiepreise sind gespeichert. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags.",
-      "hub_unsupported": "Das Wechselrichterprofil für die Steuerung über einen Modbus-Hub ist nicht verfügbar. Aktualisieren Sie die Integration."
+      "hub_unsupported": "Das Wechselrichterprofil für die Steuerung über einen Modbus-Hub ist nicht verfügbar. Aktualisieren Sie die Integration.",
+      "hub_check_control_off": "Die Volcast-Steuerung wurde ausgeschaltet: Die Prüfung des Modbus-Hubs ist fehlgeschlagen ({problems}). Beheben Sie die Ursache und führen Sie den Modbus-Hub-Schritt erneut aus."
     },
     "error": {
       "prices_not_usable": "Dieser Sensor liefert derzeit keine vollständige Preisreihe.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Prüfung des Modbus-Hubs fehlgeschlagen",
+      "description": "Die vom Modbus-Hub gelesenen Werte stimmen nicht mit Ihren Sensoren überein, oder das Gerät ist nicht der erwartete Wechselrichter ({problems}). Die Volcast-Steuerung bleibt aus. Korrigieren Sie die Sensoren oder die Registerzuordnung und führen Sie den Modbus-Hub-Schritt in den Integrationsoptionen erneut aus."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast konnte Ihren Modbus-Hub nicht vollständig prüfen",
+      "description": "Die Hub-Werte konnten für {quantities} nicht mit Ihren Sensoren verglichen werden (kein aktueller Sensor oder Batterie im Leerlauf). Die Steuerung wurde allein anhand der Geräteerkennung aktiviert. Ordnen Sie Batterieleistung und Ladestand unter Installation details zu und führen Sie den Modbus-Hub-Schritt erneut aus, während die Batterie lädt oder entlädt."
     }
   },
   "services": {

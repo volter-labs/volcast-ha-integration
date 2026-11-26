@@ -1,10 +1,18 @@
 """Kreator huba `modbus`: raport weryfikacji przed zgodą (identyfikacja + porównanie z encjami użytkownika)."""
+import asyncio
+from datetime import timedelta
 from types import SimpleNamespace
+
+import pytest
+
+from tests.test_options_hub import hub_flow, run  # noqa: I001 — najpierw atrapy HA
+import homeassistant.util.dt as dt_util
+from custom_components.volcast import config_flow as cf_mod
+from custom_components.volcast import sensor_assignment as sa_mod
 
 from custom_components.volcast.const import DOMAIN
 from custom_components.volcast.verification_entities import VolcastVerificationSensor
 from tests.control.test_ha_modbus_control import HUB, UNIT
-from tests.test_options_hub import hub_flow, run
 
 USER = {"hub": HUB, "unit_id": UNIT}
 
@@ -17,7 +25,7 @@ def setup(monkeypatch, *, soc=None, power=None, bank=None, options=None, negate=
     tmap = {}
     for key, eid, val in (("soc", "sensor.user_soc", soc), ("battery_power_w", "sensor.user_bat", power)):
         if val is not None:
-            hub.hass.states.set(eid, str(val), hub.utcnow())
+            hub.hass.states.set(eid, str(val), dt_util.utcnow())
             tmap[key] = eid
     f.config_entry.options.update({"telemetry_map": tmap, "battery_power_negate": negate, **(options or {})})
     saved = []
@@ -26,6 +34,11 @@ def setup(monkeypatch, *, soc=None, power=None, bank=None, options=None, negate=
         entry.options = dict(options)
         saved.append(options)
     f.hass.config_entries.async_update_entry = update
+    f.issues = issues = {}
+    monkeypatch.setattr(cf_mod, "ir", SimpleNamespace(
+        async_create_issue=lambda hass, domain, iid, **kw: issues.__setitem__(iid, kw),
+        async_delete_issue=lambda hass, domain, iid: issues.pop(iid, None),
+        IssueSeverity=SimpleNamespace(WARNING="warning")))
     return f, hub, saved
 
 
@@ -75,7 +88,7 @@ def test_battery_negate_flag_is_applied_to_the_user_entity(monkeypatch):
 
 def test_unavailable_user_entity_cannot_compare(monkeypatch):
     f, hub, _ = setup(monkeypatch, soc=55, bank={588: 55})
-    hub.hass.states.set("sensor.user_soc", "unavailable", hub.utcnow())
+    hub.hass.states.set("sensor.user_soc", "unavailable", dt_util.utcnow())
     r = run(f.async_step_control_hub(USER))
     assert r["data"]["hub_check"]["quantities"]["soc"]["verdict"] == "cannot_compare"
 
@@ -93,8 +106,83 @@ def test_verification_entity_shows_the_report_without_control():
     assert none.extra_state_attributes == {}
 
 
-def test_verification_entity_is_created_without_control_when_a_report_exists():
-    import inspect
-    from custom_components.volcast import sensor
-    src = inspect.getsource(sensor.async_setup_entry)
-    assert "hub_check" in src or "OPT_HUB_CHECK" in src
+def test_idle_battery_is_reported_inconclusive_and_does_not_block(monkeypatch):
+    f, _, _ = setup(monkeypatch, soc=55, power=250, bank={588: 55, 590: 25})
+    r = run(f.async_step_control_hub(USER))
+    assert r["type"] == "create_entry" and r["data"]["hub_check"]["verdict"] == "partial"
+    assert f"hub_check_not_compared_{f.config_entry.entry_id}" in f.issues
+
+
+def test_unmapped_battery_candidate_is_never_compared(monkeypatch):
+    # kandydat z propozycji (znak niezweryfikowany) nie blokuje ani nie przepuszcza — porównujemy samo SoC
+    f, hub, _ = setup(monkeypatch, soc=55, bank={588: 55, 590: -2000})
+    hub.hass.states.set("sensor.cand_bat", "2000", dt_util.utcnow())
+
+    async def sources(hass, entry, *, exclude=frozenset()):
+        return {"soc": "sensor.user_soc", "battery_power_w": "sensor.cand_bat"}
+    monkeypatch.setattr(cf_mod, "async_user_sources", sources)
+    r = run(f.async_step_control_hub(USER))
+    rep = r["data"]["hub_check"]
+    assert r["type"] == "create_entry" and rep["quantities"]["battery_power_w"]["verdict"] == "cannot_compare"
+    assert rep["quantities"]["battery_power_w"]["user"] is None and rep["quantities"]["soc"]["verdict"] == "ok"
+    assert rep["verdict"] == "partial"
+
+
+def test_stale_user_entity_cannot_compare(monkeypatch):
+    f, hub, _ = setup(monkeypatch, soc=55, bank={588: 55})
+    hub.hass.states.set("sensor.user_soc", "55", dt_util.utcnow() - timedelta(minutes=30))
+    r = run(f.async_step_control_hub(USER))
+    assert r["data"]["hub_check"]["quantities"]["soc"]["verdict"] == "cannot_compare"
+
+
+def test_failed_recheck_turns_running_control_off_through_the_restore_gate(monkeypatch):
+    target = {"transport": "ha_modbus", "hub": HUB, "unit_id": UNIT, "profile_id": "deye-sg", "device_fp": "x"}
+    f, _, saved = setup(monkeypatch, soc=80, power=0, bank={588: 55, 590: 0},
+                        options={"control_mode": "direct", "direct_target": target})
+    gate = []
+
+    async def allowed(rt, old, new):
+        gate.append((old.get("control_mode"), new.get("control_mode")))
+        return True
+    monkeypatch.setattr(cf_mod, "async_control_change_allowed", allowed)
+    r = run(f.async_step_control_hub(USER))
+    assert r["type"] == "abort" and r["reason"] == "hub_check_control_off"
+    assert gate == [("direct", None)]
+    assert f.config_entry.options.get("control_mode") is None
+    assert f.config_entry.options["hub_check"]["verdict"] == "mismatch"
+    assert f"hub_check_failed_{f.config_entry.entry_id}" in f.issues
+
+
+def test_failed_recheck_keeps_control_when_the_restore_fails(monkeypatch):
+    f, _, saved = setup(monkeypatch, soc=80, bank={588: 55}, options={"control_mode": "direct"})
+
+    async def denied(rt, old, new):
+        return False
+    monkeypatch.setattr(cf_mod, "async_control_change_allowed", denied)
+    r = run(f.async_step_control_hub(USER))
+    assert r["type"] == "form" and r["errors"] == {"base": "restore_failed"} and saved == []
+
+
+def test_passing_check_clears_the_issues(monkeypatch):
+    f, _, _ = setup(monkeypatch, soc=55, power=-1200, bank={588: 55, 590: -1200})
+    f.issues["hub_check_failed_e1"] = {}
+    run(f.async_step_control_hub(USER))
+    assert f.issues == {}
+
+
+def test_async_user_sources_never_returns_excluded_sensors():
+    entry = SimpleNamespace(options={"telemetry_map": {"soc": "sensor.volcast_reg_588", "battery_power_w": "sensor.mine"}})
+    out = asyncio.run(sa_mod.async_user_sources(SimpleNamespace(), entry,
+                                                exclude=frozenset({"sensor.volcast_reg_588"})))
+    assert out == {"battery_power_w": "sensor.mine"}
+
+
+@pytest.mark.parametrize("options,expect", [
+    ({"direct_target": {"transport": "ha_modbus"}}, True), ({"direct_target": {"transport": "tcp"}}, False),
+    ({}, False)])
+def test_stale_report_is_hidden_when_control_runs_another_way(options, expect):
+    report = {"verdict": "mismatch", "identity_ok": True, "device_type": 5, "checked_at": "t", "quantities": {}}
+    entry = SimpleNamespace(entry_id="e1", options={"hub_check": report, **options})
+    ent = VolcastVerificationSensor(entry, SimpleNamespace(verification=None))
+    assert ("hub_check" in ent.extra_state_attributes) is expect
+    assert (ent.native_value == "hub_check_failed") is expect

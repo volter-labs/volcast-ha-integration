@@ -457,7 +457,8 @@
       "no_price_sources": "Aucune intégration de prix connue n'a été trouvée dans Home Assistant. Choisissez un capteur dans Prix de l'énergie.",
       "price_source_invalid": "Les réglages de la source de prix ne sont plus valides. Recommencez.",
       "price_sell_tomorrow": "Les réglages des prix de l'énergie sont enregistrés. La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille.",
-      "hub_unsupported": "Le profil d'onduleur pour le pilotage via un hub Modbus n'est pas disponible. Mettez à jour l'intégration."
+      "hub_unsupported": "Le profil d'onduleur pour le pilotage via un hub Modbus n'est pas disponible. Mettez à jour l'intégration.",
+      "hub_check_control_off": "Le pilotage Volcast a été désactivé : la vérification du hub Modbus a échoué ({problems}). Corrigez la cause puis relancez l'étape du hub Modbus."
     },
     "error": {
       "prices_not_usable": "Ce capteur ne fournit pas de série de prix complète pour le moment.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Échec de la vérification du hub Modbus",
+      "description": "Les valeurs lues sur le hub Modbus ne correspondent pas à vos capteurs, ou l'appareil n'est pas l'onduleur attendu ({problems}). Le pilotage Volcast reste désactivé. Corrigez les capteurs ou l'association des registres, puis relancez l'étape du hub Modbus dans les options de l'intégration."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast n'a pas pu vérifier entièrement votre hub Modbus",
+      "description": "Les valeurs du hub n'ont pas pu être comparées à vos capteurs pour : {quantities} (pas de capteur récent ou batterie inactive). Le pilotage a été activé uniquement sur l'identification de l'appareil. Associez les capteurs de puissance et de niveau de la batterie dans Installation details et relancez l'étape du hub Modbus pendant que la batterie charge ou décharge."
     }
   },
   "services": {

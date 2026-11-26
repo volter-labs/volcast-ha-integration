@@ -457,7 +457,8 @@
       "no_price_sources": "Não foi encontrada nenhuma integração de preços conhecida no Home Assistant. Escolha um sensor em Preços de energia.",
       "price_source_invalid": "As definições da fonte de preços já não são válidas. Comece de novo.",
       "price_sell_tomorrow": "As definições de preços de energia foram guardadas. A fonte do preço de venda {source} ainda não fornece preços para amanhã, embora os preços de compra de amanhã já estejam disponíveis. Até que os forneça, o plano de amanhã será baseado nos preços do dia anterior.",
-      "hub_unsupported": "O perfil do inversor para controlo através de um hub Modbus não está disponível. Atualize a integração."
+      "hub_unsupported": "O perfil do inversor para controlo através de um hub Modbus não está disponível. Atualize a integração.",
+      "hub_check_control_off": "O controlo da Volcast foi desativado: a verificação do hub Modbus falhou ({problems}). Corrija a causa e execute novamente o passo do hub Modbus."
     },
     "error": {
       "prices_not_usable": "Este sensor não fornece neste momento uma série de preços completa.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "A verificação do hub Modbus falhou",
+      "description": "Os valores lidos do hub Modbus não coincidem com os seus sensores, ou o dispositivo não é o inversor esperado ({problems}). O controlo da Volcast mantém-se desativado. Corrija os sensores ou o mapeamento de registos e execute novamente o passo do hub Modbus nas opções da integração."
+    },
+    "hub_check_not_compared": {
+      "title": "A Volcast não conseguiu verificar totalmente o seu hub Modbus",
+      "description": "Não foi possível comparar as leituras do hub com os seus sensores para: {quantities} (sem sensor recente ou bateria inativa). O controlo foi ativado apenas com base na identificação do dispositivo. Mapeie os sensores de potência e carga da bateria em Installation details e execute novamente o passo do hub Modbus enquanto a bateria carrega ou descarrega."
     }
   },
   "services": {

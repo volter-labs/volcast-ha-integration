@@ -457,7 +457,8 @@
       "no_price_sources": "V Home Assistantu nebyla nalezena žádná známá cenová integrace. Vyberte senzor v Cenách energie.",
       "price_source_invalid": "Nastavení zdroje cen už neplatí. Začněte znovu.",
       "price_sell_tomorrow": "Nastavení cen energie je uloženo. Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne.",
-      "hub_unsupported": "Profil střídače pro řízení přes hub Modbus není dostupný. Aktualizujte integraci."
+      "hub_unsupported": "Profil střídače pro řízení přes hub Modbus není dostupný. Aktualizujte integraci.",
+      "hub_check_control_off": "Řízení Volcast bylo vypnuto: ověření Modbus hubu selhalo ({problems}). Odstraňte příčinu a spusťte krok Modbus hubu znovu."
     },
     "error": {
       "prices_not_usable": "Tento senzor teď neposkytuje úplnou cenovou řadu.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Ověření Modbus hubu selhalo",
+      "description": "Hodnoty z Modbus hubu neodpovídají vašim senzorům, nebo zařízení není očekávaný střídač ({problems}). Řízení Volcast zůstává vypnuté. Opravte senzory nebo mapování registrů a spusťte krok Modbus hubu znovu v nastavení integrace."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast nemohl plně ověřit váš Modbus hub",
+      "description": "Hodnoty z hubu nešlo porovnat s vašimi senzory pro: {quantities} (žádný aktuální senzor nebo byla baterie nečinná). Řízení bylo zapnuto jen na základě identifikace zařízení. Namapujte senzory výkonu a nabití baterie v Installation details a spusťte krok Modbus hubu znovu, když se baterie nabíjí nebo vybíjí."
     }
   },
   "services": {

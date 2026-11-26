@@ -41,7 +41,7 @@ def test_soc_mismatch_blocks_control(deye):
     rep = build(deye, image(r588=55, r590=0), {"soc": 80.0, "battery_power_w": 0.0})
     assert rep["verdict"] == hc.MISMATCH and hc.blocks_control(rep)
     assert rep["quantities"]["soc"]["verdict"] == hc.MISMATCH
-    assert rep["quantities"]["battery_power_w"]["verdict"] == hc.OK
+    assert rep["quantities"]["battery_power_w"]["verdict"] == hc.INCONCLUSIVE      # bateria bezczynna
 
 
 def test_soc_tolerance_edge(deye):
@@ -101,3 +101,23 @@ def test_report_has_no_entity_ids_or_names(deye):
     text = repr(rep)
     assert "sensor." not in text
     assert set(rep) == {"verdict", "identity_ok", "device_type", "checked_at", "quantities"}
+
+
+def test_idle_battery_is_inconclusive_not_ok(deye):
+    # 10x za mała moc przy bezczynnej baterii nie jest „zgodna”
+    rep = build(deye, image(r588=55, r590=25), {"soc": 55.0, "battery_power_w": 250.0})
+    q = rep["quantities"]["battery_power_w"]
+    assert q["verdict"] == hc.INCONCLUSIVE and rep["verdict"] == hc.PARTIAL and not hc.blocks_control(rep)
+    both = build(deye, image(r590=299), {"battery_power_w": -299.0})["quantities"]["battery_power_w"]
+    assert both["verdict"] == hc.INCONCLUSIVE
+
+
+def test_scale_or_sign_error_is_caught_once_power_is_large_enough(deye):
+    for hub, user in ((50, 500.0), (5000, 500.0), (500, -500.0), (-500, 500.0), (25, 400.0)):
+        q = build(deye, image(r590=hub), {"battery_power_w": user})["quantities"]["battery_power_w"]
+        assert q["verdict"] == hc.MISMATCH, (hub, user)
+
+
+def test_all_inconclusive_or_missing_is_cannot_compare(deye):
+    rep = build(deye, image(r588=55, r590=25), {"battery_power_w": 20.0})
+    assert rep["verdict"] == hc.CANNOT_COMPARE and not hc.blocks_control(rep)

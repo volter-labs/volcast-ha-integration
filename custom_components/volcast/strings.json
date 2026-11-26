@@ -457,7 +457,8 @@
       "no_price_sources": "No known price integration was found in Home Assistant. Use Energy prices to pick a sensor.",
       "price_source_invalid": "The price source settings are no longer valid. Start again.",
       "price_sell_tomorrow": "The energy price settings are saved. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices.",
-      "hub_unsupported": "The inverter profile for Modbus hub control is not available. Update the integration."
+      "hub_unsupported": "The inverter profile for Modbus hub control is not available. Update the integration.",
+      "hub_check_control_off": "Volcast control was turned off: the Modbus hub check failed ({problems}). Fix the cause, then run the Modbus hub step again."
     },
     "error": {
       "prices_not_usable": "This sensor does not provide a complete price series right now.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Volcast Modbus hub check failed",
+      "description": "The values read from the Modbus hub do not match your existing sensors, or the device is not the expected inverter ({problems}). Volcast control stays off. Fix the sensors or the register mapping, then run the Modbus hub step again in the integration options."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast could not fully check your Modbus hub",
+      "description": "The hub readings could not be compared with your own sensors for: {quantities} (no fresh sensor, or the battery was idle). Control was enabled on the strength of the device identification alone. Map your battery power and state of charge sensors under Installation details and run the Modbus hub step again while the battery is charging or discharging."
     }
   },
   "services": {

@@ -17,6 +17,10 @@ jest po przeliczeniu jednostki i po fladze odwrócenia znaku baterii):
     moc), skala 10× albo odwrócony znak wychodzą daleko poza pasmo. Odwrócony znak (suma w paśmie, różnica nie)
     dostaje znacznik `sign_inverted`.
 
+Bateria bezczynna (obie wartości mocy < 300 W) niczego nie rozstrzyga — błąd skali 10× albo znaku też mieści się
+w paśmie — więc to `inconclusive` (nie `ok`), a werdykt ogólny to najwyżej `partial`. Przy mocy ≥ 300 W po którejkolwiek
+stronie pasmo (min. 300 W) wyłapuje skalę 10× i odwrócony znak.
+
 Raport nie zawiera entity_id ani nazwy huba — tylko kody werdyktów i liczby (może iść do telemetrii).
 """
 from __future__ import annotations
@@ -30,6 +34,7 @@ from ..registers import RegisterError, RegisterImage, decode, read_values
 OK = "ok"
 PARTIAL = "partial"                      # część wielkości zgodna, reszty nie było z czym porównać
 CANNOT_COMPARE = "cannot_compare"        # żadnej wielkości nie dało się porównać (brak encji użytkownika)
+INCONCLUSIVE = "inconclusive"            # obie wartości zbyt małe, by odróżnić błąd skali albo znaku (bateria bezczynna)
 MISMATCH = "mismatch"
 IDENTITY_MISMATCH = "identity_mismatch"
 BLOCKING = frozenset({MISMATCH, IDENTITY_MISMATCH})
@@ -63,6 +68,9 @@ def _compare(key: str, hub: float | None, user: float | None) -> dict[str, Any]:
         out.update(verdict=MISMATCH, tolerance=SOC_TOLERANCE_PCT)
         return out
     if user is None:
+        return out
+    if key == BATTERY_POWER and max(abs(hub), abs(user)) < POWER_TOLERANCE_FLOOR_W:
+        out["verdict"] = INCONCLUSIVE
         return out
     tol = _tolerance(key, hub, user)
     dev = abs(hub - user)

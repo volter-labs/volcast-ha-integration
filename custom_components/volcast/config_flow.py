@@ -24,6 +24,7 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import instance_id, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -124,6 +125,10 @@ def release_ref(version: str | None) -> str:
 def hub_template_path(profile_id: str) -> str:
     """Ścieżka (w repozytorium) fragmentu YAML czujników surowych dla profilu."""
     return f"docs/profiles/{profile_id}-ha-modbus.yaml"
+
+
+_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
+HUB_USER_MAX_AGE = timedelta(minutes=10)   # starszy odczyt encji użytkownika nie służy do porównania
 
 
 def hub_check_problems(check: Mapping[str, Any]) -> str:
@@ -965,6 +970,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         if not profiles:
             return self.async_abort(reason="hub_unsupported")
         failure: ConfigFlowResult | None = None
+        blocked: tuple[dict[str, Any], str] | None = None
         for profile in profiles:
             report = build_register_map(self.hass, profile, device=(hub, unit))
             if not report.ok:
@@ -980,10 +986,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             if image is not None:
                 check = hub_check.build_report(profile, image, await self._hub_user_values(report), now=dt_util.utcnow())
             if hub_check.blocks_control(check):
-                # Raport zamiast sterowania: opcje dostają tylko raport (encja weryfikacji go pokazuje), cel nie.
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry, options=self._merged({OPT_HUB_CHECK: check}))
-                return self._hub_form(hub, unit, {"base": "hub_check_failed"}, hub_check_problems(check), profile.id)
+                if not check["identity_ok"]:
+                    # Inny typ urządzenia pod adresem: próbujemy następny profil, blokada dopiero gdy żaden nie pasuje.
+                    blocked = blocked or (check, profile.id)
+                    continue
+                return await self._hub_blocked(check, hub, unit, profile.id)
             if fp is None:
                 failure = failure or self._hub_form(hub, unit, {"base": "hub_identity_unreadable"},
                                                     profile_id=profile.id)
@@ -997,8 +1004,43 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             carries = telemetry_carries_pv_power(
                 ProfileChoice(profile, None, None), profile_map={},
                 manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
+            self._hub_issues(check)
             return await self._enable_control(options, carries_pv_power=carries)
+        if blocked is not None:
+            return await self._hub_blocked(blocked[0], hub, unit, blocked[1])
         return failure
+
+    def _hub_issues(self, check: Mapping[str, Any] | None, *, failed: bool = False) -> None:
+        """Zgłoszenia Napraw: nieudana weryfikacja huba (sterowanie wyłączone) albo pominięte porównanie."""
+        eid = self.config_entry.entry_id
+        failed_id, skipped_id = f"hub_check_failed_{eid}", f"hub_check_not_compared_{eid}"
+        if failed and check is not None:
+            ir.async_create_issue(self.hass, DOMAIN, failed_id, is_fixable=False, severity=_WARNING,
+                                  translation_key="hub_check_failed",
+                                  translation_placeholders={"problems": hub_check_problems(check)})
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, failed_id)
+        skipped = [k for k, q in (check or {}).get("quantities", {}).items()
+                   if q.get("verdict") in (hub_check.CANNOT_COMPARE, hub_check.INCONCLUSIVE)]
+        if skipped and not failed:
+            ir.async_create_issue(self.hass, DOMAIN, skipped_id, is_fixable=False, severity=_WARNING,
+                                  translation_key="hub_check_not_compared",
+                                  translation_placeholders={"quantities": ", ".join(skipped)})
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, skipped_id)
+
+    async def _hub_blocked(self, check: dict[str, Any], hub: str, unit: int, profile_id: str) -> ConfigFlowResult:
+        """Rozjazd weryfikacji: raport zamiast sterowania. Sterowanie już włączone (wcześniejszy cel) wyłączamy przez
+        bramkę przywracania (kopia TOU wraca do falownika); gdy powrót się nie uda, nic nie zapisujemy."""
+        problems = hub_check_problems(check)
+        self._hub_issues(check, failed=True)
+        if self.config_entry.options.get(OPT_CONTROL_MODE) is not None:
+            return await self._finish(
+                self._merged({OPT_CONTROL_MODE: None, OPT_HUB_CHECK: check}),
+                retry_form=lambda errors: self._hub_form(hub, unit, errors, problems, profile_id),
+                saved_notice=("hub_check_control_off", {"problems": problems}))
+        self.hass.config_entries.async_update_entry(self.config_entry, options=self._merged({OPT_HUB_CHECK: check}))
+        return self._hub_form(hub, unit, {"base": "hub_check_failed"}, problems, profile_id)
 
     async def _hub_identity(self, profile, hub: str, unit: int,
                             report) -> tuple[str | None, float | None, str, RegisterImage | None]:
@@ -1037,12 +1079,23 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         stan niedostępny albo nieliczbowy = None (nie da się porównać)."""
         sources = await async_user_sources(self.hass, self.config_entry,
                                            exclude=frozenset(report.registers.values()))
+        # Moc baterii tylko z czujnika, który użytkownik sam zmapował (jego flaga znaku jest wtedy znana);
+        # kandydat z propozycji ma niezweryfikowany znak — nie może ani blokować, ani przepuszczać.
+        sources = {k: v for k, v in sources.items() if k != hub_check.BATTERY_POWER}
+        if (mapped := (self.config_entry.options.get(OPT_TELEMETRY_MAP) or {}).get(hub_check.BATTERY_POWER)) \
+                and mapped not in report.registers.values():
+            sources[hub_check.BATTERY_POWER] = mapped
         flip = -1.0 if self.config_entry.options.get(OPT_BATTERY_NEGATE) else 1.0
+        now = dt_util.utcnow()
         out: dict[str, float | None] = {}
         for key in hub_check.QUANTITIES:
             st = self.hass.states.get(sources[key]) if sources.get(key) else None
+            stamp = getattr(st, "last_updated", None)
+            if st is None or (stamp is not None and now - stamp > HUB_USER_MAX_AGE):
+                out[key] = None            # brak encji albo nieświeży odczyt (np. chmura) — nie da się porównać
+                continue
             attrs = getattr(st, "attributes", None) or {}
-            value = canonical_value(key, getattr(st, "state", None), attrs.get("unit_of_measurement")) if st else None
+            value = canonical_value(key, getattr(st, "state", None), attrs.get("unit_of_measurement"))
             out[key] = value * flip if value is not None and key == hub_check.BATTERY_POWER else value
         return out
 
@@ -1085,6 +1138,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return await self._finish(options, leave_plan_only=True)
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        self._hub_issues(None)
         return await self._finish(self._merged({OPT_CONTROL_MODE: None, OPT_HUB_CHECK: None}))
 
     _assignment: AssignmentResult | None = None

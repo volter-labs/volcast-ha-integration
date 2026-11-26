@@ -42,7 +42,13 @@ class VolcastVerificationSensor(SensorEntity):
 
     def _hub_check(self) -> dict[str, Any] | None:
         """Raport weryfikacji huba `modbus` (tryb tylko-odczyt: bez sterowania jest jedyną treścią encji)."""
-        report = (getattr(self._entry, "options", None) or {}).get(OPT_HUB_CHECK)
+        options = getattr(self._entry, "options", None) or {}
+        report = options.get(OPT_HUB_CHECK)
+        if self._control is not None:
+            # Sterowanie działa innym trybem niż hub: stary raport nic już nie mówi o urządzeniu pod sterowaniem.
+            target = options.get("direct_target")
+            if not (isinstance(target, dict) and target.get("transport") == "ha_modbus"):
+                return None
         return report if isinstance(report, dict) and report else None
 
     @property

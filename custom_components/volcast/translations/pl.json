@@ -457,7 +457,8 @@
       "no_price_sources": "Nie znaleziono w Home Assistancie żadnej znanej integracji cenowej. Wybierz czujnik w Cenach energii.",
       "price_source_invalid": "Ustawienia źródła cen są już nieważne. Zacznij od nowa.",
       "price_sell_tomorrow": "Ustawienia cen energii są zapisane. Źródło ceny sprzedaży {source} nie podaje jeszcze cen na jutro, choć ceny zakupu na jutro są już dostępne. Dopóki ich nie poda, plan na jutro będzie liczony z cen z poprzedniego dnia.",
-      "hub_unsupported": "Profil falownika do sterowania przez hub Modbus jest niedostępny. Zaktualizuj integrację."
+      "hub_unsupported": "Profil falownika do sterowania przez hub Modbus jest niedostępny. Zaktualizuj integrację.",
+      "hub_check_control_off": "Sterowanie Volcast zostało wyłączone: weryfikacja huba Modbus nie powiodła się ({problems}). Usuń przyczynę i uruchom krok huba Modbus ponownie."
     },
     "error": {
       "prices_not_usable": "Ten czujnik nie dostarcza teraz kompletnej serii cen.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Weryfikacja huba Modbus nie powiodła się",
+      "description": "Wartości odczytane z huba Modbus nie zgadzają się z Twoimi czujnikami albo urządzenie nie jest oczekiwanym falownikiem ({problems}). Sterowanie Volcast pozostaje wyłączone. Popraw czujniki lub mapowanie rejestrów i uruchom krok huba Modbus ponownie w opcjach integracji."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast nie mógł w pełni sprawdzić huba Modbus",
+      "description": "Odczytów z huba nie dało się porównać z Twoimi czujnikami dla: {quantities} (brak świeżego czujnika albo bateria była bezczynna). Sterowanie włączono wyłącznie na podstawie identyfikacji urządzenia. Zmapuj czujniki mocy baterii i SoC w „Installation details” i uruchom krok huba Modbus ponownie, gdy bateria się ładuje lub rozładowuje."
     }
   },
   "services": {

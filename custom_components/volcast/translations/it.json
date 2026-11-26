@@ -457,7 +457,8 @@
       "no_price_sources": "In Home Assistant non è stata trovata alcuna integrazione prezzi nota. Scegli un sensore in Prezzi dell'energia.",
       "price_source_invalid": "Le impostazioni della fonte prezzi non sono più valide. Ricomincia.",
       "price_sell_tomorrow": "Le impostazioni dei prezzi dell'energia sono salvate. La fonte del prezzo di vendita {source} non fornisce ancora i prezzi di domani, mentre i prezzi di acquisto di domani sono già disponibili. Finché non li fornisce, il piano di domani si baserà sui prezzi del giorno precedente.",
-      "hub_unsupported": "Il profilo dell'inverter per il controllo tramite un hub Modbus non è disponibile. Aggiorna l'integrazione."
+      "hub_unsupported": "Il profilo dell'inverter per il controllo tramite un hub Modbus non è disponibile. Aggiorna l'integrazione.",
+      "hub_check_control_off": "Il controllo Volcast è stato disattivato: la verifica dell'hub Modbus non è riuscita ({problems}). Correggi la causa ed esegui di nuovo il passaggio dell'hub Modbus."
     },
     "error": {
       "prices_not_usable": "Questo sensore al momento non fornisce una serie di prezzi completa.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Verifica dell'hub Modbus non riuscita",
+      "description": "I valori letti dall'hub Modbus non corrispondono ai tuoi sensori, oppure il dispositivo non è l'inverter previsto ({problems}). Il controllo Volcast resta disattivato. Correggi i sensori o l'associazione dei registri ed esegui di nuovo il passaggio dell'hub Modbus nelle opzioni dell'integrazione."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast non ha potuto verificare del tutto il tuo hub Modbus",
+      "description": "Non è stato possibile confrontare le letture dell'hub con i tuoi sensori per: {quantities} (nessun sensore recente o batteria inattiva). Il controllo è stato attivato solo in base all'identificazione del dispositivo. Associa i sensori di potenza e carica della batteria in Installation details ed esegui di nuovo il passaggio dell'hub Modbus mentre la batteria si carica o si scarica."
     }
   },
   "services": {

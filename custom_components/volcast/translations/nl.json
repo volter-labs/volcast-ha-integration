@@ -457,7 +457,8 @@
       "no_price_sources": "Er is in Home Assistant geen bekende prijsintegratie gevonden. Kies een sensor bij Energieprijzen.",
       "price_source_invalid": "De instellingen van de prijsbron zijn niet meer geldig. Begin opnieuw.",
       "price_sell_tomorrow": "De instellingen voor energieprijzen zijn opgeslagen. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag.",
-      "hub_unsupported": "Het omvormerprofiel voor besturing via een Modbus-hub is niet beschikbaar. Werk de integratie bij."
+      "hub_unsupported": "Het omvormerprofiel voor besturing via een Modbus-hub is niet beschikbaar. Werk de integratie bij.",
+      "hub_check_control_off": "Volcast-sturing is uitgeschakeld: de controle van de Modbus-hub is mislukt ({problems}). Los de oorzaak op en voer de Modbus-hubstap opnieuw uit."
     },
     "error": {
       "prices_not_usable": "Deze sensor levert op dit moment geen volledige prijsreeks.",
@@ -702,6 +703,14 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Controle van de Modbus-hub mislukt",
+      "description": "De waarden van de Modbus-hub komen niet overeen met je sensoren, of het apparaat is niet de verwachte omvormer ({problems}). Volcast-sturing blijft uit. Corrigeer de sensoren of de registerkoppeling en voer de Modbus-hubstap opnieuw uit in de integratieopties."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast kon je Modbus-hub niet volledig controleren",
+      "description": "De hubwaarden konden voor {quantities} niet met je sensoren worden vergeleken (geen actuele sensor of de batterij was inactief). Sturing is alleen op basis van de apparaatidentificatie ingeschakeld. Koppel batterijvermogen en laadniveau onder Installation details en voer de Modbus-hubstap opnieuw uit terwijl de batterij laadt of ontlaadt."
     }
   },
   "services": {
