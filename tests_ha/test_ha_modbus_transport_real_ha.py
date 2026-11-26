@@ -115,3 +115,57 @@ async def test_real_bus_listener_and_own_write_identity(hass: HomeAssistant):
     await hass.async_block_till_done()
     assert t.conflict is True and t.foreign_writes == 1
     await t.close()
+
+
+async def test_register_map_and_hub_writer_contract_on_real_registry_and_platforms(hass: HomeAssistant):
+    """Mapa z rejestru encji (`registers_from_registry`), czujniki YAML bez `unique_id`
+    (`unregistered_modbus_sensors`) i encje zapisu platformy `modbus` (`hub_writers`) — na prawdziwym
+    `EntityRegistry.entities`, `EntityComponent.get_entity`/`entities`, `EntityPlatform.platform_name`
+    i `hass.states.async_entity_ids`. Atrapy w `tests/` mają te same nazwy — zmiana w HA przeszłaby tam."""
+    import logging
+    from datetime import timedelta
+
+    from homeassistant.components.sensor import SensorEntity
+    from homeassistant.components.switch import SwitchEntity
+    from homeassistant.helpers.entity_platform import EntityPlatform
+
+    from custom_components.volcast.control.direct import hub_writers
+    from custom_components.volcast.core.control.conflict import HubWriter
+    from custom_components.volcast.core.transports.ha_modbus_map import (
+        registers_from_registry, unregistered_modbus_sensors)
+
+    log = logging.getLogger(__name__)
+    for domain in ("sensor", "switch"):
+        hass.data[domain] = EntityComponent(log, domain, hass)      # jak `async_setup` integracji domeny
+
+    def platform(domain: str, name: str = "modbus") -> EntityPlatform:
+        return EntityPlatform(hass=hass, logger=log, domain=domain, platform_name=name, platform=None,
+                              scan_interval=timedelta(seconds=30), entity_namespace=None)
+
+    class Raw(SensorEntity):
+        _attr_should_poll = False                        # bez zegara odpytywania platformy w teście
+
+        def __init__(self, name, uid=None):
+            self._attr_name, self._attr_unique_id, self._attr_native_value = name, uid, 1
+
+    class Writer(SwitchEntity):                          # kształt encji zapisu huba: `_hub.name`, `_device_address`
+        _attr_should_poll = False
+
+        def __init__(self, name, hub, unit):
+            self._attr_name, self._hub, self._device_address = name, SimpleNamespace(name=hub), unit
+
+        @property
+        def is_on(self):
+            return False
+
+    await platform("sensor").async_add_entities([Raw("reg 146", "volcast_reg_146"), Raw("reg 0", "volcast_reg_0"),
+                                                 Raw("yaml without unique id")])
+    await platform("sensor", "template").async_add_entities([Raw("other", "volcast_reg_147"), Raw("plain")])
+    await platform("switch").async_add_entities([Writer("export", "deye_hub", 1)])
+    await hass.async_block_till_done()
+
+    registers, dupes = registers_from_registry(hass)
+    assert {a: e.split(".")[0] for a, e in registers.items()} == {146: "sensor", 0: "sensor"} and dupes == ()
+    assert registers[146] == er.async_get(hass).async_get_entity_id("sensor", "modbus", "volcast_reg_146")
+    assert unregistered_modbus_sensors(hass) == ("sensor.yaml_without_unique_id",)
+    assert hub_writers(hass) == [HubWriter("deye_hub", 1)]

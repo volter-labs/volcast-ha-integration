@@ -457,10 +457,12 @@ class ControlRuntime:
 
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
-_TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp")
+# `hub` — cel przez hub `modbus` HA (transport `ha_modbus`); w celu sieciowym go nie ma (None po obu stronach).
+_TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp", "hub")
 # Adres tego samego egzemplarza (odcisk z seriala, `serial_identity`): jego zmiana to nie zmiana sterowania —
 # własność nie zależy od adresu (`DirectIO.owner`), więc bez powrotu przez starego wykonawcę po martwym łączu.
-_TARGET_ADDRESS = ("host", "logger_serial")
+# Nazwa huba `modbus` jest takim adresem (ten sam falownik pod przemianowanym hubem).
+_TARGET_ADDRESS = ("host", "logger_serial", "hub")
 
 
 def address_clashes(rt: ControlRuntime) -> tuple[str, ...]:
@@ -1585,6 +1587,8 @@ def start_relocator(hass, entry, rt) -> Relocator | None:
     if conn is None or getattr(conn, "trial", True) is not False \
             or (entry.options or {}).get(OPT_CONTROL_MODE) != CONTROL_MODE_DIRECT:
         return None
+    if getattr(conn, "hub_mode", False):
+        return None                          # hub `modbus` HA: nie ma adresu w sieci do szukania
     rel = Relocator(hass, entry, conn,
                     control_change=lambda old, new: control_identity_changed(rt, old, new),
                     onboarding_active=lambda: onboarding_running(hass, entry.entry_id))

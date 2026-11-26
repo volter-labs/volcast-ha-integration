@@ -566,6 +566,10 @@ class TelemetrySender:
                                  "status": self._direct_status(), "stray": int(stats.stray),
                                  "timeouts": int(stats.timeouts),
                                  "nvm_budget_hit": bool(getattr(self._executor, "nvm_budget_hit", False))}
+            report = getattr(self._direct, "map_report", None)
+            if report is not None:
+                # hub `modbus` HA: walidacja mapy czujników — adresy, przyczyny i liczniki, bez entity_id
+                summary["direct"]["map"] = report.telemetry()
         if self._fz_frozen:
             summary["frozen"] = True
         if self._signal_connected is not None:
