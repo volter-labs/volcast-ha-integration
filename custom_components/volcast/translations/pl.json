@@ -486,7 +486,8 @@
       "unit_invalid": "Adres urządzenia musi mieścić się w zakresie 1-247.",
       "hub_map_incomplete": "Czujniki Modbus nie pasują do profilu falownika. Popraw YAML, przeładuj Modbus i wyślij ponownie.",
       "hub_identity_unreadable": "Nie udało się rozpoznać falownika z czujników. Sprawdź rejestry i wyślij ponownie.",
-      "hub_sensors_unavailable": "Część zmapowanych czujników nie ma teraz użytecznej wartości. Sprawdź czujniki z listy poniżej i wyślij ponownie."
+      "hub_sensors_unavailable": "Część zmapowanych czujników nie ma teraz użytecznej wartości. Sprawdź czujniki z listy poniżej i wyślij ponownie.",
+      "hub_check_failed": "Wartości odczytane z huba Modbus nie zgadzają się z Twoimi dotychczasowymi czujnikami albo urządzenie nie jest oczekiwanym falownikiem. Sterowanie nie zostało włączone — szczegóły poniżej i w czujniku weryfikacji; usuń przyczynę i wyślij ponownie."
     },
     "progress": {
       "direct_search": "Wyszukiwanie falownika w sieci lokalnej. Może to potrwać do minuty."

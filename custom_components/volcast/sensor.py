@@ -20,7 +20,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, OPT_HUB_CHECK
 from .coordinator import DEFAULT_ATTRIBUTION, VolcastCoordinator, VolcastData
 from .control.direct_sensors import direct_sensors
 from .control_entities import (VolcastControlStatusSensor, VolcastPlanSensor,
@@ -81,6 +81,10 @@ async def async_setup_entry(
         direct = getattr(control, "direct", None)
         if direct is not None:
             entities.extend(direct_sensors(entry, direct))
+
+    elif entry.options.get(OPT_HUB_CHECK):
+        # Raport weryfikacji huba bez sterowania (rozjazd albo inne urządzenie): sama encja weryfikacji go pokazuje.
+        entities.append(VolcastVerificationSensor(entry, None))
 
     async_add_entities(entities)
 

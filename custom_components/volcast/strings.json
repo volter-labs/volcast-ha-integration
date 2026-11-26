@@ -486,7 +486,8 @@
       "unit_invalid": "The device address must be between 1 and 247.",
       "hub_map_incomplete": "The Modbus sensors do not match the inverter profile. Fix the YAML, reload Modbus and submit again.",
       "hub_identity_unreadable": "The inverter could not be identified from the sensors. Check the registers and submit again.",
-      "hub_sensors_unavailable": "Some mapped sensors have no usable value right now. Check the sensors listed below and submit again."
+      "hub_sensors_unavailable": "Some mapped sensors have no usable value right now. Check the sensors listed below and submit again.",
+      "hub_check_failed": "The values read from the Modbus hub do not match your existing sensors, or the device is not the expected inverter. Control was not enabled — see the details below and the verification sensor, fix the cause and submit again."
     },
     "progress": {
       "direct_search": "Searching the local network for the inverter. This can take up to a minute."

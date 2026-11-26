@@ -486,7 +486,8 @@
       "unit_invalid": "Die Geräteadresse muss zwischen 1 und 247 liegen.",
       "hub_map_incomplete": "Die Modbus-Sensoren passen nicht zum Wechselrichterprofil. Korrigieren Sie das YAML, laden Sie Modbus neu und senden Sie erneut ab.",
       "hub_identity_unreadable": "Der Wechselrichter konnte anhand der Sensoren nicht erkannt werden. Prüfen Sie die Register und senden Sie erneut ab.",
-      "hub_sensors_unavailable": "Einige zugeordnete Sensoren haben derzeit keinen verwertbaren Wert. Prüfen Sie die unten aufgeführten Sensoren und senden Sie erneut ab."
+      "hub_sensors_unavailable": "Einige zugeordnete Sensoren haben derzeit keinen verwertbaren Wert. Prüfen Sie die unten aufgeführten Sensoren und senden Sie erneut ab.",
+      "hub_check_failed": "Die vom Modbus-Hub gelesenen Werte stimmen nicht mit Ihren vorhandenen Sensoren überein, oder das Gerät ist nicht der erwartete Wechselrichter. Die Steuerung wurde nicht aktiviert — Details unten und im Verifizierungssensor; beheben Sie die Ursache und senden Sie erneut ab."
     },
     "progress": {
       "direct_search": "Das lokale Netzwerk wird nach dem Wechselrichter durchsucht. Das kann bis zu einer Minute dauern."

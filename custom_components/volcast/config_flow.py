@@ -42,7 +42,9 @@ from .core.registers import RegisterImage
 from .core.transports.ha_modbus import (HA_MODBUS_KIND, HaModbusConfig, HaModbusTransport, MissingRegister,
                                          RegisterValueError)
 from .core.transports.ha_modbus_map import build_register_map
+from .core.control import hub_check
 from .core.control.caps import entity_mode_options, entity_mode_ready
+from .core.entity_map import canonical_value
 from .core.control.select import ProfileChoice
 from .core.entity_map import KEY_DESCRIPTORS, field_group, preview_entity
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
@@ -55,7 +57,7 @@ from .core.price_setup import (ActionCandidate, SeriesCheck, action_candidates, 
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
-from .sensor_assignment import AssignmentResult, async_propose
+from .sensor_assignment import AssignmentResult, async_propose, async_user_sources
 from .version import async_integration_version
 from .const import (
     DEFAULT_PAIRING_URL,
@@ -82,6 +84,7 @@ from .const import (
     OPT_BATTERY_CAPACITY_KWH,
     OPT_CONTROL_MODE,
     OPT_BATTERY_NEGATE,
+    OPT_HUB_CHECK,
     OPT_GRID_NEGATE,
     OPT_INVERTER_DOMAIN,
     OPT_LOAD_ENERGY,
@@ -121,6 +124,18 @@ def release_ref(version: str | None) -> str:
 def hub_template_path(profile_id: str) -> str:
     """Ścieżka (w repozytorium) fragmentu YAML czujników surowych dla profilu."""
     return f"docs/profiles/{profile_id}-ha-modbus.yaml"
+
+
+def hub_check_problems(check: Mapping[str, Any]) -> str:
+    """Opis rozjazdu do formularza: liczby i kody, bez nazw encji."""
+    if not check.get("identity_ok"):
+        return f"Register 0 holds {check.get('device_type')}, which is not an expected device type for this profile."
+    parts = []
+    for key, q in check.get("quantities", {}).items():
+        if q.get("verdict") == hub_check.MISMATCH:
+            hint = " (sign looks inverted)" if q.get("sign_inverted") else ""
+            parts.append(f"{key}: hub {q.get('hub')}, your sensor {q.get('user')}, tolerance {q.get('tolerance')}{hint}")
+    return "; ".join(parts) or "-"
 
 
 def compact_ranges(addrs) -> str:
@@ -956,11 +971,19 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 failure = failure or self._hub_form(hub, unit, {"base": "hub_map_incomplete"},
                                                     hub_map_problems(report), profile.id)
                 continue
-            fp, rated, unreadable = await self._hub_identity(profile, hub, unit, report)
+            fp, rated, unreadable, image = await self._hub_identity(profile, hub, unit, report)
             if unreadable:
                 failure = failure or self._hub_form(hub, unit, {"base": "hub_sensors_unavailable"},
                                                     f"Sensors without a usable value: {unreadable}", profile.id)
                 continue
+            check = None
+            if image is not None:
+                check = hub_check.build_report(profile, image, await self._hub_user_values(report), now=dt_util.utcnow())
+            if hub_check.blocks_control(check):
+                # Raport zamiast sterowania: opcje dostają tylko raport (encja weryfikacji go pokazuje), cel nie.
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, options=self._merged({OPT_HUB_CHECK: check}))
+                return self._hub_form(hub, unit, {"base": "hub_check_failed"}, hub_check_problems(check), profile.id)
             if fp is None:
                 failure = failure or self._hub_form(hub, unit, {"base": "hub_identity_unreadable"},
                                                     profile_id=profile.id)
@@ -970,14 +993,15 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             if rated is not None:
                 target["rated_power_w"] = float(rated)
             options = self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
-                                    OPT_DIRECT_TRIAL: None})
+                                    OPT_DIRECT_TRIAL: None, OPT_HUB_CHECK: check})
             carries = telemetry_carries_pv_power(
                 ProfileChoice(profile, None, None), profile_map={},
                 manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
             return await self._enable_control(options, carries_pv_power=carries)
         return failure
 
-    async def _hub_identity(self, profile, hub: str, unit: int, report) -> tuple[str | None, float | None, str]:
+    async def _hub_identity(self, profile, hub: str, unit: int,
+                            report) -> tuple[str | None, float | None, str, RegisterImage | None]:
         """(odcisk, moc znamionowa, niedostępne zakresy) z czujników mapy — tylko odczyty stanów, jak przy sondzie.
         Odcisk nowego urządzenia odrzuca serial-zaślepkę (jak wykrywanie); zakresy niepuste = czujnik bez wartości."""
         transport = None
@@ -985,25 +1009,42 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             transport = HaModbusTransport(self.hass, HaModbusConfig(hub=hub, device_address=unit,
                                                                      registers=dict(report.registers)))
             bad: list[int] = []
+            blocks: dict[int, list[int]] = {}
             for start, count in report.mapped_ranges:
                 try:
-                    await transport.read(start, count)
+                    blocks[start] = list(await transport.read(start, count))
                 except (MissingRegister, RegisterValueError) as err:
                     bad.extend(getattr(err, "addrs", ()) or range(start, start + count))
             if bad:
-                return None, None, compact_ranges(bad)
-            blocks = {b[0]: await transport.read(b[0], b[1]) for b in profile.modbus.identify_reads}
+                return None, None, compact_ranges(bad), None
+            for b in profile.modbus.identify_reads:
+                blocks[b[0]] = list(await transport.read(b[0], b[1]))
             image = RegisterImage.from_blocks(blocks)
             fp = device_fingerprint(await async_installation_salt(self.hass), profile, image, reject_placeholder=True)
             rated = identity_info(profile, image)["rated_power_w"]
             ok = isinstance(rated, (int, float)) and not isinstance(rated, bool) and rated > 0
-            return fp, (float(rated) if ok else None), ""
+            return fp, (float(rated) if ok else None), "", image
         except Exception as err:  # noqa: BLE001 — nieczytelne czujniki: błąd formularza, nie wyjątek
             _LOGGER.debug("Volcast hub identity read failed: %s", type(err).__name__)
-            return None, None, ""
+            return None, None, "", None
         finally:
             if transport is not None:
                 await transport.close()
+
+    async def _hub_user_values(self, report) -> dict[str, float | None]:
+        """Bieżące wartości użytkownika dla porównania z hubem (kanoniczne: SoC w %, moc baterii w W, dodatnia =
+        rozładowanie). Encje to mapa telemetrii albo pewny kandydat — nigdy surowe czujniki huba. Brak encji,
+        stan niedostępny albo nieliczbowy = None (nie da się porównać)."""
+        sources = await async_user_sources(self.hass, self.config_entry,
+                                           exclude=frozenset(report.registers.values()))
+        flip = -1.0 if self.config_entry.options.get(OPT_BATTERY_NEGATE) else 1.0
+        out: dict[str, float | None] = {}
+        for key in hub_check.QUANTITIES:
+            st = self.hass.states.get(sources[key]) if sources.get(key) else None
+            attrs = getattr(st, "attributes", None) or {}
+            value = canonical_value(key, getattr(st, "state", None), attrs.get("unit_of_measurement")) if st else None
+            out[key] = value * flip if value is not None and key == hub_check.BATTERY_POWER else value
+        return out
 
     async def async_step_control_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         rt = self._runtime()
@@ -1044,7 +1085,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return await self._finish(options, leave_plan_only=True)
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self._finish(self._merged({OPT_CONTROL_MODE: None}))
+        return await self._finish(self._merged({OPT_CONTROL_MODE: None, OPT_HUB_CHECK: None}))
 
     _assignment: AssignmentResult | None = None
 

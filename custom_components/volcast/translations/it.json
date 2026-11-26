@@ -486,7 +486,8 @@
       "unit_invalid": "L'indirizzo del dispositivo deve essere compreso tra 1 e 247.",
       "hub_map_incomplete": "I sensori Modbus non corrispondono al profilo dell'inverter. Correggi il YAML, ricarica Modbus e invia di nuovo.",
       "hub_identity_unreadable": "Non è stato possibile identificare l'inverter dai sensori. Controlla i registri e invia di nuovo.",
-      "hub_sensors_unavailable": "Alcuni sensori associati non hanno al momento un valore utilizzabile. Controlla i sensori elencati sotto e invia di nuovo."
+      "hub_sensors_unavailable": "Alcuni sensori associati non hanno al momento un valore utilizzabile. Controlla i sensori elencati sotto e invia di nuovo.",
+      "hub_check_failed": "I valori letti dall'hub Modbus non corrispondono ai tuoi sensori esistenti, oppure il dispositivo non è l'inverter previsto. Il controllo non è stato attivato: vedi i dettagli sotto e il sensore di verifica, correggi la causa e invia di nuovo."
     },
     "progress": {
       "direct_search": "Ricerca dell'inverter sulla rete locale. Può richiedere fino a un minuto."

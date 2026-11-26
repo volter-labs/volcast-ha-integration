@@ -486,7 +486,8 @@
       "unit_invalid": "Het apparaatadres moet tussen 1 en 247 liggen.",
       "hub_map_incomplete": "De Modbus-sensoren komen niet overeen met het omvormerprofiel. Corrigeer de YAML, herlaad Modbus en verstuur opnieuw.",
       "hub_identity_unreadable": "De omvormer kon niet worden herkend aan de hand van de sensoren. Controleer de registers en verstuur opnieuw.",
-      "hub_sensors_unavailable": "Sommige gekoppelde sensoren hebben nu geen bruikbare waarde. Controleer de onderstaande sensoren en verstuur opnieuw."
+      "hub_sensors_unavailable": "Sommige gekoppelde sensoren hebben nu geen bruikbare waarde. Controleer de onderstaande sensoren en verstuur opnieuw.",
+      "hub_check_failed": "De waarden van de Modbus-hub komen niet overeen met je bestaande sensoren, of het apparaat is niet de verwachte omvormer. Sturing is niet ingeschakeld — zie de details hieronder en de verificatiesensor, los de oorzaak op en verstuur opnieuw."
     },
     "progress": {
       "direct_search": "Het lokale netwerk wordt doorzocht op de omvormer. Dit kan tot een minuut duren."

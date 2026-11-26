@@ -486,7 +486,8 @@
       "unit_invalid": "La dirección del dispositivo debe estar entre 1 y 247.",
       "hub_map_incomplete": "Los sensores Modbus no coinciden con el perfil del inversor. Corrija el YAML, recargue Modbus y envíe de nuevo.",
       "hub_identity_unreadable": "No se pudo identificar el inversor a partir de los sensores. Compruebe los registros y envíe de nuevo.",
-      "hub_sensors_unavailable": "Algunos sensores asignados no tienen ahora un valor utilizable. Compruebe los sensores indicados abajo y envíe de nuevo."
+      "hub_sensors_unavailable": "Algunos sensores asignados no tienen ahora un valor utilizable. Compruebe los sensores indicados abajo y envíe de nuevo.",
+      "hub_check_failed": "Los valores leídos del hub Modbus no coinciden con tus sensores existentes, o el dispositivo no es el inversor esperado. No se activó el control: consulta los detalles abajo y el sensor de verificación, corrige la causa y envía de nuevo."
     },
     "progress": {
       "direct_search": "Buscando el inversor en la red local. Puede tardar hasta un minuto."

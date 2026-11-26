@@ -486,7 +486,8 @@
       "unit_invalid": "L'adresse de l'appareil doit être comprise entre 1 et 247.",
       "hub_map_incomplete": "Les capteurs Modbus ne correspondent pas au profil de l'onduleur. Corrigez le YAML, rechargez Modbus et validez à nouveau.",
       "hub_identity_unreadable": "L'onduleur n'a pas pu être identifié à partir des capteurs. Vérifiez les registres et validez à nouveau.",
-      "hub_sensors_unavailable": "Certains capteurs associés n'ont pas de valeur exploitable pour le moment. Vérifiez les capteurs listés ci-dessous et validez à nouveau."
+      "hub_sensors_unavailable": "Certains capteurs associés n'ont pas de valeur exploitable pour le moment. Vérifiez les capteurs listés ci-dessous et validez à nouveau.",
+      "hub_check_failed": "Les valeurs lues sur le hub Modbus ne correspondent pas à vos capteurs existants, ou l'appareil n'est pas l'onduleur attendu. Le pilotage n'a pas été activé — voir les détails ci-dessous et le capteur de vérification, corrigez la cause et validez à nouveau."
     },
     "progress": {
       "direct_search": "Recherche de l'onduleur sur le réseau local. Cela peut prendre jusqu'à une minute."

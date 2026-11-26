@@ -486,7 +486,8 @@
       "unit_invalid": "Adresa dispozitivului trebuie să fie între 1 și 247.",
       "hub_map_incomplete": "Senzorii Modbus nu se potrivesc cu profilul invertorului. Corectați YAML, reîncărcați Modbus și trimiteți din nou.",
       "hub_identity_unreadable": "Invertorul nu a putut fi identificat din senzori. Verificați registrele și trimiteți din nou.",
-      "hub_sensors_unavailable": "Unii senzori asociați nu au acum o valoare utilizabilă. Verificați senzorii listați mai jos și trimiteți din nou."
+      "hub_sensors_unavailable": "Unii senzori asociați nu au acum o valoare utilizabilă. Verificați senzorii listați mai jos și trimiteți din nou.",
+      "hub_check_failed": "Valorile citite din hub-ul Modbus nu se potrivesc cu senzorii tăi existenți sau dispozitivul nu este invertorul așteptat. Controlul nu a fost activat — vezi detaliile de mai jos și senzorul de verificare, remediază cauza și trimite din nou."
     },
     "progress": {
       "direct_search": "Se caută invertorul în rețeaua locală. Poate dura până la un minut."

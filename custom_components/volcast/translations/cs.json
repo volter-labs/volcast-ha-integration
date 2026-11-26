@@ -486,7 +486,8 @@
       "unit_invalid": "Adresa zařízení musí být v rozmezí 1 až 247.",
       "hub_map_incomplete": "Senzory Modbus neodpovídají profilu střídače. Opravte YAML, znovu načtěte Modbus a odešlete znovu.",
       "hub_identity_unreadable": "Střídač se nepodařilo rozpoznat ze senzorů. Zkontrolujte registry a odešlete znovu.",
-      "hub_sensors_unavailable": "Některé přiřazené senzory nemají právě teď použitelnou hodnotu. Zkontrolujte senzory uvedené níže a odešlete znovu."
+      "hub_sensors_unavailable": "Některé přiřazené senzory nemají právě teď použitelnou hodnotu. Zkontrolujte senzory uvedené níže a odešlete znovu.",
+      "hub_check_failed": "Hodnoty přečtené z Modbus hubu neodpovídají vašim stávajícím senzorům, nebo zařízení není očekávaný střídač. Řízení nebylo zapnuto — podrobnosti jsou níže a v senzoru ověření; odstraňte příčinu a odešlete znovu."
     },
     "progress": {
       "direct_search": "Vyhledávání střídače v místní síti. Může to trvat až minutu."
