@@ -457,7 +457,7 @@
       "no_price_sources": "Er is in Home Assistant geen bekende prijsintegratie gevonden. Kies een sensor bij Energieprijzen.",
       "price_source_invalid": "De instellingen van de prijsbron zijn niet meer geldig. Begin opnieuw.",
       "price_sell_tomorrow": "De instellingen voor energieprijzen zijn opgeslagen. De bron voor de verkoopprijs {source} levert nog geen prijzen voor morgen, terwijl de inkoopprijzen voor morgen al beschikbaar zijn. Tot die er zijn, is het plan voor morgen gebaseerd op de prijzen van de vorige dag.",
-      "hub_unsupported": "Voor deze omvormer is er geen profiel voor besturing via een Modbus-hub."
+      "hub_unsupported": "Het omvormerprofiel voor besturing via een Modbus-hub is niet beschikbaar. Werk de integratie bij."
     },
     "error": {
       "prices_not_usable": "Deze sensor levert op dit moment geen volledige prijsreeks.",
@@ -485,7 +485,8 @@
       "hub_invalid": "Voer de naam van een geconfigureerde Modbus-hub in.",
       "unit_invalid": "Het apparaatadres moet tussen 1 en 247 liggen.",
       "hub_map_incomplete": "De Modbus-sensoren komen niet overeen met het omvormerprofiel. Corrigeer de YAML, herlaad Modbus en verstuur opnieuw.",
-      "hub_identity_unreadable": "De omvormer kon niet worden herkend aan de hand van de sensoren. Controleer de registers en verstuur opnieuw."
+      "hub_identity_unreadable": "De omvormer kon niet worden herkend aan de hand van de sensoren. Controleer de registers en verstuur opnieuw.",
+      "hub_sensors_unavailable": "Sommige gekoppelde sensoren hebben nu geen bruikbare waarde. Controleer de onderstaande sensoren en verstuur opnieuw."
     },
     "progress": {
       "direct_search": "Het lokale netwerk wordt doorzocht op de omvormer. Dit kan tot een minuut duren."

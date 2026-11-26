@@ -457,7 +457,7 @@
       "no_price_sources": "Nu a fost găsită nicio integrare de prețuri cunoscută în Home Assistant. Alege un senzor la Prețurile energiei.",
       "price_source_invalid": "Setările sursei de prețuri nu mai sunt valide. Începe din nou.",
       "price_sell_tomorrow": "Setările prețurilor energiei sunt salvate. Sursa prețului de vânzare {source} nu oferă încă prețuri pentru mâine, deși prețurile de cumpărare pentru mâine sunt deja disponibile. Până când le oferă, planul pentru mâine se va baza pe prețurile din ziua anterioară.",
-      "hub_unsupported": "Acest invertor nu are profil pentru controlul printr-un hub Modbus."
+      "hub_unsupported": "Profilul invertorului pentru controlul printr-un hub Modbus nu este disponibil. Actualizați integrarea."
     },
     "error": {
       "prices_not_usable": "Acest senzor nu oferă acum o serie completă de prețuri.",
@@ -485,7 +485,8 @@
       "hub_invalid": "Introduceți numele unui hub Modbus configurat.",
       "unit_invalid": "Adresa dispozitivului trebuie să fie între 1 și 247.",
       "hub_map_incomplete": "Senzorii Modbus nu se potrivesc cu profilul invertorului. Corectați YAML, reîncărcați Modbus și trimiteți din nou.",
-      "hub_identity_unreadable": "Invertorul nu a putut fi identificat din senzori. Verificați registrele și trimiteți din nou."
+      "hub_identity_unreadable": "Invertorul nu a putut fi identificat din senzori. Verificați registrele și trimiteți din nou.",
+      "hub_sensors_unavailable": "Unii senzori asociați nu au acum o valoare utilizabilă. Verificați senzorii listați mai jos și trimiteți din nou."
     },
     "progress": {
       "direct_search": "Se caută invertorul în rețeaua locală. Poate dura până la un minut."

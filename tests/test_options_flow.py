@@ -98,9 +98,9 @@ def test_paired_entry_shows_menu_without_default():
     r = asyncio.run(flow().async_step_init())
     assert r == {"type": "menu", "step_id": "init", "menu_options": ["forecast", "control", "details", "prices", "price_source", "ev_charger"]}
     c = asyncio.run(flow().async_step_control())
-    # cztery pozycje, żadnej domyślnej („Bezpośrednio” sprawdza dostępność dopiero po wyborze)
+    # trzy pozycje, żadnej domyślnej („Bezpośrednio” sprawdza dostępność dopiero po wyborze)
     assert c == {"type": "menu", "step_id": "control",
-                 "menu_options": ["control_entities", "control_direct", "control_hub", "control_off"]}
+                 "menu_options": ["control_entities", "control_direct", "control_off"]}
 
 
 def test_forecast_step_merges_options_keeps_control():

@@ -457,7 +457,7 @@
       "no_price_sources": "Nie znaleziono w Home Assistancie żadnej znanej integracji cenowej. Wybierz czujnik w Cenach energii.",
       "price_source_invalid": "Ustawienia źródła cen są już nieważne. Zacznij od nowa.",
       "price_sell_tomorrow": "Ustawienia cen energii są zapisane. Źródło ceny sprzedaży {source} nie podaje jeszcze cen na jutro, choć ceny zakupu na jutro są już dostępne. Dopóki ich nie poda, plan na jutro będzie liczony z cen z poprzedniego dnia.",
-      "hub_unsupported": "Ten falownik nie ma profilu do sterowania przez hub Modbus."
+      "hub_unsupported": "Profil falownika do sterowania przez hub Modbus jest niedostępny. Zaktualizuj integrację."
     },
     "error": {
       "prices_not_usable": "Ten czujnik nie dostarcza teraz kompletnej serii cen.",
@@ -485,7 +485,8 @@
       "hub_invalid": "Podaj nazwę skonfigurowanego huba Modbus.",
       "unit_invalid": "Adres urządzenia musi mieścić się w zakresie 1-247.",
       "hub_map_incomplete": "Czujniki Modbus nie pasują do profilu falownika. Popraw YAML, przeładuj Modbus i wyślij ponownie.",
-      "hub_identity_unreadable": "Nie udało się rozpoznać falownika z czujników. Sprawdź rejestry i wyślij ponownie."
+      "hub_identity_unreadable": "Nie udało się rozpoznać falownika z czujników. Sprawdź rejestry i wyślij ponownie.",
+      "hub_sensors_unavailable": "Część zmapowanych czujników nie ma teraz użytecznej wartości. Sprawdź czujniki z listy poniżej i wyślij ponownie."
     },
     "progress": {
       "direct_search": "Wyszukiwanie falownika w sieci lokalnej. Może to potrwać do minuty."

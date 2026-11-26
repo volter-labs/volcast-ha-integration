@@ -37,9 +37,10 @@ from .control import direct_search as ds
 from .control.runtime import async_control_change_allowed, async_no_inverter_integration_now, async_direct_search, map_entities, mapped_with_overrides
 from .control.store import async_installation_salt
 from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_pv_power
-from .core.modbus.identity import device_fingerprint
+from .core.modbus.identity import device_fingerprint, identity_info
 from .core.registers import RegisterImage
-from .core.transports.ha_modbus import HA_MODBUS_KIND, HaModbusConfig, HaModbusTransport
+from .core.transports.ha_modbus import (HA_MODBUS_KIND, HaModbusConfig, HaModbusTransport, MissingRegister,
+                                         RegisterValueError)
 from .core.transports.ha_modbus_map import build_register_map
 from .core.control.caps import entity_mode_options, entity_mode_ready
 from .core.control.select import ProfileChoice
@@ -102,9 +103,14 @@ _LOGGER = logging.getLogger(__name__)
 
 # Sterowanie przez hub `modbus` HA: tylko profil z odczytem/zapisem programów TOU, bez wykrywania (domena `modbus`
 # nigdy nie jest falownikiem w `classify`); fragment YAML czujników surowych leży w dokumentacji repozytorium.
-HUB_PROFILE_ID = "deye-sg"
+HUB_PROFILES = ("deye-sg",)      # profile obsługiwane przez hub; wybór po zgodności tożsamości z czujnikami
 HUB_MODBUS_DOMAIN = "modbus"
-HUB_YAML_DOC = "docs/profiles/deye-sg-ha-modbus.yaml"
+HUB_TEMPLATE_URL = "https://github.com/volter-labs/volcast-ha-integration/blob/main/"
+
+
+def hub_template_path(profile_id: str) -> str:
+    """Ścieżka (w repozytorium) fragmentu YAML czujników surowych dla profilu."""
+    return f"docs/profiles/{profile_id}-ha-modbus.yaml"
 
 
 def compact_ranges(addrs) -> str:
@@ -772,7 +778,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         # powodu rekomendacji). „Bezpośrednio” sprawdza dostępność dopiero po wyborze.
         rt = self._runtime()
         step_id = _CONTROL_STEPS.get(getattr(getattr(rt, "recommendation", None), "reason", None), "control")
-        options = ["control_entities", "control_direct", "control_hub", "control_off"]
+        options = ["control_entities", "control_direct", "control_off"]
+        # ścieżka przez hub `modbus` tylko, gdy integracja jest załadowana (publiczne `hass.config.components`)
+        if HUB_MODBUS_DOMAIN in (getattr(self.hass.config, "components", None) or ()):
+            options.insert(2, "control_hub")
         if getattr(getattr(rt, "choice", None), "integration_domain", None):
             options.append("entity_map")
         return self.async_show_menu(step_id=step_id, menu_options=options)
@@ -894,7 +903,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         except Exception:  # noqa: BLE001 — wnętrze cudzej integracji
             return []
 
-    def _hub_form(self, hub: str | None, unit: int | None, errors: dict[str, str], problems: str = "-") -> ConfigFlowResult:
+    def _hub_form(self, hub: str | None, unit: int | None, errors: dict[str, str], problems: str = "-",
+                  profile_id: str = HUB_PROFILES[0]) -> ConfigFlowResult:
+        saved = self.config_entry.options.get(OPT_DIRECT_TARGET)
+        if hub is None and unit is None and isinstance(saved, Mapping) and saved.get("transport") == HA_MODBUS_KIND:
+            hub, unit = saved.get("hub"), saved.get("unit_id")       # ponowne wejście: podpowiedź zapisanego celu
         hubs = self._modbus_hubs()
         hub_sel: Any = vol.In(hubs) if hubs else str
         schema = vol.Schema({
@@ -903,7 +916,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 vol.Coerce(int), vol.Range(min=1, max=247)),
         })
         return self.async_show_form(step_id="control_hub", data_schema=schema, errors=errors or None,
-                                    description_placeholders={"problems": problems, "yaml_path": HUB_YAML_DOC})
+                                    description_placeholders={"problems": problems, "yaml_path": HUB_TEMPLATE_URL + hub_template_path(profile_id)})
 
     async def async_step_control_hub(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Sterowanie przez hub `modbus` HA użytkownika (transport `ha_modbus`): hub, adres urządzenia i walidacja
@@ -920,35 +933,62 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             errors["unit_id"] = "unit_invalid"
         if errors:
             return self._hub_form(hub if isinstance(hub, str) else None, unit if isinstance(unit, int) else None, errors)
-        profile = next((p for p in await self._async_profiles() if p.id == HUB_PROFILE_ID), None)
-        if profile is None:
+        loaded = await self._async_profiles()
+        profiles = [p for pid in HUB_PROFILES if (p := next((x for x in loaded if x.id == pid), None)) is not None]
+        if not profiles:
             return self.async_abort(reason="hub_unsupported")
-        report = build_register_map(self.hass, profile, device=(hub, unit))
-        if not report.ok:
-            return self._hub_form(hub, unit, {"base": "hub_map_incomplete"}, hub_map_problems(report))
-        fp = await self._hub_fingerprint(profile, hub, unit, report)
-        if fp is None:
-            return self._hub_form(hub, unit, {"base": "hub_identity_unreadable"})
-        target = {"profile_id": profile.id, "transport": HA_MODBUS_KIND, "hub": hub, "unit_id": unit,
-                  "device_fp": fp, "capabilities": {"tou": True}}
-        options = self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
-                                OPT_DIRECT_TRIAL: None})
-        carries = telemetry_carries_pv_power(
-            ProfileChoice(profile, None, None), profile_map={},
-            manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
-        return await self._enable_control(options, carries_pv_power=carries)
+        failure: ConfigFlowResult | None = None
+        for profile in profiles:
+            report = build_register_map(self.hass, profile, device=(hub, unit))
+            if not report.ok:
+                failure = failure or self._hub_form(hub, unit, {"base": "hub_map_incomplete"},
+                                                    hub_map_problems(report), profile.id)
+                continue
+            fp, rated, unreadable = await self._hub_identity(profile, hub, unit, report)
+            if unreadable:
+                failure = failure or self._hub_form(hub, unit, {"base": "hub_sensors_unavailable"},
+                                                    f"Sensors without a usable value: {unreadable}", profile.id)
+                continue
+            if fp is None:
+                failure = failure or self._hub_form(hub, unit, {"base": "hub_identity_unreadable"},
+                                                    profile_id=profile.id)
+                continue
+            target = {"profile_id": profile.id, "transport": HA_MODBUS_KIND, "hub": hub, "unit_id": unit,
+                      "device_fp": fp, "capabilities": {"tou": True}}
+            if rated is not None:
+                target["rated_power_w"] = float(rated)
+            options = self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
+                                    OPT_DIRECT_TRIAL: None})
+            carries = telemetry_carries_pv_power(
+                ProfileChoice(profile, None, None), profile_map={},
+                manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
+            return await self._enable_control(options, carries_pv_power=carries)
+        return failure
 
-    async def _hub_fingerprint(self, profile, hub: str, unit: int, report) -> str | None:
-        """Odcisk urządzenia z rejestrów identyfikacyjnych odczytanych z czujników mapy (jak przy sondzie)."""
+    async def _hub_identity(self, profile, hub: str, unit: int, report) -> tuple[str | None, float | None, str]:
+        """(odcisk, moc znamionowa, niedostępne zakresy) z czujników mapy — tylko odczyty stanów, jak przy sondzie.
+        Odcisk nowego urządzenia odrzuca serial-zaślepkę (jak wykrywanie); zakresy niepuste = czujnik bez wartości."""
         transport = None
         try:
             transport = HaModbusTransport(self.hass, HaModbusConfig(hub=hub, device_address=unit,
                                                                      registers=dict(report.registers)))
+            bad: list[int] = []
+            for start, count in report.mapped_ranges:
+                try:
+                    await transport.read(start, count)
+                except (MissingRegister, RegisterValueError) as err:
+                    bad.extend(getattr(err, "addrs", ()) or range(start, start + count))
+            if bad:
+                return None, None, compact_ranges(bad)
             blocks = {b[0]: await transport.read(b[0], b[1]) for b in profile.modbus.identify_reads}
-            return device_fingerprint(await async_installation_salt(self.hass), profile, RegisterImage.from_blocks(blocks))
+            image = RegisterImage.from_blocks(blocks)
+            fp = device_fingerprint(await async_installation_salt(self.hass), profile, image, reject_placeholder=True)
+            rated = identity_info(profile, image)["rated_power_w"]
+            ok = isinstance(rated, (int, float)) and not isinstance(rated, bool) and rated > 0
+            return fp, (float(rated) if ok else None), ""
         except Exception as err:  # noqa: BLE001 — nieczytelne czujniki: błąd formularza, nie wyjątek
             _LOGGER.debug("Volcast hub identity read failed: %s", type(err).__name__)
-            return None
+            return None, None, ""
         finally:
             if transport is not None:
                 await transport.close()

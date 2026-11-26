@@ -457,7 +457,7 @@
       "no_price_sources": "Aucune intégration de prix connue n'a été trouvée dans Home Assistant. Choisissez un capteur dans Prix de l'énergie.",
       "price_source_invalid": "Les réglages de la source de prix ne sont plus valides. Recommencez.",
       "price_sell_tomorrow": "Les réglages des prix de l'énergie sont enregistrés. La source du prix de vente {source} ne fournit pas encore de prix pour demain, alors que les prix d'achat de demain sont déjà disponibles. D'ici là, le plan de demain se basera sur les prix de la veille.",
-      "hub_unsupported": "Cet onduleur n'a pas de profil pour le pilotage via un hub Modbus."
+      "hub_unsupported": "Le profil d'onduleur pour le pilotage via un hub Modbus n'est pas disponible. Mettez à jour l'intégration."
     },
     "error": {
       "prices_not_usable": "Ce capteur ne fournit pas de série de prix complète pour le moment.",
@@ -485,7 +485,8 @@
       "hub_invalid": "Saisissez le nom d'un hub Modbus configuré.",
       "unit_invalid": "L'adresse de l'appareil doit être comprise entre 1 et 247.",
       "hub_map_incomplete": "Les capteurs Modbus ne correspondent pas au profil de l'onduleur. Corrigez le YAML, rechargez Modbus et validez à nouveau.",
-      "hub_identity_unreadable": "L'onduleur n'a pas pu être identifié à partir des capteurs. Vérifiez les registres et validez à nouveau."
+      "hub_identity_unreadable": "L'onduleur n'a pas pu être identifié à partir des capteurs. Vérifiez les registres et validez à nouveau.",
+      "hub_sensors_unavailable": "Certains capteurs associés n'ont pas de valeur exploitable pour le moment. Vérifiez les capteurs listés ci-dessous et validez à nouveau."
     },
     "progress": {
       "direct_search": "Recherche de l'onduleur sur le réseau local. Cela peut prendre jusqu'à une minute."

@@ -9,10 +9,18 @@
 #   * `input_type: holding`, `data_type: uint16`, one register per sensor;
 #   * no `scale`, `offset`, `precision` or `swap`: the sensor must report the raw 16-bit word, as an integer;
 #   * `slave` equals the device address you enter in Volcast.
-# Sensors you already have for the same registers must be replaced by (or renamed to) these raw ones.
+# Keep your existing sensors: these are additional. Each register needs exactly one `volcast_reg_<addr>` sensor.
+# You may use `device_address:` instead of `slave:` on current Home Assistant versions.
 # Signed values are decoded by Volcast from the raw word, so keep `uint16` for every register.
 # The list covers every register the Deye SG read plan needs (51 registers); a block with one missing
 # register is not read at all.
+#
+# Bus load: 51 sensors polled every 30 s add roughly 1.7 requests per second on the RS485 bus. Keep the
+# recorder small by excluding them (in configuration.yaml):
+#   recorder:
+#     exclude:
+#       entity_globs:
+#         - sensor.volcast_reg_*
 #
 # Replace `slave: 1` with your device address.
 sensors:

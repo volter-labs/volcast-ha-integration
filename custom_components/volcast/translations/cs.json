@@ -457,7 +457,7 @@
       "no_price_sources": "V Home Assistantu nebyla nalezena žádná známá cenová integrace. Vyberte senzor v Cenách energie.",
       "price_source_invalid": "Nastavení zdroje cen už neplatí. Začněte znovu.",
       "price_sell_tomorrow": "Nastavení cen energie je uloženo. Zdroj prodejní ceny {source} zatím neposkytuje ceny na zítřek, přestože nákupní ceny na zítřek už jsou k dispozici. Dokud je neposkytne, bude plán na zítřek vycházet z cen předchozího dne.",
-      "hub_unsupported": "Pro tento střídač neexistuje profil řízení přes hub Modbus."
+      "hub_unsupported": "Profil střídače pro řízení přes hub Modbus není dostupný. Aktualizujte integraci."
     },
     "error": {
       "prices_not_usable": "Tento senzor teď neposkytuje úplnou cenovou řadu.",
@@ -485,7 +485,8 @@
       "hub_invalid": "Zadejte název nakonfigurovaného hubu Modbus.",
       "unit_invalid": "Adresa zařízení musí být v rozmezí 1 až 247.",
       "hub_map_incomplete": "Senzory Modbus neodpovídají profilu střídače. Opravte YAML, znovu načtěte Modbus a odešlete znovu.",
-      "hub_identity_unreadable": "Střídač se nepodařilo rozpoznat ze senzorů. Zkontrolujte registry a odešlete znovu."
+      "hub_identity_unreadable": "Střídač se nepodařilo rozpoznat ze senzorů. Zkontrolujte registry a odešlete znovu.",
+      "hub_sensors_unavailable": "Některé přiřazené senzory nemají právě teď použitelnou hodnotu. Zkontrolujte senzory uvedené níže a odešlete znovu."
     },
     "progress": {
       "direct_search": "Vyhledávání střídače v místní síti. Může to trvat až minutu."

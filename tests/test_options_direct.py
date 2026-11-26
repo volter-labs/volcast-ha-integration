@@ -102,9 +102,9 @@ async def _noop():
 # ── „Bezpośrednio” w menu sterowania ──────────────────────────────────────
 
 
-def test_control_menu_has_four_items_no_default():
+def test_control_menu_has_three_items_no_default():
     r = asyncio.run(flow().async_step_control())
-    assert r["menu_options"] == ["control_entities", "control_direct", "control_hub", "control_off"]
+    assert r["menu_options"] == ["control_entities", "control_direct", "control_off"]
     assert "default" not in r
 
 

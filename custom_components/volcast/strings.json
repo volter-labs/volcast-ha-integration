@@ -457,7 +457,7 @@
       "no_price_sources": "No known price integration was found in Home Assistant. Use Energy prices to pick a sensor.",
       "price_source_invalid": "The price source settings are no longer valid. Start again.",
       "price_sell_tomorrow": "The energy price settings are saved. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices.",
-      "hub_unsupported": "This inverter has no profile for control through a Modbus hub."
+      "hub_unsupported": "The inverter profile for Modbus hub control is not available. Update the integration."
     },
     "error": {
       "prices_not_usable": "This sensor does not provide a complete price series right now.",
@@ -485,7 +485,8 @@
       "hub_invalid": "Enter the name of a configured Modbus hub.",
       "unit_invalid": "The device address must be between 1 and 247.",
       "hub_map_incomplete": "The Modbus sensors do not match the inverter profile. Fix the YAML, reload Modbus and submit again.",
-      "hub_identity_unreadable": "The inverter could not be identified from the sensors. Check the registers and submit again."
+      "hub_identity_unreadable": "The inverter could not be identified from the sensors. Check the registers and submit again.",
+      "hub_sensors_unavailable": "Some mapped sensors have no usable value right now. Check the sensors listed below and submit again."
     },
     "progress": {
       "direct_search": "Searching the local network for the inverter. This can take up to a minute."

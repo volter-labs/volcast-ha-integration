@@ -457,7 +457,7 @@
       "no_price_sources": "In Home Assistant wurde keine bekannte Preisintegration gefunden. Wähle unter Energiepreise einen Sensor.",
       "price_source_invalid": "Die Einstellungen der Preisquelle sind nicht mehr gültig. Beginne neu.",
       "price_sell_tomorrow": "Die Einstellungen der Energiepreise sind gespeichert. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags.",
-      "hub_unsupported": "Für diesen Wechselrichter gibt es kein Profil für die Steuerung über einen Modbus-Hub."
+      "hub_unsupported": "Das Wechselrichterprofil für die Steuerung über einen Modbus-Hub ist nicht verfügbar. Aktualisieren Sie die Integration."
     },
     "error": {
       "prices_not_usable": "Dieser Sensor liefert derzeit keine vollständige Preisreihe.",
@@ -485,7 +485,8 @@
       "hub_invalid": "Geben Sie den Namen eines konfigurierten Modbus-Hubs ein.",
       "unit_invalid": "Die Geräteadresse muss zwischen 1 und 247 liegen.",
       "hub_map_incomplete": "Die Modbus-Sensoren passen nicht zum Wechselrichterprofil. Korrigieren Sie das YAML, laden Sie Modbus neu und senden Sie erneut ab.",
-      "hub_identity_unreadable": "Der Wechselrichter konnte anhand der Sensoren nicht erkannt werden. Prüfen Sie die Register und senden Sie erneut ab."
+      "hub_identity_unreadable": "Der Wechselrichter konnte anhand der Sensoren nicht erkannt werden. Prüfen Sie die Register und senden Sie erneut ab.",
+      "hub_sensors_unavailable": "Einige zugeordnete Sensoren haben derzeit keinen verwertbaren Wert. Prüfen Sie die unten aufgeführten Sensoren und senden Sie erneut ab."
     },
     "progress": {
       "direct_search": "Das lokale Netzwerk wird nach dem Wechselrichter durchsucht. Das kann bis zu einer Minute dauern."

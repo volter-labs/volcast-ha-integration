@@ -457,7 +457,7 @@
       "no_price_sources": "Não foi encontrada nenhuma integração de preços conhecida no Home Assistant. Escolha um sensor em Preços de energia.",
       "price_source_invalid": "As definições da fonte de preços já não são válidas. Comece de novo.",
       "price_sell_tomorrow": "As definições de preços de energia foram guardadas. A fonte do preço de venda {source} ainda não fornece preços para amanhã, embora os preços de compra de amanhã já estejam disponíveis. Até que os forneça, o plano de amanhã será baseado nos preços do dia anterior.",
-      "hub_unsupported": "Este inversor não tem perfil para controlo através de um hub Modbus."
+      "hub_unsupported": "O perfil do inversor para controlo através de um hub Modbus não está disponível. Atualize a integração."
     },
     "error": {
       "prices_not_usable": "Este sensor não fornece neste momento uma série de preços completa.",
@@ -485,7 +485,8 @@
       "hub_invalid": "Introduza o nome de um hub Modbus configurado.",
       "unit_invalid": "O endereço do dispositivo tem de estar entre 1 e 247.",
       "hub_map_incomplete": "Os sensores Modbus não correspondem ao perfil do inversor. Corrija o YAML, recarregue o Modbus e envie novamente.",
-      "hub_identity_unreadable": "Não foi possível identificar o inversor a partir dos sensores. Verifique os registos e envie novamente."
+      "hub_identity_unreadable": "Não foi possível identificar o inversor a partir dos sensores. Verifique os registos e envie novamente.",
+      "hub_sensors_unavailable": "Alguns sensores mapeados não têm neste momento um valor utilizável. Verifique os sensores listados abaixo e envie novamente."
     },
     "progress": {
       "direct_search": "A procurar o inversor na rede local. Pode demorar até um minuto."
