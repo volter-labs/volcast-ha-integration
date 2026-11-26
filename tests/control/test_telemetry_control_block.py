@@ -118,4 +118,23 @@ def test_sender_without_profile_sends_driver_with_only_control():
     s = TelemetrySender(goodwe_hass(), entry, Cloud(), SimpleNamespace(local_switch=False), choice=None,
                         profile_map={}, manual_map={}, grid_negate=False, limits=None, utcnow=lambda: NOW)
     s.control_runtime = rt
-    assert s._driver() == {"control": {"seq": 7, "conflicts": []}}
+    assert s._driver() == {"control": {"seq": 7, "conflicts": []}, "features": ["live"]}
+
+
+def _no_profile_sender(manual=None):
+    entry = SimpleNamespace(entry_id="e1", options={})
+    hass = goodwe_hass()
+    hass.states.set("sensor.my_pv", "1500", {"unit_of_measurement": "W"})
+    return TelemetrySender(hass, entry, Cloud(), SimpleNamespace(local_switch=False), choice=None,
+                           profile_map={}, manual_map=manual or {}, grid_negate=False, limits=None,
+                           utcnow=lambda: NOW)
+
+
+def test_sender_without_profile_and_runtime_still_declares_live_feature():
+    assert _no_profile_sender()._driver() == {"features": ["live"]}
+
+
+def test_live_reading_works_without_profile_from_manual_entities():
+    s = _no_profile_sender({"pv_power_w": "sensor.my_pv"})
+    reading = s.build_live_reading()
+    assert reading is not None and reading["live"] is True and reading["pv_power_w"] == 1500.0
