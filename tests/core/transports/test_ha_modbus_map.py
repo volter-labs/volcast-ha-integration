@@ -214,7 +214,8 @@ async def test_ok_report_gives_a_transport_the_client_can_poll(profile, required
     now = datetime.now(timezone.utc)
     states = {e: SimpleNamespace(state="1", last_updated=now, last_reported=now) for e in rep.registers.values()}
     hass = SimpleNamespace(data={}, states=SimpleNamespace(get=states.get), services=None, bus=None)
-    t = HaModbusTransport(hass, HaModbusConfig("h", 1, rep.registers), sensor_check=lambda e: None)
+    t = HaModbusTransport(hass, HaModbusConfig("h", 1, rep.registers), sensor_check=lambda e: None,
+                          live_only=False)                      # stany stałe — tu tylko pokrycie bloków
     for start, n in rep.mapped_ranges:
         assert len(await t.read(start, n)) == n
 

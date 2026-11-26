@@ -27,6 +27,7 @@ def _client(clock: FakeClock):
     inv = Inverter(clock, _words())
     t = HaModbusTransport(inv.hass, HaModbusConfig(hub="deye_hub", device_address=1, registers=inv.entities),
                           clock=clock, sleep=clock.sleep, utcnow=inv.utcnow)
+    inv.poll_all()                                       # pierwsze odpytanie po starcie transportu
     return inv, RegisterClient(t, DEYE, clock=clock)
 
 

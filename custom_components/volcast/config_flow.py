@@ -1070,8 +1070,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         Odcisk nowego urządzenia odrzuca serial-zaślepkę (jak wykrywanie); zakresy niepuste = czujnik bez wartości."""
         transport = None
         try:
+            # tylko odczyt (bez zapisu i migawki): stany odtworzone po restarcie HA wolno tu czytać od razu — odcisk
+            # i tak sprawdza połączenie sterowania na stanach „żywych” (`HaModbusTransport.live_only`)
             transport = HaModbusTransport(self.hass, HaModbusConfig(hub=hub, device_address=unit,
-                                                                     registers=dict(report.registers)))
+                                                                     registers=dict(report.registers)), live_only=False)
             bad: list[int] = []
             blocks: dict[int, list[int]] = {}
             for start, count in report.mapped_ranges:

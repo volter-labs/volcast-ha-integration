@@ -486,7 +486,7 @@ def lan_client_seen(conn) -> str | None:
     monitor = getattr(conn, "monitor", None)
     if getattr(monitor, "state", None) == "conflict":
         return monitor.reason or "bus"
-    if getattr(conn, "conflict_reason", None) == HUB_SERVICE_WRITE:
+    if getattr(conn, "service_write_conflict", False) is True:
         return HUB_SERVICE_WRITE             # hub `modbus` HA: obce wywołanie usługi zapisu na naszym urządzeniu
     return None
 

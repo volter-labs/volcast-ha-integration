@@ -158,6 +158,13 @@ class Inverter:
         for a in registers:
             self.refresh(a)
 
+    def poll_all(self) -> None:
+        """Odpytanie wszystkich czujników przez hub (po starcie transportu — stany przestają być odtworzone)."""
+        for a, eid in self.entities.items():
+            st = self.hass.states.get(eid)
+            if st is not None and st.state == str(self.bank.get(a)):
+                self.refresh(a)
+
     def add_entity(self, eid: str, *, platform: str = "modbus", entity=None) -> None:
         self.hass.data["entity_registry"].entries[eid] = SimpleNamespace(platform=platform)
         self.hass.data["sensor"].entities[eid] = entity if entity is not None else ModbusRegisterSensor()
@@ -189,7 +196,9 @@ class Inverter:
 def _transport(inv: Inverter, clock: FakeClock, *, registers=None, **kw) -> HaModbusTransport:
     cfg = HaModbusConfig(hub=HUB, device_address=UNIT,
                          registers=registers if registers is not None else inv.entities, **kw)
-    return HaModbusTransport(inv.hass, cfg, clock=clock, sleep=clock.sleep, utcnow=inv.utcnow)
+    t = HaModbusTransport(inv.hass, cfg, clock=clock, sleep=clock.sleep, utcnow=inv.utcnow)
+    inv.poll_all()                                  # pierwsze odpytanie huba po starcie (stany „żywe”)
+    return t
 
 
 @pytest.fixture
@@ -770,6 +779,7 @@ async def test_injected_sensor_check_replaces_the_default(inv, clock):
             raise RuntimeError("boom")              # wyłożone sprawdzenie nie przepuszcza encji
         return "custom" if eid == inv.entities[149] else None
     t = HaModbusTransport(inv.hass, cfg, clock=clock, sleep=clock.sleep, utcnow=inv.utcnow, sensor_check=_check)
+    inv.poll_all()
     assert await t.read(146, 1) == [0xFE]
     with pytest.raises(UnsupportedSensor) as err:
         await t.read(149, 1)

@@ -5,6 +5,7 @@ sterowania, który drabina wysyła przy zmianie szczebla, stanu, stopu albo urz�
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -12,9 +13,10 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import OPT_HUB_CHECK, SIGNAL_CONTROL_STATE_UPDATED
+from .const import OPT_DIRECT_TARGET, OPT_HUB_CHECK, SIGNAL_CONTROL_STATE_UPDATED
 from .core.control import hub_check
 from .core.control.ladder import IDLE, RUNG_WINDOW, STOPPED, VERIFIED
+from .core.transports.ha_modbus import HA_MODBUS_KIND
 from .discovery_entities import _device_info
 
 _ATTRS = ("rung", "state", "since", "next_at", "stop_reason", "migrated")
@@ -46,8 +48,8 @@ class VolcastVerificationSensor(SensorEntity):
         report = options.get(OPT_HUB_CHECK)
         if self._control is not None:
             # Sterowanie działa innym trybem niż hub: stary raport nic już nie mówi o urządzeniu pod sterowaniem.
-            target = options.get("direct_target")
-            if not (isinstance(target, dict) and target.get("transport") == "ha_modbus"):
+            target = options.get(OPT_DIRECT_TARGET)
+            if not (isinstance(target, Mapping) and target.get("transport") == HA_MODBUS_KIND):
                 return None
         return report if isinstance(report, dict) and report else None
 

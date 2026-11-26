@@ -381,10 +381,13 @@ class DirectConnection:
             return self.monitor.reason or "bus"
         if self.static_conflicts:
             return self.static_conflicts[0]
+        return HUB_SERVICE_WRITE if self.service_write_conflict else None
+
+    @property
+    def service_write_conflict(self) -> bool:
+        """Hub HA: obce wywołanie usługi zapisu na naszym hubie i urządzeniu (niezależnie od innych kolizji)."""
         transport = self.client.transport if self.client is not None else None
-        if getattr(transport, "conflict", False) is True:
-            return HUB_SERVICE_WRITE
-        return None
+        return getattr(transport, "conflict", False) is True
 
     @property
     def conflict(self) -> bool:

@@ -153,6 +153,14 @@ class UnsupportedSensor(MissingRegister):
                          f"with unique_id, without slave_count/virtual_count): {listed}{more}")
 
 
+class RegisterNotLive(MissingRegister):
+    """Stan czujnika nie jest jeszcze dowodem odczytu magistrali po starcie transportu (np. wartość odtworzona
+    przez HA po restarcie albo przeładowaniu `modbus`) — rejestr bez wartości do następnego zapisu stanu."""
+
+    def __init__(self, addrs: Sequence[int]) -> None:
+        super().__init__(addrs, "register sensors not polled since start: " + _fmt(tuple(addrs)))
+
+
 class RegisterValueError(TransportError):
     """Błąd konfiguracji czujnika: wartość niecałkowita albo spoza zakresu u16/i16."""
 
@@ -439,7 +447,7 @@ class HaModbusTransport:
 
     def __init__(self, hass: Any, cfg: HaModbusConfig, *, clock: Callable[[], float] = time.monotonic,
                  sleep: Sleep = asyncio.sleep, utcnow: Callable[[], datetime] = _utcnow,
-                 sensor_check: Callable[[str], str | None] | None = None) -> None:
+                 sensor_check: Callable[[str], str | None] | None = None, live_only: bool = True) -> None:
         validate_ha_modbus_config(cfg)
         self.hass = hass
         self.cfg = cfg
@@ -453,6 +461,12 @@ class HaModbusTransport:
             else (lambda eid: bus_sensor_problem(hass, eid))
         # zapisy w toku: adres → (czas zapisu UTC, termin odczytu zwrotnego na zegarze monotonicznym)
         self._pending: dict[int, tuple[datetime, float]] = {}
+        # „żywość” po starcie: encja → (obiekt encji, stempel PIERWSZEGO stanu z wartością, jaki widzieliśmy);
+        # rejestr czytelny dopiero przy stemplu późniejszym (patrz `_live`). `live_only=False` — tylko podgląd
+        # kreatora (bez zapisu i migawki).
+        self.live_only = bool(live_only)
+        self._seen_first: dict[str, tuple[object, datetime]] = {}
+        self._observe_all()
         self._closed = False
         # odczyt: najstarszy stempel czujników ostatniego udanego odczytu (zegar monotoniczny)
         self.last_read_at_mono: float | None = None
@@ -481,6 +495,7 @@ class HaModbusTransport:
         if fc != FC_READ or (unit is not None and unit != self.cfg.device_address):
             raise MissingRegister(addrs)       # mapa: tylko rejestry holding urządzenia huba
         refresh_asked = False
+        self._observe_all()
         while True:
             words, stale = self._image(addrs)
             if not stale:
@@ -506,6 +521,7 @@ class HaModbusTransport:
         missing: list[int] = []
         bad: list[int] = []
         stale: list[int] = []
+        cold: list[int] = []
         unsupported: list[tuple[int, str, str]] = []
         for a in addrs:
             eid = self._registers.get(a)
@@ -513,13 +529,16 @@ class HaModbusTransport:
             if why is not None:
                 unsupported.append((a, eid, why))
                 continue
-            state = self.hass.states.get(eid) if eid is not None else None
+            state = self._state(eid) if eid is not None else None
             w = _word(state)
             if w is None:
                 missing.append(a)
                 continue
             if w is _BAD:
                 bad.append(a)
+                continue
+            if self.live_only and not self._live(eid, state):
+                cold.append(a)
                 continue
             words.append(w)
             pending = self._pending.get(a)
@@ -534,7 +553,55 @@ class HaModbusTransport:
             raise MissingRegister(missing)
         if bad:
             raise RegisterValueError(bad)
+        if cold:
+            raise RegisterNotLive(cold)
         return words, stale
+
+    def _observe_all(self) -> None:
+        """Baza „żywości” dla WSZYSTKICH czujników mapy przy każdym odczycie (nie tylko czytanego bloku): odczyt,
+        który przerwie się na pierwszym bloku, nie może przesunąć bazy pozostałych na późniejsze odpytanie."""
+        if not self.live_only:
+            return
+        for eid in set(self._registers.values()):
+            try:
+                self._live(eid, self._state(eid))
+            except Exception:  # noqa: BLE001 — obserwacja pomocnicza; odczyt i tak sprawdza każdy rejestr
+                pass
+
+    def _state(self, eid: str):
+        return self.hass.states.get(eid)
+
+    def _entity(self, eid: str):
+        """Obiekt encji czujnika (nowy po przeładowaniu `modbus`) albo None."""
+        try:
+            data = getattr(self.hass, "data", None)
+            component = data.get("sensor") if isinstance(data, Mapping) else None
+            return component.get_entity(eid) if component is not None else None
+        except Exception:  # noqa: BLE001 — brak obiektu = nieznany (porównanie z poprzednim)
+            return None
+
+    def _live(self, eid: str, state) -> bool:
+        """Czy stan czujnika dowodzi odczytu magistrali po starcie transportu.
+
+        Czujnik `modbus` (`RestoreSensor`) przy dodaniu encji (start HA, `modbus.reload`) zapisuje wartość sprzed
+        restartu ze ŚWIEŻYM stemplem, a magistralę odpytuje dopiero po połączeniu huba. Pierwszy stan z wartością,
+        jaki widzimy dla danego obiektu encji (przy starcie transportu albo później), może być takim odtworzeniem —
+        jest tylko bazą; dowodem odczytu jest dopiero stan stemplowany PÓŹNIEJ (następne odpytanie). Nowy obiekt
+        encji (przeładowanie) — baza od nowa. Kosztuje najwyżej jedno odpytanie czujnika po starcie."""
+        if _word(state) in (None, _BAD):
+            return False
+        stamp = _stamp(state)
+        if stamp is None:
+            return False
+        entity = self._entity(eid)
+        first = self._seen_first.get(eid)
+        if first is None or first[0] is not entity:
+            self._seen_first[eid] = (entity, stamp)
+            return False
+        try:
+            return stamp > first[1]
+        except TypeError:
+            return False
 
     def _problem(self, eid: str) -> str | None:
         try:

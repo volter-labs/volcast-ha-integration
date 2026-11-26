@@ -198,8 +198,13 @@ class HubHarness(Harness):
                                   rated_power_w=self.rated, store=self.store, clock=self.clock, utcnow=self.utc,
                                   io=self.io)
 
+    scan_on_start = True                             # HA odpytuje czujniki tuż po starcie transportu
+
     def _transport(self, hass, cfg, *, clock):
-        return HaModbusTransport(hass, cfg, clock=clock, sleep=self.clock.sleep, utcnow=self.hub.utcnow)
+        t = HaModbusTransport(hass, cfg, clock=clock, sleep=self.clock.sleep, utcnow=self.hub.utcnow)
+        if self.scan_on_start:
+            self.hub.scan()
+        return t
 
     async def cycle(self, advance: float = 61.0, *, scan=None) -> None:
         self.clock.advance(advance)
@@ -792,5 +797,53 @@ async def test_every_hub_service_write_counts_against_the_nvm_budget(make_hass, 
         n = len(h.service_writes())
         counts = h.ex._memory.budget.counts(h.ex._now_wall())
         assert n > 0 and sum(counts.values()) == n
+    finally:
+        await h.close()
+
+
+# ── restart HA: stany odtworzone (sprzed restartu) ze świeżym stemplem ────
+
+
+@pytest.mark.asyncio
+async def test_restored_states_after_an_ha_restart_give_no_takeover_until_a_real_poll(make_hass, issues):
+    """Po restarcie HA czujniki pokazują słowa sprzed restartu ze świeżym stemplem (odtworzenie), a falownik
+    ma już inne programy TOU. Do pierwszego prawdziwego odpytania: bez tożsamości, odczytu, migawki i zapisu;
+    potem migawka z PRAWDZIWYCH słów."""
+    h = HubHarness(make_hass)
+    h.scan_on_start = False                          # hub jeszcze się nie połączył — brak odpytania
+    restored = {a: h.hub.bank[a] for a in TOU}
+    for a in (166, 167, 172):                        # w czasie przerwy właściciel zmienił programy
+        h.hub.bank[a] = (h.hub.bank[a] + 5) & 0xFFFF
+    live = h.hub.words(TOU)
+    for eid in list(h.hass.data["sensor"].by_id):    # start HA: encje z rejestru jako `unavailable` (zaślepka)
+        h.hass.data["sensor"].by_id[eid] = HubSensor(int(eid.rsplit("_", 1)[1]))
+        h.hass.states.set(eid, "unavailable", h.hub.utcnow())
+    await h.start(raw=TOU_RAW)
+    try:
+        h.clock.advance(1.0)                         # dodanie encji: odtworzone słowa, świeży stempel
+        for a, eid in h.hub.entities.items():
+            h.hass.states.set(eid, restored.get(a, h.hub.bank[a]), h.hub.utcnow())
+        await h.conn.async_poll()
+        await h.ex.async_tick()
+        assert h.conn.identity != "confirmed" and h.conn.reading is None
+        assert not h.ex.owned and h.ex._state.tou_snapshot is None and h.service_writes() == []
+        await h.cycle()                              # pierwsze prawdziwe odpytanie huba
+        await h.ex.async_tick()
+        assert h.conn.identity == "confirmed" and h.ex.owned
+        snap = h.ex._state.tou_snapshot
+        assert [p[2] for p in snap["programs"]] == live[166 - 146:172 - 146]
+        assert [p[3] for p in snap["programs"]] == live[172 - 146:178 - 146]
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_service_write_evidence_survives_a_static_conflict(make_hass, issues):
+    h = await HubHarness(make_hass).start(raw=TOU_RAW)
+    try:
+        await h.hub.foreign_write(167, 40)
+        h.conn.static_conflicts = ("solarman",)              # kolizja statyczna wykryta przy ponownym sprawdzeniu
+        assert h.conn.conflict_reason == "solarman"
+        assert rt_mod.lan_client_seen(h.conn) == "modbus_service_write"   # dowód dla serwera nie ginie
     finally:
         await h.close()
