@@ -12,8 +12,9 @@ znamy): hub wskazany jako transport NIE jest kolizją; kolizją jest każdy, kto
 rejestrów — inny wpis `volcast` na tym samym hubie i urządzeniu (albo z celem sieciowym: może to być ta
 sama bramka), integracja falownika z adresem w sieci lokalnej albo nieustalonym (nie da się porównać),
 wpis `modbus` innego huba i encje zapisu platformy `modbus` (switch, climate, fan, light, cover — piszą
-przez hub bez usługi, więc słuchacz usług transportu ich nie widzi) na naszym hubie i urządzeniu albo
-z hubem/urządzeniem nieustalonym. Obce wywołania usługi `modbus.write_register` łapie transport w pracy.
+przez hub bez usługi, więc słuchacz usług transportu ich nie widzi) na naszym hubie i urządzeniu, które
+piszą do rejestrów sterowania profilu (kod `modbus_write_entity`); hub, urządzenie albo rejestr
+nieustalony = kolizja. Obce wywołania usługi `modbus.write_register` łapie transport w pracy.
 
 W pracy (`ContentionMonitor`, czysta maszyna stanów na licznikach transportu): obce ramki albo
 zerwania połączenia przez drugą stronę (przy działających odczytach) w oknie → stan `conflict`.
@@ -128,14 +129,33 @@ MODBUS_WRITE_DOMAINS: frozenset[str] = frozenset({"switch", "climate", "fan", "l
 MODBUS_DOMAIN = "modbus"
 
 
+HUB_WRITER = "modbus_write_entity"              # kolizja: encja zapisu `modbus` na naszych rejestrach
+
+
 @dataclass(frozen=True)
 class HubWriter:
-    """Encja zapisu platformy `modbus`: hub i adres urządzenia, do którego pisze; None = nieustalone."""
+    """Encja zapisu platformy `modbus`: hub, adres urządzenia i rejestry holding, do których pisze
+    (frozenset() = tylko cewki); None = nieustalone. `entity_id` — tylko lokalnie (zgłoszenie w Naprawach)."""
     hub: str | None
     unit: int | None
+    addrs: frozenset[int] | None = None
+    entity_id: str | None = None
 
-    def __repr__(self) -> str:                  # nazwa huba nie trafia do logów
+    def __repr__(self) -> str:                  # nazwa huba i encji nie trafia do logów
         return "HubWriter()"
+
+
+def conflicting_writers(hub: str, unit: int, writers: Iterable[HubWriter],
+                        write_addrs: frozenset[int] | None) -> list[HubWriter]:
+    """Encje zapisu, które mogą zmienić rejestry, które pisze Volcast: nasz hub i urządzenie (albo nieustalone)
+    i rejestr wspólny z `write_addrs` (albo nieustalony). `write_addrs` None = każdy rejestr."""
+    out = []
+    for w in writers:
+        if not ((w.hub is None or w.hub == hub) and _same_device(unit, w.unit)):
+            continue
+        if w.addrs is None or write_addrs is None or w.addrs & write_addrs:
+            out.append(w)
+    return out
 
 
 def _same_device(unit: int, other) -> bool:
@@ -144,8 +164,10 @@ def _same_device(unit: int, other) -> bool:
 
 
 def hub_static_conflicts(hub: str, unit: int, entries: Iterable[EntrySnap],
-                         writers: Iterable[HubWriter] | None) -> tuple[str, ...]:
-    """Kolizje celu przez hub `modbus` HA (`hub`, adres urządzenia `unit`); () = brak kolizji.
+                         writers: Iterable[HubWriter] | None,
+                         write_addrs: frozenset[int] | None = None) -> tuple[str, ...]:
+    """Kolizje celu przez hub `modbus` HA (`hub`, adres urządzenia `unit`); () = brak kolizji. Encje zapisu
+    `modbus` — kod `HUB_WRITER`, tylko na rejestrach `write_addrs` (None = każdy rejestr).
 
     `writers` None = listy encji zapisu nie dało się ustalić — kolizja (fail-closed).
     """
@@ -165,12 +187,8 @@ def hub_static_conflicts(hub: str, unit: int, entries: Iterable[EntrySnap],
         if e.domain not in CONFLICT_DOMAINS or e.addresses == ():
             continue                                     # wpis bez adresu = integracja chmurowa
         out[e.domain] = None                             # adres w sieci lokalnej albo nieustalony
-    if writers is None:
-        out[MODBUS_DOMAIN] = None
-    else:
-        for w in writers:
-            if (w.hub is None or w.hub == hub) and _same_device(unit, w.unit):
-                out[MODBUS_DOMAIN] = None
+    if writers is None or conflicting_writers(hub, unit, writers, write_addrs):
+        out[HUB_WRITER] = None
     return tuple(out)
 
 

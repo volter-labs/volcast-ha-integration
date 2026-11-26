@@ -300,6 +300,78 @@ def bus_sensor_problem(hass, entity_id: str) -> str | None:
     return None
 
 
+# ── encje integracji `modbus` (atrybuty PRYWATNE — wyłącznie tutaj) ───────
+# Hub (`_hub.name`), adres urządzenia (`_device_address`, starsze HA `_slave`), rejestr (`_address`), typ wejścia
+# (`_input_type`), liczba słów (`_count`), odpytanie (`_scan_interval`), zapis (`_write_type`, `_write_address`,
+# `_brightness_address`, `_color_temp_address`). Brak atrybutu = nieustalone → wołający fail-closed. Kontrakt
+# z prawdziwymi klasami encji HA: `tests_ha/test_ha_modbus_transport_real_ha.py`.
+
+SENSOR_OTHER_DEVICE = "sensor_other_device"      # czujnik czyta z innego huba albo adresu urządzenia niż zapis
+SENSOR_OTHER_REGISTER = "sensor_other_register"  # inny rejestr, rejestry input albo więcej niż jedno słowo
+SENSOR_DEVICE_UNKNOWN = "sensor_device_unknown"  # huba, urządzenia albo rejestru czujnika nie da się ustalić
+_HOLDING = "holding"
+_WRITE_REGISTER_TYPES = frozenset({"write_register", "write_registers"})
+_WRITE_COIL_TYPES = frozenset({"write_coil", "write_coils"})
+
+
+def _plain_int(v) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def modbus_entity_device(entity) -> tuple[str | None, int | None]:
+    """(hub, adres urządzenia) encji `modbus`; None w polu = nieustalone."""
+    hub = getattr(getattr(entity, "_hub", None), "name", None)
+    unit = getattr(entity, "_device_address", getattr(entity, "_slave", None))
+    return (hub if isinstance(hub, str) and hub else None), _plain_int(unit)
+
+
+def modbus_sensor_problem(entity, addr: int, hub: str, unit: int) -> str | None:
+    """None, gdy czujnik dowodnie czyta JEDNO słowo holding `addr` z urządzenia `unit` na hubie `hub` (tym, do
+    którego piszemy); inaczej przyczyna. Nieustalone = `SENSOR_DEVICE_UNKNOWN` (fail-closed)."""
+    if entity is None:
+        return SENSOR_DEVICE_UNKNOWN
+    e_hub, e_unit = modbus_entity_device(entity)
+    e_addr = _plain_int(getattr(entity, "_address", None))
+    if e_hub is None or e_unit is None or e_addr is None:
+        return SENSOR_DEVICE_UNKNOWN
+    if e_hub != hub or e_unit != unit:
+        return SENSOR_OTHER_DEVICE
+    if e_addr != addr or getattr(entity, "_input_type", None) != _HOLDING \
+            or _plain_int(getattr(entity, "_count", None)) != 1:
+        return SENSOR_OTHER_REGISTER
+    return None
+
+
+def modbus_scan_s(entity) -> float | None:
+    """Okres odpytywania czujnika (s) albo None."""
+    v = _plain_int(getattr(entity, "_scan_interval", None))
+    return float(v) if v is not None and v > 0 else None
+
+
+def modbus_writer_registers(entity, domain: str) -> frozenset[int] | None:
+    """Rejestry holding, do których pisze encja zapisu platformy `modbus`; frozenset() = tylko cewki;
+    None = nieustalone (np. `climate` — wiele rejestrów konfiguracji; nieznany typ zapisu)."""
+    if domain == "climate":
+        return None
+    write_type = getattr(entity, "_write_type", None)
+    addr = _plain_int(getattr(entity, "_write_address", getattr(entity, "_address", None)))
+    out: set[int] = set()
+    if write_type in _WRITE_REGISTER_TYPES:
+        if addr is None:
+            return None
+        out.add(addr)
+    elif write_type not in _WRITE_COIL_TYPES:
+        return None
+    if domain == "light":                        # jasność i temperatura barwy — zawsze zapis rejestru
+        for attr in ("_brightness_address", "_color_temp_address"):
+            extra = getattr(entity, attr, None)
+            if extra:
+                if _plain_int(extra) is None:
+                    return None
+                out.add(extra)
+    return frozenset(out)
+
+
 def _schema_fields(hass) -> frozenset[str] | None:
     """Pola schematu zarejestrowanej usługi `modbus.write_register` albo None (nie da się odczytać)."""
     services = None

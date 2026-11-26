@@ -32,7 +32,7 @@ from typing import Any, Callable
 
 from ..modbus.blocks import block_fc, block_unit, read_plan
 from ..registers import FC_HOLDING
-from .ha_modbus import CHECK_FAILED, MODBUS_DOMAIN, bus_sensor_problem
+from .ha_modbus import CHECK_FAILED, MODBUS_DOMAIN, bus_sensor_problem, modbus_scan_s, modbus_sensor_problem
 
 UNIQUE_ID_PREFIX = "volcast_reg_"
 _MAX_ADDR = 0xFFFF
@@ -75,6 +75,7 @@ class MapReport:
     unregistered_sensors: tuple[str, ...]       # czujniki YAML `modbus` bez `unique_id` (wskazówka, lokalnie)
     invalid_entries: int = 0                    # wpisy jawnej mapy odrzucone (zły adres/encja)
     registry_available: bool = True
+    max_scan_s: float | None = None             # najdłuższe odpytywanie czujników mapy (przy `device`)
 
     @property
     def ok(self) -> bool:
@@ -94,6 +95,7 @@ class MapReport:
             "unregistered_count": len(self.unregistered_sensors),
             "invalid_entries": self.invalid_entries,
             "registry_available": self.registry_available,
+            "max_scan_s": self.max_scan_s,
         }
 
 
@@ -149,7 +151,8 @@ def registers_from_registry(hass) -> tuple[dict[int, str], tuple[int, ...]]:
     """(mapa, adresy niejednoznaczne). Czujniki `sensor` platformy `modbus` z `unique_id` `volcast_reg_<adres>`;
     adres z dwiema encjami jest wyłączony z mapy
     (rejestr HA pilnuje unikalności `unique_id`, więc to obrona; zapis z zerami wiodącymi odrzucamy).
-    Konwencja nie wiąże czujnika z hubem ani adresem urządzenia — jeden falownik na konwencję. Brak rejestru encji → pusta mapa."""
+    Konwencja nie wiąże czujnika z hubem ani adresem urządzenia — jeden falownik na konwencję; wiązanie z celem
+    zapisu sprawdza `build_register_map(device=...)`. Brak rejestru encji → pusta mapa."""
     registry = _registry(hass)
     entities = getattr(registry, "entities", None)
     if registry is None or entities is None:
@@ -191,9 +194,19 @@ def unregistered_modbus_sensors(hass) -> tuple[str, ...]:
         return ()
 
 
+def _sensor_entity(hass, entity_id: str):
+    component = hass.data.get("sensor") if isinstance(getattr(hass, "data", None), Mapping) else None
+    return component.get_entity(entity_id) if component is not None else None
+
+
 def build_register_map(hass, profile, *, explicit: Mapping[Any, Any] | None = None,
-                       sensor_check: SensorCheck | None = None) -> MapReport:
-    """Mapa (jawna albo z rejestru encji) + walidacja względem `profile`."""
+                       sensor_check: SensorCheck | None = None,
+                       device: tuple[str, int] | None = None) -> MapReport:
+    """Mapa (jawna albo z rejestru encji) + walidacja względem `profile`.
+
+    `device` = (hub, adres urządzenia) celu zapisu: każdy czujnik mapy musi DOWODNIE czytać z tego huba
+    i urządzenia, swój rejestr holding jako jedno słowo (`modbus_sensor_problem`) — inaczej jest nieobsługiwany
+    (tożsamość i odczyt zwrotny z innego urządzenia niż zapis). Bez `device` — jak dotąd (podgląd kreatora)."""
     check = sensor_check or (lambda eid: bus_sensor_problem(hass, eid))
     invalid = 0
     duplicates: tuple[int, ...] = ()
@@ -212,13 +225,24 @@ def build_register_map(hass, profile, *, explicit: Mapping[Any, Any] | None = No
     duplicates = tuple(sorted(set(duplicates) | set(shared)))
     required = sorted(required_addresses(profile))
     bad: list[UnsupportedEntry] = []
+    scan_all: list[float | None] = []
     for addr in sorted(registers):
         try:
             why = check(registers[addr])
         except Exception as err:  # noqa: BLE001 — wstrzyknięte sprawdzenie nie może przepuścić encji
             why = f"{CHECK_FAILED}: {type(err).__name__}"
+        scans: list[float | None] = []
+        if why is None and device is not None:
+            try:
+                entity = _sensor_entity(hass, registers[addr])
+                why = modbus_sensor_problem(entity, addr, device[0], device[1])
+                scans.append(modbus_scan_s(entity))
+            except Exception as err:  # noqa: BLE001 — sprawdzenie nie może przepuścić encji
+                why = f"{CHECK_FAILED}: {type(err).__name__}"
         if why is not None:
             bad.append(UnsupportedEntry(addr, registers[addr], why))
+        else:
+            scan_all.extend(scans)
     bad_addrs = {u.addr for u in bad}
     blocks = []
     for start, n, fc, unit in _plan(profile):
@@ -237,4 +261,5 @@ def build_register_map(hass, profile, *, explicit: Mapping[Any, Any] | None = No
         unregistered_sensors=unregistered_modbus_sensors(hass) if explicit is None else (),
         invalid_entries=invalid,
         registry_available=available,
+        max_scan_s=(None if not scan_all or None in scan_all else max(scan_all)),
     )

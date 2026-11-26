@@ -214,7 +214,8 @@ def test_drifted_keys_uses_register_quantum():
 # ── statycznie: transport przez hub `modbus` HA (bez adresu IP celu) ──────
 
 
-from custom_components.volcast.core.control.conflict import HubWriter, hub_static_conflicts  # noqa: E402
+from custom_components.volcast.core.control.conflict import (  # noqa: E402
+    HubWriter, conflicting_writers, hub_static_conflicts)
 
 HUB, UNIT = "deye_hub", 1
 
@@ -250,18 +251,33 @@ def test_other_volcast_entry_conflicts_unless_another_hub_or_device():
     assert hub_static_conflicts(HUB, UNIT, [host_target], []) == ("volcast",)       # ta sama bramka? nie wiemy
 
 
-def test_modbus_write_entities_on_our_hub_and_device_conflict():
+WRITES = frozenset(range(146, 178))                     # rejestry, które pisze Volcast (blok TOU)
+
+
+def test_modbus_write_entities_on_our_hub_and_device_conflict_only_on_our_registers():
     # encje zapisu platformy `modbus` piszą przez hub bez usługi — słuchacz usług ich nie widzi
-    assert hub_static_conflicts(HUB, UNIT, [], [HubWriter(HUB, UNIT)]) == ("modbus",)
-    assert hub_static_conflicts(HUB, UNIT, [], [HubWriter(HUB, 0)]) == ("modbus",)        # rozgłoszenie
-    assert hub_static_conflicts(HUB, UNIT, [], [HubWriter(None, UNIT)]) == ("modbus",)    # hub nieustalony
-    assert hub_static_conflicts(HUB, UNIT, [], [HubWriter(HUB, None)]) == ("modbus",)     # urządzenie nieustalone
-    assert hub_static_conflicts(HUB, UNIT, [], [HubWriter(HUB, 2), HubWriter("heat_pump", UNIT)]) == ()
+    def clash(*writers):
+        return hub_static_conflicts(HUB, UNIT, [], list(writers), WRITES)
+    assert clash(HubWriter(HUB, UNIT, frozenset({166}))) == ("modbus_write_entity",)
+    assert clash(HubWriter(HUB, 0, frozenset({146}))) == ("modbus_write_entity",)          # rozgłoszenie
+    assert clash(HubWriter(None, UNIT, frozenset({146}))) == ("modbus_write_entity",)      # hub nieustalony
+    assert clash(HubWriter(HUB, None, frozenset({146}))) == ("modbus_write_entity",)       # urządzenie nieustalone
+    assert clash(HubWriter(HUB, UNIT, None)) == ("modbus_write_entity",)                   # rejestr nieustalony
+    assert clash(HubWriter(HUB, UNIT, frozenset({300}))) == ()                             # inny rejestr
+    assert clash(HubWriter(HUB, UNIT, frozenset())) == ()                                  # cewka, nie rejestr
+    assert clash(HubWriter(HUB, 2, frozenset({146})), HubWriter("heat_pump", UNIT, frozenset({146}))) == ()
+
+
+def test_conflicting_writers_lists_only_the_offending_entities():
+    w1, w2 = HubWriter(HUB, UNIT, frozenset({166}), "switch.a"), HubWriter(HUB, UNIT, frozenset({300}), "switch.b")
+    assert conflicting_writers(HUB, UNIT, [w1, w2], WRITES) == [w1]
+    assert conflicting_writers(HUB, UNIT, [w2], None) == [w2]                # nasze rejestry nieznane — każdy
 
 
 def test_hub_writer_list_unknown_is_a_conflict():
-    assert hub_static_conflicts(HUB, UNIT, [], None) == ("modbus",)
+    assert hub_static_conflicts(HUB, UNIT, [], None, WRITES) == ("modbus_write_entity",)
 
 
 def test_entry_snap_repr_hides_the_hub_name():
     assert HUB not in repr(EntrySnap("volcast", ("",), False, hub=(HUB, UNIT)))
+    assert HUB not in repr(HubWriter(HUB, UNIT, None, "switch.a")) and "switch.a" not in repr(HubWriter(HUB, 1))
