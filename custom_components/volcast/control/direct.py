@@ -47,7 +47,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from ..const import (CONTROL_MODE_DIRECT, DIRECT_POLL_S, DIRECT_SLOW_POLL_S, DOMAIN, OPT_CONTROL_MODE,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL)
-from ..core.control.conflict import (CONFLICT_DOMAINS, HUB_WRITER, MODBUS_DOMAIN, MODBUS_WRITE_DOMAINS, SELF_DOMAIN,
+from ..core.control.conflict import (CONFLICT_DOMAINS, MODBUS_DOMAIN, MODBUS_WRITE_DOMAINS, SELF_DOMAIN,
                                     ContentionMonitor, EntrySnap, HubWriter, conflicting_writers, hub_static_conflicts,
                                     static_conflicts)
 from ..core.discovery.known import HOST_KEYS

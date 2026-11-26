@@ -10,7 +10,6 @@ import homeassistant.util.dt as dt_util
 from custom_components.volcast import config_flow as cf_mod
 from custom_components.volcast import sensor_assignment as sa_mod
 
-from custom_components.volcast.const import DOMAIN
 from custom_components.volcast.verification_entities import VolcastVerificationSensor
 from tests.control.test_ha_modbus_control import HUB, UNIT
 
