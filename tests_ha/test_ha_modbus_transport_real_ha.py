@@ -183,8 +183,8 @@ async def test_private_modbus_entity_attributes_on_real_classes(hass: HomeAssist
     `modbus_writer_registers`) na PRAWDZIWYCH `ModbusRegisterSensor` i `ModbusSwitch` z instalacji HA:
     zmiana nazw w HA da tu porażkę, nie ciche „nieustalone” (które i tak odmówiłoby sterowania)."""
     from custom_components.volcast.core.transports.ha_modbus import (
-        SENSOR_OTHER_DEVICE, SENSOR_OTHER_REGISTER, modbus_entity_device, modbus_scan_s, modbus_sensor_problem,
-        modbus_writer_registers)
+        SENSOR_NOT_RAW, SENSOR_OTHER_DEVICE, SENSOR_OTHER_REGISTER, modbus_entity_device, modbus_scan_s,
+        modbus_sensor_problem, modbus_writer_registers)
     m = modbus_classes
     hub = SimpleNamespace(name="deye_hub")
 
@@ -202,6 +202,11 @@ async def test_private_modbus_entity_attributes_on_real_classes(hass: HomeAssist
     assert modbus_sensor_problem(sensor(input_type="input"), 146, "deye_hub", 1) == SENSOR_OTHER_REGISTER
     assert modbus_sensor_problem(sensor(data_type="uint32"), 146, "deye_hub", 1) == SENSOR_OTHER_REGISTER
     assert modbus_sensor_problem(s, 147, "deye_hub", 1) == SENSOR_OTHER_REGISTER
+    # surowe słowo: int16 przyjęty, skala/przesunięcie/zamiana/precyzja/modyfikatory — nie
+    assert modbus_sensor_problem(sensor(data_type="int16"), 146, "deye_hub", 1) is None
+    for over in ({"scale": 10}, {"scale": 0.1}, {"offset": 5}, {"swap": "byte"}, {"precision": 1},
+                 {"min_value": 0}, {"max_value": 100}, {"nan_value": 65535}, {"zero_suppress": 1}):
+        assert modbus_sensor_problem(sensor(**over), 146, "deye_hub", 1) == SENSOR_NOT_RAW, over
 
     def switch(**over):
         conf = {"name": "export", "address": 166, "slave": 1, **over}

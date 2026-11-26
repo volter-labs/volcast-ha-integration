@@ -201,7 +201,7 @@ def _sensor_entity(hass, entity_id: str):
 
 def build_register_map(hass, profile, *, explicit: Mapping[Any, Any] | None = None,
                        sensor_check: SensorCheck | None = None,
-                       device: tuple[str, int] | None = None) -> MapReport:
+                       device: tuple[str, int] | None = None, hints: bool = True) -> MapReport:
     """Mapa (jawna albo z rejestru encji) + walidacja względem `profile`.
 
     `device` = (hub, adres urządzenia) celu zapisu: każdy czujnik mapy musi DOWODNIE czytać z tego huba
@@ -258,7 +258,8 @@ def build_register_map(hass, profile, *, explicit: Mapping[Any, Any] | None = No
         duplicates=duplicates,
         blocks=tuple(blocks),
         mapped_ranges=tuple((b.start, b.count) for b in blocks if b.readable),
-        unregistered_sensors=unregistered_modbus_sensors(hass) if explicit is None else (),
+        # wskazówka dla kreatora (przegląd wszystkich czujników) — bez niej przy częstym ponownym sprawdzaniu
+        unregistered_sensors=unregistered_modbus_sensors(hass) if explicit is None and hints else (),
         invalid_entries=invalid,
         registry_available=available,
         max_scan_s=(None if not scan_all or None in scan_all else max(scan_all)),

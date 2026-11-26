@@ -302,13 +302,20 @@ def bus_sensor_problem(hass, entity_id: str) -> str | None:
 
 # ── encje integracji `modbus` (atrybuty PRYWATNE — wyłącznie tutaj) ───────
 # Hub (`_hub.name`), adres urządzenia (`_device_address`, starsze HA `_slave`), rejestr (`_address`), typ wejścia
-# (`_input_type`), liczba słów (`_count`), odpytanie (`_scan_interval`), zapis (`_write_type`, `_write_address`,
-# `_brightness_address`, `_color_temp_address`). Brak atrybutu = nieustalone → wołający fail-closed. Kontrakt
-# z prawdziwymi klasami encji HA: `tests_ha/test_ha_modbus_transport_real_ha.py`.
+# (`_input_type`), liczba słów (`_count`), surowa wartość (`_data_type`, `_scale`, `_offset`, `_swap`, `_precision`,
+# `_min_value`, `_max_value`, `_nan_value`, `_zero_suppress`), odpytanie (`_scan_interval`), zapis (`_write_type`,
+# `_write_address`, `_brightness_address`, `_color_temp_address`). Brak atrybutu = nieustalone → wołający
+# fail-closed. Kontrakt z prawdziwymi klasami encji HA: `tests_ha/test_ha_modbus_transport_real_ha.py`.
 
 SENSOR_OTHER_DEVICE = "sensor_other_device"      # czujnik czyta z innego huba albo adresu urządzenia niż zapis
 SENSOR_OTHER_REGISTER = "sensor_other_register"  # inny rejestr, rejestry input albo więcej niż jedno słowo
 SENSOR_DEVICE_UNKNOWN = "sensor_device_unknown"  # huba, urządzenia albo rejestru czujnika nie da się ustalić
+SENSOR_NOT_RAW = "sensor_not_raw"                # wartość czujnika to nie surowe słowo (typ, skala, przesunięcie…)
+_RAW_TYPES = frozenset({"uint16", "int16"})      # int16 daje to samo słowo (transport: U2 → u16)
+_RAW_SETTINGS = ("_data_type", "_scale", "_offset", "_swap", "_precision")
+_NO_SWAP = (None, "none")
+# modyfikatory wartości (nowsze HA); brak atrybutu = brak modyfikatora (starsze HA ich nie miały)
+_VALUE_MODIFIERS = ("_min_value", "_max_value", "_nan_value", "_zero_suppress")
 _HOLDING = "holding"
 _WRITE_REGISTER_TYPES = frozenset({"write_register", "write_registers"})
 _WRITE_COIL_TYPES = frozenset({"write_coil", "write_coils"})
@@ -339,6 +346,29 @@ def modbus_sensor_problem(entity, addr: int, hub: str, unit: int) -> str | None:
     if e_addr != addr or getattr(entity, "_input_type", None) != _HOLDING \
             or _plain_int(getattr(entity, "_count", None)) != 1:
         return SENSOR_OTHER_REGISTER
+    return _raw_problem(entity)
+
+
+_MISSING = object()
+
+
+def _raw_problem(entity) -> str | None:
+    """None, gdy stan czujnika to surowe słowo rejestru: `uint16`/`int16`, skala 1, przesunięcie 0, bez zamiany
+    bajtów/słów, precyzja 0 i bez modyfikatorów (min/max/nan/zero_suppress). Inaczej `SENSOR_NOT_RAW` (obraz,
+    a z nim migawka TOU, która wraca na falownik, byłby przekłamany); nieczytelne ustawienie — nieustalone."""
+    values = {a: getattr(entity, a, _MISSING) for a in _RAW_SETTINGS}
+    if any(v is _MISSING for v in values.values()):
+        return SENSOR_DEVICE_UNKNOWN
+    data_type = values["_data_type"]
+    scale, offset, precision = values["_scale"], values["_offset"], values["_precision"]
+    numeric = (int, float)
+    if str(data_type) not in _RAW_TYPES or values["_swap"] not in _NO_SWAP \
+            or not isinstance(scale, numeric) or isinstance(scale, bool) or scale != 1 \
+            or not isinstance(offset, numeric) or isinstance(offset, bool) or offset != 0 \
+            or precision not in (0, None) or isinstance(precision, bool):
+        return SENSOR_NOT_RAW
+    if any(getattr(entity, a, None) is not None for a in _VALUE_MODIFIERS):
+        return SENSOR_NOT_RAW
     return None
 
 

@@ -98,6 +98,7 @@ class HubSensor:
         self._input_type = "holding"
         self._count = 1
         self._scan_interval = scan
+        self._data_type, self._swap, self._scale, self._offset, self._precision = "uint16", None, 1, 0, 0
 
 
 class FakeHub:
@@ -596,6 +597,8 @@ async def test_map_report_reaches_telemetry_and_diagnostics_without_entity_ids(m
     ({}, (588, {"_hub": SimpleNamespace(name="meter_hub")}), "sensor_other_device"),
     ({}, (166, {"_address": 167}), "sensor_other_register"),
     ({}, (146, {"_hub": None}), "sensor_device_unknown"),
+    ({}, (166, {"_scale": 10, "_swap": "byte"}), "sensor_not_raw"),     # próba recenzenta: obraz TOU przekłamany
+    ({}, (588, {"_offset": 1}), "sensor_not_raw"),
 ])
 async def test_sensors_not_proven_on_the_write_target_refuse_control(make_hass, issues, target_over, sensor_over,
                                                                      cause):
@@ -622,6 +625,49 @@ async def test_target_on_another_hub_and_device_never_writes(make_hass, issues):
         await h.cycle()
         assert h.conn.identity != "confirmed" and not h.ex.owned
         assert h.service_writes() == []
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("addr, attrs", [(3, {"_device_address": 2}), (166, {"_device_address": 2}),
+                                         (588, {"_scale": 10})])
+async def test_sensor_changed_mid_run_stops_identity_at_the_next_poll(make_hass, issues, addr, attrs):
+    """Bez wymuszania terminu tożsamości: czujnik zmieniony pod działającym połączeniem (YAML + przeładowanie
+    `modbus`) zatrzymuje odczyty i zapisy już przy następnym odpytaniu, a nowa własność (migawka TOU) nie
+    powstaje z obrazu innego urządzenia."""
+    h = await HubHarness(make_hass).start(raw=TOU_RAW, consent=False)
+    try:
+        await h.ex.async_tick()
+        assert h.conn.identity == "confirmed" and not h.ex.owned
+        for k, v in attrs.items():
+            setattr(h.hub.sensor(addr), k, v)
+        assert h.conn.identity_check_due()                     # przed zapisem: mapa sprawdzona na nowo
+        await h.cycle(10.0)
+        assert h.conn.identity != "confirmed" and h.conn.reading is None
+        await h.ex.async_set_consent(True)
+        await h.cycle(10.0)
+        await h.ex.async_tick()
+        assert not await h.io.async_identity_ok()
+        assert h.service_writes() == [] and not h.ex.owned and h.ex._state.tou_snapshot is None
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_sensor_moved_while_owning_stops_writes_at_once(make_hass, issues):
+    h = await HubHarness(make_hass).start(raw=TOU_RAW)
+    try:
+        await h.ex.async_tick()
+        assert h.ex.owned
+        snap = copy.deepcopy(h.ex._state.tou_snapshot)
+        n = len(h.service_writes())
+        h.hub.sensor(166)._device_address = 2
+        h.hub.bank[167] = 99                                  # obraz „innego urządzenia” wygląda na obcy zapis
+        await h.cycle(400.0)
+        await h.cycle(400.0)
+        assert len(h.service_writes()) == n and h.ex._state.tou_snapshot == snap
+        assert h.conn.identity != "confirmed"
     finally:
         await h.close()
 

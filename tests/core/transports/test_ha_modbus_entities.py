@@ -11,7 +11,8 @@ import pytest
 from custom_components.volcast.core.modbus.blocks import write_addresses
 from custom_components.volcast.core.profile import load_builtin
 from custom_components.volcast.core.transports.ha_modbus import (
-    SENSOR_DEVICE_UNKNOWN, SENSOR_OTHER_DEVICE, SENSOR_OTHER_REGISTER, modbus_entity_device, modbus_scan_s,
+    SENSOR_DEVICE_UNKNOWN, SENSOR_NOT_RAW, SENSOR_OTHER_DEVICE, SENSOR_OTHER_REGISTER, modbus_entity_device,
+    modbus_scan_s,
     modbus_sensor_problem, modbus_writer_registers)
 from custom_components.volcast.core.transports.ha_modbus_map import build_register_map
 
@@ -21,7 +22,8 @@ DEYE = load_builtin("deye-sg")
 
 def sensor(addr, *, hub=HUB, unit=UNIT, input_type="holding", count=1, scan=30, **over):
     s = SimpleNamespace(_hub=SimpleNamespace(name=hub), _device_address=unit, _address=addr, _input_type=input_type,
-                        _count=count, _scan_interval=scan)
+                        _count=count, _scan_interval=scan, _data_type="uint16", _swap=None, _scale=1, _offset=0,
+                        _precision=0, _min_value=None, _max_value=None, _nan_value=None, _zero_suppress=None)
     for k, v in over.items():
         setattr(s, k, v)
     return s
@@ -45,6 +47,27 @@ def test_sensor_on_the_target_hub_device_and_register_is_bound():
 ])
 def test_sensor_not_proven_on_the_target_device_is_refused(s, cause):
     assert modbus_sensor_problem(s, 146, HUB, UNIT) == cause
+
+
+@pytest.mark.parametrize("over", [
+    {"_data_type": "uint32"}, {"_data_type": "float32"}, {"_data_type": "custom"}, {"_scale": 10},
+    {"_scale": 0.1}, {"_offset": 5}, {"_swap": "byte"}, {"_swap": "word"}, {"_precision": 1},
+    {"_min_value": 0}, {"_max_value": 100}, {"_nan_value": 65535}, {"_zero_suppress": 1}])
+def test_sensor_that_does_not_carry_the_raw_word_is_refused(over):
+    assert modbus_sensor_problem(sensor(146, **over), 146, HUB, UNIT) == SENSOR_NOT_RAW
+
+
+@pytest.mark.parametrize("over", [{"_data_type": "int16"}, {"_swap": "none"}, {"_scale": 1.0, "_offset": 0.0},
+                                  {"_precision": None}])
+def test_raw_sensor_variants_are_accepted(over):
+    assert modbus_sensor_problem(sensor(146, **over), 146, HUB, UNIT) is None
+
+
+@pytest.mark.parametrize("missing", ["_data_type", "_scale", "_offset", "_swap", "_precision"])
+def test_raw_settings_that_cannot_be_read_are_unknown(missing):
+    s = sensor(146)
+    delattr(s, missing)
+    assert modbus_sensor_problem(s, 146, HUB, UNIT) == SENSOR_DEVICE_UNKNOWN
 
 
 def test_older_ha_slave_attribute_is_the_device_address():

@@ -423,6 +423,7 @@ class DirectConnection:
         Dla bramek zapisu to za mało: zapis i decyzja próbna wymagają też `identity == "confirmed"`."""
         now = self._clock() if now_mono is None else now_mono
         self._observe_link()
+        self._hub_binding_lost()
         if self.identity != "confirmed" or self._recheck or self._identity_at is None:
             return True
         limit = IDENTITY_UDP_MAX_AGE_S if self.target.get("transport") == "goodwe_udp" else IDENTITY_MAX_AGE_S
@@ -577,19 +578,19 @@ class DirectConnection:
             return
         await self._start_client(transport)
 
-    def _hub_map(self) -> MapReport:
+    def _hub_map(self, *, hints: bool = True) -> MapReport:
         """Mapa czujników celu przez hub, związana z hubem i urządzeniem ZAPISU: każdy czujnik (także tożsamości)
         musi dowodnie czytać z tego samego huba i adresu urządzenia, do którego piszemy."""
         explicit = self.target.get("registers")
         return build_register_map(self._hass, self.profile,
                                   explicit=explicit if isinstance(explicit, Mapping) else None,
-                                  device=(str(self.target.get("hub")), int(self.target.get("unit_id"))))
+                                  device=(str(self.target.get("hub")), int(self.target.get("unit_id"))), hints=hints)
 
     def _hub_map_valid(self) -> bool:
         """Ponowne sprawdzenie mapy (YAML mógł się zmienić pod działającym połączeniem): zgodna z profilem
         i z celem zapisu oraz ta sama, na której zbudowano transport."""
         try:
-            report = self._hub_map()
+            report = self._hub_map(hints=False)
         except Exception as err:  # noqa: BLE001 — „nie wiemy” = niepotwierdzone
             _LOGGER.debug("Volcast modbus hub map check failed: %s", type(err).__name__)
             return False
@@ -598,13 +599,29 @@ class DirectConnection:
         cfg = getattr(self.client.transport, "cfg", None) if self.client is not None else None
         return report.ok and dict(getattr(cfg, "registers", {}) or {}) == dict(report.registers)
 
+    def _hub_binding_lost(self) -> bool:
+        """Hub HA: mapa sprawdzana na nowo przy KAŻDYM odpytaniu i przed każdą sesją zapisów (tylko lokalne
+        wyszukania w rejestrze encji). Niezgodna → tożsamość `pending`, bez odczytów — żadna decyzja, migawka TOU
+        ani zapis nie powstaje z obrazu innego urządzenia albo przekłamanych czujników. True = utracona."""
+        if not self.hub_mode or self.client is None or self._hub_map_valid():
+            return False
+        if self.identity != "pending":
+            _LOGGER.warning("Volcast direct control: the modbus hub sensors no longer read the raw registers of the "
+                            "controlled device — writes stopped")
+        self.identity = "pending"
+        self._recheck = True
+        self.reading = None
+        return True
+
     def _sync_issue(self, issue_id: str, attr: str, key: str, placeholders: dict | None) -> None:
         """Zgłoszenie w Naprawach: utworzone (z treścią) albo usunięte; bez powtórzeń."""
         try:
             if placeholders is not None:
+                if getattr(self, attr) == placeholders:
+                    return                       # ta sama treść — bez ponownego zgłoszenia przy każdym odpytaniu
                 ir.async_create_issue(self._hass, DOMAIN, issue_id, is_fixable=False, severity=_WARNING,
                                       translation_key=key, translation_placeholders=placeholders)
-                setattr(self, attr, True)
+                setattr(self, attr, dict(placeholders))
             elif getattr(self, attr):
                 ir.async_delete_issue(self._hass, DOMAIN, issue_id)
                 setattr(self, attr, False)
@@ -774,6 +791,7 @@ class DirectConnection:
             self._notify()
             return self.reading
         self._observe_link()
+        self._hub_binding_lost()                       # hub HA: mapa czujników przy każdym odpytaniu
         if self.identity == "confirmed" and self._identity_stale(now):
             self.identity = "pending"                  # UDP: tożsamość co godzinę, przed odczytem stanu
         if self.identity != "confirmed" or self._recheck:
@@ -926,15 +944,8 @@ class DirectConnection:
             return self.identity
         now = self._clock()
         self._identity_tried = now
-        if self.hub_mode and not self._hub_map_valid():
-            # czujniki (także tożsamości) nie czytają już dowodnie z celu zapisu: bez potwierdzenia i bez odczytów
-            if self.identity != "pending":
-                _LOGGER.warning("Volcast direct control: the modbus hub sensors no longer read from the controlled "
-                                "device — writes stopped")
-            self.identity = "pending"
-            self._recheck = True
-            self.reading = None
-            return self.identity
+        if self._hub_binding_lost():
+            return self.identity             # czujniki (także tożsamości) nie czytają dowodnie z celu zapisu
         try:
             fp = await self.client.read_identity()
         except Exception as err:  # noqa: BLE001
