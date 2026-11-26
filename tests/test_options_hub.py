@@ -61,8 +61,27 @@ def test_hub_list_comes_from_the_modbus_integration(monkeypatch):
     assert r["step_id"] == "control_hub"
     schema_keys = {str(k): v for k, v in r["data_schema"].schema.items()}
     assert schema_keys["hub"].container == ["deye_hub", "other"]
+    assert r["description_placeholders"]["yaml_path"] .endswith(
+        "/docs/profiles/deye-sg-ha-modbus.yaml")
+
+
+@pytest.mark.parametrize("version,ref", [
+    ("2.0.0b17", "v2.0.0-beta17"), ("2.0.0", "v2.0.0"), ("1.7.5", "v1.7.5"), ("unknown", "main"), ("", "main"),
+    (None, "main"), ("2.0.0.dev1", "main"), ("2.0.0b", "main"), ("2.0.0rc1", "main")])
+def test_release_ref_maps_the_version_to_a_tag(version, ref):
+    assert cf_mod.release_ref(version) == ref
+
+
+def test_template_link_uses_the_installed_version_tag(monkeypatch):
+    f, _ = hub_flow(monkeypatch)
+
+    async def version(_hass):
+        return "2.0.0b17"
+    monkeypatch.setattr(cf_mod, "async_integration_version", version)
+    r = run(f.async_step_control_hub())
     assert r["description_placeholders"]["yaml_path"] == (
-        "https://github.com/volter-labs/volcast-ha-integration/blob/main/docs/profiles/deye-sg-ha-modbus.yaml")
+        "https://github.com/volter-labs/volcast-ha-integration/blob/v2.0.0-beta17/docs/profiles/"
+        "deye-sg-ha-modbus.yaml")
 
 
 def test_hub_falls_back_to_text_without_the_modbus_integration(monkeypatch):

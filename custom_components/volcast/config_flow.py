@@ -105,7 +105,17 @@ _LOGGER = logging.getLogger(__name__)
 # nigdy nie jest falownikiem w `classify`); fragment YAML czujników surowych leży w dokumentacji repozytorium.
 HUB_PROFILES = ("deye-sg",)      # profile obsługiwane przez hub; wybór po zgodności tożsamości z czujnikami
 HUB_MODBUS_DOMAIN = "modbus"
-HUB_TEMPLATE_URL = "https://github.com/volter-labs/volcast-ha-integration/blob/main/"
+HUB_TEMPLATE_URL = "https://github.com/volter-labs/volcast-ha-integration/blob/{ref}/"
+_RELEASE_VERSION = re.compile(r"(\d+\.\d+\.\d+)(?:b(\d+))?")
+
+
+def release_ref(version: str | None) -> str:
+    """Tag wydania dla wersji integracji: `2.0.0b17` -> `v2.0.0-beta17`, `2.0.0` -> `v2.0.0`; wersja nieznana
+    albo deweloperska -> `main` (bbety wychodzą z gałęzi `release/*` i tagów, nie z `main`)."""
+    m = _RELEASE_VERSION.fullmatch(version or "")
+    if m is None:
+        return "main"
+    return f"v{m.group(1)}-beta{m.group(2)}" if m.group(2) else f"v{m.group(1)}"
 
 
 def hub_template_path(profile_id: str) -> str:
@@ -916,12 +926,14 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 vol.Coerce(int), vol.Range(min=1, max=247)),
         })
         return self.async_show_form(step_id="control_hub", data_schema=schema, errors=errors or None,
-                                    description_placeholders={"problems": problems, "yaml_path": HUB_TEMPLATE_URL + hub_template_path(profile_id)})
+                                    description_placeholders={"problems": problems, "yaml_path": HUB_TEMPLATE_URL.format(
+                                            ref=getattr(self, "_hub_ref", "main")) + hub_template_path(profile_id)})
 
     async def async_step_control_hub(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Sterowanie przez hub `modbus` HA użytkownika (transport `ha_modbus`): hub, adres urządzenia i walidacja
         mapy surowych czujników względem profilu. Ponowne wysłanie formularza = „sprawdź jeszcze raz” (po edycji
         YAML); sterowanie włączamy dopiero przy zgodnej mapie."""
+        self._hub_ref = release_ref(await async_integration_version(self.hass))
         if user_input is None:
             return self._hub_form(None, None, {})
         hub = user_input.get("hub")
