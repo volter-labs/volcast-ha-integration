@@ -11,8 +11,9 @@ import voluptuous as vol
 
 from custom_components.volcast.core.transports.base import LinkDown, RegisterTransport, RequestTimeout
 from custom_components.volcast.core.transports.ha_modbus import (
-    HA_MODBUS_KIND, HaModbusConfig, HaModbusTransport, MissingRegister, RegisterValueError,
-    WriteUnconfirmed, validate_ha_modbus_config)
+    BACKGROUND_TASK_NAME, CHECK_FAILED, HA_MODBUS_KIND, NOT_LOADED, NOT_MODBUS_PLATFORM, NOT_REGISTERED,
+    NOT_SENSOR_DOMAIN, REGISTRY_UNAVAILABLE, SLAVE_SENSOR, HaModbusConfig, HaModbusTransport, MissingRegister,
+    RegisterValueError, UnsupportedSensor, WriteUnconfirmed, bus_sensor_problem, validate_ha_modbus_config)
 from custom_components.volcast.core.transports.modbus_frames import FC_WRITE_MULTIPLE, FC_WRITE_SINGLE
 
 from .helpers import FakeClock
@@ -358,6 +359,7 @@ async def test_unavailable_or_non_numeric_sensor_is_a_missing_register_not_zero(
 
 @pytest.mark.asyncio
 async def test_unmapped_or_absent_entity_is_a_missing_register(inv, clock):
+    inv.add_entity("sensor.gone")                   # zarejestrowany czujnik bez stanu
     t = _transport(inv, clock, registers={148: inv.entities[148], 150: "sensor.gone"})
     with pytest.raises(MissingRegister) as err:
         await t.read(148, 3)
@@ -696,12 +698,12 @@ def _updates(inv) -> list:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("platform,entity", [
-    ("modbus", SlaveSensor()),                      # slave_count / virtual_count
-    ("template", ModbusRegisterSensor()),           # encja innej integracji
-    ("modbus", None),                               # brak w komponencie `sensor`
+@pytest.mark.parametrize("platform,entity,reason", [
+    ("modbus", SlaveSensor(), SLAVE_SENSOR),                       # slave_count / virtual_count
+    ("template", ModbusRegisterSensor(), NOT_MODBUS_PLATFORM),    # encja innej integracji
+    ("modbus", None, NOT_LOADED),                                 # brak w komponencie `sensor`
 ])
-async def test_non_bus_entities_are_missing_and_never_refreshed(inv, clock, platform, entity):
+async def test_non_bus_entities_are_unsupported_and_never_refreshed(inv, clock, platform, entity, reason):
     t = _transport(inv, clock)
     eid = inv.entities[149]
     inv.add_entity(eid, platform=platform, entity=entity)
@@ -709,43 +711,138 @@ async def test_non_bus_entities_are_missing_and_never_refreshed(inv, clock, plat
         del inv.hass.data["sensor"].entities[eid]
     with pytest.raises(WriteUnconfirmed):
         await t.write(148, [1, 2, 3], function=FC_WRITE_MULTIPLE)
-    with pytest.raises(MissingRegister) as err:
+    with pytest.raises(UnsupportedSensor) as err:
         await t.read(148, 3)
-    assert err.value.addrs == (149,) and _updates(inv) == []
-    assert t.image_at_mono([149]) is None
+    assert isinstance(err.value, MissingRegister)                 # wołający nadal fail-closed
+    assert err.value.details == ((149, eid, reason),) and err.value.addrs == (149,)
+    assert eid in str(err.value) and reason in str(err.value)
+    assert _updates(inv) == [] and t.image_at_mono([149]) is None
+
+
+def test_base_sensor_needs_no_private_attributes(inv):
+    """Tylko publiczne cechy: czujnik bazowy bez `_hub` i bez `coordinator` jest przyjmowany."""
+    inv.add_entity("sensor.plain", entity=object())
+    assert bus_sensor_problem(inv.hass, "sensor.plain") is None
 
 
 @pytest.mark.asyncio
-async def test_unregistered_or_non_sensor_entity_is_missing(clock):
+async def test_unregistered_or_non_sensor_entity_is_unsupported(clock):
     inv = Inverter(clock, {146: 1, 147: 2})
-    del inv.hass.data["entity_registry"].entries[inv.entities[146]]
+    del inv.hass.data["entity_registry"].entries[inv.entities[146]]   # czujnik YAML bez unique_id
     t = _transport(inv, clock, registers={146: inv.entities[146], 147: "number.volcast_reg_147"})
     inv.add_entity("number.volcast_reg_147")
     inv.hass.states.set("number.volcast_reg_147", "2", inv.utcnow())
-    with pytest.raises(MissingRegister) as err:
+    with pytest.raises(UnsupportedSensor) as err:
         await t.read(146, 2)
-    assert err.value.addrs == (146, 147)
+    assert err.value.reasons == (NOT_REGISTERED, NOT_SENSOR_DOMAIN)
 
 
 @pytest.mark.asyncio
-async def test_no_entity_registry_fails_closed(inv, clock):
+async def test_no_entity_registry_is_a_distinct_cause(inv, clock):
     inv.hass.data = {}
     t = _transport(inv, clock)
-    with pytest.raises(MissingRegister):
+    with pytest.raises(UnsupportedSensor) as err:
         await t.read(146, 1)
+    assert err.value.reasons == (REGISTRY_UNAVAILABLE,)
 
 
 @pytest.mark.asyncio
-async def test_injected_bus_entity_check_replaces_the_default(inv, clock):
+async def test_broken_check_reports_check_failed_not_silent_missing(inv, clock):
+    class _BrokenComponent:
+        def get_entity(self, _eid):
+            raise AttributeError("api changed")
+    inv.hass.data["sensor"] = _BrokenComponent()
+    t = _transport(inv, clock)
+    with pytest.raises(UnsupportedSensor) as err:
+        await t.read(146, 1)
+    assert err.value.reasons == (f"{CHECK_FAILED}: AttributeError",)
+
+
+@pytest.mark.asyncio
+async def test_injected_sensor_check_replaces_the_default(inv, clock):
     inv.hass.data = {}
     cfg = HaModbusConfig(hub=HUB, device_address=UNIT, registers=inv.entities)
     seen = []
-    t = HaModbusTransport(inv.hass, cfg, clock=clock, sleep=clock.sleep, utcnow=inv.utcnow,
-                          bus_entity=lambda eid: seen.append(eid) or eid != inv.entities[149])
+
+    def _check(eid):
+        seen.append(eid)
+        if eid == inv.entities[166]:
+            raise RuntimeError("boom")              # wyłożone sprawdzenie nie przepuszcza encji
+        return "custom" if eid == inv.entities[149] else None
+    t = HaModbusTransport(inv.hass, cfg, clock=clock, sleep=clock.sleep, utcnow=inv.utcnow, sensor_check=_check)
     assert await t.read(146, 1) == [0xFE]
-    with pytest.raises(MissingRegister):
+    with pytest.raises(UnsupportedSensor) as err:
         await t.read(149, 1)
-    assert set(seen) == {inv.entities[146], inv.entities[149]}
+    assert err.value.reasons == ("custom",)
+    with pytest.raises(UnsupportedSensor) as err:
+        await t.read(166, 1)
+    assert err.value.reasons == (f"{CHECK_FAILED}: RuntimeError",)
+    assert {inv.entities[146], inv.entities[149]} <= set(seen)
+
+
+_CONTRACT = r"""
+import json, sys, types
+from types import SimpleNamespace
+
+
+class _Stub(types.ModuleType):                       # pymodbus nie jest w venv testów; klasy encji go nie używają
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        cls = type(name, (Exception,), {})
+        setattr(self, name, cls)
+        return cls
+
+
+try:
+    import pymodbus  # noqa: F401
+except ImportError:
+    for m in ("pymodbus", "pymodbus.client", "pymodbus.exceptions", "pymodbus.framer", "pymodbus.pdu"):
+        sys.modules[m] = _Stub(m)
+try:
+    from homeassistant.components.modbus import SENSOR_SCHEMA
+    from homeassistant.components.modbus.sensor import ModbusRegisterSensor, SlaveSensor
+    from homeassistant.components.modbus.validators import struct_validator
+    from homeassistant.helpers.entity_registry import RegistryEntry
+except Exception as err:  # noqa: BLE001
+    print(json.dumps({"skip": f"{type(err).__name__}: {err}"}))
+    raise SystemExit(0)
+sys.path.insert(0, sys.argv[1])
+from core.transports.ha_modbus import bus_sensor_problem  # noqa: E402
+
+entry = struct_validator(SENSOR_SCHEMA({"name": "reg 146", "address": 146, "unique_id": "volcast_reg_146",
+                                        "data_type": "uint16", "slave": 1}))
+hub = SimpleNamespace(name="deye_hub")
+base = ModbusRegisterSensor(None, hub, entry, 0)
+with_slaves = ModbusRegisterSensor(None, hub, {**entry, "slave_count": 1}, 1)
+slave = SlaveSensor(SimpleNamespace(), 0, entry)
+entities = {"sensor.base": base, "sensor.with_slaves": with_slaves, "sensor.slave": slave}
+import attr  # noqa: E402
+assert "platform" in attr.fields_dict(RegistryEntry), "RegistryEntry.platform missing"
+reg = {eid: SimpleNamespace(entity_id=eid, platform="modbus") for eid in entities}
+hass = SimpleNamespace(data={"entity_registry": SimpleNamespace(async_get=reg.get),
+                             "sensor": SimpleNamespace(get_entity=entities.get)})
+print(json.dumps({eid: bus_sensor_problem(hass, eid) for eid in entities}))
+"""
+
+
+def test_contract_with_real_home_assistant_modbus_sensor_classes(tmp_path):
+    """Kontrakt na PRAWDZIWYCH klasach HA z venv testów (poza atrapami conftest — osobny proces):
+    czujnik bazowy przyjęty (także z `slave_count`), `SlaveSensor` odrzucony."""
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+    pkg = Path(__file__).resolve().parents[3] / "custom_components" / "volcast"
+    script = tmp_path / "contract.py"
+    script.write_text(_CONTRACT, encoding="utf-8")
+    res = subprocess.run([sys.executable, "-I", str(script), str(pkg)], cwd=str(tmp_path),
+                         capture_output=True, text=True, timeout=120)
+    assert res.returncode == 0, res.stderr[-2000:]
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    if "skip" in out:
+        pytest.skip(f"Home Assistant modbus classes not importable: {out['skip']}")
+    assert out == {"sensor.base": None, "sensor.with_slaves": None, "sensor.slave": SLAVE_SENSOR}
 
 
 # ── wywołanie HA nigdy nie jest anulowane ─────────────────────────────────
@@ -860,3 +957,17 @@ async def test_device_address_preferred_over_deprecated_slave_alias(clock):
     with pytest.raises(WriteUnconfirmed):
         await t.write(146, [0xFF], function=FC_WRITE_MULTIPLE)
     assert "device_address" in inv.hass.services.writes()[0] and "slave" not in inv.hass.services.writes()[0]
+
+
+@pytest.mark.asyncio
+async def test_write_runs_as_a_home_assistant_background_task_when_available(inv, clock):
+    made = []
+
+    def _bg(coro, name):
+        made.append(name)
+        return asyncio.ensure_future(coro)
+    inv.hass.async_create_background_task = _bg
+    t = _transport(inv, clock)
+    with pytest.raises(WriteUnconfirmed):
+        await t.write(146, [0xFF], function=FC_WRITE_MULTIPLE)
+    assert made == [BACKGROUND_TASK_NAME] and inv.bank[146] == 0xFF

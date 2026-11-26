@@ -46,9 +46,13 @@ czytamy od razu, bez względu na wiek.
 WARUNEK mapy: wyłącznie czujniki bazowe platformy `modbus` (`sensor.*`), jeden na rejestr, które same
 czytają swój rejestr przez hub. Czujniki `slave_count`/`virtual_count` (`SlaveSensor`, encja koordynatora)
 i encje innych integracji odrzucamy jak brak rejestru: `update_entity` przepisuje ich stary stan z nowym
-stemplem bez odczytu magistrali (fałszywa świeżość, a dla `SlaveSensor` traceback w logu HA). Sprawdzenie
-— `bus_entity(entity_id)` wstrzyknięte przez warstwę HA; domyślne (`default_bus_entity`) czyta rejestr encji
-i komponent `sensor` z `hass.data` bez importu HA.
+stemplem bez odczytu magistrali (fałszywa świeżość, a dla `SlaveSensor` traceback w logu HA). Taki rejestr
+to `UnsupportedSensor` (podklasa `MissingRegister` — wołający dalej fail-closed) z encją i przyczyną, żeby
+raport mógł wskazać prawdziwy powód (np. czujnik YAML bez `unique_id` nie jest w rejestrze encji).
+Sprawdzenie — `sensor_check(entity_id) -> przyczyna | None` wstrzyknięte przez warstwę HA; domyślne
+(`bus_sensor_problem`) używa wyłącznie publicznych cech: domena `sensor`, wpis w rejestrze encji z platformą
+`modbus`, encja w komponencie `sensor` i brak `coordinator` (publiczny atrybut `CoordinatorEntity` —
+`SlaveSensor`); bez importu HA. Kontrakt pilnuje test na prawdziwych klasach HA z venv testów.
 
 Podpięcie pod połączenie trybu bezpośredniego (ten sam `kind == "direct"`, inny transport):
 * tożsamość — rejestry identyfikacji (Deye: 0, 3–7, 20–21) czytane zwykłym `read`, gdy są w mapie;
@@ -59,7 +63,7 @@ Podpięcie pod połączenie trybu bezpośredniego (ten sam `kind == "direct"`, i
 * `poll_s` połączenia jest poza transportem (odczyt stanu jest lokalny; świeżość daje `scan_interval`
   czujników użytkownika).
 
-W komunikatach wyłącznie adresy rejestrów i nazwy klas błędów — bez encji i nazw huba.
+W komunikatach adresy rejestrów, nazwy klas błędów i (tylko `UnsupportedSensor`) entity_id — bez nazwy huba.
 """
 from __future__ import annotations
 
@@ -98,6 +102,7 @@ DEFAULT_CONFLICT_HOLD_S = 1800.0
 _OWN_RECENT = 64
 EVENT_CALL_SERVICE = "call_service"
 DEFAULT_HUB = "modbus_hub"
+BACKGROUND_TASK_NAME = "volcast modbus hub write"
 _FOREIGN_SERVICES = frozenset({"write_register", "write_coil"})
 
 _NO_VALUE = ("unavailable", "unknown", "")
@@ -118,9 +123,34 @@ _I16_MIN = -0x8000
 class MissingRegister(TransportError):
     """Rejestr bez wartości: brak w mapie, brak encji, niedostępna albo stan nieliczbowy."""
 
-    def __init__(self, addrs: Sequence[int]) -> None:
+    def __init__(self, addrs: Sequence[int], message: str | None = None) -> None:
         self.addrs = tuple(addrs)
-        super().__init__("missing registers: " + _fmt(self.addrs))
+        super().__init__(message or "missing registers: " + _fmt(self.addrs))
+
+
+# Przyczyny `UnsupportedSensor` (stałe — raport kreatora/weryfikacji tłumaczy je dla użytkownika).
+NOT_SENSOR_DOMAIN = "not_sensor_domain"
+REGISTRY_UNAVAILABLE = "entity_registry_unavailable"
+NOT_REGISTERED = "not_in_entity_registry"          # np. czujnik YAML bez `unique_id`
+NOT_MODBUS_PLATFORM = "not_modbus_platform"
+NOT_LOADED = "entity_not_loaded"
+SLAVE_SENSOR = "slave_or_virtual_sensor"            # `slave_count`/`virtual_count`
+CHECK_FAILED = "check_failed"                       # sprawdzenie samo się wyłożyło (zmiana w HA?)
+
+
+class UnsupportedSensor(MissingRegister):
+    """Rejestr zmapowany na encję, która nie jest bazowym czujnikiem huba `modbus` czytającym swój
+    rejestr. `details` — krotki (adres, entity_id, przyczyna)."""
+
+    def __init__(self, details: Sequence[tuple[int, str, str]]) -> None:
+        self.details = tuple(details)
+        self.entity_ids = tuple(d[1] for d in self.details)
+        self.reasons = tuple(d[2] for d in self.details)
+        listed = "; ".join(f"{a} {eid}: {why}" for a, eid, why in self.details[:8])
+        more = " …" if len(self.details) > 8 else ""
+        super().__init__([d[0] for d in self.details],
+                         "register entities are not direct modbus hub sensors (need a modbus platform sensor "
+                         f"with unique_id, without slave_count/virtual_count): {listed}{more}")
 
 
 class RegisterValueError(TransportError):
@@ -240,28 +270,34 @@ def _not_sent(err: BaseException) -> bool:
                for c in type(err).__mro__)
 
 
-def default_bus_entity(hass, entity_id: str) -> bool:
-    """Czy encja to czujnik bazowy platformy `modbus`, który sam czyta rejestr przez hub (nie
-    `SlaveSensor` z `slave_count`/`virtual_count`, nie encja innej integracji). Bez importu HA: rejestr
-    encji (`hass.data["entity_registry"]`) i komponent `sensor` (`hass.data["sensor"]`); czegokolwiek
-    brak → False (fail-closed). Opiera się na budowie encji HA 2024.4–2026.x: czujnik bazowy ma `_hub`,
-    `SlaveSensor` jest encją koordynatora (`coordinator`)."""
+def bus_sensor_problem(hass, entity_id: str) -> str | None:
+    """None, gdy encja to bazowy czujnik platformy `modbus`, który sam czyta swój rejestr przez hub;
+    inaczej przyczyna (stałe wyżej). Wyłącznie publiczne cechy, bez importu HA: domena `sensor`, wpis
+    w rejestrze encji (`hass.data["entity_registry"]`, `RegistryEntry.platform`), encja w komponencie
+    `sensor` (`hass.data["sensor"].get_entity`) i brak `coordinator` — publicznego atrybutu
+    `CoordinatorEntity` (`SlaveSensor` z `slave_count`/`virtual_count` nim jest, czujnik bazowy nie).
+    Wyjątek w sprawdzeniu (np. zmiana API HA) → `CHECK_FAILED`, nie ciche „brak rejestru”."""
     if not isinstance(entity_id, str) or not entity_id.startswith("sensor."):
-        return False
-    data = getattr(hass, "data", None)
-    if not isinstance(data, Mapping):
-        return False
+        return NOT_SENSOR_DOMAIN
     try:
-        registry, component = data.get("entity_registry"), data.get("sensor")
-        entry = registry.async_get(entity_id) if registry is not None else None
-        if entry is None or getattr(entry, "platform", None) != MODBUS_DOMAIN or component is None:
-            return False
-        entity = component.get_entity(entity_id)
-    except Exception:  # noqa: BLE001 — introspekcja; niepewne = nie nasz czujnik
-        return False
-    if entity is None or type(entity).__name__ == "SlaveSensor":
-        return False
-    return getattr(entity, "_hub", None) is not None and not hasattr(entity, "coordinator")
+        data = getattr(hass, "data", None)
+        registry = data.get("entity_registry") if isinstance(data, Mapping) else None
+        if registry is None:
+            return REGISTRY_UNAVAILABLE
+        entry = registry.async_get(entity_id)
+        if entry is None:
+            return NOT_REGISTERED
+        if getattr(entry, "platform", None) != MODBUS_DOMAIN:
+            return NOT_MODBUS_PLATFORM
+        component = data.get("sensor")
+        entity = component.get_entity(entity_id) if component is not None else None
+        if entity is None:
+            return NOT_LOADED
+        if hasattr(entity, "coordinator"):
+            return SLAVE_SENSOR
+    except Exception as err:  # noqa: BLE001 — sprawdzenie, nie ścieżka danych
+        return f"{CHECK_FAILED}: {type(err).__name__}"
+    return None
 
 
 def _schema_fields(hass) -> frozenset[str] | None:
@@ -301,7 +337,7 @@ class HaModbusTransport:
 
     def __init__(self, hass: Any, cfg: HaModbusConfig, *, clock: Callable[[], float] = time.monotonic,
                  sleep: Sleep = asyncio.sleep, utcnow: Callable[[], datetime] = _utcnow,
-                 bus_entity: Callable[[str], bool] | None = None) -> None:
+                 sensor_check: Callable[[str], str | None] | None = None) -> None:
         validate_ha_modbus_config(cfg)
         self.hass = hass
         self.cfg = cfg
@@ -311,7 +347,8 @@ class HaModbusTransport:
         self._sleep = sleep
         self._utcnow = utcnow
         # warunek mapy (czujnik bazowy `modbus`) — warstwa HA może wstrzyknąć własne sprawdzenie
-        self._bus_entity = bus_entity if bus_entity is not None else (lambda eid: default_bus_entity(hass, eid))
+        self._sensor_check = sensor_check if sensor_check is not None \
+            else (lambda eid: bus_sensor_problem(hass, eid))
         # zapisy w toku: adres → (czas zapisu UTC, termin odczytu zwrotnego na zegarze monotonicznym)
         self._pending: dict[int, tuple[datetime, float]] = {}
         self._closed = False
@@ -367,8 +404,14 @@ class HaModbusTransport:
         missing: list[int] = []
         bad: list[int] = []
         stale: list[int] = []
+        unsupported: list[tuple[int, str, str]] = []
         for a in addrs:
-            state = self._sensor_state(a)
+            eid = self._registers.get(a)
+            why = self._problem(eid) if eid is not None else None
+            if why is not None:
+                unsupported.append((a, eid, why))
+                continue
+            state = self.hass.states.get(eid) if eid is not None else None
             w = _word(state)
             if w is None:
                 missing.append(a)
@@ -383,16 +426,24 @@ class HaModbusTransport:
                     del self._pending[a]       # odświeżony po zapisie — dalej zwykły odczyt
                 else:
                     stale.append(a)
+        if unsupported:
+            raise UnsupportedSensor(unsupported)    # przyczyna konfiguracji ważniejsza niż brak wartości
         if missing:
             raise MissingRegister(missing)
         if bad:
             raise RegisterValueError(bad)
         return words, stale
 
+    def _problem(self, eid: str) -> str | None:
+        try:
+            return self._sensor_check(eid)
+        except Exception as err:  # noqa: BLE001 — wstrzyknięte sprawdzenie nie może przepuścić encji
+            return f"{CHECK_FAILED}: {type(err).__name__}"
+
     def _sensor_state(self, addr: int):
         """Stan czujnika rejestru albo None (brak w mapie, encja spoza warunku mapy, brak stanu)."""
         eid = self._registers.get(addr)
-        if eid is None or not self._bus_entity(eid):
+        if eid is None or self._problem(eid) is not None:
             return None
         return self.hass.states.get(eid)
 
@@ -441,7 +492,7 @@ class HaModbusTransport:
             on_send()
         self._own.append(data)
         self.stats.requests += 1
-        call = asyncio.ensure_future(services.async_call(MODBUS_DOMAIN, WRITE_SERVICE, data, blocking=True))
+        call = self._start(services.async_call(MODBUS_DOMAIN, WRITE_SERVICE, data, blocking=True))
         n = len(words)
         try:
             await asyncio.wait_for(asyncio.shield(call), self.cfg.write_timeout_s)
@@ -463,6 +514,14 @@ class HaModbusTransport:
             raise WriteUnconfirmed(f"modbus write outcome unknown: {type(err).__name__}") from None
         self._mark_written(addr, n, device)
         raise WriteUnconfirmed("modbus service does not report the bus result")
+
+    def _start(self, coro) -> asyncio.Future:
+        """Wywołanie usługi jako zadanie śledzone przez HA (`async_create_background_task`), żeby
+        zatrzymanie HA widziało zapis, na który już nie czekamy; bez tej funkcji — zwykłe zadanie."""
+        create = getattr(self.hass, "async_create_background_task", None)
+        if callable(create):
+            return create(coro, BACKGROUND_TASK_NAME)
+        return asyncio.ensure_future(coro)
 
     def _settled(self, call: asyncio.Future, addr: int, count: int, device: int) -> None:
         """Koniec wywołania HA, na które już nie czekamy: zapis w toku od chwili końca (chyba że HA je
