@@ -423,8 +423,13 @@ class VerificationRunner:
         if getattr(getattr(self._ex.io, "conn", None), "conflict", False):
             lad.foreign_write(now)
             return
-        seen = {k: v for k, v in rd.readings.items() if k in self._write_keys()}
         write_end = self._ex.last_write_end
+        at_mono = _number(getattr(rd.source, "at_mono", None))
+        if write_end is not None and at_mono is not None and at_mono <= write_end:
+            # Odczyt sprzed końca naszego zapisu (krok tuż po cyklu z zapisem): ani porównanie, ani nowa baza —
+            # inaczej następny odczyt z naszą wartością wyglądałby na obcy zapis (jak `_reading_fresh` wykonawcy).
+            return
+        seen = {k: v for k, v in rd.readings.items() if k in self._write_keys()}
         if self._seen is not None and write_end == self._seen_write_end \
                 and any(k in seen and seen[k] != v for k, v in self._seen.items()):
             lad.foreign_write(now)

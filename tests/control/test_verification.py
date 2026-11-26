@@ -20,6 +20,7 @@ from tests.control.test_executor_direct import (  # noqa: F401 — `issues` to f
 
 BASELINE_AUTO = 1                                   # GoodWe ET: tryb bazowy `auto` (symulator startuje w 11)
 from tests.core.control.test_ladder import shape_errors
+from tests.core.control.tou_helpers import NOW as TOU_NOW
 
 P = LadderParams(trial_hours=24, window_minutes=15, window_power_w=500)
 
@@ -181,12 +182,13 @@ class FakeIO:
         self.writer = SimpleNamespace(is_ours=lambda cid: cid == "ours")
         self.foreign_cb = None
         self.identity_ok = True
+        self.source = None                           # tryb bezpośredni: odczyt cyklu z `at_mono`
 
     def identity(self):
         return self._identity
 
     def read(self, now):
-        return Reading(dict(self.readings), self.raw_mode, {}, {}, self.soc_age)
+        return Reading(dict(self.readings), self.raw_mode, {}, {}, self.soc_age, self.source)
 
     def identity_confirmed(self):
         return self.identity_ok
@@ -887,5 +889,79 @@ async def test_time_window_reading_from_the_inverter_registers_is_readable(make_
         assert "mode" not in rd.readings and rd.raw_mode is None
         assert ver_mod.tou_block_keys(DEYE_V) <= set(rd.readings)
         assert runner._readable(rd) is True
+    finally:
+        await h.close()
+
+
+# ── próba: odczyt sprzed naszego zapisu nie jest bazą porównania ─────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model, key, ours, foreign", [
+    ("time_window", "tou.2.soc", 80.0, 95.0),
+    ("mode_setpoint", "mode", "eco", "general"),
+])
+async def test_runner_own_write_seen_one_poll_late_is_not_a_foreign_write(monkeypatch, model, key, ours, foreign):
+    """Kolejność z wykonawcy: krok drabiny idzie po cyklu z zapisem, a odczyt to jeszcze odpytanie sprzed
+    zapisu; nasza wartość pojawia się dopiero w następnym odczycie przy tym samym końcu zapisu."""
+    if model == "time_window":
+        io, env = _deye_env(monkeypatch)
+    else:
+        io = FakeIO(kind="direct", identity="direct|goodwe-et|fp")
+        io.conn = SimpleNamespace(conflict=False)
+        env = Env(monkeypatch, FakeExecutor(io))
+    io.source = SimpleNamespace(at_mono=1.0)
+    await env.runner.async_start()
+    await env.step(minutes=1)
+    assert env.state == (3, RUNNING)
+    env.ex.last_write_end = 5.0                                 # nasz zapis; odczyt nadal sprzed niego
+    await env.step(minutes=1)
+    assert env.state == (3, RUNNING)
+    io.source = SimpleNamespace(at_mono=6.0)                    # pierwszy odczyt po zapisie: nasza wartość
+    io.readings[key] = ours
+    await env.step(minutes=1)
+    assert env.state == (3, RUNNING)
+    io.source = SimpleNamespace(at_mono=7.0)                    # potem obca zmiana bez naszego zapisu
+    io.readings[key] = foreign
+    await env.step(minutes=1)
+    assert env.state == (3, STOPPED) and env.runner.ladder.state.stop_reason == "foreign_write"
+
+
+@pytest.mark.asyncio
+async def test_trial_restore_of_the_owner_programs_is_not_a_foreign_write(monkeypatch, make_hass, rtu_tcp_sim,
+                                                                         deye_bank, issues):
+    """Falownik z naszymi programami, drabina od nowa (zmiana profilu): bramka planu zamknięta w próbie →
+    wykonawca przywraca programy właściciela. Krok po tym cyklu widzi odczyt sprzed powrotu, następny —
+    po nim; żaden nie jest obcym zapisem. Dopiero zmiana rejestru TOU z zewnątrz stopuje próbę."""
+    created = []
+    monkeypatch.setattr(ver_mod.ir, "async_create_issue", lambda hass, domain, issue_id, **kw: created.append(kw))
+    monkeypatch.setattr(ver_mod.ir, "async_delete_issue", lambda hass, domain, issue_id: None)
+    monkeypatch.setattr(ver_mod, "async_dispatcher_send", lambda hass, sig: None)
+    owner = deye_bank.read(146, 32)
+    h = await _deye(make_hass, rtu_tcp_sim).start(raw=TOU_RAW)
+    try:
+        h.ex.verification = Gate(True)
+        await h.ex.async_tick()
+        assert h.ex.owned and deye_bank.read(146, 32) != owner
+        await h.cycle()
+        runner = VerificationRunner(SimpleNamespace(data={}), SimpleNamespace(entry_id="e1", options={}), h.ex,
+                                    params=P, start_rung=1, salt=SALT, utcnow=lambda: TOU_NOW,
+                                    track_point=lambda hass, action, when: (lambda: None))
+        await runner.async_start()
+        lad = runner.ladder
+        assert (lad.state.rung, lad.state.state) == (3, RUNNING) and h.ex.verification is runner
+        h.clock.advance(61.0)
+        await h.ex.async_tick()                                 # powrót: bramka planu zamknięta w próbie
+        assert deye_bank.read(146, 32) == owner and not h.ex.owned
+        await runner.async_step()                               # odczyt sprzed powrotu
+        assert (lad.state.rung, lad.state.state) == (3, RUNNING)
+        await h.cycle()                                         # odczyt po powrocie: programy właściciela
+        await runner.async_step()
+        assert (lad.state.rung, lad.state.state) == (3, RUNNING) and created == []
+        soc2 = DEYE_V.raw["write"]["tou_program"]["soc"]["addr"] + 1
+        deye_bank.write(soc2, [deye_bank.read(soc2, 1)[0] + 7])  # obcy zapis programu 2
+        await h.cycle()
+        await runner.async_step()
+        assert (lad.state.rung, lad.state.state) == (3, STOPPED) and lad.state.stop_reason == "foreign_write"
     finally:
         await h.close()
