@@ -7,6 +7,14 @@ Wpis bez żadnego adresu (`()`) to integracja chmurowa — nigdy nie jest kolizj
 domeny falownika z adresem, którego nie da się ustalić (nieparsowalny, nierozwiązywalny — `None`),
 jest kolizją — „nie wiemy” znaczy „ktoś może tam pisać”.
 
+Transport przez hub `modbus` HA (`hub_static_conflicts`, cel bez adresu IP — adresu bramki huba nie
+znamy): hub wskazany jako transport NIE jest kolizją; kolizją jest każdy, kto może pisać do tych samych
+rejestrów — inny wpis `volcast` na tym samym hubie i urządzeniu (albo z celem sieciowym: może to być ta
+sama bramka), integracja falownika z adresem w sieci lokalnej albo nieustalonym (nie da się porównać),
+wpis `modbus` innego huba i encje zapisu platformy `modbus` (switch, climate, fan, light, cover — piszą
+przez hub bez usługi, więc słuchacz usług transportu ich nie widzi) na naszym hubie i urządzeniu albo
+z hubem/urządzeniem nieustalonym. Obce wywołania usługi `modbus.write_register` łapie transport w pracy.
+
 W pracy (`ContentionMonitor`, czysta maszyna stanów na licznikach transportu): obce ramki albo
 zerwania połączenia przez drugą stronę (przy działających odczytach) w oknie → stan `conflict`.
 Ramki protokołu naszego loggera (`stats.unsolicited`, np. heartbeat Solarman V5) NIGDY nie są
@@ -63,6 +71,9 @@ class EntrySnap:
     addresses: tuple[str, ...] | None
     disabled: bool
     is_self: bool = False
+    # Hub `modbus` HA: wpis `volcast` z celem przez hub — (hub, adres urządzenia); wpis `modbus` — (nazwa, None).
+    # None = brak takiego celu (albo nazwy).
+    hub: tuple[str, int | None] | None = None
 
     def __repr__(self) -> str:                  # adresy nie trafiają do logów
         return f"EntrySnap(domain={self.domain!r}, disabled={self.disabled!r}, is_self={self.is_self!r})"
@@ -109,6 +120,57 @@ def static_conflicts(target_host: str, entries: Iterable[EntrySnap]) -> tuple[st
         normed = [_norm(a) for a in e.addresses]
         if None in normed or target in normed:
             out[e.domain] = None
+    return tuple(out)
+
+
+# domeny encji platformy `modbus`, które piszą do rejestrów przez hub (bez usługi `modbus.write_register`)
+MODBUS_WRITE_DOMAINS: frozenset[str] = frozenset({"switch", "climate", "fan", "light", "cover"})
+MODBUS_DOMAIN = "modbus"
+
+
+@dataclass(frozen=True)
+class HubWriter:
+    """Encja zapisu platformy `modbus`: hub i adres urządzenia, do którego pisze; None = nieustalone."""
+    hub: str | None
+    unit: int | None
+
+    def __repr__(self) -> str:                  # nazwa huba nie trafia do logów
+        return "HubWriter()"
+
+
+def _same_device(unit: int, other) -> bool:
+    """Zapis do `other` dociera do naszego urządzenia: ten sam adres, rozgłoszenie (0) albo nieustalony."""
+    return not isinstance(other, int) or isinstance(other, bool) or other in (0, unit)
+
+
+def hub_static_conflicts(hub: str, unit: int, entries: Iterable[EntrySnap],
+                         writers: Iterable[HubWriter] | None) -> tuple[str, ...]:
+    """Kolizje celu przez hub `modbus` HA (`hub`, adres urządzenia `unit`); () = brak kolizji.
+
+    `writers` None = listy encji zapisu nie dało się ustalić — kolizja (fail-closed).
+    """
+    out: dict[str, None] = {}
+    for e in entries:
+        if e.disabled or e.is_self:
+            continue
+        if e.domain == SELF_DOMAIN:
+            if e.addresses == ():
+                continue                                 # wpis bez połączenia bezpośredniego
+            if e.hub is not None and (e.hub[0] != hub or not _same_device(unit, e.hub[1])):
+                continue                                 # inny hub albo inne urządzenie na nim
+            out[e.domain] = None                         # ten sam cel, cel sieciowy albo nieznany
+            continue
+        if e.domain == MODBUS_DOMAIN and e.hub is not None and e.hub[0] == hub:
+            continue                                     # hub wskazany jako transport — nasz
+        if e.domain not in CONFLICT_DOMAINS or e.addresses == ():
+            continue                                     # wpis bez adresu = integracja chmurowa
+        out[e.domain] = None                             # adres w sieci lokalnej albo nieustalony
+    if writers is None:
+        out[MODBUS_DOMAIN] = None
+    else:
+        for w in writers:
+            if (w.hub is None or w.hub == hub) and _same_device(unit, w.unit):
+                out[MODBUS_DOMAIN] = None
     return tuple(out)
 
 

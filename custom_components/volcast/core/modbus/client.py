@@ -23,13 +23,17 @@
   (oraz ponowienie bloku, odczyt z podziału z potwierdzeniem) idą pod jedną sesją na wyłączność
   łącza — krótką, nie na cały cykl, żeby pisarz nie czekał sekund.
 * `at_mono` odczytu to chwila STARTU cyklu (bloki nie są atomowe — zapis mógł wejść między nie).
+  Transport, który zna wiek swojego obrazu rejestrów (`image_at_mono`, np. `ha_modbus` — obraz z czujników
+  HA odświeżanych osobno), daje zamiast tego NAJSTARSZY stempel wszystkich przeczytanych bloków
+  (`last_read_at_mono` po każdym bloku, zegar monotoniczny): obraz w połowie odświeżony po naszym zapisie
+  nie jest „odczytem po zapisie”. Blok bez znanego wieku = blok bez odczytu.
 """
 from __future__ import annotations
 
 import contextlib
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable
 
 from ..registers import RegisterImage
@@ -80,6 +84,9 @@ class RegisterClient:
             transport.recorder = self._on_frame
         # łącze bez korelacji odpowiedzi: kolejność bloków, wyjątek 2 bloku potwierdzany, podział ostrożny
         self._disambiguate = needs_disambiguation(transport)
+        # wiek obrazu podaje transport (`image_at_mono`); w cyklu `read_state` — wiek każdego bloku
+        self._aged = callable(getattr(transport, "image_at_mono", None))
+        self._cycle_ages: list[float] | None = None
         # słowa z ostatnich odczytów całych bloków: adres (adres połączenia) albo (urządzenie, adres)
         self._known: dict[int | tuple[int, int], int] = {}
 
@@ -138,6 +145,11 @@ class RegisterClient:
             raise
         # Próby, które przekroczyły czas przed udaną, też są czasem straconym.
         lost[0] += self._timed_out(stats, before) * timeout
+        if self._cycle_ages is not None:
+            at = getattr(self.transport, "last_read_at_mono", None)
+            if not isinstance(at, (int, float)) or isinstance(at, bool) or not math.isfinite(at):
+                raise TransportError("register image age unknown")
+            self._cycle_ages.append(float(at))
         return out
 
     @staticmethod
@@ -153,10 +165,17 @@ class RegisterClient:
         lost = [0.0]
         frames: list[dict] = []
         blocks: dict[int | tuple[int, int], list[int]] = {}
-        last_err: TransportError | None = None
         plan = read_plan(self.profile, exclude=self.unreadable)
         if self._disambiguate:
             plan = poll_order(self.profile, plan)
+        self._cycle_ages = [] if self._aged else None
+        try:
+            return await self._read_state(plan, started, started_utc, lost, frames, blocks)
+        finally:
+            self._cycle_ages = None
+
+    async def _read_state(self, plan, started, started_utc, lost, frames, blocks) -> DirectReading:
+        last_err: TransportError | None = None
         for i, block in enumerate(plan):
             try:
                 if self._disambiguate:
@@ -181,8 +200,11 @@ class RegisterClient:
         self.last_frames = frames
         if not blocks:
             raise last_err or TransportError("nothing read")
-        return build_reading(self.profile, RegisterImage.from_blocks(blocks),
-                             at_mono=started, at_utc=started_utc)
+        at_mono, at_utc = started, started_utc
+        if self._cycle_ages:
+            at_mono = min(self._cycle_ages)
+            at_utc = started_utc + timedelta(seconds=at_mono - started)
+        return build_reading(self.profile, RegisterImage.from_blocks(blocks), at_mono=at_mono, at_utc=at_utc)
 
     async def _read_split(self, block, blocks, frames, lost) -> TransportError | None:
         """Blok z dziurą nieobsługiwaną przez urządzenie → zakresy kluczy osobno.
