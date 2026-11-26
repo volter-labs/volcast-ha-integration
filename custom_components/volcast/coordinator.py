@@ -198,6 +198,10 @@ class VolcastData:
     production_source: str | None = None
     production_source_detail: str | None = None
     calibration: dict[str, Any] | None = None
+    # Dzisiejszy uzysk i reszta dnia (doba konta po stronie serwera); brak → None
+    actual_so_far_kwh: float | None = None
+    remaining_kwh: float | None = None
+    expected_total_kwh: float | None = None
     # Atrybucja źródła danych: tekst z API (pole top-level) bez zmian, a bez niego domyślna
     attribution: str = DEFAULT_ATTRIBUTION
 
@@ -469,7 +473,17 @@ def _parse_response(raw: dict[str, Any], hass: HomeAssistant) -> VolcastData:
         attribution=_attribution(raw.get("attribution")),
         # kubełki mogą mieć samples: null — przekazujemy bez ingerencji
         calibration=attrs.get("calibration"),
+        actual_so_far_kwh=_kwh(attrs.get("actual_so_far_kwh")),
+        remaining_kwh=_kwh(attrs.get("remaining_kwh")),
+        expected_total_kwh=_kwh(attrs.get("expected_total_kwh")),
     )
+
+
+def _kwh(value: Any) -> float | None:
+    """Liczba kWh z odpowiedzi API; brak albo nie-liczba = None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+        return None
+    return float(value)
 
 
 def _attribution(value: Any) -> str:

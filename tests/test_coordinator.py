@@ -611,3 +611,13 @@ class TestAttribution:
 
     def test_error_data_has_default_attribution(self):
         assert _error_data("Premium required").attribution == "Weather: Open-Meteo"
+
+
+def test_parse_response_reads_today_yield_split_and_tolerates_absence():
+    raw = _make_api_response(forecast=[])
+    result = _parse_response(raw, FakeHass())
+    assert result.actual_so_far_kwh is None and result.remaining_kwh is None and result.expected_total_kwh is None
+    raw["attributes"].update({"actual_so_far_kwh": 1.9, "remaining_kwh": 8.1, "expected_total_kwh": "x"})
+    result = _parse_response(raw, FakeHass())
+    assert result.actual_so_far_kwh == 1.9 and result.remaining_kwh == 8.1
+    assert result.expected_total_kwh is None

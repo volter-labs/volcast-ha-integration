@@ -280,6 +280,11 @@ class VolcastEnergyTodaySensor(VolcastBaseSensor):
                 for d in self._data.forecast
             ]
             attrs["nowcast_applied"] = self._data.nowcast_applied
+            # Uzysk dziś i reszta dnia (stan sensora bez zmian); pola nieobecne, gdy serwer ich nie wysłał
+            for key in ("actual_so_far_kwh", "remaining_kwh", "expected_total_kwh"):
+                value = getattr(self._data, key)
+                if value is not None:
+                    attrs[key] = value
         return attrs
 
 
