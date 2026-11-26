@@ -556,6 +556,14 @@
       "title": "Volcast konnte die direkte Wechselrichter-Verbindung nicht starten",
       "description": "Die Direktverbindung zum Wechselrichter konnte wegen eines unerwarteten Fehlers nicht gestartet werden. Volcast versucht es einige Male erneut; bis die Verbindung steht, kann es Wechselrichter-Einstellungen weder ändern noch zurücksetzen. Falls das so bleibt, lade Volcast neu und prüfe die Home-Assistant-Logs."
     },
+    "ha_modbus_map": {
+      "title": "Volcast kann den Wechselrichter nicht über die Modbus-Hub-Sensoren steuern",
+      "description": "Volcast steuert diesen Wechselrichter über deinen Modbus-Hub in Home Assistant und liest ihn über Rohregister-Sensoren. Einige benötigte Register fehlen oder ihre Sensoren lesen nicht von dem Wechselrichter, auf den Volcast schreibt (gleicher Hub und gleiche Geräteadresse, ein Holding-Register pro Sensor): {registers}. Bis das behoben ist, ändert Volcast keine Wechselrichter-Einstellungen. Ergänze oder korrigiere die Sensoren aus dem Volcast-YAML-Ausschnitt und lade Volcast neu."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Eine Modbus-Entität schreibt in die Register, die Volcast steuert",
+      "description": "Diese Modbus-Entitäten am selben Hub und Gerät können in die Wechselrichter-Register schreiben, die Volcast steuert (Registernummern, ? = unbekanntes Register): {entities}. Solange sie aktiv sind, ändert Volcast keine Wechselrichter-Einstellungen, damit sich zwei Programme nicht gegenseitig überschreiben. Deaktiviere sie unter Einstellungen → Entitäten oder entferne sie aus deiner Modbus-YAML."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast muss wissen, welche Sensoren verwendet werden sollen",
       "fix_flow": {

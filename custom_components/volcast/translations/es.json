@@ -556,6 +556,14 @@
       "title": "Volcast no pudo iniciar la conexión directa con el inversor",
       "description": "La conexión directa con el inversor no pudo iniciarse por un error inesperado. Volcast lo reintenta unas cuantas veces; hasta que se conecte, no puede cambiar ni devolver los ajustes del inversor. Si esto continúa, recarga Volcast y revisa los registros de Home Assistant."
     },
+    "ha_modbus_map": {
+      "title": "Volcast no puede controlar el inversor con los sensores del hub Modbus",
+      "description": "Volcast controla este inversor a través de tu hub Modbus de Home Assistant y lo lee con sensores de registros sin procesar. Faltan algunos registros necesarios o sus sensores no leen del inversor en el que Volcast escribe (el mismo hub y la misma dirección de dispositivo, un registro holding por sensor): {registers}. Hasta que se corrija, Volcast no cambia los ajustes del inversor. Añade o corrige los sensores del fragmento YAML de Volcast y recarga Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Una entidad Modbus escribe en los registros que controla Volcast",
+      "description": "Estas entidades Modbus en el mismo hub y dispositivo pueden escribir en los registros del inversor que controla Volcast (números de registro, ? = registro desconocido): {entities}. Mientras estén activas, Volcast no cambia los ajustes del inversor, para que dos programas no se sobrescriban. Desactívalas en Ajustes → Entidades o quítalas de tu YAML de Modbus."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast necesita saber qué sensores usar",
       "fix_flow": {

@@ -556,6 +556,14 @@
       "title": "Volcast nemohl spustit přímé připojení ke střídači",
       "description": "Přímé připojení ke střídači se kvůli neočekávané chybě nepodařilo spustit. Volcast to několikrát zopakuje; dokud se nepřipojí, nemůže měnit ani vracet nastavení střídače. Pokud to trvá, znovu načtěte Volcast a zkontrolujte protokoly Home Assistantu."
     },
+    "ha_modbus_map": {
+      "title": "Volcast nemůže řídit střídač přes senzory Modbus hubu",
+      "description": "Volcast řídí tento střídač přes váš Modbus hub v Home Assistantu a čte ho ze surových senzorů registrů. Některé potřebné registry chybějí nebo jejich senzory nečtou ze střídače, do kterého Volcast zapisuje (stejný hub a adresa zařízení, jeden holding registr na senzor): {registers}. Dokud to nebude opraveno, Volcast nemění nastavení střídače. Přidejte nebo opravte senzory z YAML ukázky Volcast a pak Volcast znovu načtěte."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Entita Modbus zapisuje do registrů, které řídí Volcast",
+      "description": "Tyto entity Modbus na stejném hubu a zařízení mohou zapisovat do registrů střídače, které řídí Volcast (čísla registrů, ? = neznámý registr): {entities}. Dokud jsou aktivní, Volcast nemění nastavení střídače, aby se dva programy navzájem nepřepisovaly. Vypněte je v Nastavení → Entity nebo je odstraňte z vašeho Modbus YAML."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast potřebuje vědět, které senzory použít",
       "fix_flow": {

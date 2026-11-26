@@ -556,6 +556,14 @@
       "title": "Volcast kon de directe omvormerverbinding niet starten",
       "description": "De directe verbinding met de omvormer kon door een onverwachte fout niet starten. Volcast probeert het een paar keer opnieuw; totdat er verbinding is, kan het omvormerinstellingen niet wijzigen of terugzetten. Blijft dit zo, laad Volcast dan opnieuw en controleer de Home Assistant-logs."
     },
+    "ha_modbus_map": {
+      "title": "Volcast kan de omvormer niet via de Modbus-hubsensoren aansturen",
+      "description": "Volcast stuurt deze omvormer aan via je Modbus-hub in Home Assistant en leest hem uit via ruwe registersensoren. Sommige benodigde registers ontbreken, of hun sensoren lezen niet van de omvormer waarnaar Volcast schrijft (dezelfde hub en hetzelfde apparaatadres, één holding-register per sensor): {registers}. Tot dit is opgelost wijzigt Volcast geen omvormerinstellingen. Voeg de sensoren uit het Volcast-YAML-fragment toe of corrigeer ze en herlaad Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Een Modbus-entiteit schrijft naar de registers die Volcast aanstuurt",
+      "description": "Deze Modbus-entiteiten op dezelfde hub en hetzelfde apparaat kunnen schrijven naar de omvormerregisters die Volcast aanstuurt (registernummers, ? = onbekend register): {entities}. Zolang ze actief zijn wijzigt Volcast geen omvormerinstellingen, zodat twee programma's elkaar niet overschrijven. Schakel ze uit via Instellingen → Entiteiten of verwijder ze uit je Modbus-YAML."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast moet weten welke sensoren gebruikt moeten worden",
       "fix_flow": {

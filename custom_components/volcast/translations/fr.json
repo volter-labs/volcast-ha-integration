@@ -556,6 +556,14 @@
       "title": "Volcast n'a pas pu démarrer la connexion directe à l'onduleur",
       "description": "La connexion directe à l'onduleur n'a pas pu démarrer à cause d'une erreur inattendue. Volcast réessaie plusieurs fois ; tant qu'il n'est pas connecté, il ne peut ni modifier ni rétablir les réglages de l'onduleur. Si cela persiste, rechargez Volcast et vérifiez les journaux de Home Assistant."
     },
+    "ha_modbus_map": {
+      "title": "Volcast ne peut pas piloter l'onduleur via les capteurs du hub Modbus",
+      "description": "Volcast pilote cet onduleur via votre hub Modbus Home Assistant et le lit avec des capteurs de registres bruts. Certains registres nécessaires manquent, ou leurs capteurs ne lisent pas l'onduleur sur lequel Volcast écrit (même hub et même adresse d'appareil, un registre holding par capteur) : {registers}. Tant que ce n'est pas corrigé, Volcast ne modifie pas les réglages de l'onduleur. Ajoutez ou corrigez les capteurs de l'extrait YAML Volcast, puis rechargez Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Une entité Modbus écrit dans les registres pilotés par Volcast",
+      "description": "Ces entités Modbus sur le même hub et le même appareil peuvent écrire dans les registres de l'onduleur pilotés par Volcast (numéros de registre, ? = registre inconnu) : {entities}. Tant qu'elles sont actives, Volcast ne modifie pas les réglages de l'onduleur, pour que deux programmes ne s'écrasent pas. Désactivez-les dans Paramètres → Entités ou retirez-les de votre YAML Modbus."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast doit savoir quels capteurs utiliser",
       "fix_flow": {

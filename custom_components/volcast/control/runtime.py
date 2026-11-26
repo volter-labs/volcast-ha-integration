@@ -79,7 +79,7 @@ from ..core.profile import ORIGIN_FEED_ENDORSED, load_builtin, profile_from_dict
 from ..registry_compat import all_devices, device_config_entry_ids
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
-from .direct import DirectConnection, serial_identity
+from .direct import HUB_SERVICE_WRITE, DirectConnection, serial_identity
 from .conflicts import ConflictMonitor
 from .executor import ControlGaps, VolcastExecutor
 from .ha_writer import EntityServiceWriter
@@ -461,8 +461,7 @@ class ControlRuntime:
 _TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp", "hub")
 # Adres tego samego egzemplarza (odcisk z seriala, `serial_identity`): jego zmiana to nie zmiana sterowania —
 # własność nie zależy od adresu (`DirectIO.owner`), więc bez powrotu przez starego wykonawcę po martwym łączu.
-# Nazwa huba `modbus` jest takim adresem (ten sam falownik pod przemianowanym hubem).
-_TARGET_ADDRESS = ("host", "logger_serial", "hub")
+_TARGET_ADDRESS = ("host", "logger_serial")
 
 
 def address_clashes(rt: ControlRuntime) -> tuple[str, ...]:
@@ -487,6 +486,8 @@ def lan_client_seen(conn) -> str | None:
     monitor = getattr(conn, "monitor", None)
     if getattr(monitor, "state", None) == "conflict":
         return monitor.reason or "bus"
+    if getattr(conn, "conflict_reason", None) == HUB_SERVICE_WRITE:
+        return HUB_SERVICE_WRITE             # hub `modbus` HA: obce wywołanie usługi zapisu na naszym urządzeniu
     return None
 
 

@@ -572,6 +572,14 @@
       "title": "Volcast could not start the direct inverter connection",
       "description": "The direct connection to the inverter failed to start because of an unexpected error. Volcast retries a few times; until it connects, it cannot change or return the inverter settings. If this stays, reload Volcast and check the Home Assistant logs."
     },
+    "ha_modbus_map": {
+      "title": "Volcast cannot control the inverter through the Modbus hub sensors",
+      "description": "Volcast controls this inverter through your Home Assistant Modbus hub and reads it from raw register sensors. Some registers it needs are missing, or their sensors do not read from the inverter it writes to (the same hub and device address, one holding register per sensor): {registers}. Volcast does not change inverter settings until this is fixed. Add or correct the sensors from the Volcast YAML snippet, then reload Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "A Modbus entity writes to the registers Volcast controls",
+      "description": "These Modbus entities on the same hub and device can write to the inverter registers Volcast controls (register numbers, ? = unknown register): {entities}. Volcast does not change inverter settings while they are active, so two programs do not overwrite each other. Disable them in Settings → Entities or remove them from your Modbus YAML."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast needs to know which sensors to use",
       "fix_flow": {

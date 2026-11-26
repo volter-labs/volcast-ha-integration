@@ -556,6 +556,14 @@
       "title": "Volcast nie mógł uruchomić bezpośredniego połączenia z falownikiem",
       "description": "Bezpośrednie połączenie z falownikiem nie uruchomiło się z powodu nieoczekiwanego błędu. Volcast ponawia próbę kilka razy; do czasu połączenia nie może zmieniać ani przywracać ustawień falownika. Jeśli problem trwa, przeładuj Volcast i sprawdź logi Home Assistanta."
     },
+    "ha_modbus_map": {
+      "title": "Volcast nie może sterować falownikiem przez czujniki huba Modbus",
+      "description": "Volcast steruje tym falownikiem przez hub Modbus w Home Assistancie i odczytuje go z surowych czujników rejestrów. Brakuje części potrzebnych rejestrów albo ich czujniki nie czytają z falownika, do którego Volcast zapisuje (ten sam hub i adres urządzenia, jeden rejestr holding na czujnik): {registers}. Do czasu poprawki Volcast nie zmienia ustawień falownika. Dodaj lub popraw czujniki z fragmentu YAML Volcast, a potem przeładuj Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Encja Modbus zapisuje rejestry, którymi steruje Volcast",
+      "description": "Te encje Modbus na tym samym hubie i urządzeniu mogą zapisywać rejestry falownika, którymi steruje Volcast (numery rejestrów, ? = rejestr nieznany): {entities}. Dopóki są aktywne, Volcast nie zmienia ustawień falownika, żeby dwa programy się nie nadpisywały. Wyłącz je w Ustawienia → Encje albo usuń z konfiguracji YAML Modbus."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast musi wiedzieć, których czujników użyć",
       "fix_flow": {

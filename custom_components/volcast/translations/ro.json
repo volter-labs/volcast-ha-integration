@@ -556,6 +556,14 @@
       "title": "Volcast nu a putut porni conexiunea directă la invertor",
       "description": "Conexiunea directă la invertor nu a putut porni din cauza unei erori neașteptate. Volcast reîncearcă de câteva ori; până se conectează, nu poate modifica sau readuce setările invertorului. Dacă persistă, reîncarcă Volcast și verifică jurnalele Home Assistant."
     },
+    "ha_modbus_map": {
+      "title": "Volcast nu poate controla invertorul prin senzorii hub-ului Modbus",
+      "description": "Volcast controlează acest invertor prin hub-ul Modbus din Home Assistant și îl citește din senzori de registre brute. Lipsesc unele registre necesare sau senzorii lor nu citesc de la invertorul în care scrie Volcast (același hub și aceeași adresă de dispozitiv, un registru holding per senzor): {registers}. Până la remediere, Volcast nu schimbă setările invertorului. Adaugă sau corectează senzorii din fragmentul YAML Volcast, apoi reîncarcă Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "O entitate Modbus scrie în registrele controlate de Volcast",
+      "description": "Aceste entități Modbus de pe același hub și dispozitiv pot scrie în registrele invertorului controlate de Volcast (numere de registru, ? = registru necunoscut): {entities}. Cât timp sunt active, Volcast nu schimbă setările invertorului, ca două programe să nu se suprascrie. Dezactivează-le din Setări → Entități sau elimină-le din YAML-ul Modbus."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast trebuie să știe ce senzori să folosească",
       "fix_flow": {

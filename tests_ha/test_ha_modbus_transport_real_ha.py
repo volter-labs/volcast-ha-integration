@@ -55,11 +55,17 @@ def modbus_classes(monkeypatch):
         except ImportError:
             from homeassistant.components.modbus import SENSOR_SCHEMA
         from homeassistant.components.modbus.sensor import ModbusRegisterSensor, SlaveSensor
+        from homeassistant.components.modbus.switch import ModbusSwitch
         from homeassistant.components.modbus.validators import struct_validator
+        try:
+            from homeassistant.components.modbus.schemas import SWITCH_SCHEMA            # HA ≥ 2026.9
+        except ImportError:
+            from homeassistant.components.modbus import SWITCH_SCHEMA
     except Exception as err:  # noqa: BLE001
         pytest.skip(f"Home Assistant modbus classes not importable: {type(err).__name__}: {err}")
     yield SimpleNamespace(SENSOR_SCHEMA=SENSOR_SCHEMA, struct_validator=struct_validator,
-                          ModbusRegisterSensor=ModbusRegisterSensor, SlaveSensor=SlaveSensor)
+                          ModbusRegisterSensor=ModbusRegisterSensor, SlaveSensor=SlaveSensor,
+                          SWITCH_SCHEMA=SWITCH_SCHEMA, ModbusSwitch=ModbusSwitch)
     for name in set(sys.modules) - before:
         if name.startswith("homeassistant.components.modbus"):
             sys.modules.pop(name, None)
@@ -148,11 +154,12 @@ async def test_register_map_and_hub_writer_contract_on_real_registry_and_platfor
         def __init__(self, name, uid=None):
             self._attr_name, self._attr_unique_id, self._attr_native_value = name, uid, 1
 
-    class Writer(SwitchEntity):                          # kształt encji zapisu huba: `_hub.name`, `_device_address`
+    class Writer(SwitchEntity):                          # kształt encji zapisu huba (prawdziwe klasy — test niżej)
         _attr_should_poll = False
 
         def __init__(self, name, hub, unit):
             self._attr_name, self._hub, self._device_address = name, SimpleNamespace(name=hub), unit
+            self._address, self._write_type = 166, "write_register"
 
         @property
         def is_on(self):
@@ -168,4 +175,40 @@ async def test_register_map_and_hub_writer_contract_on_real_registry_and_platfor
     assert {a: e.split(".")[0] for a, e in registers.items()} == {146: "sensor", 0: "sensor"} and dupes == ()
     assert registers[146] == er.async_get(hass).async_get_entity_id("sensor", "modbus", "volcast_reg_146")
     assert unregistered_modbus_sensors(hass) == ("sensor.yaml_without_unique_id",)
-    assert hub_writers(hass) == [HubWriter("deye_hub", 1)]
+    assert hub_writers(hass) == [HubWriter("deye_hub", 1, frozenset({166}), "switch.export")]
+
+
+async def test_private_modbus_entity_attributes_on_real_classes(hass: HomeAssistant, modbus_classes):
+    """Jedyny pomocnik atrybutów prywatnych (`modbus_entity_device`, `modbus_sensor_problem`, `modbus_scan_s`,
+    `modbus_writer_registers`) na PRAWDZIWYCH `ModbusRegisterSensor` i `ModbusSwitch` z instalacji HA:
+    zmiana nazw w HA da tu porażkę, nie ciche „nieustalone” (które i tak odmówiłoby sterowania)."""
+    from custom_components.volcast.core.transports.ha_modbus import (
+        SENSOR_OTHER_DEVICE, SENSOR_OTHER_REGISTER, modbus_entity_device, modbus_scan_s, modbus_sensor_problem,
+        modbus_writer_registers)
+    m = modbus_classes
+    hub = SimpleNamespace(name="deye_hub")
+
+    def sensor(**over):
+        conf = {"name": "reg", "address": 146, "unique_id": "volcast_reg_146", "data_type": "uint16", "slave": 1,
+                "scan_interval": 30, **over}
+        return m.ModbusRegisterSensor(hass, hub, m.struct_validator(m.SENSOR_SCHEMA(conf)), 0)
+
+    s = sensor()
+    assert modbus_entity_device(s) == ("deye_hub", 1)
+    assert modbus_sensor_problem(s, 146, "deye_hub", 1) is None
+    assert modbus_scan_s(s) == 30.0
+    assert modbus_sensor_problem(sensor(slave=2), 146, "deye_hub", 1) == SENSOR_OTHER_DEVICE
+    assert modbus_sensor_problem(s, 146, "other_hub", 1) == SENSOR_OTHER_DEVICE
+    assert modbus_sensor_problem(sensor(input_type="input"), 146, "deye_hub", 1) == SENSOR_OTHER_REGISTER
+    assert modbus_sensor_problem(sensor(data_type="uint32"), 146, "deye_hub", 1) == SENSOR_OTHER_REGISTER
+    assert modbus_sensor_problem(s, 147, "deye_hub", 1) == SENSOR_OTHER_REGISTER
+
+    def switch(**over):
+        conf = {"name": "export", "address": 166, "slave": 1, **over}
+        return m.ModbusSwitch(hass, hub, m.SWITCH_SCHEMA(conf))
+
+    w = switch()
+    assert modbus_entity_device(w) == ("deye_hub", 1)
+    assert modbus_writer_registers(w, "switch") == frozenset({166})
+    assert modbus_writer_registers(switch(write_type="coil"), "switch") == frozenset()
+    assert modbus_writer_registers(switch(write_type="holdings"), "switch") == frozenset({166})

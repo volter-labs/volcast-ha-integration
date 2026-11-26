@@ -556,6 +556,14 @@
       "title": "Volcast non è riuscito ad avviare la connessione diretta all'inverter",
       "description": "La connessione diretta all'inverter non si è avviata a causa di un errore imprevisto. Volcast riprova alcune volte; finché non si connette, non può modificare né ripristinare le impostazioni dell'inverter. Se il problema persiste, ricarica Volcast e controlla i log di Home Assistant."
     },
+    "ha_modbus_map": {
+      "title": "Volcast non può controllare l'inverter tramite i sensori dell'hub Modbus",
+      "description": "Volcast controlla questo inverter tramite il tuo hub Modbus di Home Assistant e lo legge da sensori di registri grezzi. Mancano alcuni registri necessari, oppure i loro sensori non leggono dall'inverter su cui Volcast scrive (stesso hub e stesso indirizzo dispositivo, un registro holding per sensore): {registers}. Finché non viene corretto, Volcast non modifica le impostazioni dell'inverter. Aggiungi o correggi i sensori dallo snippet YAML di Volcast, poi ricarica Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Un'entità Modbus scrive nei registri controllati da Volcast",
+      "description": "Queste entità Modbus sullo stesso hub e dispositivo possono scrivere nei registri dell'inverter controllati da Volcast (numeri di registro, ? = registro sconosciuto): {entities}. Finché sono attive, Volcast non modifica le impostazioni dell'inverter, così due programmi non si sovrascrivono. Disattivale in Impostazioni → Entità o rimuovile dal tuo YAML Modbus."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast deve sapere quali sensori usare",
       "fix_flow": {

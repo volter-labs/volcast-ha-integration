@@ -27,7 +27,7 @@ from tests.control.test_executor_direct import (  # noqa: F401 — `issues` to f
     DEYE_V, SALT, TOU_RAW, Harness, _deye, issues)
 from tests.control.test_verification import P, Gate
 from tests.core.control.tou_helpers import NOW as TOU_NOW
-from tests.core.transports.test_ha_modbus import FakeBus, FakeServices, ModbusRegisterSensor
+from tests.core.transports.test_ha_modbus import FakeBus, FakeServices
 from tests.sim.fixtures import deye_words
 
 HUB, UNIT = "deye_hub", 1
@@ -88,6 +88,18 @@ class States:
         return [s for e, s in self._s.items() if domain is None or e.startswith(domain + ".")]
 
 
+class HubSensor:
+    """Kształt bazowego czujnika `modbus` HA: hub, adres urządzenia, rejestr, typ wejścia, liczba słów, odpytanie."""
+
+    def __init__(self, addr: int, *, hub: str = HUB, unit: int = UNIT, scan: int = 30) -> None:
+        self._hub = SimpleNamespace(name=hub)
+        self._device_address = unit
+        self._address = addr
+        self._input_type = "holding"
+        self._count = 1
+        self._scan_interval = scan
+
+
 class FakeHub:
     """Hub `modbus` w HA użytkownika: bank rejestrów falownika, usługa zapisu, czujniki surowe."""
 
@@ -112,8 +124,11 @@ class FakeHub:
         self.entities[addr] = eid
         self.hass.data["entity_registry"].entities[eid] = SimpleNamespace(
             entity_id=eid, platform="modbus", unique_id=f"volcast_reg_{addr}")
-        self.hass.data["sensor"].by_id[eid] = ModbusRegisterSensor()
+        self.hass.data["sensor"].by_id[eid] = HubSensor(addr)
         self.refresh(addr)
+
+    def sensor(self, addr: int) -> HubSensor:
+        return self.hass.data["sensor"].by_id[self.entities[addr]]
 
     def remove_sensor(self, addr: int) -> None:
         eid = self.entities.pop(addr)
@@ -264,35 +279,54 @@ async def test_second_connection_to_the_same_hub_device_is_in_use(make_hass, iss
         await h.close()
 
 
-def _writer_entity(hub: str, unit: int):
+def _writer_entity(hub: str, unit: int, addr: int = 166, write_type: str = "write_register"):
     return SimpleNamespace(platform=SimpleNamespace(platform_name="modbus"), _hub=SimpleNamespace(name=hub),
-                           _device_address=unit)
+                           _device_address=unit, _address=addr, _write_type=write_type,
+                           entity_id="switch.inverter_export")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("hub, unit, refused", [
-    (HUB, UNIT, "direct_conflict:modbus"), (HUB, 0, "direct_conflict:modbus"), (HUB, 2, None), ("heat_pump", UNIT, None)])
-async def test_modbus_write_entity_on_our_hub_and_device_refuses_control(make_hass, issues, hub, unit, refused):
+@pytest.mark.parametrize("hub, unit, addr, write_type, refused", [
+    (HUB, UNIT, 166, "write_register", "direct_conflict:modbus_write_entity"),     # SoC programu 1
+    (HUB, 0, 146, "write_register", "direct_conflict:modbus_write_entity"),        # rozgłoszenie
+    (HUB, UNIT, 300, "write_register", None),                                       # rejestr spoza naszych
+    (HUB, UNIT, 166, "write_coil", None),                                           # cewka
+    (HUB, 2, 166, "write_register", None),
+    ("heat_pump", UNIT, 166, "write_register", None)])
+async def test_modbus_write_entity_conflicts_only_on_our_registers(make_hass, issues, hub, unit, addr, write_type,
+                                                                   refused):
     h = HubHarness(make_hass)
     switches = Component()
-    switches.by_id["switch.inverter_export"] = _writer_entity(hub, unit)
+    switches.by_id["switch.inverter_export"] = _writer_entity(hub, unit, addr, write_type)
     h.hass.data["switch"] = switches
     try:
         await h.conn.async_start()
         assert h.conn.refused() == refused
+        raised = [(i, p) for i, k, p in issues.created if k == "ha_modbus_write_entity"]
+        if refused:
+            text = raised[0][1]["entities"] if raised else ""
+            assert "switch.inverter_export" in text and str(addr) in text
+        else:
+            assert raised == []
     finally:
         await h.close()
 
 
 @pytest.mark.asyncio
-async def test_modbus_write_entity_with_an_unreadable_hub_refuses_control(make_hass, issues):
+@pytest.mark.parametrize("entity", [
+    SimpleNamespace(platform=SimpleNamespace(platform_name="modbus"), entity_id="switch.x"),        # nic nie wiemy
+    SimpleNamespace(platform=SimpleNamespace(platform_name="modbus"), _hub=SimpleNamespace(name=HUB),
+                    _device_address=UNIT, entity_id="switch.x")])                                   # rejestr nieznany
+async def test_modbus_write_entity_with_an_unreadable_target_refuses_control(make_hass, issues, entity):
     h = HubHarness(make_hass)
     switches = Component()
-    switches.by_id["switch.x"] = SimpleNamespace(platform=SimpleNamespace(platform_name="modbus"))
+    switches.by_id["switch.x"] = entity
     h.hass.data["switch"] = switches
     try:
         await h.conn.async_start()
-        assert h.conn.refused() == "direct_conflict:modbus"
+        assert h.conn.refused() == "direct_conflict:modbus_write_entity"
+        raised = [p for _i, k, p in issues.created if k == "ha_modbus_write_entity"]
+        assert raised and "switch.x: ?" in raised[0]["entities"]
     finally:
         await h.close()
 
@@ -338,11 +372,23 @@ def test_target_fingerprint_binds_the_hub_and_device_and_keeps_host_targets():
     assert target_fingerprint(host, SALT) == want
 
 
-def test_hub_change_is_a_control_change_unless_the_same_serial_device():
+def test_hub_or_device_change_is_always_a_control_change():
+    """Tożsamość z czujników wiąże się z hubem i urządzeniem celu — zmiana huba albo adresu to inne sterowanie,
+    także dla falownika z odciskiem z seriala (bez przenoszenia własności po samym serialu)."""
     old = {"control_mode": "direct", "direct_target": hub_target()}
-    new = {"control_mode": "direct", "direct_target": hub_target(hub="other_hub")}
-    assert rt_mod.control_options_changed(old, new) is True
-    assert rt_mod.control_options_changed(old, new, profile=DEYE_V) is False   # ten sam egzemplarz (serial)
+    for over in ({"hub": "other_hub"}, {"unit_id": 2}):
+        new = {"control_mode": "direct", "direct_target": hub_target(**over)}
+        assert rt_mod.control_options_changed(old, new) is True
+        assert rt_mod.control_options_changed(old, new, profile=DEYE_V) is True
+
+
+@pytest.mark.asyncio
+async def test_owner_record_of_another_hub_does_not_match(make_hass, issues):
+    h = HubHarness(make_hass)
+    other = HubHarness(make_hass, target=hub_target(hub="renamed_hub"))
+    record = h.io.owner()
+    assert "device_target" not in record                     # bez odcisku niezależnego od huba
+    assert h.io.owner_matches(record) and not other.io.owner_matches(record)
 
 
 @pytest.mark.asyncio
@@ -474,8 +520,9 @@ async def _trial(monkeypatch, make_hass):
 @pytest.mark.asyncio
 async def test_trial_own_restore_with_staggered_sensor_refresh_is_not_a_foreign_write(monkeypatch, make_hass,
                                                                                        issues):
-    """Nasz zapis wielu rejestrów (powrót do programów właściciela) i czujniki odświeżane po kolei: obraz
-    w połowie odświeżony nie jest ani bazą, ani obcą zmianą."""
+    """Nasz zapis wielu rejestrów (powrót do programów właściciela) i czujniki odświeżane po kolei: brak fałszywego
+    `foreign_write`. Regułę najstarszego stempla przypina `tests/core/modbus/test_client_image_age.py` — tutaj
+    zapisane rejestry chroni już świeżość zapisów w toku transportu."""
     h, runner, owner, created = await _trial(monkeypatch, make_hass)
     lad = runner.ladder
     try:
@@ -534,5 +581,170 @@ async def test_map_report_reaches_telemetry_and_diagnostics_without_entity_ids(m
         block = sender._extra()["direct"]["map"]
         assert 589 in block["missing"] and {"addr": 588, "cause": "slave_or_virtual_sensor"} in block["unsupported"]
         assert "sensor." not in json.dumps(block) and HUB not in json.dumps(block)
+    finally:
+        await h.close()
+
+
+# ── tożsamość wiąże się z celem zapisu (hub i urządzenie czujników) ───────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_over, sensor_over, cause", [
+    ({"hub": "other_hub", "unit_id": 2}, None, "sensor_other_device"),   # cel inny niż czujniki
+    ({"unit_id": 2}, None, "sensor_other_device"),                        # np. drugi falownik równoległy
+    ({}, (0, {"_device_address": 2}), "sensor_other_device"),             # identyfikacja z innego urządzenia
+    ({}, (588, {"_hub": SimpleNamespace(name="meter_hub")}), "sensor_other_device"),
+    ({}, (166, {"_address": 167}), "sensor_other_register"),
+    ({}, (146, {"_hub": None}), "sensor_device_unknown"),
+])
+async def test_sensors_not_proven_on_the_write_target_refuse_control(make_hass, issues, target_over, sensor_over,
+                                                                     cause):
+    h = HubHarness(make_hass, target=hub_target(**target_over))
+    if sensor_over is not None:
+        addr, attrs = sensor_over
+        for k, v in attrs.items():
+            setattr(h.hub.sensor(addr), k, v)
+    try:
+        await h.conn.async_start()
+        assert h.conn.refused() == "ha_modbus_map" and h.conn.client is None
+        assert cause in {u.cause for u in h.conn.map_report.unsupported}
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_target_on_another_hub_and_device_never_writes(make_hass, issues):
+    """Próba recenzenta: czujniki (z tożsamością) na `deye_hub`/1, cel zapisu `other_hub`/2 — przedtem tożsamość
+    „potwierdzona” i zapisy TOU szły do innego urządzenia."""
+    h = await HubHarness(make_hass, target=hub_target(hub="other_hub", unit_id=2)).start(raw=TOU_RAW)
+    try:
+        await h.ex.async_tick()
+        await h.cycle()
+        assert h.conn.identity != "confirmed" and not h.ex.owned
+        assert h.service_writes() == []
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_sensor_moved_to_another_device_while_running_stops_identity(make_hass, issues):
+    h = await HubHarness(make_hass).start(raw=TOU_RAW, consent=False)
+    try:
+        assert h.conn.identity == "confirmed"
+        h.hub.sensor(3)._device_address = 2                   # YAML zmieniony pod działającym połączeniem
+        h.conn._identity_at = -1e9                            # potwierdzenie przeterminowane
+        assert not await h.io.async_identity_ok()
+        await h.cycle()
+        assert h.conn.identity != "confirmed" and h.conn.reading is None
+        assert "sensor_other_device" in {u.cause for u in h.conn.map_report.unsupported}
+        h.hub.sensor(3)._device_address = UNIT
+        await h.cycle()
+        assert h.conn.identity == "confirmed" and h.conn.reading is not None
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_map_refusal_raises_a_repair_with_addresses_and_causes_only(make_hass, issues):
+    h = HubHarness(make_hass)
+    h.hub.remove_sensor(589)
+    h.hub.sensor(0)._device_address = 2
+
+    async def no_wait(_delay):
+        return None
+    h.conn._sleep = no_wait
+    try:
+        await h.conn.async_start()
+        raised = [(i, p) for i, k, p in issues.created if k == "ha_modbus_map"]
+        assert raised and raised[0][0] == "ha_modbus_map_e1"
+        text = raised[0][1]["registers"]
+        assert "589" in text and "0" in text and "sensor_other_device" in text and "sensor." not in text
+        h.hub.add_sensor(589, "sensor.volcast_reg_589")
+        h.hub.sensor(0)._device_address = UNIT
+        await h.conn._retry_task
+        assert h.conn.refused() is None and "ha_modbus_map_e1" in issues.deleted
+    finally:
+        await h.close()
+
+
+# ── dostępność odczytu: wiek obrazu a odpytywanie czujników ───────────────
+
+
+@pytest.mark.asyncio
+async def test_sensor_scan_slower_than_the_poll_does_not_flap_availability(make_hass, issues):
+    """Czujniki co 30 s, połączenie co 10 s: wiek obrazu (najstarszy stempel) przekracza 3 × poll, ale encje
+    i telemetria zostają dostępne — próg wynika z odpytywania czujników; bramki zapisu dalej widzą prawdziwy wiek."""
+    from custom_components.volcast.control.direct_sensors import stale_limit_s
+    from custom_components.volcast.control.telemetry import TelemetrySender
+    from tests.control.test_telemetry_direct import Cloud, Executor, _hass
+    h = HubHarness(make_hass)
+    try:
+        await h.conn.async_start()
+        sender = TelemetrySender(_hass(), SimpleNamespace(entry_id="e1", options={"control_mode": "direct"}),
+                                 Cloud(), Executor(), choice=ProfileChoice(DEYE_V, None, None), profile_map={},
+                                 manual_map={}, grid_negate=False, limits=None, utcnow=lambda: TOU_NOW,
+                                 direct=h.conn, direct_capabilities=None)
+        ages = []
+        for step in range(12):                                # 120 s: 4 odpytania czujników, 12 połączenia
+            h.clock.advance(10.0)
+            if step % 3 == 0:
+                h.hub.scan()
+            await h.conn.async_poll()
+            h.clock.advance(9.0)                              # najgorsza faza: tuż przed następnym odpytaniem
+            ages.append(h.conn.age_s())
+            assert h.conn.age_s() < stale_limit_s(h.conn)
+            assert sender._direct_status() == "ok"
+        assert max(ages) > 3 * h.conn.poll_s                  # stary próg by migał
+        assert stale_limit_s(h.conn) >= 3 * h.conn.poll_s + 2 * 30.0
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_sensors_that_stop_updating_still_go_stale(make_hass, issues):
+    from custom_components.volcast.control.direct_sensors import stale_limit_s
+    h = HubHarness(make_hass)
+    try:
+        await h.conn.async_start()
+        await h.conn.async_poll()
+        h.clock.advance(stale_limit_s(h.conn) + 1.0)          # hub stoi: stany bez nowych stempli
+        await h.conn.async_poll()
+        assert not h.conn.age_s() < stale_limit_s(h.conn)
+    finally:
+        await h.close()
+
+
+def test_network_connection_keeps_the_poll_based_limit():
+    from custom_components.volcast.control.direct_sensors import STALE_FACTOR, stale_limit_s
+    conn = SimpleNamespace(poll_s=10.0)
+    assert stale_limit_s(conn) == STALE_FACTOR * 10.0
+
+
+# ── kolizja w pracy: przyczyna, budżet NVM ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_foreign_service_write_has_its_own_conflict_reason(make_hass, issues):
+    h = await HubHarness(make_hass).start(raw=TOU_RAW)
+    try:
+        assert h.conn.conflict_reason is None
+        await h.hub.foreign_write(167, 40)
+        assert h.conn.conflict_reason == "modbus_service_write"
+        assert rt_mod.lan_client_seen(h.conn) == "modbus_service_write"
+        await h.cycle()
+        raised = [p for _i, k, p in issues.created if k == "direct_conflict"]
+        assert raised and raised[-1]["reason"] == "modbus_service_write"
+    finally:
+        await h.close()
+
+
+@pytest.mark.asyncio
+async def test_every_hub_service_write_counts_against_the_nvm_budget(make_hass, issues):
+    h = await HubHarness(make_hass).start(raw=TOU_RAW)
+    try:
+        await h.ex.async_tick()
+        n = len(h.service_writes())
+        counts = h.ex._memory.budget.counts(h.ex._now_wall())
+        assert n > 0 and sum(counts.values()) == n
     finally:
         await h.close()

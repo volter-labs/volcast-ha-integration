@@ -18,6 +18,15 @@ from homeassistant.const import EntityCategory
 from ..const import DOMAIN
 
 STALE_FACTOR = 3.0
+
+
+def stale_limit_s(conn) -> float:
+    """Wiek odczytu, od którego encje i telemetria uznają go za nieaktualny: `STALE_FACTOR` × odpytywanie
+    połączenia plus zapas na wiek obrazu rejestrów (`image_slack_s` — hub `modbus` HA, gdzie wiek odczytu to
+    najstarszy stempel czujników odpytywanych przez HA rzadziej niż połączenie). Bramki zapisu — bez zapasu."""
+    slack = getattr(conn, "image_slack_s", 0.0)
+    slack = float(slack) if isinstance(slack, (int, float)) and not isinstance(slack, bool) and slack > 0 else 0.0
+    return STALE_FACTOR * float(conn.poll_s) + slack
 _POWER, _ENERGY = "power", "energy"
 _MEAS, _TOTAL = "measurement", "total_increasing"
 
@@ -92,7 +101,7 @@ class DirectSensor(SensorEntity):
 
     def _fresh(self):
         r = self._conn.reading
-        if r is None or not self._conn.age_s() < STALE_FACTOR * float(self._conn.poll_s):
+        if r is None or not self._conn.age_s() < stale_limit_s(self._conn):
             return None
         return r
 
