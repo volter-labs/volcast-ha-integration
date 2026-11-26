@@ -52,7 +52,7 @@ raport mógł wskazać prawdziwy powód (np. czujnik YAML bez `unique_id` nie je
 Sprawdzenie — `sensor_check(entity_id) -> przyczyna | None` wstrzyknięte przez warstwę HA; domyślne
 (`bus_sensor_problem`) używa wyłącznie publicznych cech: domena `sensor`, wpis w rejestrze encji z platformą
 `modbus`, encja w komponencie `sensor` i brak `coordinator` (publiczny atrybut `CoordinatorEntity` —
-`SlaveSensor`); bez importu HA. Kontrakt pilnuje test na prawdziwych klasach HA z venv testów.
+`SlaveSensor`); bez importu HA. Kontrakt pilnuje `tests_ha/test_ha_modbus_transport_real_ha.py`.
 
 Podpięcie pod połączenie trybu bezpośredniego (ten sam `kind == "direct"`, inny transport):
 * tożsamość — rejestry identyfikacji (Deye: 0, 3–7, 20–21) czytane zwykłym `read`, gdy są w mapie;
@@ -516,8 +516,10 @@ class HaModbusTransport:
         raise WriteUnconfirmed("modbus service does not report the bus result")
 
     def _start(self, coro) -> asyncio.Future:
-        """Wywołanie usługi jako zadanie śledzone przez HA (`async_create_background_task`), żeby
-        zatrzymanie HA widziało zapis, na który już nie czekamy; bez tej funkcji — zwykłe zadanie."""
+        """Wywołanie usługi jako zadanie tła HA (`async_create_background_task`), żeby zapis, na który już
+        nie czekamy, nie był zadaniem poza HA. Przy zatrzymaniu HA ANULUJE zadania tła (nie czeka na nie) —
+        w tym samym etapie zamyka hub `modbus`, więc nie wydłużamy zatrzymania. Bez tej funkcji — zwykłe
+        zadanie."""
         create = getattr(self.hass, "async_create_background_task", None)
         if callable(create):
             return create(coro, BACKGROUND_TASK_NAME)
