@@ -69,6 +69,11 @@ def _plan(mode="discharge", **slot) -> dict:
             "slots": [{"from": iso(now - timedelta(minutes=30)), "to": iso(now + timedelta(hours=2)), **body}]}
 
 
+def _fetched_now() -> str:
+    """Czas pobrania planu „teraz” — plan w magazynie bez niego ma wiek nieznany (przeterminowany)."""
+    return dt_util.utcnow().isoformat()
+
+
 async def _settle(hass, rt) -> None:
     """Start połączenia w tle (kolizje, tożsamość), pierwszy odczyt i cykl."""
     for _ in range(100):
@@ -95,7 +100,7 @@ def _verified_device(target: dict) -> dict:
 async def _setup(hass, hass_storage, options, *, state=None, profiles=None, monkeypatch=None):
     seed_salt(hass_storage)
     if state is None:
-        state = {"consent": True, "local_switch": True, "plan_raw": _plan()}
+        state = {"consent": True, "local_switch": True, "plan_raw": _plan(), "plan_fetched_at": _fetched_now()}
         if options.get("control_mode") == "direct":
             state["verification"] = _verified_device(options["direct_target"])
     store_state(hass_storage, "paired01", state)
@@ -176,7 +181,8 @@ async def test_real_ha_upgrade_keeps_control_of_a_device_controlled_before(hass:
     target = _target(goodwe_sim, gw)
     owner = {"profile": "goodwe-et", "mode": "direct", "target": target_fingerprint(target, SALT),
              "device": target["device_fp"]}
-    state = {"consent": True, "local_switch": True, "plan_raw": _plan(), "owned": True, "owner": owner,
+    state = {"consent": True, "local_switch": True, "plan_raw": _plan(), "plan_fetched_at": _fetched_now(),
+             "owned": True, "owner": owner,
              "snapshot": {"mode": "auto"}, "restore_keys": ["mode"]}
     entry, rt = await _setup(hass, hass_storage, {"control_mode": "direct", "direct_target": target},
                              state=state, profiles=[gw], monkeypatch=monkeypatch)
