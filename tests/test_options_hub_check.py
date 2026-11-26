@@ -247,3 +247,43 @@ def test_constant_value_user_sensor_is_fresh_through_last_reported(monkeypatch):
     st.last_reported = dt_util.utcnow()                            # ale czujnik wciąż raportuje
     r = run(f.async_step_control_hub(USER))
     assert r["data"]["hub_check"]["quantities"]["soc"]["verdict"] == "ok"
+
+
+def _still_on(f):
+    eid = f.config_entry.entry_id
+    f.issues[f"hub_check_control_on_{eid}"] = {}
+    return f"hub_check_control_on_{eid}"
+
+
+def test_still_on_issue_survives_an_unrelated_save_while_control_runs(monkeypatch):
+    f, _, _ = setup(monkeypatch, soc=80, bank={588: 55},
+                    options={"control_mode": "direct", "direct_target": {"transport": "ha_modbus"}})
+    key = _still_on(f)
+    f.config_entry.options["hub_check"] = {"verdict": "mismatch", "quantities": {}, "identity_ok": True}
+    run(f._finish(f._merged({"battery_capacity_kwh": 10})))
+    assert key in f.issues
+
+
+def test_still_on_issue_clears_when_saved_options_show_control_off_or_a_passing_check(monkeypatch):
+    f, _, _ = setup(monkeypatch, soc=55, power=-1200, bank={588: 55, 590: -1200})
+    key = _still_on(f)
+    run(f._finish(f._merged({"control_mode": None})))
+    assert key not in f.issues
+    key = _still_on(f)
+    run(f.async_step_control_hub(USER))                       # zdany raport
+    assert key not in f.issues
+
+
+def test_turning_control_off_with_the_switch_clears_the_still_on_issue(monkeypatch):
+    from custom_components.volcast import control_entities as ce
+
+    deleted = []
+    monkeypatch.setattr(ce.ir, "async_delete_issue", lambda hass, domain, iid: deleted.append(iid))
+
+    async def noop(*a, **k):
+        return None
+    ex = SimpleNamespace(async_set_local_switch=noop, async_tick=noop, consent_mirror=False)
+    sw = ce.VolcastControlSwitch(SimpleNamespace(entry_id="e1", options={}), SimpleNamespace(executor=ex))
+    sw.hass = object()
+    asyncio.run(sw.async_turn_off())
+    assert deleted == ["hub_check_control_on_e1"]

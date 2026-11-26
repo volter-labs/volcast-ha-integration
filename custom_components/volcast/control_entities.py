@@ -21,11 +21,13 @@ import homeassistant.util.dt as dt_util
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_track_point_in_utc_time
 
 from .const import (DOMAIN, OPT_BATTERY_CAPACITY_KWH, OPT_CONTROL_MODE, OPT_TELEMETRY_MAP,
                     SIGNAL_CONTROL_UPDATED, SIGNAL_PRICES_UPDATED)
+from .core.control import hub_check
 from .core.slot import InvalidSchedule, effective_action, parse_schedule
 
 _LOGGER = logging.getLogger(__name__)
@@ -379,16 +381,25 @@ class VolcastControlSwitch(_ControlEntity, SwitchEntity):
             self._ensure_off_sender()                # wcześniejsze wyłączenie nadal niedoręczone
         await ex.async_tick()
 
+    def _clear_hub_control_on_issue(self) -> None:
+        """Zgłoszenie „sterowanie wciąż włączone po nieudanej weryfikacji huba” traci sens, gdy użytkownik sam
+        wyłączył sterowanie przełącznikiem."""
+        hass = getattr(self, "hass", None)
+        if hass is not None:
+            ir.async_delete_issue(hass, DOMAIN, hub_check.issue_ids(self._entry.entry_id)[2])
+
     async def async_turn_off(self, **_kw) -> None:
         ex = self._rt.executor
         if not self._mirror():
             await ex.async_set_local_switch(False)
             await ex.async_tick()
+            self._clear_hub_control_on_issue()
             return
         self._gen += 1
         self._cancel_off()
         await ex.async_mirror_switch_off()           # lokalnie od razu, przed chmurą
         await ex.async_tick()                        # istniejący powrót do trybu bazowego
+        self._clear_hub_control_on_issue()
         self._ensure_off_sender()
 
     def _ensure_off_sender(self) -> None:

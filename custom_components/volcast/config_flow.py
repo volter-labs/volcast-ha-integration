@@ -1015,11 +1015,15 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         """Zgłoszenia Napraw wynikają z ZAPISANYCH opcji (wołane po zapisie, nie przed): nieudana weryfikacja huba
         przy wyłączonym sterowaniu, albo pominięte porównanie. Inny tryb sterowania / brak raportu = sprzątanie."""
         failed_id, skipped_id, still_on_id = hub_check.issue_ids(self.config_entry.entry_id)
-        ir.async_delete_issue(self.hass, DOMAIN, still_on_id)                 # zapis się udał — sterowanie nie trwa przy złym raporcie
         check = options.get(OPT_HUB_CHECK)
         target = options.get(OPT_DIRECT_TARGET)
         other_mode = (options.get(OPT_CONTROL_MODE) is not None
                       and not (isinstance(target, Mapping) and target.get("transport") == HA_MODBUS_KIND))
+        # „Sterowanie wciąż włączone” znika dopiero, gdy zapisane opcje pokazują sterowanie wyłączone, inny tryb albo
+        # zdany raport — nie przy niepowiązanym zapisie.
+        passing = isinstance(check, Mapping) and bool(check) and not hub_check.blocks_control(check)
+        if options.get(OPT_CONTROL_MODE) is None or other_mode or passing:
+            ir.async_delete_issue(self.hass, DOMAIN, still_on_id)
         if not isinstance(check, Mapping) or not check or other_mode:
             ir.async_delete_issue(self.hass, DOMAIN, failed_id)
             ir.async_delete_issue(self.hass, DOMAIN, skipped_id)
