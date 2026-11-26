@@ -17,7 +17,7 @@ def raw_plan(n=48):
               "to": (t0 + timedelta(hours=i + 1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "mode": "self_consume", "price_pln_kwh": 0.61, "plan_mode": "SELF_CONSUME",
               "grid_import_kwh": 0.12, "grid_export_kwh": 0.0, "display_kind": "SELF_CONSUME",
-              "soc_target": 20} for i in range(n)]
+              "soc_target": 20, "buy_price_kwh": 0.933, "sell_price_kwh": 0.664} for i in range(n)]
     return {"schedule_id": "p", "slots": list(reversed(slots)),
             "fallback": {"mode": "self_consume", "soc_reserve": 10}, "control_enabled": False}
 
@@ -30,8 +30,9 @@ def test_plan_slots_for_card_fields_order_and_size():
                            "price", "buy_price", "sell_price", "export_allowed", "export_limit_w", "plan_mode", "import_kwh",
                            "export_kwh", "display_kind", "now"}
     assert out[0]["from"] == "2026-09-23T00:00:00Z"
-    # `slots` jest w `_unrecorded_attributes` (limit 16 KB dotyczy rejestratora); z jawnymi cenami ~19 KB
-    assert len(json.dumps(out, separators=(",", ":"))) < 20_000
+    # Limit 16 KB atrybutów dotyczy rejestratora; `slots` jest z niego wyłączone, więc rozmiar nie jest ograniczony.
+    assert "slots" in VolcastPlanSensor._unrecorded_attributes
+    assert out[0]["buy_price"] == 0.933 and out[0]["sell_price"] == 0.664
 
 
 def test_slot_buy_and_sell_price_come_from_server_fields_and_price_stays():
@@ -44,8 +45,9 @@ def test_slot_buy_and_sell_price_come_from_server_fields_and_price_stays():
 
 def test_slot_prices_absent_or_null_give_none():
     raw = raw_plan(2)
-    raw["slots"][0]["buy_price_kwh"] = None
-    raw["slots"][0]["sell_price_kwh"] = "x"
+    for r in raw["slots"]:
+        r["buy_price_kwh"] = None
+        r["sell_price_kwh"] = "x"
     out = plan_slots_for_card(raw, NOW)
     assert all(o["buy_price"] is None and o["sell_price"] is None for o in out)
     assert out[0]["price"] == 0.61
@@ -632,5 +634,6 @@ def test_plan_sensor_strategy_attribute_is_tolerant():
     assert _strategy_attr(strategy="BACKUP") == "BACKUP"
     assert _strategy_attr() is None
     assert _strategy_attr(strategy=None) is None
-    assert _strategy_attr(strategy="WHATEVER") is None
+    assert _strategy_attr(strategy="FUTURE_MODE") == "FUTURE_MODE"      # nowa wartość serwera nie jest ukrywana
+    assert _strategy_attr(strategy="") is None
     assert _strategy_attr(strategy=3) is None

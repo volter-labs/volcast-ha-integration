@@ -50,13 +50,10 @@ def _utc(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-_PLAN_STRATEGIES = frozenset({"EARNINGS", "SELF_CONSUMPTION", "BACKUP"})
-
-
 def plan_strategy(raw: dict | None) -> str | None:
-    """Strategia planera z poziomu planu; brak albo nieznana wartość = None."""
+    """Strategia planera z poziomu planu; nowe wartości serwera przechodzą dalej, brak/null/nie-tekst = None."""
     value = raw.get("strategy") if isinstance(raw, dict) else None
-    return value if isinstance(value, str) and value in _PLAN_STRATEGIES else None
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def plan_slots_for_card(raw: dict | None, now: datetime) -> list[dict]:

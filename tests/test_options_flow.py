@@ -242,10 +242,40 @@ def test_prices_form_offers_only_usable_entities():
     assert (r["type"], r["step_id"]) == ("form", "prices")
 
 
+class _Reg:
+    """Rejestr encji: platforma per encja (ścieżka `er.async_get(hass)` zamiast podmiany `_platform_of`)."""
+
+    def __init__(self, platforms):
+        self.entities = {k: SimpleNamespace(entity_id=k, platform=v, domain=k.split(".")[0])
+                         for k, v in platforms.items()}
+
+    def async_get(self, eid):
+        return self.entities.get(eid)
+
+
+def _own_platform_flow(monkeypatch, options=None):
+    from custom_components.volcast import config_flow as cf
+    f = flow(prices={"sensor.nordpool": _price_attrs(), "sensor.volcast_buy_price": _price_attrs()},
+             options=options)
+    reg = _Reg({"sensor.nordpool": "nordpool", "sensor.volcast_buy_price": DOMAIN})
+    monkeypatch.setattr(cf.er, "async_get", lambda hass: reg)
+    return f
+
+
 def test_prices_form_never_offers_own_platform_entities(monkeypatch):
-    f = flow(prices={"sensor.nordpool": _price_attrs(), "sensor.volcast_buy_price": _price_attrs()})
-    monkeypatch.setattr(f, "_platform_of", lambda eid: DOMAIN if "volcast" in eid else None)
+    f = _own_platform_flow(monkeypatch, {"entity_price_buy": "sensor.volcast_buy_price"})
     assert f._usable_price_entities() == ["sensor.nordpool"]
+    assert f._own_entity_ids() == ["sensor.volcast_buy_price"]
+    cfgs = [m.config for m in f._prices_schema().schema.values()
+            if hasattr(m, "config") and "domain" in m.config]
+    assert all("sensor.volcast_buy_price" in c["exclude_entities"] for c in cfgs[:2])
+    assert "sensor.volcast_buy_price" not in cfgs[0]["include_entities"]
+
+
+def test_prices_submit_rejects_own_platform_entity(monkeypatch):
+    f = _own_platform_flow(monkeypatch)
+    r = asyncio.run(f.async_step_prices({"entity_price_buy": "sensor.volcast_buy_price"}))
+    assert r["type"] == "form" and r["errors"]
 
 
 # ── informacja: sprzedaż nie ma jeszcze jutra, kupno już ma ───────────────
