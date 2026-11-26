@@ -1261,9 +1261,16 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             states = [st for domain in ENTITY_DOMAINS for st in self.hass.states.async_all(domain)]
         except Exception:  # noqa: BLE001
             return []
-        return sorted(st.entity_id for st in states
-                      if st is not None and self._price_usable(
-                          st.entity_id, currency or platform_currency(self._platform_of(st.entity_id))))
+        out = []
+        for st in states:
+            if st is None:
+                continue
+            platform = self._platform_of(st.entity_id)
+            if platform == DOMAIN:      # własne encje cen wtyczki nigdy nie są źródłem cen
+                continue
+            if self._price_usable(st.entity_id, currency or platform_currency(platform)):
+                out.append(st.entity_id)
+        return sorted(out)
 
     # ── źródło cen z wykrytych integracji ─────────────────────────────────
     def _option_currency(self) -> str | None:

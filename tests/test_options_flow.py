@@ -242,6 +242,12 @@ def test_prices_form_offers_only_usable_entities():
     assert (r["type"], r["step_id"]) == ("form", "prices")
 
 
+def test_prices_form_never_offers_own_platform_entities(monkeypatch):
+    f = flow(prices={"sensor.nordpool": _price_attrs(), "sensor.volcast_buy_price": _price_attrs()})
+    monkeypatch.setattr(f, "_platform_of", lambda eid: DOMAIN if "volcast" in eid else None)
+    assert f._usable_price_entities() == ["sensor.nordpool"]
+
+
 # ── informacja: sprzedaż nie ma jeszcze jutra, kupno już ma ───────────────
 
 
