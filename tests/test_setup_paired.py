@@ -1,4 +1,5 @@
 import asyncio
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -606,9 +607,12 @@ async def _setup(monkeypatch, hass, coordinator, *, data=PAIRED, options=None):
 def _stored_plan():
     from custom_components.volcast.control.store import ControlState, ControlStore
 
+    from .control.ha_fakes import NOW
     from .control.test_executor import plan
     store = ControlStore(object(), "test_entry_id")
-    asyncio.run(store.async_save(ControlState(plan_raw=plan(), consent=True, local_switch=True)))
+    # Plan pobrany godzinę przed startem bez sieci — w limicie wieku planu.
+    asyncio.run(store.async_save(ControlState(plan_raw=plan(), consent=True, local_switch=True,
+                                              plan_fetched_at=(NOW - timedelta(hours=1)).isoformat())))
     return store
 
 

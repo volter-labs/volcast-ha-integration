@@ -173,9 +173,11 @@ class VolcastPlanSensor(_ControlEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         ex = self._rt.executor
-        if ex.schedule is None:
+        now = dt_util.utcnow()
+        schedule = ex.executed_schedule(now)          # plan przeterminowany: to, co faktycznie wykonujemy
+        if schedule is None:
             return "no_plan"
-        slot, _ = ex.schedule.effective_slot(dt_util.utcnow())
+        slot, _ = schedule.effective_slot(now)
         return effective_action(slot).value
 
     @property
@@ -186,8 +188,10 @@ class VolcastPlanSensor(_ControlEntity, SensorEntity):
         mapped = self._rt.mapped or {}
         d = ex.last_decision
         fallback = None
-        if ex.schedule is not None:
-            _, fallback = ex.schedule.effective_slot(now)
+        schedule = ex.executed_schedule(now)
+        if schedule is not None:
+            _, fallback = schedule.effective_slot(now)
+        fetched = ex.plan_fetched_at
         return {
             "slots": slots, "schedule_id": (ex.raw_plan or {}).get("schedule_id"),
             "strategy": plan_strategy(ex.raw_plan),
@@ -195,6 +199,9 @@ class VolcastPlanSensor(_ControlEntity, SensorEntity):
             "control_active": bool(d and (d.status == "write" or d.reason == "nothing_to_write")),
             "account_consent": ex.consent, "local_switch": ex.local_switch,
             "reason": d.reason if d else None, "paused": ex.paused, "fallback": fallback,
+            # `slots` = plan z chmury; przy `plan_stale` jego sloty aktywne wykonuje slot zapasowy
+            "plan_fetched_at": _utc(fetched) if fetched is not None else None,
+            "plan_stale": ex.plan_stale(now),
             "entities": {k: manual.get(key) or mapped.get(key) for k, key in _CARD_ENTITIES.items()},
             "battery_capacity_kwh": self._entry.options.get(OPT_BATTERY_CAPACITY_KWH),
             "tou_preview": ex.tou_preview,

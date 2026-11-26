@@ -59,6 +59,7 @@ def test_invalid_plan_gives_empty():
 
 
 def _rt(**ex):
+    ex = {"plan_fetched_at": None, "plan_stale": lambda now: True, "executed_schedule": lambda now: None, **ex}
     executor = SimpleNamespace(raw_plan=raw_plan(), schedule=None, consent=False, local_switch=False,
                                paused=False, last_decision=None, tou_preview=None, **ex)
     return SimpleNamespace(executor=executor, mapped={"soc": "sensor.soc", "mode": "select.m"},
@@ -637,3 +638,45 @@ def test_plan_sensor_strategy_attribute_is_tolerant():
     assert _strategy_attr(strategy="FUTURE_MODE") == "FUTURE_MODE"      # nowa wartość serwera nie jest ukrywana
     assert _strategy_attr(strategy="") is None
     assert _strategy_attr(strategy=3) is None
+
+
+# ── limit wieku planu: atrybuty sensora Plan ─────────────────────────────────
+from custom_components.volcast.core.slot import parse_schedule  # noqa: E402
+
+
+def _charge_now_plan():
+    return {"schedule_id": "c", "slots": [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z",
+                                           "mode": "charge", "charge_source": "grid", "power_w": 3000}],
+            "fallback": {"mode": "self_consume", "soc_reserve": 10}, "control_enabled": True}
+
+
+def _stale_rt(stale, fetched_at, monkeypatch):
+    from custom_components.volcast import control_entities as ce
+    monkeypatch.setattr(ce.dt_util, "utcnow", lambda: NOW)
+    raw = _charge_now_plan()
+    sch = parse_schedule(raw)
+    rt = _rt()
+    rt.executor.raw_plan = raw
+    rt.executor.schedule = sch
+    rt.executor.plan_fetched_at = fetched_at
+    rt.executor.plan_stale = lambda now: stale
+    rt.executor.executed_schedule = lambda now: sch.active_as_fallback() if stale else sch
+    return VolcastPlanSensor(SimpleNamespace(entry_id="e1", options={}), rt)
+
+
+def test_plan_sensor_reports_fetch_time_and_stale_flag(monkeypatch):
+    fetched = NOW - timedelta(hours=7)
+    s = _stale_rt(True, fetched, monkeypatch)
+    a = s.extra_state_attributes
+    assert a["plan_fetched_at"] == "2026-09-23T03:30:00Z" and a["plan_stale"] is True
+    assert a["fallback"] is True and s.native_value == "self_consume"     # stan = to, co wykonujemy
+    assert a["slots"][0]["action"] == "charge"                            # karta pokazuje plan z chmury
+
+    s = _stale_rt(False, NOW - timedelta(hours=5), monkeypatch)
+    a = s.extra_state_attributes
+    assert a["plan_stale"] is False and a["fallback"] is False and s.native_value == "charge"
+
+
+def test_plan_sensor_without_fetch_time():
+    a = VolcastPlanSensor(SimpleNamespace(entry_id="e1", options={}), _rt()).extra_state_attributes
+    assert a["plan_fetched_at"] is None and a["plan_stale"] is True

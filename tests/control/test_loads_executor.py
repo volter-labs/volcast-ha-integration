@@ -921,6 +921,9 @@ def test_refresh_confirms_plan_only_on_cloud_answer():
             return self.result
 
     class Battery:
+        async def async_note_plan_confirmed(self):
+            seen.append("battery_confirmed")
+
         async def async_tick(self):
             seen.append("battery")
 
@@ -934,11 +937,11 @@ def test_refresh_confirms_plan_only_on_cloud_answer():
     for result in ("accepted", "unchanged", "network", "auth", "rejected", "error"):
         seen.clear()
         asyncio.run(refresh_and_tick(Fetcher(result), Battery(), Loads()))
-        assert seen == (["confirmed", "battery", "loads"] if result in ("accepted", "unchanged")
+        assert seen == (["battery_confirmed", "confirmed", "battery", "loads"] if result in ("accepted", "unchanged")
                         else ["battery", "loads"]), result
     seen.clear()
     asyncio.run(refresh_and_tick(Fetcher("accepted"), Battery(), None))
-    assert seen == ["battery"]
+    assert seen == ["battery_confirmed", "battery"]
 
 
 # ── ręczna ingerencja ─────────────────────────────────────────────────────

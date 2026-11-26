@@ -31,6 +31,11 @@ zapisana razem z migawką. Gdy po restarcie feed nie daje już tej treści z pra
 bez ważnego certyfikatu, inna treść), powrót do migawki idzie tą kopią — po ponownym sprawdzeniu jej
 certyfikatu — zamiast porzucenia rekordu. Profil z pakietu: brak pola (zapis rekordu jak dotąd).
 
+`plan_fetched_at` — czas (ISO UTC ze strefą) ostatniego udanego pobrania planu: limit wieku planu
+baterii (`core/slot.py`, `STALE_PLAN_S`) liczy się od niego także po restarcie bez sieci. Brak albo zły
+kształt = wiek nieznany (plan przeterminowany do najbliższego pobrania) — także po powrocie z wersji,
+która pola nie zna i gubi je przy zapisie.
+
 `nvm_log` — ramki zapisu do pamięci nieulotnej falownika w oknie budżetu (`[klucz, czas UTC]`),
 żeby budżet przeżył restart i przeładowanie.
 
@@ -44,6 +49,7 @@ import logging
 import math
 import secrets
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 
 from homeassistant.helpers.storage import Store
 
@@ -83,6 +89,18 @@ class ControlState:
     # ostatni tryb zapisany przez NAS (nazwa z profilu), trwały mimo restartu; osobny klucz magazynu,
     # który poprzednia wersja pomija przy odczycie i gubi przy następnym zapisie
     last_mode: str | None = None
+    plan_fetched_at: str | None = None
+
+
+def _aware_iso(raw) -> str | None:
+    """Znacznik ISO ze strefą; inny kształt (liczba, tekst, czas bez strefy) = None."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return raw if parsed.tzinfo is not None else None
 
 
 def control_meta_clean(raw) -> dict:
@@ -189,7 +207,8 @@ class ControlStore:
             conflict_ack=conflict_ack_pairs(raw.get("conflict_ack")),
             control_meta=control_meta_clean(raw.get("control_meta")),
             trusted_profile=trusted if isinstance(trusted := raw.get("trusted_profile"), dict) else None,
-            last_mode=last_mode if owner and isinstance(last_mode, str) and last_mode else None)
+            last_mode=last_mode if owner and isinstance(last_mode, str) and last_mode else None,
+            plan_fetched_at=_aware_iso(raw.get("plan_fetched_at")))
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)

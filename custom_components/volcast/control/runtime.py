@@ -1272,8 +1272,11 @@ async def refresh_and_tick(fetcher, executor, loads_executor) -> None:
     awaryjna chroni przed utratą łączności z chmurą, nie przed brakiem przeliczenia; odpowiedź
     `rejected` (plan nieparsowalny) nie odmładza — jak brak planu."""
     result = await fetcher.async_refresh()
-    if loads_executor is not None and result in ("accepted", "unchanged"):
-        loads_executor.note_plan_confirmed()
+    if result in ("accepted", "unchanged"):
+        # Ten sam licznik dla baterii: limit wieku planu (`STALE_PLAN_S`) od ostatniej odpowiedzi z planem.
+        await executor.async_note_plan_confirmed()
+        if loads_executor is not None:
+            loads_executor.note_plan_confirmed()
     await executor.async_tick()
     if loads_executor is not None:
         await loads_executor.async_tick()
