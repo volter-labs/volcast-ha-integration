@@ -186,3 +186,64 @@ def test_stale_report_is_hidden_when_control_runs_another_way(options, expect):
     ent = VolcastVerificationSensor(entry, SimpleNamespace(verification=None))
     assert ("hub_check" in ent.extra_state_attributes) is expect
     assert (ent.native_value == "hub_check_failed") is expect
+
+
+def test_restore_failure_says_control_is_still_on(monkeypatch):
+    f, _, saved = setup(monkeypatch, soc=80, bank={588: 55}, options={"control_mode": "direct"})
+
+    async def denied(rt, old, new):
+        return False
+    monkeypatch.setattr(cf_mod, "async_control_change_allowed", denied)
+    run(f.async_step_control_hub(USER))
+    eid = f.config_entry.entry_id
+    assert f"hub_check_control_on_{eid}" in f.issues and f"hub_check_failed_{eid}" not in f.issues
+    assert f.issues[f"hub_check_control_on_{eid}"]["translation_key"] == "hub_check_control_on"
+
+
+def test_issues_follow_the_saved_options_not_the_attempt(monkeypatch):
+    f, _, _ = setup(monkeypatch, soc=80, bank={588: 55}, options={"control_mode": "direct"})
+
+    async def denied(rt, old, new):
+        return False
+    monkeypatch.setattr(cf_mod, "async_control_change_allowed", denied)
+    run(f.async_step_control_hub(USER))
+    assert f"hub_check_failed_{f.config_entry.entry_id}" not in f.issues      # nic nie zapisano
+
+
+def test_failed_issue_is_removed_when_control_switches_to_another_mode(monkeypatch):
+    f, _, _ = setup(monkeypatch, soc=80, bank={588: 55})
+    run(f.async_step_control_hub(USER))
+    eid = f.config_entry.entry_id
+    assert f"hub_check_failed_{eid}" in f.issues
+    f.config_entry.options.update({"direct_target": {"transport": "tcp"}})
+    run(f._finish(f._merged({"control_mode": "direct"})))
+    assert f.issues == {}
+
+
+def test_control_off_removes_the_issues(monkeypatch):
+    f, _, _ = setup(monkeypatch, soc=80, bank={588: 55})
+    run(f.async_step_control_hub(USER))
+    run(f.async_step_control_off())
+    assert f.issues == {}
+
+
+def test_issues_are_removed_with_the_entry(monkeypatch):
+    from custom_components.volcast.core.control import hub_check
+    import custom_components.volcast as init_mod
+    deleted = []
+    monkeypatch.setattr(init_mod.ir, "async_delete_issue", lambda hass, domain, iid: deleted.append(iid))
+
+    async def noop(*a, **k):
+        return None
+    monkeypatch.setattr(init_mod, "async_remove_control", noop)
+    asyncio.run(init_mod.async_remove_entry(SimpleNamespace(), SimpleNamespace(entry_id="e1", options={}, data={})))
+    assert set(hub_check.issue_ids("e1")) <= set(deleted)
+
+
+def test_constant_value_user_sensor_is_fresh_through_last_reported(monkeypatch):
+    f, hub, _ = setup(monkeypatch, soc=55, bank={588: 55})
+    st = hub.hass.states.get("sensor.user_soc")
+    st.last_updated = dt_util.utcnow() - timedelta(hours=3)        # wartość stała od godzin
+    st.last_reported = dt_util.utcnow()                            # ale czujnik wciąż raportuje
+    r = run(f.async_step_control_hub(USER))
+    assert r["data"]["hub_check"]["quantities"]["soc"]["verdict"] == "ok"

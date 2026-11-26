@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast could not fully check your Modbus hub",
       "description": "The hub readings could not be compared with your own sensors for: {quantities} (no fresh sensor, or the battery was idle). Control was enabled on the strength of the device identification alone. Map your battery power and state of charge sensors under Installation details and run the Modbus hub step again while the battery is charging or discharging."
+    },
+    "hub_check_control_on": {
+      "title": "Volcast control is STILL ON after a failed Modbus hub check",
+      "description": "The Modbus hub check failed ({problems}), but Volcast could not return the inverter to its baseline, so nothing was changed and Volcast control is still running. Make sure the inverter is reachable, then open the integration options, choose Modbus hub again and submit; control turns off once the inverter is restored. To stop control right away, turn off the Volcast control switch."
     }
   },
   "services": {

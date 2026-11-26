@@ -13,13 +13,14 @@ Tolerancje (jednostki kanoniczne wtyczki: SoC w %, moc baterii w W, dodatnia = r
 jest po przeliczeniu jednostki i po fladze odwrócenia znaku baterii):
   * SoC: |hub − użytkownik| ≤ 5 punktów % — dwa źródła (BMS i falownik) zaokrąglają i odświeżają się osobno;
     SoC spoza 0–100 w hubie = rozjazd (zła skala albo adres);
-  * moc baterii: |hub − użytkownik| ≤ max(300 W, 15 % większej z wartości) — próbki z różnych chwil (zmienna
+  * moc baterii (tylko gdy większa z wartości ≥ 600 W): |hub − użytkownik| ≤ max(300 W, 15 % większej z
+    wartości) — próbki z różnych chwil (zmienna
     moc), skala 10× albo odwrócony znak wychodzą daleko poza pasmo. Odwrócony znak (suma w paśmie, różnica nie)
     dostaje znacznik `sign_inverted`.
 
-Bateria bezczynna (obie wartości mocy < 300 W) niczego nie rozstrzyga — błąd skali 10× albo znaku też mieści się
-w paśmie — więc to `inconclusive` (nie `ok`), a werdykt ogólny to najwyżej `partial`. Przy mocy ≥ 300 W po którejkolwiek
-stronie pasmo (min. 300 W) wyłapuje skalę 10× i odwrócony znak.
+Bateria słabo obciążona (większa z mocy < 600 W) niczego nie rozstrzyga — błąd skali 10× też mieści się w paśmie
+(przy M < 334 W różnica 0,9·M ≤ 300 W) — więc to `inconclusive` (nie `ok`), a werdykt ogólny to najwyżej `partial`.
+Przy M ≥ 600 W różnica 10× (≥ 540 W) zawsze przekracza pasmo max(300 W, 15 % M), tak samo odwrócony znak.
 
 Raport nie zawiera entity_id ani nazwy huba — tylko kody werdyktów i liczby (może iść do telemetrii).
 """
@@ -45,7 +46,15 @@ QUANTITIES = (SOC, BATTERY_POWER)
 
 SOC_TOLERANCE_PCT = 5.0
 POWER_TOLERANCE_FLOOR_W = 300.0
+# Poniżej tej mocy (większa z wartości) porównanie nic nie rozstrzyga: błąd skali 10× (mniejsza = 0,1 większej) różni się
+# o 0,9·M, a pasmo ma co najmniej 300 W, więc przy M < 334 W taki błąd się w nim mieści. 600 W zostawia zapas.
+POWER_DISCRIMINATING_W = 600.0
 POWER_TOLERANCE_REL = 0.15
+
+
+def issue_ids(entry_id: str) -> tuple[str, str, str]:
+    """Identyfikatory zgłoszeń Napraw: nieudana weryfikacja, pominięte porównanie, sterowanie wciąż włączone."""
+    return (f"hub_check_failed_{entry_id}", f"hub_check_not_compared_{entry_id}", f"hub_check_control_on_{entry_id}")
 
 
 def _num(v: Any) -> float | None:
@@ -69,7 +78,7 @@ def _compare(key: str, hub: float | None, user: float | None) -> dict[str, Any]:
         return out
     if user is None:
         return out
-    if key == BATTERY_POWER and max(abs(hub), abs(user)) < POWER_TOLERANCE_FLOOR_W:
+    if key == BATTERY_POWER and max(abs(hub), abs(user)) < POWER_DISCRIMINATING_W:
         out["verdict"] = INCONCLUSIVE
         return out
     tol = _tolerance(key, hub, user)

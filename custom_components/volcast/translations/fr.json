@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast n'a pas pu vérifier entièrement votre hub Modbus",
       "description": "Les valeurs du hub n'ont pas pu être comparées à vos capteurs pour : {quantities} (pas de capteur récent ou batterie inactive). Le pilotage a été activé uniquement sur l'identification de l'appareil. Associez les capteurs de puissance et de niveau de la batterie dans Installation details et relancez l'étape du hub Modbus pendant que la batterie charge ou décharge."
+    },
+    "hub_check_control_on": {
+      "title": "Le pilotage Volcast est TOUJOURS ACTIF après l'échec de la vérification du hub Modbus",
+      "description": "La vérification du hub Modbus a échoué ({problems}), mais Volcast n'a pas pu remettre l'onduleur dans son état de base : rien n'a été modifié et le pilotage continue. Vérifiez que l'onduleur est joignable, ouvrez les options de l'intégration, choisissez à nouveau le hub Modbus et validez ; le pilotage s'arrêtera une fois l'onduleur restauré. Pour l'arrêter immédiatement, désactivez l'interrupteur de pilotage Volcast."
     }
   },
   "services": {

@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast nemohl plně ověřit váš Modbus hub",
       "description": "Hodnoty z hubu nešlo porovnat s vašimi senzory pro: {quantities} (žádný aktuální senzor nebo byla baterie nečinná). Řízení bylo zapnuto jen na základě identifikace zařízení. Namapujte senzory výkonu a nabití baterie v Installation details a spusťte krok Modbus hubu znovu, když se baterie nabíjí nebo vybíjí."
+    },
+    "hub_check_control_on": {
+      "title": "Řízení Volcast je STÁLE ZAPNUTÉ po neúspěšném ověření Modbus hubu",
+      "description": "Ověření Modbus hubu selhalo ({problems}), ale Volcast nedokázal vrátit střídač do základního stavu, takže se nic nezměnilo a řízení stále běží. Ověřte, že je střídač dostupný, otevřete nastavení integrace, znovu zvolte Modbus hub a odešlete; řízení se vypne po obnovení střídače. Chcete-li řízení zastavit ihned, vypněte přepínač řízení Volcast."
     }
   },
   "services": {

@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast kon je Modbus-hub niet volledig controleren",
       "description": "De hubwaarden konden voor {quantities} niet met je sensoren worden vergeleken (geen actuele sensor of de batterij was inactief). Sturing is alleen op basis van de apparaatidentificatie ingeschakeld. Koppel batterijvermogen en laadniveau onder Installation details en voer de Modbus-hubstap opnieuw uit terwijl de batterij laadt of ontlaadt."
+    },
+    "hub_check_control_on": {
+      "title": "Volcast-sturing staat NOG STEEDS AAN na een mislukte Modbus-hubcontrole",
+      "description": "De controle van de Modbus-hub is mislukt ({problems}), maar Volcast kon de omvormer niet terugzetten naar de basisinstelling. Er is niets gewijzigd en de sturing draait nog. Zorg dat de omvormer bereikbaar is, open daarna de integratieopties, kies opnieuw de Modbus-hub en verstuur; de sturing gaat uit zodra de omvormer is hersteld. Zet de Volcast-stuurschakelaar uit om de sturing direct te stoppen."
     }
   },
   "services": {

@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast konnte Ihren Modbus-Hub nicht vollständig prüfen",
       "description": "Die Hub-Werte konnten für {quantities} nicht mit Ihren Sensoren verglichen werden (kein aktueller Sensor oder Batterie im Leerlauf). Die Steuerung wurde allein anhand der Geräteerkennung aktiviert. Ordnen Sie Batterieleistung und Ladestand unter Installation details zu und führen Sie den Modbus-Hub-Schritt erneut aus, während die Batterie lädt oder entlädt."
+    },
+    "hub_check_control_on": {
+      "title": "Die Volcast-Steuerung läuft nach fehlgeschlagener Modbus-Hub-Prüfung WEITER",
+      "description": "Die Prüfung des Modbus-Hubs ist fehlgeschlagen ({problems}), aber Volcast konnte den Wechselrichter nicht in den Basiszustand zurückversetzen. Es wurde nichts geändert, die Steuerung läuft weiter. Stellen Sie sicher, dass der Wechselrichter erreichbar ist, öffnen Sie dann die Integrationsoptionen, wählen Sie erneut den Modbus-Hub und senden Sie ab; die Steuerung schaltet sich nach der Wiederherstellung aus. Um die Steuerung sofort zu stoppen, schalten Sie den Volcast-Steuerungsschalter aus."
     }
   },
   "services": {

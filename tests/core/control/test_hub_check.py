@@ -51,15 +51,10 @@ def test_soc_tolerance_edge(deye):
 
 
 def test_battery_power_band_is_relative_with_a_floor(deye):
-    # 10 kW: 15 % = 1500 W; 400 W: podłoga 300 W
-    assert build(deye, image(r590=10000), {"battery_power_w": 8600.0})["quantities"][
-        "battery_power_w"]["verdict"] == hc.OK
-    assert build(deye, image(r590=10000), {"battery_power_w": 8400.0})["quantities"][
-        "battery_power_w"]["verdict"] == hc.MISMATCH
-    assert build(deye, image(r590=400), {"battery_power_w": 80.0})["quantities"][
-        "battery_power_w"]["verdict"] == hc.MISMATCH
-    assert build(deye, image(r590=400), {"battery_power_w": 150.0})["quantities"][
-        "battery_power_w"]["verdict"] == hc.OK
+    q = lambda hub, user: build(deye, image(r590=hub), {"battery_power_w": user})["quantities"]["battery_power_w"]
+    # 10 kW: 15 % = 1500 W; 700 W: podłoga 300 W
+    assert q(10000, 8600.0)["verdict"] == hc.OK and q(10000, 8400.0)["verdict"] == hc.MISMATCH
+    assert q(700, 420.0)["verdict"] == hc.OK and q(700, 390.0)["verdict"] == hc.MISMATCH
 
 
 def test_inverted_sign_is_a_mismatch_with_a_hint(deye):
@@ -108,14 +103,24 @@ def test_idle_battery_is_inconclusive_not_ok(deye):
     rep = build(deye, image(r588=55, r590=25), {"soc": 55.0, "battery_power_w": 250.0})
     q = rep["quantities"]["battery_power_w"]
     assert q["verdict"] == hc.INCONCLUSIVE and rep["verdict"] == hc.PARTIAL and not hc.blocks_control(rep)
-    both = build(deye, image(r590=299), {"battery_power_w": -299.0})["quantities"]["battery_power_w"]
+    both = build(deye, image(r590=599), {"battery_power_w": 599.0})["quantities"]["battery_power_w"]
     assert both["verdict"] == hc.INCONCLUSIVE
+    assert build(deye, image(r590=600), {"battery_power_w": 600.0})["quantities"]["battery_power_w"][
+        "verdict"] == hc.OK
 
 
-def test_scale_or_sign_error_is_caught_once_power_is_large_enough(deye):
-    for hub, user in ((50, 500.0), (5000, 500.0), (500, -500.0), (-500, 500.0), (25, 400.0)):
-        q = build(deye, image(r590=hub), {"battery_power_w": user})["quantities"]["battery_power_w"]
-        assert q["verdict"] == hc.MISMATCH, (hub, user)
+@pytest.mark.parametrize("power", range(300, 1001, 10))
+def test_a_ten_fold_error_is_never_ok_for_any_power(deye, power):
+    for hub, user in ((power, power / 10), (power / 10, power), (-power, power / 10), (power, -power)):
+        q = build(deye, image(r590=int(hub)), {"battery_power_w": float(user)})["quantities"]["battery_power_w"]
+        assert q["verdict"] in (hc.MISMATCH, hc.INCONCLUSIVE), (hub, user, q)
+        if max(abs(hub), abs(user)) >= hc.POWER_DISCRIMINATING_W:
+            assert q["verdict"] == hc.MISMATCH, (hub, user)
+
+
+def test_the_31_vs_310_case_is_inconclusive(deye):
+    q = build(deye, image(r590=31), {"battery_power_w": 310.0})["quantities"]["battery_power_w"]
+    assert q["verdict"] == hc.INCONCLUSIVE
 
 
 def test_all_inconclusive_or_missing_is_cannot_compare(deye):

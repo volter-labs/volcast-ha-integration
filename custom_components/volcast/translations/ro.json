@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast nu a putut verifica complet hub-ul tău Modbus",
       "description": "Citirile hub-ului nu au putut fi comparate cu senzorii tăi pentru: {quantities} (fără senzor recent sau bateria era inactivă). Controlul a fost activat doar pe baza identificării dispozitivului. Mapează senzorii de putere și de încărcare ai bateriei în Installation details și rulează din nou pasul hub-ului Modbus cât timp bateria se încarcă sau se descarcă."
+    },
+    "hub_check_control_on": {
+      "title": "Controlul Volcast RĂMÂNE ACTIV după o verificare eșuată a hub-ului Modbus",
+      "description": "Verificarea hub-ului Modbus a eșuat ({problems}), dar Volcast nu a putut readuce invertorul la starea de bază, așa că nu s-a modificat nimic, iar controlul încă funcționează. Asigură-te că invertorul este accesibil, deschide opțiunile integrării, alege din nou hub-ul Modbus și trimite; controlul se oprește după restaurarea invertorului. Pentru a opri controlul imediat, dezactivează comutatorul de control Volcast."
     }
   },
   "services": {

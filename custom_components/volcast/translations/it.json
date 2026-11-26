@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast non ha potuto verificare del tutto il tuo hub Modbus",
       "description": "Non è stato possibile confrontare le letture dell'hub con i tuoi sensori per: {quantities} (nessun sensore recente o batteria inattiva). Il controllo è stato attivato solo in base all'identificazione del dispositivo. Associa i sensori di potenza e carica della batteria in Installation details ed esegui di nuovo il passaggio dell'hub Modbus mentre la batteria si carica o si scarica."
+    },
+    "hub_check_control_on": {
+      "title": "Il controllo Volcast è ANCORA ATTIVO dopo una verifica fallita dell'hub Modbus",
+      "description": "La verifica dell'hub Modbus non è riuscita ({problems}), ma Volcast non è riuscito a riportare l'inverter allo stato base: non è stato modificato nulla e il controllo è ancora in funzione. Assicurati che l'inverter sia raggiungibile, apri le opzioni dell'integrazione, scegli di nuovo l'hub Modbus e invia; il controllo si disattiverà quando l'inverter sarà ripristinato. Per fermarlo subito, disattiva l'interruttore di controllo Volcast."
     }
   },
   "services": {

@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast nie mógł w pełni sprawdzić huba Modbus",
       "description": "Odczytów z huba nie dało się porównać z Twoimi czujnikami dla: {quantities} (brak świeżego czujnika albo bateria była bezczynna). Sterowanie włączono wyłącznie na podstawie identyfikacji urządzenia. Zmapuj czujniki mocy baterii i SoC w „Installation details” i uruchom krok huba Modbus ponownie, gdy bateria się ładuje lub rozładowuje."
+    },
+    "hub_check_control_on": {
+      "title": "Sterowanie Volcast NADAL DZIAŁA mimo nieudanej weryfikacji huba Modbus",
+      "description": "Weryfikacja huba Modbus nie powiodła się ({problems}), ale Volcast nie mógł przywrócić falownika do ustawień bazowych, więc nic nie zmieniono i sterowanie nadal działa. Upewnij się, że falownik jest osiągalny, następnie otwórz opcje integracji, wybierz ponownie hub Modbus i wyślij; sterowanie wyłączy się po przywróceniu falownika. Aby zatrzymać sterowanie od razu, wyłącz przełącznik sterowania Volcast."
     }
   },
   "services": {

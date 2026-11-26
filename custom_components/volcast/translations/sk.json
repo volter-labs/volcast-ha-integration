@@ -711,6 +711,10 @@
     "hub_check_not_compared": {
       "title": "Volcast nedokázal plne overiť váš Modbus hub",
       "description": "Hodnoty z hubu sa nedali porovnať s vašimi senzormi pre: {quantities} (žiadny aktuálny senzor alebo bola batéria nečinná). Riadenie bolo zapnuté len na základe identifikácie zariadenia. Namapujte senzory výkonu a nabitia batérie v Installation details a spustite krok Modbus hubu znova, keď sa batéria nabíja alebo vybíja."
+    },
+    "hub_check_control_on": {
+      "title": "Riadenie Volcast je STÁLE ZAPNUTÉ po neúspešnom overení Modbus hubu",
+      "description": "Overenie Modbus hubu zlyhalo ({problems}), ale Volcast nedokázal vrátiť striedač do základného stavu, takže sa nič nezmenilo a riadenie stále beží. Overte, že je striedač dostupný, otvorte nastavenia integrácie, znova zvoľte Modbus hub a odošlite; riadenie sa vypne po obnovení striedača. Ak chcete riadenie zastaviť okamžite, vypnite prepínač riadenia Volcast."
     }
   },
   "services": {

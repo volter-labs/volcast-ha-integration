@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -770,8 +770,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             await rt.async_leave_plan_only()
         if saved_notice is not None:
             self.hass.config_entries.async_update_entry(self.config_entry, options=options)
+            self._sync_hub_issues(options)
             reason, placeholders = saved_notice
             return self.async_abort(reason=reason, description_placeholders=placeholders)
+        self._sync_hub_issues(options)
         return self.async_create_entry(data=options)
 
     def _forecast_options(self, user_input: dict[str, Any]) -> dict[str, Any]:
@@ -1004,25 +1006,34 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             carries = telemetry_carries_pv_power(
                 ProfileChoice(profile, None, None), profile_map={},
                 manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
-            self._hub_issues(check)
             return await self._enable_control(options, carries_pv_power=carries)
         if blocked is not None:
             return await self._hub_blocked(blocked[0], hub, unit, blocked[1])
         return failure
 
-    def _hub_issues(self, check: Mapping[str, Any] | None, *, failed: bool = False) -> None:
-        """Zgłoszenia Napraw: nieudana weryfikacja huba (sterowanie wyłączone) albo pominięte porównanie."""
-        eid = self.config_entry.entry_id
-        failed_id, skipped_id = f"hub_check_failed_{eid}", f"hub_check_not_compared_{eid}"
-        if failed and check is not None:
+    def _sync_hub_issues(self, options: Mapping[str, Any]) -> None:
+        """Zgłoszenia Napraw wynikają z ZAPISANYCH opcji (wołane po zapisie, nie przed): nieudana weryfikacja huba
+        przy wyłączonym sterowaniu, albo pominięte porównanie. Inny tryb sterowania / brak raportu = sprzątanie."""
+        failed_id, skipped_id, still_on_id = hub_check.issue_ids(self.config_entry.entry_id)
+        ir.async_delete_issue(self.hass, DOMAIN, still_on_id)                 # zapis się udał — sterowanie nie trwa przy złym raporcie
+        check = options.get(OPT_HUB_CHECK)
+        target = options.get(OPT_DIRECT_TARGET)
+        other_mode = (options.get(OPT_CONTROL_MODE) is not None
+                      and not (isinstance(target, Mapping) and target.get("transport") == HA_MODBUS_KIND))
+        if not isinstance(check, Mapping) or not check or other_mode:
+            ir.async_delete_issue(self.hass, DOMAIN, failed_id)
+            ir.async_delete_issue(self.hass, DOMAIN, skipped_id)
+            return
+        if hub_check.blocks_control(check):
             ir.async_create_issue(self.hass, DOMAIN, failed_id, is_fixable=False, severity=_WARNING,
                                   translation_key="hub_check_failed",
                                   translation_placeholders={"problems": hub_check_problems(check)})
-        else:
-            ir.async_delete_issue(self.hass, DOMAIN, failed_id)
-        skipped = [k for k, q in (check or {}).get("quantities", {}).items()
+            ir.async_delete_issue(self.hass, DOMAIN, skipped_id)
+            return
+        ir.async_delete_issue(self.hass, DOMAIN, failed_id)
+        skipped = [k for k, q in check.get("quantities", {}).items()
                    if q.get("verdict") in (hub_check.CANNOT_COMPARE, hub_check.INCONCLUSIVE)]
-        if skipped and not failed:
+        if skipped:
             ir.async_create_issue(self.hass, DOMAIN, skipped_id, is_fixable=False, severity=_WARNING,
                                   translation_key="hub_check_not_compared",
                                   translation_placeholders={"quantities": ", ".join(skipped)})
@@ -1031,15 +1042,22 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
 
     async def _hub_blocked(self, check: dict[str, Any], hub: str, unit: int, profile_id: str) -> ConfigFlowResult:
         """Rozjazd weryfikacji: raport zamiast sterowania. Sterowanie już włączone (wcześniejszy cel) wyłączamy przez
-        bramkę przywracania (kopia TOU wraca do falownika); gdy powrót się nie uda, nic nie zapisujemy."""
+        bramkę przywracania (kopia TOU wraca do falownika); gdy powrót się nie uda, nic nie zapisujemy, a zgłoszenie
+        mówi, że sterowanie NADAL działa."""
         problems = hub_check_problems(check)
-        self._hub_issues(check, failed=True)
         if self.config_entry.options.get(OPT_CONTROL_MODE) is not None:
-            return await self._finish(
+            result = await self._finish(
                 self._merged({OPT_CONTROL_MODE: None, OPT_HUB_CHECK: check}),
                 retry_form=lambda errors: self._hub_form(hub, unit, errors, problems, profile_id),
                 saved_notice=("hub_check_control_off", {"problems": problems}))
-        self.hass.config_entries.async_update_entry(self.config_entry, options=self._merged({OPT_HUB_CHECK: check}))
+            if (result.get("errors") or {}).get("base") == RESTORE_FAILED:
+                ir.async_create_issue(self.hass, DOMAIN, hub_check.issue_ids(self.config_entry.entry_id)[2],
+                                      is_fixable=False, severity=_WARNING, translation_key="hub_check_control_on",
+                                      translation_placeholders={"problems": problems})
+            return result
+        options = self._merged({OPT_HUB_CHECK: check})
+        self.hass.config_entries.async_update_entry(self.config_entry, options=options)
+        self._sync_hub_issues(options)
         return self._hub_form(hub, unit, {"base": "hub_check_failed"}, problems, profile_id)
 
     async def _hub_identity(self, profile, hub: str, unit: int,
@@ -1090,8 +1108,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         out: dict[str, float | None] = {}
         for key in hub_check.QUANTITIES:
             st = self.hass.states.get(sources[key]) if sources.get(key) else None
-            stamp = getattr(st, "last_updated", None)
-            if st is None or (stamp is not None and now - stamp > HUB_USER_MAX_AGE):
+            stamps = [x for x in (getattr(st, "last_reported", None), getattr(st, "last_updated", None))
+                      if isinstance(x, datetime)]
+            # Świeżość jak w transporcie: późniejszy z `last_reported` i `last_updated` (czujnik o stałej wartości
+            # zmienia tylko `last_reported`).
+            if st is None or (stamps and now - max(stamps) > HUB_USER_MAX_AGE):
                 out[key] = None            # brak encji albo nieświeży odczyt (np. chmura) — nie da się porównać
                 continue
             attrs = getattr(st, "attributes", None) or {}
@@ -1138,7 +1159,6 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return await self._finish(options, leave_plan_only=True)
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        self._hub_issues(None)
         return await self._finish(self._merged({OPT_CONTROL_MODE: None, OPT_HUB_CHECK: None}))
 
     _assignment: AssignmentResult | None = None
