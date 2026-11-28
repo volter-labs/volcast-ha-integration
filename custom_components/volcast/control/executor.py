@@ -109,7 +109,9 @@ Zgłoszenie da się naprawić („Wznów sterowanie teraz", `async_resume_contro
 
 Okna czasowe (`control_model == "time_window"`): już PIERWSZA obca zmiana pola programu albo włącznika
 harmonogramu jest przejęciem tego klucza (`takeover.first_change_takes_over`; inne modele — dwa rozjazdy).
-Odczyt równy wartości planu nie jest zmianą właściciela (nasz zapis o nieznanym wyniku, który doszedł).
+Odczyt równy wartości planu nie jest zmianą właściciela (np. nasz zapis zgłoszony jako odrzucony, który doszedł
+później). Pole z nieznanym wynikiem zapisu (ERROR) traci odniesienie: nie ma rozjazdu ani powrotu warunkowego,
+dopóki następny zapis albo powrót tego pola go nie ustali.
 Każde przejęcie wysyła zdarzenie HA `volcast_control_takeover` (`entry_id`, `key`, `value`, `at`).
 Powrót do programów właściciela jest warunkowy: rejestr wraca z migawki tylko, gdy ma jeszcze wartość, którą
 ostatnio zapisaliśmy albo zostawiliśmy z migawki (pamięć `last_written`, trwała kopia `tou_written` —
@@ -1865,8 +1867,8 @@ class VolcastExecutor:
             first = first_change_takes_over(model, key)
             planned = self._planned.get(key)
             if first and planned is not None and same_value(planned, value):
-                # Okna czasowe: odczyt równy planowi to nasz zapis (np. o nieznanym wyniku, który doszedł),
-                # nie zmiana właściciela — staje się odniesieniem.
+                # Okna czasowe: odczyt równy planowi to nasz zapis (np. zgłoszony jako odrzucony, a doszedł
+                # później), nie zmiana właściciela — staje się odniesieniem.
                 memory.last_written[key] = value
                 self._drift_values.pop(key, None)
                 continue
@@ -1880,6 +1882,9 @@ class VolcastExecutor:
             switch_off = key == "enable" and value == 0.0
             if switch_off or first or drift.note_drift(key, now_mono):
                 _LOGGER.warning("Volcast control paused for 30 min: %s changed outside Volcast", key)
+                # Diagnostyka fałszywych przejęć (np. normalizacja wartości przez firmware): same liczby.
+                _LOGGER.info("Volcast control: %s was %s (our last value), now %s", key,
+                             memory.last_written.get(key), value)
                 memory.last_written[key] = value          # wartość właściciela = punkt odniesienia
                 self._drift_values.pop(key, None)
                 self._owner_held[key] = planned
@@ -1989,16 +1994,19 @@ class VolcastExecutor:
                 d = replace(d, status=BLOCKED, reason="gates_changed")
         elif d.status == WRITE and self._state.tou_snapshot is None:
             self._snapshot_lost()               # nigdy nowa migawka przy własności — powrót do programów bazowych
+        if d.status == WRITE and not await self._async_unpin_tou(d.writes):
+            # Bez trwałego odniesienia sprzed sekwencji restart wziąłby nasze nowe programy za zmianę
+            # właściciela (i nie oddałby ich) — jak przy migawce: żadnej ramki.
+            d = replace(d, status=ERROR, reason="store_failed")
         if d.status == WRITE:
-            await self._async_unpin_tou(d.writes)
             report = await async_run_tou_writes(d.writes, self._writer.async_write, pre_held=d.pre_held,
                                                 on_exception=self._log_write_exception)
             end = self._clock()                     # po końcu sekwencji — odczyt z jej trakcie jest nieświeży
             self._end_direct_writes()
             commit_tou(d, report, self._memory, end, now_wall=None)   # ramki liczy `on_send` pisarza
             for key in report.ambiguous:
-                # Nieznany wynik zapisu pola: bez odniesienia (ani rozjazdu, ani powrotu warunkowego), dopóki
-                # odczyt równy planowi albo następny zapis go nie ustali.
+                # Nieznany wynik zapisu pola: bez odniesienia (ani rozjazdu, ani powrotu warunkowego — powrót
+                # bezwarunkowy), dopóki następny zapis albo powrót tego pola go nie ustali. Trwała kopia też.
                 self._memory.last_written.pop(key, None)
             self.last_tou_report = report
             changed = self._note_written([*report.written, *report.ambiguous])
@@ -2081,6 +2089,9 @@ class VolcastExecutor:
              self._state.tou_written) = prev
             return replace(d, status=ERROR, reason="store_failed")
         self._memory.last_written.update(reference)
+        if self.restore_skipped:
+            self.restore_skipped = []                # raport poprzedniego oddania nie dotyczy nowej własności
+            self._notify()
         return d
 
     async def _tou_restore_after_failure(self, *, record_decision: bool = True) -> None:
@@ -2125,6 +2136,7 @@ class VolcastExecutor:
         writes = [w for w in writes if w.key not in taken]
         if not writes:
             return TouReport()
+        # Powrót idzie i bez zapisu: nieaktualne odniesienie wskazuje tu tylko wartości, które powrót nadpisuje.
         await self._async_unpin_tou(writes)
         report = await async_run_tou_writes(writes, self._writer.async_write, on_exception=self._log_write_exception)
         end = self._clock()
@@ -2145,17 +2157,19 @@ class VolcastExecutor:
         flat[EN_KEY] = 0.0
         return flat
 
-    async def _async_unpin_tou(self, writes) -> None:
+    async def _async_unpin_tou(self, writes) -> bool:
         """Przed zapisem: pola, które zaraz piszemy, znikają z trwałego odniesienia (zapisane od razu). Restart
         w trakcie sekwencji zostawia je bez odniesienia — powrót przywróci je bezwarunkowo, zamiast wziąć nasz
-        nowy program za zmianę właściciela. Po sekwencji `_sync_tou_written` wpisuje to, co doszło."""
+        nowy program za zmianę właściciela. Po sekwencji `_sync_tou_written` wpisuje to, co doszło.
+        False = odniesienia nie udało się zapisać."""
         st = self._state
         if not st.owned or not st.tou_written:
-            return
+            return True
         keys = {EN_KEY if w.key in (ENABLE, TOU_WORD) else w.key for w in writes}
-        if keys & set(st.tou_written):
-            st.tou_written = {k: v for k, v in st.tou_written.items() if k not in keys}
-            await self._async_save("control state")
+        if not keys & set(st.tou_written):
+            return True
+        st.tou_written = {k: v for k, v in st.tou_written.items() if k not in keys}
+        return await self._async_save("control state")
 
     def _sync_tou_written(self) -> bool:
         """Trwała kopia odniesienia okien czasowych = pola TOU pamięci `last_written`; True, gdy się zmieniła."""
