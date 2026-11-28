@@ -106,6 +106,8 @@ ONBOARDING_KEY = "volcast_onboarding"
 ONBOARDING_OBJ_KEY = "volcast_onboarding_obj"      # entry_id → żywy `Onboarding` (hak telemetrii)
 # Blokady zapisu per wpis — wspólne dla kolejnych wykonawców (przeładowania).
 _LOCKS_KEY = "volcast_control_locks"
+# Pierwszy cykl po starcie czeka najwyżej tyle na pierwsze pobranie planu (potem rusza jak dotąd).
+FIRST_FETCH_WAIT_S = 30.0
 
 # Opcje, od których zależą: czy sterujemy i przez które encje.
 CONTROL_OPTION_KEYS = (OPT_CONTROL_MODE, OPT_PROFILE_ID, OPT_INVERTER_DOMAIN, OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL,
@@ -1285,6 +1287,33 @@ async def refresh_and_tick(fetcher, executor, loads_executor) -> None:
         await loads_executor.async_tick()
 
 
+async def _await_first_fetch(first_fetch, wait_s: float) -> bool:
+    """Czeka (najwyżej `wait_s`) na pierwsze pobranie planu; True = skończyło się bez wyjątku.
+
+    Po przerwie HA dłuższej niż limit wieku planu (wiek z magazynu jest do `_FETCH_SAVE_S` starszy
+    od ostatniego udanego pobrania) cykl przed pobraniem wpisałby slot zapasowy, a chwilę później
+    znów plan — zbędna para zapisów do falownika (i dławik zapisu może opóźnić powrót do planu).
+    Anulowanie (unload, zatrzymanie HA) przechodzi dalej: zatrzymany wykonawca i tak nic nie zapisze."""
+    if not isinstance(first_fetch, asyncio.Future):
+        return False
+    try:
+        await asyncio.wait_for(asyncio.shield(first_fetch), wait_s)
+    except asyncio.TimeoutError:
+        return False
+    except Exception:  # noqa: BLE001 — nieudane pobranie: cykl z planu z magazynu, jak dotąd
+        return False
+    return True
+
+
+async def first_tick_after_fetch(first_fetch, executor, *, wait_s: float = FIRST_FETCH_WAIT_S) -> None:
+    """Pierwszy cykl wykonawcy po pierwszym pobraniu planu. Pobranie zakończone na czas samo kończy się
+    cyklem (`refresh_and_tick`), więc wtedy nie ma drugiego; po przekroczeniu `wait_s` albo błędzie
+    pobrania cykl rusza z planem z magazynu, jak dotąd."""
+    if await _await_first_fetch(first_fetch, wait_s):
+        return
+    await executor.async_tick()
+
+
 def _build_loads_executor(hass, entry, executor, inverter_entities: frozenset, mapped: Mapping[str, str]):
     """Wykonawca ładowarki: bramki z wykonawcy falownika (zgoda konta, przełącznik w HA, tryb „tylko
     plan”), zakaz zapisu każdej encji falownika."""
@@ -1463,11 +1492,13 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
         raise
     # Pierwszy cykl i pierwsze pobranie — zadania HA, nie wpisu: unload nie anuluje ich
     # w połowie zapisu grupy (zatrzymany wykonawca i tak już nic nie zapisze).
-    hass.async_create_background_task(executor.async_tick(), "volcast_first_tick")
-    hass.async_create_background_task(_fetch(), "volcast_first_fetch")
+    # Cykl czeka (ograniczenie czasu) na pobranie: plan z magazynu po długiej przerwie bywa przeterminowany.
+    first_fetch = hass.async_create_background_task(_fetch(), "volcast_first_fetch")
+    hass.async_create_background_task(first_tick_after_fetch(first_fetch, executor), "volcast_first_tick")
     if conn is not None:
         entry.async_create_background_task(
-            hass, _async_start_direct(conn, executor, on_started=lambda: schedule_recommendation(hass, entry, rt)),
+            hass, _async_start_direct(conn, executor, on_started=lambda: schedule_recommendation(hass, entry, rt),
+                                      first_fetch=first_fetch),
             "volcast_direct_start")
     entry.async_create_background_task(
         hass, async_import_history_once(hass, cloud, executor, load_entity=opts.get(OPT_LOAD_ENERGY),
@@ -1477,7 +1508,8 @@ async def async_setup_control(hass, entry, *, report: Callable[[], dict | None])
     return rt
 
 
-async def _async_start_direct(conn, executor, on_started: Callable[[], None] | None = None) -> None:
+async def _async_start_direct(conn, executor, on_started: Callable[[], None] | None = None, *,
+                              first_fetch=None) -> None:
     """Start połączenia w tle (kolizje, tożsamość), pierwszy odczyt i od razu cykl; potem `on_started`
     (przeliczenie rekomendacji — po starcie `last_probe` jest pusty, a cel i tożsamość już znane)."""
     try:
@@ -1486,6 +1518,7 @@ async def _async_start_direct(conn, executor, on_started: Callable[[], None] | N
         await conn.async_start()
         if conn.refused() is None:
             await conn.async_poll()
+            await _await_first_fetch(first_fetch, FIRST_FETCH_WAIT_S)   # jak pierwszy cykl: plan przed zapasem
             await executor.async_tick()
     except Exception as err:  # noqa: BLE001 — połączenie nie psuje prognozy ani wpisu
         _LOGGER.warning("Volcast direct connection start failed (%s)", type(err).__name__)
