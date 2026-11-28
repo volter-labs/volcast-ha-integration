@@ -766,7 +766,9 @@ async def test_tou_commit_uses_time_after_the_write_sequence(make_hass, rtu_tcp_
 
 
 @pytest.mark.asyncio
-async def test_owner_program_edit_twice_pauses_and_is_not_restored(make_hass, rtu_tcp_sim, deye_bank, issues):
+async def test_owner_program_edit_pauses_at_first_change_and_is_not_restored(make_hass, rtu_tcp_sim, deye_bank,
+                                                                            issues):
+    """Okna czasowe: już pierwsza zmiana pola programu to przejęcie (nie dopiero druga, jak w trybie + nastawie)."""
     h = await _deye(make_hass, rtu_tcp_sim).start(raw=TOU_RAW)
     try:
         await h.ex.async_tick()
@@ -774,10 +776,9 @@ async def test_owner_program_edit_twice_pauses_and_is_not_restored(make_hass, rt
         ours = deye_bank.read(soc_reg, 1)[0]
         deye_bank.poke(soc_reg, 55)
         await h.cycle(400.0)
-        assert not h.ex.paused
-        await h.cycle(400.0)                                  # ta sama wartość trwa — liczy się raz
-        assert not h.ex.paused
-        deye_bank.poke(soc_reg, 60)                           # druga ZMIANA właściciela w 30 min
+        assert h.ex.paused and "tou.1.soc" in h.ex._state.taken_over
+        assert deye_bank.read(soc_reg, 1)[0] == 55            # nie nadpisane w następnym cyklu
+        deye_bank.poke(soc_reg, 60)                           # kolejna zmiana właściciela
         await h.cycle(400.0)
         assert h.ex.paused and "tou.1.soc" in h.ex._state.taken_over
         await h.ex.async_set_consent(False)

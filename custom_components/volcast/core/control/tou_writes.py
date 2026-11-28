@@ -13,6 +13,9 @@ włącznik ON. Wstrzymanie z powodu porażki po wyłączeniu włącznika w tym c
 `restore_needed` (wykonawca od razu przywraca programy właściciela). Wstrzymanie wyłącznie
 przez interwał/budżet powrotu nie wymaga: włącznik OFF to stan bezpieczny, następny cykl
 dokończy. Nieudany zapis OFF = nic dalej nie idzie (programy nietknięte).
+
+Powrót warunkowy (`restore_skips`): rejestr wraca do migawki tylko, gdy ma jeszcze wartość, którą
+ostatnio zapisaliśmy (odniesienie); inna wartość to zmiana właściciela — zostaje i jest raportowana.
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ from ..engines.time_window import baseline_programs, program_diff
 from ..params import Params, TouProgram
 from ..registers import RegisterWrite, encode_tou_enable, encode_writes
 from ..write_sequence import ERROR, OK, OK_ADJUSTED, OnException, WriteReport, _account, _swallow
+from .cycle import same_value
 
 ENABLE = "tou_enable"
 # surowe słowo włącznika właściciela (powrót) — pisarz nie składa bitów, porównuje całe słowo
@@ -174,6 +178,26 @@ def _snapshot_programs(profile, snapshot: Mapping[str, Any]) -> tuple[TouProgram
     bit = 1 << profile.raw["write"]["tou_program"]["grid_charge"]["bit"]
     return tuple(TouProgram(start_min=int(s), power_w=float(p), soc=float(c), grid_charge=bool(int(g) & bit))
                  for s, p, c, g in snapshot["programs"])
+
+
+def restore_skips(target: Mapping[str, float], device: Mapping[str, float], reference: Mapping[str, float],
+                  uncertain: Collection[str] = ()) -> dict[str, tuple[float, float]]:
+    """Klucze powrotu (widok urządzenia: `tou.<n>.<pole>`, `tou_enabled`), których NIE przywracamy:
+    `{klucz: (wartość z migawki, bieżąca)}`.
+
+    Pomijamy klucz, którego bieżąca wartość różni się od celu powrotu ORAZ od naszej wartości odniesienia
+    (ostatni zapis; dla pól nigdy niepisanych — wartość z migawki, czyli to, co zostawiliśmy). Bez odniesienia
+    albo przy niepewnym wyniku naszego zapisu (mógł dojść) — przywracamy jak dotąd. Klucz bez odczytu
+    albo już równy celowi nie jest raportowany."""
+    out: dict[str, tuple[float, float]] = {}
+    for key, want in target.items():
+        cur = device.get(key)
+        if cur is None or same_value(cur, want) or key in uncertain:
+            continue
+        ref = reference.get(key)
+        if ref is not None and not same_value(ref, cur):
+            out[key] = (want, cur)
+    return out
 
 
 def tou_restore_writes(profile, snapshot: Mapping[str, Any] | None, reading, *, soc_reserve: float,

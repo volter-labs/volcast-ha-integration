@@ -245,7 +245,8 @@ class VolcastControlStatusSensor(_ControlEntity, SensorEntity):
         d = ex.last_decision
         rb = getattr(getattr(ex, "io", None), "readback", None)
         return {**(d.summary() if d else {}), "foreign_changes": list(getattr(ex, "foreign_changes", [])),
-                "readback_issues": rb.items if rb is not None else []}
+                "readback_issues": rb.items if rb is not None else [],
+                "restore_skipped": list(getattr(ex, "restore_skipped", []))}
 
 
 class VolcastPriceSensor(SensorEntity):

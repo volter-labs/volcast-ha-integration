@@ -17,6 +17,8 @@
 
 - Time-window verification: fixed how the integration verifies that a written time window took effect. This also affects direct Deye control.
 - Foreign-write detection: fixed detection of writes to the inverter made by something other than the integration.
+- Time-window control (Deye): a change you make to a time-of-use program or to the schedule switch (for example in the inverter vendor app) is now respected after the first change. Volcast stops writing that setting and pauses control for 30 minutes, as it already did after a second change. When control is turned off, the integration restores a setting from its saved copy only if the setting still holds the value Volcast last wrote. A setting you changed stays as you set it, also after a Home Assistant restart. Settings left this way are listed in the `restore_skipped` attribute of the control status sensor. Two Home Assistant events are fired: `volcast_control_takeover` and `volcast_control_restore_skipped`. Mode and setpoint inverters such as GoodWe still treat only a second change as a takeover.
+- Caution for time-window control (Deye): any single change of a program value that Volcast did not make now counts as a takeover. This includes a change the inverter makes by itself, for example firmware adjusting a written value some time after the write. The setting is then kept as it is and is not restored when control is turned off. The values involved are logged at INFO level. If you see a takeover you did not cause, please report it.
 
 ## Upgrading
 

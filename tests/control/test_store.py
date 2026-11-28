@@ -169,3 +169,21 @@ def test_plan_fetch_time_roundtrip_and_bad_values_are_unknown():
     for bad in (123, "wczoraj", "2026-09-23T04:00:30", "", None, True):
         asyncio.run(st._store.async_save({"plan_raw": {"slots": []}, "plan_fetched_at": bad}))
         assert asyncio.run(st.async_load()).plan_fetched_at is None
+
+
+def test_tou_written_roundtrip_legacy_and_bad_entries():
+    st = ControlStore(object(), "e1")
+    s = ControlState(owned=True, tou_written={"tou.2.start": 125.0, "tou_enabled": 1.0})
+    asyncio.run(st.async_save(s))
+    assert asyncio.run(st.async_load()).tou_written == {"tou.2.start": 125.0, "tou_enabled": 1.0}
+    asyncio.run(st.async_save(ControlState(owned=True)))
+    assert "tou_written" not in st._store._data                  # bez odniesienia — rekord jak dotąd
+    assert asyncio.run(st.async_load()).tou_written is None      # poprzednia wersja: powrót bezwarunkowy
+    asyncio.run(st._store.async_save({"owned": True, "tou_written": {"tou.1.soc": 20, "mode": 1.0,
+                                                                     "tou.2.soc": True, "tou.3.soc": "x",
+                                                                     "tou.4.soc": float("nan")}}))
+    assert asyncio.run(st.async_load()).tou_written == {"tou.1.soc": 20.0}
+    asyncio.run(st._store.async_save({"owned": True, "tou_written": [1]}))
+    assert asyncio.run(st.async_load()).tou_written is None
+    asyncio.run(st._store.async_save({"owned": False, "tou_written": {"tou.1.soc": 20}}))
+    assert asyncio.run(st.async_load()).tou_written is None      # bez własności nie ma odniesienia
