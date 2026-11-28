@@ -257,7 +257,14 @@ async def test_assignment_issue_clears_once_the_map_has_pv_power(monkeypatch):
 
 # --- Rozpoznany falownik bez kanału sieci albo zużycia domu -----------------------------------
 
-_GW = SimpleNamespace(integration_domain="goodwe", profile=SimpleNamespace(raw={}))
+def _choice(profile_id: str, domain: str):
+    from custom_components.volcast.core.control.select import ProfileChoice
+    from custom_components.volcast.core.profile import load_builtin
+    return ProfileChoice(load_builtin(profile_id), domain, "X")
+
+
+_GW = _choice("goodwe-et", "goodwe")
+_HUAWEI = _choice("huawei-sun2000", "huawei_solar")
 
 
 def _channels_calls(mock):
@@ -303,6 +310,30 @@ async def test_recognised_inverter_without_grid_or_load_raises_fixable_issue(mon
 
 
 @pytest.mark.asyncio
+async def test_huawei_without_house_load_entity_raises_no_issue_when_the_meter_is_read(monkeypatch):
+    # Integracja Huawei nie ma encji zużycia domu (profil: `null`) — nie zgłaszamy czegoś, czego nie da się wskazać.
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_reading(monkeypatch, choice=_HUAWEI,
+                    profile_map={"pv_power_w": "sensor.hw_in", "grid_power_w": "sensor.hw_meter"})
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, options=_MAPPED)
+    assert ok and not _channels_calls(create)
+    # produkcja i tak zostaje na trackerze (serwer bez zużycia nie sprawdzi bilansu)
+    assert hass.data["volcast"][entry.entry_id]["tracker"] is not None
+
+
+@pytest.mark.asyncio
+async def test_huawei_without_visible_meter_raises_the_issue_for_grid_only(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_reading(monkeypatch, choice=_HUAWEI, profile_map={"pv_power_w": "sensor.hw_in"})
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and len(_channels_calls(create)) == 1
+    rt = hass.data["volcast"][entry.entry_id]["control"]
+    assert rt.telemetry.missing_balance_channels == ("grid_power_w",)      # naprawa pokaże tylko sieć
+
+
+@pytest.mark.asyncio
 async def test_channels_issue_absent_when_grid_and_load_are_read(monkeypatch):
     from .test_setup_paired import PAIRED
     create, delete = _patch_issues(monkeypatch)
@@ -338,7 +369,8 @@ async def test_channels_issue_absent_without_recognised_inverter_or_reading_path
 
 
 @pytest.mark.asyncio
-async def test_channels_issue_goes_away_on_unload_and_removal(monkeypatch):
+async def test_channels_issue_survives_unload_and_goes_away_on_removal(monkeypatch):
+    # Przeładowanie (rozładunek + setup) nie kasuje zgłoszenia — inaczej ginie „Ignoruj” użytkownika bez miernika.
     import custom_components.volcast as integ
     from .test_setup_paired import PAIRED
     create, delete = _patch_issues(monkeypatch)
@@ -348,11 +380,32 @@ async def test_channels_issue_goes_away_on_unload_and_removal(monkeypatch):
     monkeypatch.setattr(integ, "async_unload_control", AsyncMock())
     delete.reset_mock()
     assert await integ.async_unload_entry(hass, entry) is True
-    assert any(c.args[2] == issue for c in delete.call_args_list)
+    assert not any(c.args[2] == issue for c in delete.call_args_list)
     delete.reset_mock()
     monkeypatch.setattr(integ, "async_remove_control", AsyncMock())
     await integ.async_remove_entry(hass, entry)
     assert any(c.args[2] == issue for c in delete.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_channels_issue_absent_while_a_feed_profile_waits_for_reload(monkeypatch):
+    # Profil z feedu przyszedł po starcie (`announced_choice`): do przeładowania wybór to None, a mapa ręczna ma
+    # samą moc PV — kanały sieci i zużycia może dać dopiero profil, więc bez zgłoszenia obok „profil gotowy”.
+    import custom_components.volcast as integ
+    from custom_components.volcast.control.telemetry import TelemetrySender
+    from .test_setup_paired import PAIRED, fake_runtime
+    create, delete = _patch_issues(monkeypatch)
+
+    async def setup_control(hass, entry, *, report):
+        rt = fake_runtime()
+        rt.announced_choice = ("goodwe-et", "goodwe")
+        rt.telemetry = TelemetrySender(None, SimpleNamespace(entry_id="e1", options={}), None, None, choice=None,
+                                       profile_map={}, grid_negate=False, limits=None,
+                                       manual_map={"pv_power_w": "sensor.pv"})
+        return rt
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and not _channels_calls(create)
 
 
 @pytest.mark.asyncio

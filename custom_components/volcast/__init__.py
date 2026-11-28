@@ -539,11 +539,15 @@ def _channels_missing(entry: ConfigEntry, control: ControlRuntime | None) -> tup
 
     Tylko wpis sparowany ze złożonym sterowaniem i nadajnikiem telemetrii. Bez rozpoznanej integracji i bez
     połączenia bezpośredniego jest naprawa mapy czujników (wszystkie pola), a ścieżka bez żadnego źródła
-    to zgłoszenie „brak odczytów” — tu wtedy pusto, żeby nie dublować zgłoszeń.
+    to zgłoszenie „brak odczytów” — tu wtedy pusto, żeby nie dublować zgłoszeń. Kanał, którego integracja
+    falownika nie ma, nie jest zgłaszany (`missing_balance_keys`).
     """
     if control is None or not entry.data.get(CONF_BACKEND):
         return ()
-    if no_inverter_integration(entry.options, control):
+    # Jawnie: rozpoznana integracja albo połączenie bezpośrednie. Profil z feedu czekający na przeładowanie
+    # (`announced_choice`) jeszcze nie czyta — kanały może dać dopiero on.
+    choice = getattr(control, "choice", None)
+    if not getattr(choice, "integration_domain", None) and getattr(control, "direct", None) is None:
         return ()
     telemetry = getattr(control, "telemetry", None)
     if telemetry is None:
@@ -555,7 +559,9 @@ def _sync_channels_issue(hass: HomeAssistant, entry: ConfigEntry, control: Contr
     """Zgłoszenie „brak sieci / zużycia domu”: bez nich serwer nie sprawdzi bilansu, więc bilans energii, widok
     na żywo i kalibracja z telemetrii są ograniczone. Naprawa dokłada brakujące czujniki do mapy ręcznej.
 
-    Liczone przy setupie — zapis mapy przeładowuje wpis i liczy od nowa. Nigdy nie rzuca.
+    Liczone przy setupie — zapis mapy przeładowuje wpis i liczy od nowa. Rozładunek (też przy przeładowaniu)
+    zgłoszenia NIE zdejmuje: „Ignoruj” użytkownika bez miernika żyje w rejestrze zgłoszeń i zginąłby przy
+    każdym przeładowaniu. Zdejmuje je ustąpienie warunku albo usunięcie wpisu. Nigdy nie rzuca.
     """
     try:
         if _channels_missing(entry, control):
@@ -599,7 +605,6 @@ async def _async_cleanup_failed_setup(
     async def _delete_mapping_issue() -> None:
         ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, _assignment_issue_id(entry))
-        ir.async_delete_issue(hass, DOMAIN, _channels_issue_id(entry))
     steps.append(("repair", _delete_mapping_issue))
 
     cancelled: asyncio.CancelledError | None = None
@@ -754,7 +759,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
             ir.async_delete_issue(hass, DOMAIN, _assignment_issue_id(entry))
-            ir.async_delete_issue(hass, DOMAIN, _channels_issue_id(entry))
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Volcast: repair cleanup on unload failed (%s)", type(err).__name__)
     return unload_ok

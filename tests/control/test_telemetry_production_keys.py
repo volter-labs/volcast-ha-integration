@@ -22,11 +22,12 @@ SOLAREDGE = ProfileChoice(load_builtin("solaredge-storedge"), "solaredge_modbus"
 COUNTER_ONLY = ProfileChoice(SimpleNamespace(raw={"read": {"pv_energy_total_kwh": {}, "soc": {}}}), None, "X")
 
 
-def _sender(*, choice, profile_map=None, manual=None, direct=None) -> TelemetrySender:
+def _sender(*, choice, profile_map=None, manual=None, direct=None, capacity=None) -> TelemetrySender:
     entry = SimpleNamespace(entry_id="e1", options={})
+    limits = {"battery_capacity_kwh": capacity} if capacity is not None else None
     return TelemetrySender(SimpleNamespace(), entry, None, None, choice=choice,
                            profile_map=profile_map or {}, manual_map=manual or {}, grid_negate=False,
-                           limits=None, direct=direct)
+                           limits=limits, direct=direct)
 
 
 _BAL = {"grid_power_w": "sensor.grid", "load_power_w": "sensor.load"}
@@ -65,6 +66,14 @@ CASES = [
     ({"choice": None, "manual": {"pv_power_w": "sensor.p", "pv_energy_total_kwh": "sensor.e", **_BAL}}, True),
     ({"choice": None, "manual": {"pv_power_w": "sensor.pv_power"}}, False),
     ({"choice": None, "manual": {"soc": "sensor.soc"}}, False),
+    # bateria bez mocy baterii: serwer nie zadeklaruje jej braku, bilans próbki się nie domknie
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p", "soc": "sensor.soc", **_BAL}}, False),
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p", "soc": "sensor.soc", "battery_power_w": "sensor.b",
+                                    **_BAL}}, True),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.p", **_BAL}, "capacity": 10.0}, False),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.p", "battery_power_w": "sensor.b", **_BAL},
+      "capacity": 10.0}, True),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.p", **_BAL}, "capacity": 0}, True),   # bez magazynu
 ]
 
 
@@ -78,7 +87,8 @@ def test_prediction_before_composing_uses_the_same_rule(kwargs, expected):
     # Opcje (przed złożeniem sterowania) przewidują to samo, co nadajnik powie po złożeniu.
     assert telemetry_carries_production(kwargs["choice"], profile_map=kwargs.get("profile_map") or {},
                                         manual_map=kwargs.get("manual") or {},
-                                        direct=kwargs.get("direct") is not None) is expected
+                                        direct=kwargs.get("direct") is not None,
+                                        battery_capacity_kwh=kwargs.get("capacity")) is expected
 
 
 def _runtime(telemetry) -> ControlRuntime:
@@ -99,12 +109,14 @@ def test_runtime_without_telemetry_reports_no_production():
 MISSING = [
     ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p", **_BAL}}, ()),
     ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p"}}, ("grid_power_w", "load_power_w")),
-    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in"}}, ("grid_power_w", "load_power_w")),
-    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in", "grid_power_w": "sensor.hw_m"}},
+    # Huawei w trybie encji: profil nie opisuje zużycia domu — tego nie da się naprawić w integracji, więc
+    # zgłaszamy tylko opisaną, a nieznalezioną sieć (np. miernik niewidoczny w HA)
+    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in"}}, ("grid_power_w",)),
+    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in", "grid_power_w": "sensor.hw_m"}}, ()),
+    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in"}, "manual": {"grid_power_w": "sensor.g"}}, ()),
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p"}, "manual": {"grid_power_w": "sensor.g"}},
      ("load_power_w",)),
-    # mapa ręczna uzupełnia brakujący kanał przy rozpoznanym profilu
-    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in"}, "manual": {"grid_power_w": "sensor.g"}},
-     ("load_power_w",)),
+    # bezpośrednio: brak w rejestrach da się uzupełnić mapą ręczną (Fronius ma moc sieci i zużycia w integracji)
     ({"choice": GW, "direct": SimpleNamespace()}, ()),
     ({"choice": FRONIUS, "direct": SimpleNamespace()}, ("grid_power_w", "load_power_w")),
     # nic nie jest czytane: tym zajmują się inne zgłoszenia (brak odczytów, mapa czujników)

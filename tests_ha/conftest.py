@@ -43,6 +43,8 @@ GOODWE = {
     # Moc sieci (licznik integracji GoodWe): bez niej i bez poboru serwer nie przyjmie produkcji z telemetrii.
     "grid_power_w": ("sensor", "active_power_total", "goodwe_active_power_total", "0",
                      {"unit_of_measurement": "W"}),
+    # Moc baterii: przy magazynie (SOC) serwer bez niej też nie sprawdzi bilansu.
+    "battery_power_w": ("sensor", "pbattery1", "goodwe_battery_power", "0", {"unit_of_measurement": "W"}),
     "mode": ("select", "ems_mode", "goodwe_ems_mode", "auto",
              {"options": ["auto", "charge_pv", "battery_standby", "sell_power", "charge_battery",
                           "discharge_battery"]}),

@@ -157,7 +157,7 @@ async def test_remove_of_loaded_entry_leaves_no_mapping_issue_or_timers(hass: Ho
 async def test_recognised_inverter_without_grid_keeps_tracker_and_raises_channels_issue(
         hass: HomeAssistant, network_down, hass_storage):
     """Falownik rozpoznany, ale bez encji mocy sieci: serwer nie przyjmie produkcji z telemetrii, więc tracker
-    zostaje, a Naprawy proponują wskazanie brakującego czujnika. Rozładunek zdejmuje zgłoszenie."""
+    zostaje, a Naprawy proponują wskazanie brakującego czujnika."""
     ents = add_goodwe(hass)
     er.async_get(hass).async_remove(ents["grid_power_w"])
     hass.states.async_remove(ents["grid_power_w"])
@@ -172,9 +172,16 @@ async def test_recognised_inverter_without_grid_keeps_tracker_and_raises_channel
     issue = _issue(hass, f"telemetry_channels_missing_{entry.entry_id}")
     assert issue is not None and issue.is_fixable and issue.severity is ir.IssueSeverity.WARNING
     assert issue.translation_key == "telemetry_channels_missing" and issue.data == {"entry_id": entry.entry_id}
-    assert await hass.config_entries.async_unload(entry.entry_id)
+    # „Ignoruj” (np. brak miernika) przeżywa przeładowanie wpisu; usunięcie wpisu zdejmuje zgłoszenie.
+    issue_id = f"telemetry_channels_missing_{entry.entry_id}"
+    ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+    assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
-    assert _issue(hass, f"telemetry_channels_missing_{entry.entry_id}") is None
+    issue = _issue(hass, issue_id)
+    assert issue is not None and issue.dismissed_version is not None
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _issue(hass, issue_id) is None
 
 
 async def test_complete_inverter_telemetry_raises_no_channels_issue(hass: HomeAssistant, network_down,

@@ -206,29 +206,64 @@ def _read_sources(choice: ProfileChoice | None, *, profile_map: Mapping[str, str
     return frozenset(profile_keys) | frozenset(manual_map)
 
 
+def _described_entity_keys(choice: ProfileChoice) -> frozenset[str]:
+    """Klucze, dla których profil opisuje encję wybranej integracji (`null` = integracja jej nie ma)."""
+    raw = getattr(choice.profile, "raw", None) or {}
+    keys: set[str] = set()
+    for integ in (raw.get("ha") or {}).get("integrations") or ():
+        if integ.get("domain") == choice.integration_domain:
+            keys.update(k for k, spec in (integ.get("entities") or {}).items() if spec)
+    return frozenset(keys)
+
+
 def missing_balance_keys(choice: ProfileChoice | None, *, profile_map: Mapping[str, str],
                          manual_map: Mapping[str, str], direct: bool) -> tuple[str, ...]:
-    """Kanały bilansu (`BALANCE_KEYS`), których ścieżka odczytu nie ma. Ścieżka bez żadnego źródła = `()`:
-    to brak odczytów w ogóle, nie brak kanału (zgłaszają to inne naprawy)."""
+    """Kanały bilansu (`BALANCE_KEYS`) do uzupełnienia: ścieżka odczytu ich nie ma, a da się je wskazać.
+
+    W trybie encji tylko kanały, które profil opisuje dla wybranej integracji, a encji nie znaleziono (np. miernik
+    Huawei niewidoczny w HA). Kanał, którego integracja nie ma (Huawei: zużycie domu), nie jest zgłaszany — jedyną
+    „naprawą” byłby szablon zużycia z bilansu, który domyka bilans z definicji i wyłącza kontrolę serwera.
+    Bezpośrednio każdy brak w rejestrach (integracja falownika może go mieć, np. Fronius). Ścieżka bez żadnego
+    źródła = `()`: to brak odczytów w ogóle, nie brak kanału (zgłaszają to inne naprawy).
+    """
     sources = _read_sources(choice, profile_map=profile_map, manual_map=manual_map, direct=direct)
     if not sources:
         return ()
-    return tuple(k for k in BALANCE_KEYS if k not in sources)
+    missing = tuple(k for k in BALANCE_KEYS if k not in sources)
+    if not direct and choice is not None and choice.integration_domain:
+        described = _described_entity_keys(choice)
+        missing = tuple(k for k in missing if k in described)
+    return missing
+
+
+def _has_battery(sources: frozenset[str], battery_capacity_kwh) -> bool:
+    """Magazyn wiadomy od złożenia: pojemność w opcjach albo źródło SOC."""
+    cap = battery_capacity_kwh
+    if isinstance(cap, (int, float)) and not isinstance(cap, bool) and cap > 0:
+        return True
+    return "soc" in sources
 
 
 def telemetry_carries_production(choice: ProfileChoice | None, *, profile_map: Mapping[str, str],
-                                 manual_map: Mapping[str, str], direct: bool) -> bool:
+                                 manual_map: Mapping[str, str], direct: bool,
+                                 battery_capacity_kwh: float | None = None) -> bool:
     """Czy serwer policzy z telemetrii produkcję dla kalibracji — wtedy lokalny tracker nie działa.
 
     Potrzebna moc PV (serwer całkuje moc; sam licznik energii PV bez mocy nie daje mu produkcji — skali
-    licznika nie ma czym potwierdzić) i oba kanały bilansu (`BALANCE_KEYS`): bez sieci albo zużycia serwer
-    oznacza godzinę „tylko na wykres” i produkcja dla Kalmana płynie wyłącznie z trackera. Kanał dołożony
-    później (mapa ręczna) zmienia opcje, a przeładowanie wpisu przełącza źródło — serwer i tak nie nadpisuje
-    godziny zgłoszonej przez wtyczkę (bramka `juz_zgloszone`) i robi jeden krok Kalmana na godzinę.
+    licznika nie ma czym potwierdzić), oba kanały bilansu (`BALANCE_KEYS`) i — przy magazynie — moc baterii:
+    serwer uznaje brak baterii tylko z historii konta bez magazynu, więc bez mocy baterii bilans się nie
+    domyka, godzina idzie „tylko na wykres” i produkcja dla Kalmana płynie wyłącznie z trackera.
+    Znana luka: nowe konto bez magazynu przez pierwsze dni (zanim serwer z historii uzna brak baterii) też
+    dostaje tylko wykres. Reguła jest deklaratywna — encja zmapowana, ale niedostępna, liczy się jako źródło.
+    Kanał dołożony później (mapa ręczna) zmienia opcje, a przeładowanie wpisu przełącza źródło — serwer i tak
+    nie nadpisuje godziny zgłoszonej przez wtyczkę (bramka `juz_zgloszone`) i robi jeden krok Kalmana na godzinę.
     Jedna reguła dla nadajnika i dla opcji, które przewidują ją przed złożeniem sterowania.
     """
     sources = _read_sources(choice, profile_map=profile_map, manual_map=manual_map, direct=direct)
-    return "pv_power_w" in sources and all(k in sources for k in BALANCE_KEYS)
+    required = ("pv_power_w", *BALANCE_KEYS)
+    if _has_battery(sources, battery_capacity_kwh):
+        required = (*required, "battery_power_w")
+    return all(k in sources for k in required)
 
 
 
@@ -374,12 +409,14 @@ class TelemetrySender:
     @property
     def reports_pv_production(self) -> bool:
         """Czy serwer policzy z tej telemetrii produkcję (wiadomo od złożenia) — reguła `telemetry_carries_production`."""
+        cap = self._limits.get("battery_capacity_kwh") if isinstance(self._limits, Mapping) else None
         return telemetry_carries_production(self._choice, profile_map=self._profile_map,
-                                            manual_map=self._manual_map, direct=self._direct is not None)
+                                            manual_map=self._manual_map, direct=self._direct is not None,
+                                            battery_capacity_kwh=cap)
 
     @property
     def missing_balance_channels(self) -> tuple[str, ...]:
-        """Kanały bilansu, których ta ścieżka odczytu nie ma (`missing_balance_keys`)."""
+        """Kanały bilansu do uzupełnienia na tej ścieżce odczytu (`missing_balance_keys`)."""
         return missing_balance_keys(self._choice, profile_map=self._profile_map, manual_map=self._manual_map,
                                     direct=self._direct is not None)
 
