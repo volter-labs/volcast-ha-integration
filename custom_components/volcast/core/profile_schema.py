@@ -351,6 +351,20 @@ def _tou_sell(v: _V, tp: dict) -> None:
         v.err("$.write.tou_program.sell.bit", "musi różnić się od grid_charge.bit")
 
 
+def _sell_bit_direct_only(v: _V, top: dict) -> None:
+    """Bit sprzedaży (`write.tou_program.sell`) tylko w trybie bezpośrednim: encje HA programów (`tou_<n>_*`)
+    nie mają pola sprzedaży, więc tryb encji pisałby programy bez niego (bit właściciela zostałby)."""
+    wr, ha = top.get("write"), top.get("ha")
+    tp = wr.get("tou_program") if isinstance(wr, dict) else None
+    if not isinstance(tp, dict) or "sell" not in tp or not isinstance(ha, dict):
+        return
+    for integ in ha.get("integrations") or ():
+        ents = integ.get("entities") if isinstance(integ, dict) else None
+        if isinstance(ents, dict) and any(isinstance(k, str) and _HA_TOU_KEY.match(k) for k in ents):
+            v.err("$.write.tou_program.sell", "tylko tryb bezpośredni: encje HA programów nie niosą bitu sprzedaży")
+            return
+
+
 def _write_spec(v: _V, key: str, raw: Any) -> None:
     """`$.write.<klucz>`: adres, typ (u16 | u32), kodowanie klucza; opcjonalnie skala i kolejność słów
     (nastawy liczbowe), własny adres urządzenia oraz wartości on/off przełącznika (`on_off`)."""
@@ -1059,6 +1073,7 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
             v.err("$.limits.rated_power_register", "musi wskazywać identify.registers")
 
     _ha(v, top.get("ha"))
+    _sell_bit_direct_only(v, top)
     if "verification" in top:
         _verification(v, top["verification"])
     if "work_mode" in top:

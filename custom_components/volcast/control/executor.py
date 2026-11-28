@@ -2022,9 +2022,10 @@ class VolcastExecutor:
 
     def _tou_without_owner_held(self, d, reading, gates: Gates, now_mono: float):
         """Pola programów przejęte przez właściciela nie są pisane (zostaje jego wartość), reszta przepisania
-        idzie. Gdy tego nie da się zrobić bezpiecznie (przejęty start programu — kolejność startów), a zmiana
-        idzie w stronę bezpieczną: wyłączenie harmonogramu (poza budżetem, z limitem); nigdy żywy, nieaktualny
-        program ładowania z sieci."""
+        idzie. Gdy tego nie da się zrobić bezpiecznie (przejęty start programu — kolejność startów; przejęty
+        bit sprzedaży ustawiony przez właściciela, gdy plan nie sprzedaje), a zmiana idzie w stronę bezpieczną:
+        wyłączenie harmonogramu (poza budżetem, z limitem); nigdy żywy, nieaktualny program ładowania z sieci
+        ani sprzedaży."""
         if d.status not in (WRITE, DRY_RUN) or not self._owner_held or "tou_safety_off" in d.notes:
             return d
 
@@ -2032,10 +2033,16 @@ class VolcastExecutor:
             return EN_KEY if w.key in (ENABLE, TOU_WORD) else w.key
 
         held = {key(w) for w in d.writes} & self._held_keys()
-        if not held:
+        # Przejęty bit sprzedaży właściciela tam, gdzie plan nie sprzedaje: program sprzedawałby baterię pod
+        # NASZĄ podłogą SoC i mocą (codziennie, do rezerwy) — jak przy przejętym starcie: tylko wyłączenie
+        # harmonogramu w stronę bezpieczną albo nic; nigdy przepisywanie wokół jego bitu.
+        selling = {k for k in self._held_keys() if k.endswith(".sell")
+                   and same_value(float(reading.device.get(k, 0.0)), 1.0)
+                   and not same_value(float(d.flat.get(k, 0.0)), 1.0)}
+        if not held and not selling:
             return d
         programs = [w for w in d.writes if w.key not in (ENABLE, TOU_WORD)]
-        if any(k.endswith(".start") for k in held):
+        if selling or any(k.endswith(".start") for k in held):
             safe = safety_off_decision(d, reading, self._profile, gates, self._memory, now_mono)
             if safe is not None:
                 return replace(safe, notes=(*safe.notes, "owner_kept"))

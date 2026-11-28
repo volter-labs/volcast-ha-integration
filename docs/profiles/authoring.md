@@ -193,7 +193,9 @@ Pick one with `control_model`.
   `discharge_forced` intent may add `"sell": true` (never together with `"grid_charge": true`): its window
   sets the sell bit, the program SoC is the discharge floor and the program power caps the discharge.
   A `sell` slot runs as `self_consume` unless `capabilities.sell_from_battery` is `true`; fallback and
-  stale-plan windows and the baseline always clear the sell bit.
+  stale-plan windows and the baseline always clear the sell bit, and merging windows to fit the program count
+  never extends a sell window over non-sell slots (the sell window shrinks or is dropped instead). The sell bit
+  is direct mode only: a profile with `tou_program.sell` cannot declare HA `tou_<n>_*` entities.
 * `capabilities.time_windows` equals `tou.programs`.
 
 Intents are chosen from `charge_grid`, `charge_pv`, `discharge_forced`, `sell`, `self_consume`,

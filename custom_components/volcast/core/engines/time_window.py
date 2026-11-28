@@ -370,6 +370,10 @@ def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve
             a, b = wins[i], wins[i + 1]
             base = _cost(a, p_mean) + _cost(b, p_mean)
             for k, keep in enumerate((a, b)):
+                if keep.prog.sell and not (b if k == 0 else a).prog.sell:
+                    # Okno sprzedaży nigdy nie wchłania slotów bez sprzedaży (zapasowych ani innych intencji):
+                    # sprzedaż tylko się kurczy albo znika — w parze zawsze zostaje wariant bez sprzedaży.
+                    continue
                 new = sum(_loss(h, keep.intent, keep.prog, p_mean) for h in a.members + b.members)
                 inc = new - base
                 cand = (round(inc, _TIE_DIGITS), i, k, inc)
@@ -392,6 +396,9 @@ def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve
             raise ValueError("horyzont za krótki, żeby wypełnić wszystkie programy")
         wins[idx:idx + 1] = list(_split(w, w.start + step_td * (steps // 2)))
 
+    for w in wins:
+        if w.prog.sell and any(not h.prog.sell for h in w.members):
+            w.prog = replace(w.prog, sell=False)    # niezmiennik, fail-closed: Sell tylko nad slotami sprzedaży
     total = sum(_cost(w, p_mean) for w in wins)
     programs = tuple(sorted(
         (TouProgram(_local_min(w.start, ptz), w.prog.power_w, w.prog.soc, w.prog.grid_charge, w.prog.sell)

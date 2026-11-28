@@ -290,3 +290,109 @@ def test_schema_field_order_with_sell_requires_the_field():
     raw = tw_profile()
     raw["tou"]["field_order"] = ["soc", "power_w", "grid_charge", "sell", "start"]
     assert any("field_order" in e for e in validate_profile(raw))
+
+
+# ── okno sprzedaży nigdy nie rozlewa się na sloty bez sprzedaży (scalanie do N programów) ──────────
+
+
+def _sell_minutes_ok(schedule, programs, t0, tz, step=5):
+    """Każda pora doby, w której aktywny program ma bit Sell, przypada (wg najbliższego wystąpienia od t0,
+    jak liczy silnik) na zaplanowany slot sprzedaży — nie zapasowy, nie inną intencję. Zwraca naruszenia."""
+    from custom_components.volcast.core.engines.mode_setpoint import slot_intent
+    ordered = sorted(programs, key=lambda p: p.start_min)
+    loc0 = t0.astimezone(tz)
+    m0, d0 = loc0.hour * 60 + loc0.minute, loc0.date()
+    bad = []
+    for m in range(0, 1440, step):
+        prog = ordered[-1]
+        for p in ordered:
+            if p.start_min <= m:
+                prog = p
+        if not prog.sell:
+            continue
+        day = d0 if m >= m0 else d0 + timedelta(days=1)
+        inst = datetime.combine(day, datetime.min.time(), tzinfo=tz).replace(hour=m // 60, minute=m % 60)
+        s = schedule.slot_for(inst.astimezone(timezone.utc))
+        if s is None or s.from_fallback or slot_intent(s)[0] != "sell":
+            bad.append(m)
+    return bad
+
+
+def _morning_plan():
+    # Teraz 07:00, plan tylko na dziś 07–24 (ceny jutra jeszcze nieznane): 00–07 to sloty zapasowe.
+    pat = {7: SELL_SLOT, 8: SELL_SLOT, 19: SELL_SLOT}
+    ch = {"mode": "charge", "charge_source": "grid", "power_w": 2000, "soc_target": 90, "price_pln_kwh": 0.2}
+    for h in (11, 12, 15, 16):
+        pat[h] = ch
+    for h in (13, 17):
+        pat[h] = {"mode": "idle", "price_pln_kwh": 0.9}
+    return _plan([(h, pat.get(h, SELF)) for h in range(7, 24)])
+
+
+@pytest.mark.parametrize("anchor", ["day", "now"])
+def test_merge_never_extends_sell_over_fallback(anchor):
+    plan = _morning_plan()
+    now = DAY0 + timedelta(hours=7)
+    r = compress(plan, now, DEYE_SELL, soc_reserve=10.0, rated_power_w=8000.0, tz=WAW, anchor=anchor)
+    assert r.merges                                                 # więcej okien niż programów
+    t0 = plan.slot_for(now).start
+    assert _sell_minutes_ok(plan, r.programs, t0, WAW) == []
+
+
+def _random_plan(rng):
+    import random  # noqa: F401 — rng podany z zewnątrz
+    first = rng.randrange(0, 24)
+    last = rng.randrange(first + 1, 25)
+    hours = []
+    for h in range(first, last):
+        k = rng.random()
+        if k < 0.3:
+            f = {"mode": "discharge", "discharge_purpose": "sell", "power_w": rng.choice([1000, 3000, 6000]),
+                 "soc_target": rng.choice([None, 20, 40, 70])}
+        elif k < 0.5:
+            f = {"mode": "charge", "charge_source": "grid", "power_w": rng.choice([1000, 3000]), "soc_target": 90}
+        elif k < 0.6:
+            f = {"mode": "idle"}
+        elif k < 0.65:
+            continue                                                 # dziura w planie = slot zapasowy
+        else:
+            f = {"mode": "self_consume"}
+        if rng.random() < 0.85:
+            f["price_pln_kwh"] = round(rng.uniform(-0.2, 2.0), 3)
+        hours.append((h, f))
+    return _plan(hours or [(first, SELF)]), first
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_property_sell_bit_only_over_planned_sell_slots(seed):
+    import random
+    rng = random.Random(seed)
+    plan, first = _random_plan(rng)
+    now = DAY0 + timedelta(hours=rng.randrange(0, 24), minutes=rng.choice([0, 20, 45]))
+    for anchor in ("day", "now"):
+        r = compress(plan, now, DEYE_SELL, soc_reserve=10.0, rated_power_w=8000.0, tz=WAW, anchor=anchor)
+        cov = plan.slot_for(now)
+        loc = now.astimezone(WAW)
+        t0 = cov.start if cov is not None else loc.replace(minute=loc.minute - loc.minute % 5, second=0)
+        assert _sell_minutes_ok(plan, r.programs, t0, WAW) == [], (seed, anchor)
+
+
+def test_autumn_repeated_hour_prefers_program_without_sell():
+    from datetime import date
+    from tests.core.test_time_window_dst import plan_from
+
+    def pattern(loc):
+        if loc.hour == 2:
+            return {**SELL_SLOT} if loc.utcoffset() == timedelta(hours=2) else SELF
+        return SELF
+    plan = plan_from(pattern, date(2026, 10, 22))
+    now = datetime(2026, 10, 24, 10, tzinfo=timezone.utc)
+    r = compress(plan, now, DEYE_SELL, soc_reserve=10.0, rated_power_w=10000.0, tz=WAW, anchor="day")
+    active = [p for p in sorted(r.programs, key=lambda p: p.start_min) if p.start_min <= 150][-1]
+    assert active.sell is False
+
+
+def test_schema_sell_bit_rejected_with_ha_program_entities():
+    raw = _deye_raw()
+    raw["ha"]["integrations"][0]["entities"]["tou_1_soc"] = {"domain": "number", "unique_id_regex": "^x_tou1_soc$"}
+    assert any("tou_program.sell" in e and "bezpośredni" in e for e in validate_profile(raw))

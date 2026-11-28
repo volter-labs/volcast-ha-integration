@@ -90,7 +90,8 @@ def test_model_string_never_decides_direct_identification():
         assert identity_info(DEYE, RegisterImage({0: code, 20: 0x1F40, 21: 0}))["matched"] is True
     assert identity_info(DEYE, RegisterImage({0: 3, 20: 0x1F40, 21: 0}))["matched"] is False   # jednofazowy
     regex = DEYE.raw["ha"]["integrations"][0]["model_regex"][0]
-    assert re.fullmatch(regex, "Deye SG0*LP3") and not re.fullmatch(regex, "Deye SUN-8K-SG05LP3-EU-SM2")
-    # Tabliczka w integracji solarman: profil Deye rozpoznany po producencie (tylko odczyt), nie odrzucony.
+    assert re.fullmatch(regex, "Deye SG0*LP3")
+    # Znane ograniczenie (nie zachowanie docelowe): model z tabliczki w integracji solarman nie pasuje do
+    # `model_regex`, więc bez mapy encji — profil Deye i tak rozpoznany po producencie (tylko odczyt).
     c = select_profile([InverterHint("solarman", "Deye", "SUN-8K-SG05LP3-EU-SM2")], [DEYE])
     assert (c.profile.id, c.integration_domain) == ("deye-sg", None)
