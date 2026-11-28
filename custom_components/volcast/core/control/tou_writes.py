@@ -175,8 +175,11 @@ def validate_tou_snapshot(raw: Any, count: int = SNAPSHOT_PROGRAMS) -> dict | No
 
 
 def _snapshot_programs(profile, snapshot: Mapping[str, Any]) -> tuple[TouProgram, ...]:
-    bit = 1 << profile.raw["write"]["tou_program"]["grid_charge"]["bit"]
-    return tuple(TouProgram(start_min=int(s), power_w=float(p), soc=float(c), grid_charge=bool(int(g) & bit))
+    tp = profile.raw["write"]["tou_program"]
+    bit = 1 << tp["grid_charge"]["bit"]
+    sell = (1 << tp["sell"]["bit"]) if "sell" in tp else None      # bit sprzedaży w tym samym słowie flag
+    return tuple(TouProgram(start_min=int(s), power_w=float(p), soc=float(c), grid_charge=bool(int(g) & bit),
+                            sell=None if sell is None else bool(int(g) & sell))
                  for s, p, c, g in snapshot["programs"])
 
 

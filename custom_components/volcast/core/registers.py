@@ -269,7 +269,7 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
     """Koduje parametry semantyczne na zapisy rejestrów, w kolejności profilu.
 
     `keys` ogranicza zbiór (np. po przefiltrowaniu przez throttling/uzgadnianie),
-    ale nie zmienia kolejności. Pola bitowe (np. `grid_charge`) wymagają aktualnej
+    ale nie zmienia kolejności. Pola bitowe (`grid_charge`, `sell`) wymagają aktualnej
     migawki rejestrów, bo zapisują pojedynczy bit bez ruszania reszty słowa.
     """
     wanted = None if keys is None else set(keys)
@@ -279,6 +279,9 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
         params = direction_params(params, profile)
     spec = profile.raw["write"]
     out: list[RegisterWrite] = []
+    # Słowa flag już złożone w tym przebiegu: dwa pola bitowe jednego słowa (ładowanie z sieci, sprzedaż)
+    # składają się na sobie — drugi zapis niesie wynik pierwszego, nie stare słowo z migawki.
+    bit_words: dict[int, int] = {}
     for key in ordered_keys(params, profile):
         if wanted is not None and key not in wanted:
             continue
@@ -302,11 +305,17 @@ def encode_writes(params: Params, profile, keys: Iterable[str] | None = None,
             elif field == "soc":
                 value = _round_clamp(prog.soc, 100)
             else:
-                if current is None:
-                    raise RegisterError(f"{key}: pole bitowe wymaga odczytu rejestru {addr}")
-                word = current.words(addr, 1)[0]
+                on = {"grid_charge": prog.grid_charge, "sell": prog.sell}[field]
+                if on is None:
+                    raise RegisterError(f"{key}: brak wartości pola bitowego w programie")
+                if addr not in bit_words:
+                    if current is None:
+                        raise RegisterError(f"{key}: pole bitowe wymaga odczytu rejestru {addr}")
+                    bit_words[addr] = current.words(addr, 1)[0]
+                word = bit_words[addr]
                 mask = 1 << fs["bit"]
-                value = (word | mask) if prog.grid_charge else (word & ~mask & 0xFFFF)
+                value = (word | mask) if on else (word & ~mask & 0xFFFF)
+                bit_words[addr] = value
             out.append(RegisterWrite(key, addr, value))
             continue
         s = spec[key]

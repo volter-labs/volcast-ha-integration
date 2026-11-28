@@ -62,7 +62,8 @@ class TouDecision:
             "would_write": [w.key for w in self.writes], "held": list(self.pre_held),
             "notes": list(self.notes), "lost_value_pln": self.lost_value_pln,
             "programs": [{"start_min": p.start_min, "power_w": p.power_w, "soc": p.soc,
-                          "grid_charge": p.grid_charge} for p in self.programs],
+                          "grid_charge": p.grid_charge, **({} if p.sell is None else {"sell": p.sell})}
+                         for p in self.programs],
         }
 
 
@@ -200,12 +201,15 @@ def _toward_safety(device_programs, planned, profile) -> bool:
     """Po pokryciu doby (co krok profilu, programy cykliczne wg startu): czy gdziekolwiek urządzenie
     ładuje z sieci, gdzie plan nie ładuje, albo mocniej / do wyższego SoC — albo (bez ładowania z
     sieci) rozładowuje mocniej lub do niższej podłogi niż plan. Skrócenie lub zdjęcie okna ładowania
-    też tu wpada (zmiana startu)."""
+    też tu wpada (zmiana startu). Tak samo urządzenie sprzedające z baterii (bit Sell) tam, gdzie plan
+    nie sprzedaje."""
     if not device_programs or not planned:
         return False
     tol_p, tol_s = profile.power_tolerance_w, profile.soc_tolerance_pp
     for minute in range(0, 1440, max(1, profile.time_step_min)):
         d, p = _active(device_programs, minute), _active(planned, minute)
+        if d.sell and not p.sell:
+            return True
         if d.grid_charge:
             if not p.grid_charge or p.power_w < d.power_w - tol_p or p.soc < d.soc - tol_s:
                 return True

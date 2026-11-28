@@ -386,3 +386,32 @@ async def test_new_ownership_clears_the_previous_restore_report(rig):
         assert r.h.ex.owned and r.h.ex.restore_skipped == []
     finally:
         await r.h.close()
+
+
+SELL1 = 172                                       # słowo flag programu 1 (Deye: bit 5 = Sell)
+
+
+@pytest.mark.asyncio
+async def test_owner_sell_bit_taken_over_turns_the_schedule_off(rig):
+    """Właściciel ustawia Sell w programie, którego plan nie sprzedaje: przejęte pole `tou.1.sell` nie może
+    zostać na falowniku pod naszymi podłogami SoC i mocami (codzienna sprzedaż do rezerwy) — harmonogram
+    idzie OFF (strona bezpieczna) i nie wraca, dopóki bit właściciela stoi; bitu właściciela nie ruszamy."""
+    r = await rig()
+    try:
+        ours = await _owned(r)
+        assert ours[SELL1 - 146] & 32 == 0
+        r.poke(SELL1, ours[SELL1 - 146] | 32)
+        await r.h.cycle(400.0)
+        ex = r.h.ex
+        assert "tou.1.sell" in ex._state.taken_over and ex.paused
+        for _ in range(6):                                             # koniec pauzy (30 min) i dalej
+            await r.h.cycle(400.0)
+        words = r.words()
+        assert words[0] & 1 == 0                                       # harmonogram wyłączony
+        assert words[SELL1 - 146] & 32 == 32                           # bit właściciela zostaje
+        n = r.writes_to(146)
+        for _ in range(3):
+            await r.h.cycle(400.0)
+        assert r.words()[0] & 1 == 0 and r.writes_to(146) == n         # nie włączamy z powrotem
+    finally:
+        await r.h.close()

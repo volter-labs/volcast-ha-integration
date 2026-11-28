@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from .control.readings import EXTRA_KEYS, MEASURED_KEYS
-from .params import TOU_FIELDS, WRITE_PARAMS
+from .params import TOU_FIELDS, TOU_OPTIONAL_FIELDS, WRITE_PARAMS
 from .regex_safety import (IDENTIFY_PROBES, REGEX_HINTS, iter_regex_fields, regex_problem, safe_search,
                            text_problem)
 
@@ -314,7 +314,7 @@ def _write(v: _V, raw: Any, model: str, tou: dict | None) -> set[str]:
     if model == "mode_setpoint" and "mode" not in w:
         v.err("$.write.mode", "mode_setpoint wymaga zapisu trybu")
     if model == "time_window":
-        tp = v.obj(w.get("tou_program"), "$.write.tou_program", ("count",) + TOU_FIELDS)
+        tp = v.obj(w.get("tou_program"), "$.write.tou_program", ("count",) + TOU_FIELDS, TOU_OPTIONAL_FIELDS)
         if tp is not None:
             if v.int_(tp.get("count"), "$.write.tou_program.count", 1, 12) and tou is not None \
                     and tp["count"] != tou.get("programs"):
@@ -329,9 +329,40 @@ def _write(v: _V, raw: Any, model: str, tou: dict | None) -> set[str]:
             if g is not None:
                 v.int_(g.get("addr"), "$.write.tou_program.grid_charge.addr", 0, 65535)
                 v.int_(g.get("bit"), "$.write.tou_program.grid_charge.bit", 0, 15)
+            if "sell" in tp:
+                _tou_sell(v, tp)
     # Włącznik jest częścią sekwencji TOU (wyłączenie na początku, włączenie na końcu),
     # nie osobnym kluczem kolejności zapisu.
     return {("tou" if k == "tou_program" else k) for k in w if k != "tou_enable"}
+
+
+def _tou_sell(v: _V, tp: dict) -> None:
+    """`$.write.tou_program.sell`: bit sprzedaży z baterii w TYM SAMYM słowie flag co `grid_charge`
+    (migawka właściciela trzyma jedno surowe słowo flag na program), na innym bicie."""
+    s = v.obj(tp["sell"], "$.write.tou_program.sell", ("addr", "bit"))
+    g = tp.get("grid_charge")
+    if s is None:
+        return
+    if v.int_(s.get("addr"), "$.write.tou_program.sell.addr", 0, 65535) and isinstance(g, dict) \
+            and s["addr"] != g.get("addr"):
+        v.err("$.write.tou_program.sell.addr", "musi równać się grid_charge.addr (to samo słowo flag)")
+    if v.int_(s.get("bit"), "$.write.tou_program.sell.bit", 0, 15) and isinstance(g, dict) \
+            and s["bit"] == g.get("bit"):
+        v.err("$.write.tou_program.sell.bit", "musi różnić się od grid_charge.bit")
+
+
+def _sell_bit_direct_only(v: _V, top: dict) -> None:
+    """Bit sprzedaży (`write.tou_program.sell`) tylko w trybie bezpośrednim: encje HA programów (`tou_<n>_*`)
+    nie mają pola sprzedaży, więc tryb encji pisałby programy bez niego (bit właściciela zostałby)."""
+    wr, ha = top.get("write"), top.get("ha")
+    tp = wr.get("tou_program") if isinstance(wr, dict) else None
+    if not isinstance(tp, dict) or "sell" not in tp or not isinstance(ha, dict):
+        return
+    for integ in ha.get("integrations") or ():
+        ents = integ.get("entities") if isinstance(integ, dict) else None
+        if isinstance(ents, dict) and any(isinstance(k, str) and _HA_TOU_KEY.match(k) for k in ents):
+            v.err("$.write.tou_program.sell", "tylko tryb bezpośredni: encje HA programów nie niosą bitu sprzedaży")
+            return
 
 
 def _write_spec(v: _V, key: str, raw: Any) -> None:
@@ -551,9 +582,14 @@ def _nvm_budget(v: _V, raw: Any) -> None:
         v.int_(b.get("total"), f"{path}.total", 1, 1_000_000)
 
 
-def _intents(v: _V, raw: Any, model: str, modes: dict, by_direction: bool) -> None:
+# Intencje okien czasowych, które mogą ustawić bit sprzedaży z baterii (`intents.<n>.sell`).
+SELL_BIT_INTENTS = ("sell", "discharge_forced")
+
+
+def _intents(v: _V, raw: Any, model: str, modes: dict, by_direction: bool, has_sell_bit: bool = False) -> None:
     """`by_direction` (`write_policy.power_by_direction`): moc ze slotu trafia do nastawy wybranej
-    kierunkiem trybu, więc intencja z mocą ze slotu musi wskazywać tryb ładowania albo rozładowania."""
+    kierunkiem trybu, więc intencja z mocą ze slotu musi wskazywać tryb ładowania albo rozładowania.
+    `has_sell_bit` (`write.tou_program.sell`): tylko wtedy intencja okna może ustawić bit sprzedaży."""
     it = v.obj(raw, "$.intents", INTENTS)
     if it is None:
         return
@@ -582,11 +618,20 @@ def _intents(v: _V, raw: Any, model: str, modes: dict, by_direction: bool) -> No
                 if name == "self_consume":
                     v.err(path, "samokonsumpcja musi być obsługiwana (to tryb bazowy)")
                 continue
-            s = v.obj(spec, path, ("grid_charge", "soc", "power"))
+            s = v.obj(spec, path, ("grid_charge", "soc", "power"), ("sell",))
             if s is not None:
                 v.bool_(s.get("grid_charge"), f"{path}.grid_charge")
                 v.enum(s.get("soc"), f"{path}.soc", ("target_or_max", "reserve", "hold"))
                 v.enum(s.get("power"), f"{path}.power", ("slot", "max"))
+                if "sell" in s:
+                    v.bool_(s["sell"], f"{path}.sell")
+                if s.get("sell") is True:
+                    if not has_sell_bit:
+                        v.err(f"{path}.sell", "wymaga write.tou_program.sell")
+                    elif name not in SELL_BIT_INTENTS:
+                        v.err(f"{path}.sell", f"dozwolone tylko dla {list(SELL_BIT_INTENTS)}")
+                    elif s.get("grid_charge") is True:
+                        v.err(f"{path}", "sprzedaż z baterii i ładowanie z sieci naraz")
 
 
 _HA_TOU_DOMAIN = {"start": "time", "grid_charge": "switch", "power_w": "number", "soc": "number"}
@@ -929,8 +974,10 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
             v.num(tou.get("soc_tolerance_pp"), "$.tou.soc_tolerance_pp")
             v.num(tou.get("power_tolerance_w"), "$.tou.power_tolerance_w")
             fo = v.str_list(tou.get("field_order"), "$.tou.field_order")
-            if fo is not None and sorted(fo) != sorted(TOU_FIELDS):
-                v.err("$.tou.field_order", f"permutacja {list(TOU_FIELDS)}")
+            tp_raw = (top.get("write") or {}).get("tou_program") if isinstance(top.get("write"), dict) else None
+            fields = TOU_FIELDS + tuple(f for f in TOU_OPTIONAL_FIELDS if isinstance(tp_raw, dict) and f in tp_raw)
+            if fo is not None and sorted(fo) != sorted(fields):
+                v.err("$.tou.field_order", f"permutacja {list(fields)}")
         if "modes" in top:
             v.err("$.modes", "tylko dla mode_setpoint")
 
@@ -951,7 +998,9 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
         _modbus(v, top["modbus"], tr, written, _write_addresses(wr))
     wp_raw = top.get("write_policy")
     by_direction = isinstance(wp_raw, dict) and wp_raw.get("power_by_direction") is True
-    _intents(v, top.get("intents"), model, modes, by_direction)
+    tp_raw = wr.get("tou_program") if isinstance(wr, dict) else None
+    _intents(v, top.get("intents"), model, modes, by_direction,
+             has_sell_bit=model == "time_window" and isinstance(tp_raw, dict) and "sell" in tp_raw)
 
     base = top.get("baseline")
     if model == "mode_setpoint":
@@ -1024,6 +1073,7 @@ def validate_profile(raw: object, *, parse_tree: bool = False) -> list[str]:
             v.err("$.limits.rated_power_register", "musi wskazywać identify.registers")
 
     _ha(v, top.get("ha"))
+    _sell_bit_direct_only(v, top)
     if "verification" in top:
         _verification(v, top["verification"])
     if "work_mode" in top:

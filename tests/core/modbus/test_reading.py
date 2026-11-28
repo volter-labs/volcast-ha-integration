@@ -59,7 +59,7 @@ def test_deye_lo_hi_u32_decoded():
 def test_current_programs_hhmm_and_bit():
     progs = current_programs(DEYE, deye_image())
     assert [p.start_min for p in progs] == [0, 300, 600, 840, 1080, 1320]
-    assert progs[0] == TouProgram(start_min=0, power_w=3000.0, soc=80.0, grid_charge=True)
+    assert progs[0] == TouProgram(start_min=0, power_w=3000.0, soc=80.0, grid_charge=True, sell=False)
     assert [p.grid_charge for p in progs] == [True, False, False, False, False, True]
     # Bit sieci czytany z bitu profilu, pozostałe bity słowa bez znaczenia.
     assert current_programs(DEYE, deye_image(**{"173": 0b11100}))[1].grid_charge is False
