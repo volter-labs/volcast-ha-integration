@@ -254,9 +254,18 @@ def test_direct_profile_without_pv_power_skips_telemetry_info(monkeypatch):
 
 
 def test_direct_manual_pv_power_shows_telemetry_info(monkeypatch):
-    f = flow(options={**MAPPED_PV, "telemetry_map": {"pv_power_w": "sensor.inv_pv"}}, runtime=rt(reports=[report()]),
+    # Zużycie liczone z mocy PV też znika z rejestrów — mapa ręczna dokłada je obok mocy PV.
+    tmap = {"pv_power_w": "sensor.inv_pv", "load_power_w": "sensor.house"}
+    f = flow(options={**MAPPED_PV, "telemetry_map": tmap}, runtime=rt(reports=[report()]),
              profiles=(_without_pv_register(GW_V), DEYE), monkeypatch=monkeypatch)
     assert asyncio.run(f.async_step_control_direct())["step_id"] == "control_telemetry_info"
+
+
+def test_direct_manual_pv_power_without_load_has_no_telemetry_info(monkeypatch):
+    # Bez zużycia domu serwer nie przyjmie produkcji z telemetrii — zmapowane czujniki PV zostają w użyciu.
+    f = flow(options={**MAPPED_PV, "telemetry_map": {"pv_power_w": "sensor.inv_pv"}}, runtime=rt(reports=[report()]),
+             profiles=(_without_pv_register(GW_V), DEYE), monkeypatch=monkeypatch)
+    assert asyncio.run(f.async_step_control_direct())["type"] == "create_entry"
 
 
 def test_direct_already_on_has_no_telemetry_info(monkeypatch):

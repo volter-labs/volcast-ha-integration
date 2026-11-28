@@ -305,6 +305,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _sync_production_issues(hass, entry, energy_entity, power_entity,
                                 telemetry_production=telemetry_production)
         _sync_assignment_issue(hass, entry, control)
+        _sync_channels_issue(hass, entry, control)
 
         # Tracker i reconciler przed platformami — sensory diagnostyczne czytają je przy setupie.
         if telemetry_production:
@@ -529,6 +530,56 @@ def _sync_assignment_issue(hass: HomeAssistant, entry: ConfigEntry, control: Con
         _LOGGER.warning("Volcast: sensor assignment repair could not be synced (%s)", type(err).__name__)
 
 
+def _channels_issue_id(entry: ConfigEntry) -> str:
+    return f"telemetry_channels_missing_{entry.entry_id}"
+
+
+def _channels_missing(entry: ConfigEntry, control: ControlRuntime | None) -> tuple[str, ...]:
+    """Kanały bilansu (sieć, zużycie domu), których nie czyta telemetria ROZPOZNANEGO falownika.
+
+    Tylko wpis sparowany ze złożonym sterowaniem i nadajnikiem telemetrii. Bez rozpoznanej integracji i bez
+    połączenia bezpośredniego jest naprawa mapy czujników (wszystkie pola), a ścieżka bez żadnego źródła
+    to zgłoszenie „brak odczytów” — tu wtedy pusto, żeby nie dublować zgłoszeń. Kanał, którego integracja
+    falownika nie ma, nie jest zgłaszany (`missing_balance_keys`).
+    """
+    if control is None or not entry.data.get(CONF_BACKEND):
+        return ()
+    # Jawnie: rozpoznana integracja albo połączenie bezpośrednie. Profil z feedu czekający na przeładowanie
+    # (`announced_choice`) jeszcze nie czyta — kanały może dać dopiero on.
+    choice = getattr(control, "choice", None)
+    if not getattr(choice, "integration_domain", None) and getattr(control, "direct", None) is None:
+        return ()
+    telemetry = getattr(control, "telemetry", None)
+    if telemetry is None:
+        return ()
+    return tuple(getattr(telemetry, "missing_balance_channels", ()) or ())
+
+
+def _sync_channels_issue(hass: HomeAssistant, entry: ConfigEntry, control: ControlRuntime | None) -> None:
+    """Zgłoszenie „brak sieci / zużycia domu”: bez nich serwer nie sprawdzi bilansu, więc bilans energii, widok
+    na żywo i kalibracja z telemetrii są ograniczone. Naprawa dokłada brakujące czujniki do mapy ręcznej.
+
+    Liczone przy setupie — zapis mapy przeładowuje wpis i liczy od nowa. Rozładunek (też przy przeładowaniu)
+    zgłoszenia NIE zdejmuje: „Ignoruj” użytkownika bez miernika żyje w rejestrze zgłoszeń i zginąłby przy
+    każdym przeładowaniu. Zdejmuje je ustąpienie warunku albo usunięcie wpisu. Nigdy nie rzuca.
+    """
+    try:
+        if _channels_missing(entry, control):
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                _channels_issue_id(entry),
+                is_fixable=True,
+                severity=_ISSUE_WARNING,
+                translation_key="telemetry_channels_missing",
+                data={"entry_id": entry.entry_id},
+            )
+        else:
+            ir.async_delete_issue(hass, DOMAIN, _channels_issue_id(entry))
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Volcast: telemetry channels repair could not be synced (%s)", type(err).__name__)
+
+
 async def _async_cleanup_failed_setup(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -570,10 +621,11 @@ async def _async_cleanup_failed_setup(
 
 
 def _telemetry_carries_production(control: ControlRuntime | None) -> bool:
-    """Czy telemetria sterowania niesie produkcję PV (wtedy serwer kalibruje z niej).
+    """Czy telemetria sterowania niesie produkcję PV, którą serwer przyjmie do kalibracji.
 
-    Rozstrzyga nadajnik telemetrii z kluczy, które czyta (moc PV; sam licznik nie wystarcza) —
-    falownik tylko do odczytu albo bez encji PV nie niesie produkcji, mapa ręczna może.
+    Rozstrzyga nadajnik telemetrii z kluczy, które czyta (moc PV — sam licznik nie wystarcza — oraz sieć
+    i zużycie domu, bez których serwer daje godzinie tylko wykres) — falownik tylko do odczytu, bez encji PV
+    albo bez kanału bilansu nie niesie produkcji (tracker zostaje), mapa ręczna może ją uzupełnić.
     """
     return control is not None and control.telemetry_reports_production
 
@@ -760,6 +812,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     try:
         ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, _assignment_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, _channels_issue_id(entry))
         for issue_id in hub_check.issue_ids(entry.entry_id):
             ir.async_delete_issue(hass, DOMAIN, issue_id)
     except Exception as err:  # noqa: BLE001

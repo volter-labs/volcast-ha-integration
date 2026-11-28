@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Volcastu chýbajú údaje o sieti alebo spotrebe domu",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Volcastu chýbajú údaje o sieti alebo spotrebe domu",
+            "description": "Volcast rozpoznal váš menič, ale nedostáva z neho výkon siete, výkon spotreby domu alebo oboje. Bez nich sú energetická bilancia, živý prehľad a kalibrácia predpovede z údajov meniča obmedzené. Nižšie vyberte chýbajúce senzory - pridajú sa do vašej mapy senzorov, nič iné sa nezmení a nastavenia meniča zostanú bez zmeny. Volcast očakáva, že výkon siete je pri odbere kladný. Ak taký senzor nemáte (napríklad nemáte elektromer siete), môžete toto hlásenie ignorovať.",
+            "data": {
+              "grid_power_w": "Výkon siete",
+              "load_power_w": "Výkon spotreby domu",
+              "grid_power_negate": "Senzor siete zobrazuje export ako kladný"
+            },
+            "data_description": {
+              "grid_power_negate": "Zapnite, ak je senzor siete pri odbere záporný."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Vyberte aspoň jeden senzor."
+        },
+        "abort": {
+          "not_loaded": "Volcast pre túto položku nebeží. Znova načítajte integráciu a skúste to znova.",
+          "channels_present": "Volcast už dostáva údaje o sieti aj spotrebe domu, takže netreba vyberať senzory. Ak sa hlásenie stále zobrazuje, znova načítajte integráciu."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Niektoré nastavenia striedača nie sú pre Volcast dostupné",
       "description": "Volcast nemôže tieto nastavenia striedača používať, pretože ich entity chýbajú, sú vypnuté alebo nedostupné: {entities}. Riadenie pokračuje bez nich a plán Volcast sa na ne už nespolieha. Keď budú entity opäť dostupné, Volcast ich použije automaticky."

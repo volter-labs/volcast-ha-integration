@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Faltam ao Volcast dados da rede ou do consumo da casa",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Faltam ao Volcast dados da rede ou do consumo da casa",
+            "description": "O Volcast reconheceu seu inversor, mas não recebe dele a potência da rede, a potência de consumo da casa ou nenhuma delas. Sem elas, o balanço de energia, a visualização ao vivo e a calibração da previsão com dados do inversor ficam limitados. Escolha abaixo os sensores que faltam: eles são adicionados ao seu mapa de sensores, nada mais é alterado e as configurações do inversor continuam as mesmas. O Volcast espera que a potência da rede seja positiva ao importar. Se você não tem esse sensor (por exemplo, sem medidor da rede), pode ignorar este aviso.",
+            "data": {
+              "grid_power_w": "Potência da rede",
+              "load_power_w": "Potência de consumo da casa",
+              "grid_power_negate": "O sensor da rede mostra a exportação como positiva"
+            },
+            "data_description": {
+              "grid_power_negate": "Ative quando o sensor da rede é negativo durante a importação."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Escolha pelo menos um sensor."
+        },
+        "abort": {
+          "not_loaded": "O Volcast não está em execução para esta entrada. Recarregue a integração e tente novamente.",
+          "channels_present": "O Volcast já recebe dados da rede e do consumo da casa, então não é preciso escolher sensores. Recarregue a integração se este aviso continuar aparecendo."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Algumas configurações do inversor não estão disponíveis para o Volcast",
       "description": "O Volcast não consegue usar estas configurações do inversor porque as respectivas entidades estão ausentes, desativadas ou indisponíveis: {entities}. O controle continua sem elas e o plano do Volcast deixa de depender delas. Quando as entidades voltarem a ficar disponíveis, o Volcast as usa automaticamente."

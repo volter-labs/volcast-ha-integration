@@ -210,6 +210,9 @@ class VolcastProductionTracker:
         # {date, hour} — oba trwale w tym samym Store (patrz BASELINE_STORAGE_KEY).
         self._last_state: dict[str, Any] | None = None
         self._flushed: dict[str, Any] | None = None
+        # Godzina startu (date, hour), ktorej NIE wysylamy: start bez uzytecznego stanu z poprzedniego biegu
+        # (`_partial_start_hour`). Ustawiana w `async_start`, zdejmowana po flushu tej godziny.
+        self._skip_hour: tuple[str, int] | None = None
 
         # Stan publiczny (dostępny dla sensorów diagnostycznych)
         self.last_submission_time: datetime | None = None
@@ -416,6 +419,41 @@ class VolcastProductionTracker:
         if first < cur:
             self._set_covers(bucket, first, cur)
 
+    def _has_recent_state(self, now: datetime) -> bool:
+        """Czy Store ma stan z biegu sprzed najwyzej MAX_GAP_HOURS (ostatni odczyt, wyslana godzina, baseline)."""
+        cur = _hour_dt(now.strftime("%Y-%m-%d"), now.hour)
+        last = self._last_state
+        if isinstance(last, dict):
+            try:
+                age_h = (now.timestamp() - float(last["ts"])) / 3600.0
+                if 0 <= age_h <= MAX_GAP_HOURS:
+                    return True
+            except (KeyError, TypeError, ValueError):
+                pass
+        for rec in (self._flushed, self._baseline):
+            if not isinstance(rec, dict):
+                continue
+            try:
+                age_h = (cur - _hour_dt(rec["date"], int(rec["hour"]))).total_seconds() / 3600.0
+            except (KeyError, TypeError, ValueError):
+                continue
+            if 0 <= age_h <= MAX_GAP_HOURS:
+                return True
+        return False
+
+    def _partial_start_hour(self, now: datetime) -> tuple[str, int] | None:
+        """Godzina startu, jesli tracker rusza bez uzytecznego stanu z poprzedniego biegu.
+
+        Taka godzina ma tylko czesc energii (od pierwszego odczytu po starcie). Wyslana jako pelny odczyt
+        dawalaby Kalmanowi za niski stosunek, a tlumienie po stronie serwera dziala tylko w gore — wiec jej
+        nie wysylamy. Nic nie ginie: most serwera o :10 uzupelnia wykres z telemetrii, a reconciler (czujnik
+        energii) nocą wpisuje prawdziwa wartosc ze statystyk HA. Start ze stanem sprzed najwyzej MAX_GAP_HOURS
+        liczy godzine jak dotad (odzysk od ostatniego stanu licznika / baseline'u).
+        """
+        if self._has_recent_state(now):
+            return None
+        return now.strftime("%Y-%m-%d"), now.hour
+
     def _get_local_now(self) -> datetime:
         """Zwróć bieżący czas w strefie czasowej HA."""
         return dt_util.now()
@@ -425,6 +463,7 @@ class VolcastProductionTracker:
         # PRZED rejestracja listenerow: _async_state_changed jest synchroniczne
         # i czyta self._baseline z pamieci, wiec musi juz byc wczytany.
         await self._load_baseline()
+        self._skip_hour = self._partial_start_hour(self._get_local_now())
 
         self._async_subscribe()
 
@@ -657,6 +696,16 @@ class VolcastProductionTracker:
             production_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         else:
             production_date = today_str
+
+        if self._skip_hour == (production_date, prev_hour):
+            # Niepelna godzina startu bez stanu z poprzedniego biegu (`_partial_start_hour`). Oznaczamy ja jako
+            # obsluzona, zeby odzysk po pozniejszej ciszy nie wliczyl jej energii do innej godziny.
+            self._skip_hour = None
+            self._flushed = {"date": production_date, "hour": prev_hour}
+            await self._persist_baseline(now)
+            _LOGGER.info("Production for %s %02d:00 not sent: the tracker started during that hour "
+                         "without earlier counter state, so the hour is incomplete", production_date, prev_hour)
+            return
 
         reading: dict[str, Any] = {
             "date": production_date,

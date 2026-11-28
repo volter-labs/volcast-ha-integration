@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Volcast nu are date despre rețea sau consumul casei",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Volcast nu are date despre rețea sau consumul casei",
+            "description": "Volcast a recunoscut invertorul tău, dar nu primește de la el puterea din rețea, puterea consumată de casă sau niciuna dintre ele. Fără ele, bilanțul energetic, vizualizarea în timp real și calibrarea prognozei din datele invertorului sunt limitate. Alege mai jos senzorii care lipsesc: sunt adăugați la harta ta de senzori, nimic altceva nu se schimbă, iar setările invertorului rămân neschimbate. Volcast se așteaptă ca puterea din rețea să fie pozitivă la consum din rețea. Dacă nu ai un astfel de senzor (de exemplu, niciun contor de rețea), poți ignora această problemă.",
+            "data": {
+              "grid_power_w": "Puterea rețelei",
+              "load_power_w": "Puterea consumului casei",
+              "grid_power_negate": "Senzorul rețelei arată exportul ca pozitiv"
+            },
+            "data_description": {
+              "grid_power_negate": "Activează când senzorul rețelei este negativ la import."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Alege cel puțin un senzor."
+        },
+        "abort": {
+          "not_loaded": "Volcast nu rulează pentru această intrare. Reîncarcă integrarea și încearcă din nou.",
+          "channels_present": "Volcast primește deja date despre rețea și consumul casei, deci nu trebuie aleși senzori. Reîncarcă integrarea dacă problema este încă afișată."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Unele setări ale invertorului nu sunt disponibile pentru Volcast",
       "description": "Volcast nu poate folosi aceste setări ale invertorului deoarece entitățile lor lipsesc, sunt dezactivate sau indisponibile: {entities}. Controlul continuă fără ele, iar planul Volcast nu se mai bazează pe ele. Când entitățile devin din nou disponibile, Volcast le folosește automat."

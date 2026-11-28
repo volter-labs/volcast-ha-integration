@@ -889,10 +889,12 @@ class TestChargePowerCarryOver:
         from datetime import datetime
         from zoneinfo import ZoneInfo
         tz = ZoneInfo("Europe/Berlin")
-        clock = {"t": datetime(2026, 9, 6, 13, 30, tzinfo=tz)}
+        # Start w poprzedniej godzinie: godzina startu bez stanu z poprzedniego biegu nie jest wysyłana.
+        clock = {"t": datetime(2026, 9, 6, 12, 59, tzinfo=tz)}
         tracker, submitted = _make_battery_tracker(monkeypatch, clock)
         await tracker.async_start()
 
+        clock["t"] = datetime(2026, 9, 6, 13, 30, tzinfo=tz)
         tracker._async_state_changed(_ev("sensor.pv_energy", 100.0))
         clock["t"] = datetime(2026, 9, 6, 14, 0, 10, tzinfo=tz)
         tracker._async_state_changed(_ev("sensor.pv_energy", 101.0))
@@ -1212,8 +1214,9 @@ class TestGapRecovery:
     """Counter silent for hours, then returns with a jump: the total survives."""
 
     async def _normal_hour_then_silence(self, h: _GapHarness):
+        h.at(7, 59)
+        await h.boot()        # start before hour 8: the start hour (7) carries no data
         h.at(8, 10)
-        await h.boot()
         h.energy(100.0)
         h.at(8, 55)
         h.energy(100.8)
@@ -1373,8 +1376,9 @@ class TestGapRecovery:
     @pytest.mark.asyncio
     async def test_no_gap_payload_has_no_covers_from(self, monkeypatch):
         h = _GapHarness(monkeypatch)
+        h.at(11, 59)
+        await h.boot()        # start before hour 12: the start hour (11) carries no data
         h.at(12, 10)
-        await h.boot()
         h.energy(100.0)
         h.at(12, 55)
         h.energy(101.0)
@@ -1413,3 +1417,64 @@ class TestGapRecovery:
         r12 = h.reading(12)
         assert r12["covers_from"] == {"date": "2026-09-14", "hour": 9}
         assert r12["actual_kwh"] == pytest.approx(2.8, abs=1e-4)
+
+
+class TestFirstPartialHourAfterFreshStart:
+    """Tracker started mid-hour without a usable saved baseline (never ran, or last run over
+    MAX_GAP_HOURS ago): the start hour holds only part of its energy. Sent as a full reading it
+    would step the server's Kalman filter down with a too-low ratio, so it is not sent."""
+
+    async def _run_from_10_40(self, h: _GapHarness):
+        h.at(10, 40)
+        await h.boot()
+        h.energy(100.0)
+        h.at(10, 59)
+        h.energy(100.5)
+        h.at(11, 0)
+        h.energy(100.6)
+        h.at(11, 5)
+        await h.tick()                    # flush of hour 10
+        h.at(11, 59)
+        h.energy(101.6)
+        h.at(12, 0)
+        h.energy(101.7)
+        h.at(12, 5)
+        await h.tick()                    # flush of hour 11
+
+    @pytest.mark.asyncio
+    async def test_start_hour_without_baseline_is_not_sent_and_next_hour_is(self, monkeypatch):
+        h = _GapHarness(monkeypatch)
+        await self._run_from_10_40(h)
+        assert [r["hour"] for r in h.submitted] == [11]
+        assert h.reading(11)["actual_kwh"] == pytest.approx(1.1, abs=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_saved_state_older_than_the_gap_limit_counts_as_no_baseline(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        old = datetime(2026, 9, 11, 9, 30, tzinfo=ZoneInfo("Europe/Warsaw"))
+        store = _FakeStore()
+        await store.async_save({
+            "last": {"value": 90.0, "ts": old.timestamp(), "date": "2026-09-11", "hour": 9},
+            "flushed": {"date": "2026-09-11", "hour": 9},
+            "date": "2026-09-11", "hour": 9, "value": 89.0,
+        })
+        h = _GapHarness(monkeypatch, baseline_store=store)
+        await self._run_from_10_40(h)
+        assert [r["hour"] for r in h.submitted] == [11]
+
+    @pytest.mark.asyncio
+    async def test_start_hour_with_a_fresh_baseline_is_sent_as_today(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        last = datetime(2026, 9, 14, 9, 58, tzinfo=ZoneInfo("Europe/Warsaw"))
+        store = _FakeStore()
+        await store.async_save({
+            "last": {"value": 99.8, "ts": last.timestamp(), "date": "2026-09-14", "hour": 9},
+            "flushed": {"date": "2026-09-14", "hour": 9},
+        })
+        h = _GapHarness(monkeypatch, baseline_store=store)
+        await self._run_from_10_40(h)
+        assert [r["hour"] for r in h.submitted] == [10, 11]
+        # energia od ostatniego znanego stanu (99.8), nie od pierwszego odczytu po starcie
+        assert h.reading(10)["actual_kwh"] == pytest.approx(0.7, abs=1e-4)

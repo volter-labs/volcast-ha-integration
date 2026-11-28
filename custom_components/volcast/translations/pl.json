@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Volcastowi brakuje danych o sieci lub zużyciu domu",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Volcastowi brakuje danych o sieci lub zużyciu domu",
+            "description": "Volcast rozpoznał Twój falownik, ale nie dostaje z niego mocy sieci, mocy zużycia domu albo obu. Bez nich bilans energii, widok na żywo i kalibracja prognozy z danych falownika są ograniczone. Wskaż poniżej brakujące czujniki - zostaną dopisane do mapy czujników, nic innego się nie zmieni, a ustawienia falownika zostają bez zmian. Volcast oczekuje, że moc sieci jest dodatnia przy poborze. Jeśli nie masz takiego czujnika (np. brak licznika sieci), możesz zignorować to zgłoszenie.",
+            "data": {
+              "grid_power_w": "Moc sieci",
+              "load_power_w": "Moc odbiorów domu",
+              "grid_power_negate": "Czujnik sieci pokazuje eksport jako wartość dodatnią"
+            },
+            "data_description": {
+              "grid_power_negate": "Włącz, gdy czujnik sieci pokazuje wartość ujemną przy poborze."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Wybierz co najmniej jeden czujnik."
+        },
+        "abort": {
+          "not_loaded": "Volcast nie działa dla tego wpisu. Załaduj integrację ponownie i spróbuj jeszcze raz.",
+          "channels_present": "Volcast dostaje już dane o sieci i zużyciu domu, więc nie trzeba wskazywać czujników. Jeśli zgłoszenie nadal jest widoczne, przeładuj integrację."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Część ustawień falownika jest niedostępna dla Volcast",
       "description": "Volcast nie może używać tych ustawień falownika, ponieważ ich encje są brakujące, wyłączone lub niedostępne: {entities}. Sterowanie działa dalej bez nich, a plan Volcast już na nich nie polega. Gdy encje znów będą dostępne, Volcast użyje ich automatycznie."

@@ -639,6 +639,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Volcast is missing grid or house load data",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Volcast is missing grid or house load data",
+            "description": "Volcast recognised your inverter, but it does not receive grid power, house load power or both from it. Without them the energy balance, the live view and the forecast calibration from inverter data are limited. Pick the missing sensors below - they are added to your sensor map, nothing else is changed and the inverter settings stay as they are. Volcast expects grid power to be positive while importing. If you have no such sensor (for example no grid meter), you can ignore this issue.",
+            "data": {
+              "grid_power_w": "Grid power",
+              "load_power_w": "House load power",
+              "grid_power_negate": "Grid sensor shows export as positive"
+            },
+            "data_description": {
+              "grid_power_negate": "Turn on when your grid sensor is negative while importing."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Choose at least one sensor."
+        },
+        "abort": {
+          "not_loaded": "Volcast is not running for this entry. Reload the integration and try again.",
+          "channels_present": "Volcast already receives grid and house load data, so no sensors need to be picked. Reload the integration if this issue is still shown."
+        }
+      }
+    },
     "controller_conflict": {
       "title": "Another controller is controlling your inverter",
       "fix_flow": {
