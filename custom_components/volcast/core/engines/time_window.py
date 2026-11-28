@@ -38,6 +38,10 @@ from ..slot import Schedule, Slot
 from .mode_setpoint import slot_intent
 
 _NATURAL = ("self_consume", "charge_pv")
+# Intencja wykonywana tylko przy zadeklarowanej możliwości profilu — bez niej slot idzie jako
+# samokonsumpcja (jak intencja, której profil nie obsługuje). Bramka testu na żywo: profil może już
+# umieć zapisać okno sprzedaży, a feed trzyma możliwość wyłączoną, dopóki test nie przejdzie.
+_INTENT_CAPABILITY = {"sell": "sell_from_battery"}
 _TIE_DIGITS = 9     # remisy przyrostów liczone po zaokrągleniu — szum float nie zmienia wyboru
 
 
@@ -46,6 +50,7 @@ class ProgramSpec:
     grid_charge: bool
     soc: float
     power_w: float
+    sell: bool | None = None        # bit sprzedaży z baterii; None = profil go nie ma
 
 
 @dataclass(frozen=True)
@@ -110,6 +115,25 @@ def _soc_floor(soc: float, reserve: float) -> float:
     return min(max(soc, reserve), 100.0)
 
 
+def _has_sell_bit(profile: Profile) -> bool:
+    return "sell" in (profile.raw["write"].get("tou_program") or {})
+
+
+def _runnable(profile: Profile, intent: str, slot: Slot, fallback: bool) -> bool:
+    """Czy profil wykona intencję slotu. Nie: profil jej nie obsługuje, brak zadeklarowanej możliwości
+    albo okno sprzedające w slocie zapasowym (plan wygasły lub przeterminowany — bateria nie oddaje
+    do sieci bez aktualnego planu)."""
+    spec = profile.intent(intent)
+    if spec is None:
+        return False
+    cap = _INTENT_CAPABILITY.get(intent)
+    if cap is not None and profile.raw["capabilities"].get(cap) is not True:
+        return False
+    if spec.get("sell") is True and (fallback or slot.from_fallback):
+        return False
+    return True
+
+
 def _program(intent: str, slot: Slot, profile: Profile, reserve: float, rated: float) -> ProgramSpec:
     spec = profile.intent(intent)
     target = slot.soc_target if slot.soc_target is not None else 100.0
@@ -118,7 +142,8 @@ def _program(intent: str, slot: Slot, profile: Profile, reserve: float, rated: f
         power = rated
     else:
         power = min(max(slot.power_w, 0.0), rated)
-    return ProgramSpec(bool(spec["grid_charge"]), float(_soc_floor(soc, reserve)), float(power))
+    sell = bool(spec.get("sell", False)) if _has_sell_bit(profile) else None
+    return ProgramSpec(bool(spec["grid_charge"]), float(_soc_floor(soc, reserve)), float(power), sell)
 
 
 def _own_energy(h: _H) -> float:
@@ -234,7 +259,7 @@ def _day_grid(schedule: Schedule, now: datetime, tz: tzinfo, step: int,
             if i not in cands:
                 cands.append(i)
         if len(cands) > 1:
-            safe = [i for i in cands if not grid_charge(slots[i])]
+            safe = [i for i in cands if not grid_charge(slots[i])]     # bez sieci i bez sprzedaży
             cands = safe or cands
         chosen.append(cands[0] if cands else None)
     for k in range(len(chosen)):                            # pora nieistniejąca → sąsiednia
@@ -258,7 +283,7 @@ def _day_grid(schedule: Schedule, now: datetime, tz: tzinfo, step: int,
 
 
 def _within(a: ProgramSpec, b: ProgramSpec, profile: Profile) -> bool:
-    return (a.grid_charge == b.grid_charge and abs(a.soc - b.soc) <= profile.soc_tolerance_pp
+    return (a.grid_charge == b.grid_charge and a.sell == b.sell and abs(a.soc - b.soc) <= profile.soc_tolerance_pp
             and abs(a.power_w - b.power_w) <= profile.power_tolerance_w)
 
 
@@ -298,9 +323,11 @@ def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve
     ptz = tz                                   # strefa, w której liczona jest pora doby programu
     if anchor == "day":
         def grid_charge(s: Slot) -> bool:
+            # Remis pory powtórzonej: wygrywa program bez wymuszonego przepływu z/do sieci.
             own, _ = slot_intent(s)
-            run = own if profile.intent(own) is not None else "self_consume"
-            return _program(run, s, profile, soc_reserve, rated_power_w).grid_charge
+            run = own if _runnable(profile, own, s, False) else "self_consume"
+            prog = _program(run, s, profile, soc_reserve, rated_power_w)
+            return prog.grid_charge or prog.sell is True
         slots, flags, ptz = _day_grid(schedule, now, tz, step, grid_charge)
     else:
         slots, flags = _horizon(schedule, now, tz, step)
@@ -310,8 +337,8 @@ def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve
     for s, fb in zip(slots, flags):
         own, _note = slot_intent(s)
         run = own
-        if profile.intent(own) is None:
-            run = "self_consume"          # profil tej intencji nie obsługuje
+        if not _runnable(profile, own, s, fb):
+            run = "self_consume"          # profil tej intencji nie obsługuje (albo nie wolno jej tu)
             degraded[own] = degraded.get(own, 0) + 1
         hs.append(_H(s, own, run, _program(run, s, profile, soc_reserve, rated_power_w), fb))
 
@@ -325,7 +352,7 @@ def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve
         last = wins[-1] if wins else None
         if last is not None and last.intent == h.run and _within(last.prog, h.prog, profile):
             last.prog = ProgramSpec(last.prog.grid_charge, max(last.prog.soc, h.prog.soc),
-                                    max(last.prog.power_w, h.prog.power_w))
+                                    max(last.prog.power_w, h.prog.power_w), last.prog.sell)
             last.end = h.slot.end
             last.members.append(h)
         else:
@@ -367,7 +394,8 @@ def compress(schedule: Schedule, now: datetime, profile: Profile, *, soc_reserve
 
     total = sum(_cost(w, p_mean) for w in wins)
     programs = tuple(sorted(
-        (TouProgram(_local_min(w.start, ptz), w.prog.power_w, w.prog.soc, w.prog.grid_charge) for w in wins),
+        (TouProgram(_local_min(w.start, ptz), w.prog.power_w, w.prog.soc, w.prog.grid_charge, w.prog.sell)
+         for w in wins),
         key=lambda p: p.start_min))
     return CompressionResult(
         programs=programs,
@@ -388,8 +416,9 @@ def baseline_programs(profile: Profile, soc_reserve: float, rated_power_w: float
     spec = profile.intent("self_consume")
     soc = soc_reserve if spec["soc"] == "reserve" else 100.0
     every = (1440 // n) // step * step
+    sell = False if _has_sell_bit(profile) else None      # tryb bazowy nigdy nie sprzedaje z baterii
     return tuple(TouProgram(i * every, float(rated_power_w), float(_soc_floor(soc, soc_reserve)),
-                            bool(spec["grid_charge"]))
+                            bool(spec["grid_charge"]), sell)
                  for i in range(n))
 
 

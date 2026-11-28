@@ -179,7 +179,7 @@ def test_unverified_is_dry_run_with_programs_in_summary():
     assert (d.status, d.reason) == ("dry_run", "unverified_profile")
     s = d.summary()
     assert s["would_write"] and len(s["programs"]) == 6 and "lost_value_pln" in s
-    assert set(s["programs"][0]) == {"start_min", "power_w", "soc", "grid_charge"}
+    assert set(s["programs"][0]) == {"start_min", "power_w", "soc", "grid_charge", "sell"}     # Deye: bit Sell
 
 
 def test_other_control_mode_is_idle():

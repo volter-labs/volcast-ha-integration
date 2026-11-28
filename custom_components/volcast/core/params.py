@@ -14,6 +14,8 @@ WRITE_PARAMS: tuple[str, ...] = (
     "charge_power_w", "discharge_power_w", "enable",
 )
 TOU_FIELDS: tuple[str, ...] = ("start", "power_w", "soc", "grid_charge")
+# Pola programu opcjonalne w profilu: bit sprzedaży z baterii (`write.tou_program.sell`).
+TOU_OPTIONAL_FIELDS: tuple[str, ...] = ("sell",)
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,8 @@ class TouProgram:
     power_w: float
     soc: float
     grid_charge: bool
+    # Bit sprzedaży z baterii; None = profil go nie ma (klucz `tou.<i>.sell` nie istnieje, bit nietknięty).
+    sell: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -59,4 +63,6 @@ class Params:
             out[f"tou.{i}.power_w"] = float(prog.power_w)
             out[f"tou.{i}.soc"] = float(prog.soc)
             out[f"tou.{i}.grid_charge"] = 1.0 if prog.grid_charge else 0.0
+            if prog.sell is not None:
+                out[f"tou.{i}.sell"] = 1.0 if prog.sell else 0.0
         return out

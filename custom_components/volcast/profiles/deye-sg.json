@@ -11,6 +11,7 @@
     {"what": "time-of-use semantics", "ref": "Deye system work mode manual (program time/power/SOC/grid charge), unverified"},
     {"what": "time-of-use block 146-177 of the three-phase map (146 enable bit 0 + weekday bits 1-7, 148-153 start, 154-159 power, 166-171 SoC, 172-177 charge bits)", "ref": "kellerza/sunsynk src/sunsynk/definitions/three_phase_common.py and PROG_CHARGE_OPTIONS/PROG_MODE_OPTIONS in src/sunsynk/definitions/__init__.py (https://github.com/kellerza/sunsynk/blob/main/src/sunsynk/definitions/three_phase_common.py)"},
     {"what": "time-of-use register 0x0092 with weekday mask (0x00FF = whole week), program time/power/SOC/charging registers", "ref": "davidrapan/ha-solarman inverter_definitions/deye_p3.yaml (https://github.com/davidrapan/ha-solarman/blob/main/custom_components/solarman/inverter_definitions/deye_p3.yaml)"},
+    {"what": "sell from battery: bit 5 of the program flag registers 172-177 (program SoC = discharge floor, program power 154-159 = discharge power cap; work mode and export limit untouched), observed on a live three-phase unit, firmware MAIN 2107-1184-1809", "ref": "live-unit test on a SUN-8K-SG05LP3: Sell set per program in the vendor app, registers 172-177 read back over Modbus (bit 5 = 32), discharge to the program SoC observed"},
     {"what": "three-phase time-of-use windows at 146-177; register 146 is a bit mask (preserve the other bits when writing)", "ref": "MarkLabs Deye Modbus register list (https://marklabs.pl/en/deye-modbus-complete-register-list/)"}
   ],
   "unit_id": 1,
@@ -40,7 +41,8 @@
       "start": {"addr": 148, "encode": "hhmm"},
       "power_w": {"addr": 154, "encode": "watts"},
       "soc": {"addr": 166, "encode": "percent"},
-      "grid_charge": {"addr": 172, "bit": 0}
+      "grid_charge": {"addr": 172, "bit": 0},
+      "sell": {"addr": 172, "bit": 5}
     },
     "tou_enable": {"addr": 146, "enable_bit": 0, "day_mask": 254}
   },
@@ -48,12 +50,12 @@
     "charge_grid": {"grid_charge": true, "soc": "target_or_max", "power": "slot"},
     "charge_pv": {"grid_charge": false, "soc": "reserve", "power": "max"},
     "discharge_forced": null,
-    "sell": null,
+    "sell": {"grid_charge": false, "sell": true, "soc": "target_or_max", "power": "slot"},
     "self_consume": {"grid_charge": false, "soc": "reserve", "power": "max"},
     "standby": {"grid_charge": false, "soc": "hold", "power": "max"}
   },
   "tou": {"programs": 6, "time_step_min": 5, "soc_tolerance_pp": 5, "power_tolerance_w": 500,
-          "field_order": ["soc", "power_w", "grid_charge", "start"]},
+          "field_order": ["soc", "power_w", "grid_charge", "sell", "start"]},
   "baseline": {"intent": "self_consume"},
   "write_policy": {"order": ["tou"], "min_interval_s": 300, "nvm": true,
                    "max_direction_changes_per_hour": 0, "max_state_age_s": 300,

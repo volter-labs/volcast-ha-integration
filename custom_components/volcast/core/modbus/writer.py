@@ -55,7 +55,7 @@ pierwszy odczyt po echu jeszcze stary, nowa wartość < 1 s później). Zamiast 
 „inna”); DENIED dopiero, gdy ostatni nadal pokazuje wartość sprzed zapisu; ponowny odczyt bez
 odpowiedzi → ERROR. Ponowne odczyty to tylko FC 3 — próba zapisu nadal jedna.
 
-Pola bitowe (bit ładowania z sieci programu, włącznik harmonogramu) są składane na słowie
+Pola bitowe (bit ładowania z sieci i bit sprzedaży programu, włącznik harmonogramu) są składane na słowie
 z odczytu PRZED zapisem, nie z obrazu ostatniego odpytania. Włącznik harmonogramu, który już
 jest w żądanym stanie według tego świeżego odczytu, nie jest wysyłany (OK bez ramki) — dzięki
 temu wyłączenie przed przepisaniem programów jest zawsze w sekwencji, a kosztuje ramkę tylko
@@ -211,12 +211,17 @@ def _numeric_actual(profile, key: str, word: int, requested: int) -> float | Non
     return float(actual)
 
 
+# Pola bitowe programu (słowo flag): bit ładowania z sieci i bit sprzedaży z baterii.
+_TOU_BIT_FIELDS = ("grid_charge", "sell")
+
+
 def _fresh_value(profile, key: str, value: int, before: int) -> int:
     """Pole bitowe: odczyt-modyfikacja-zapis na słowie ŚWIEŻO odczytanym przed zapisem
     (bity właściciela zmienione od ostatniego odpytania nie mogą zostać nadpisane)."""
     write = profile.raw["write"]
-    if key.startswith("tou.") and key.endswith(".grid_charge"):
-        mask = 1 << write["tou_program"]["grid_charge"]["bit"]
+    field = key.rsplit(".", 1)[-1] if key.startswith("tou.") else None
+    if field in _TOU_BIT_FIELDS and field in write["tou_program"]:
+        mask = 1 << write["tou_program"][field]["bit"]
         return (before & ~mask & 0xFFFF) | (value & mask)
     if key == "tou_enable":
         spec = write["tou_enable"]

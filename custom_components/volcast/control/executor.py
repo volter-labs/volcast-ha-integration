@@ -2954,7 +2954,8 @@ class VolcastExecutor:
         self.tou_preview = {
             "lost_value_pln": round(res.lost_value_pln, 2), "merges": len(res.merges),
             "programs": [{"start": f"{p.start_min // 60:02d}:{p.start_min % 60:02d}",
-                          "power_w": round(p.power_w), "soc": round(p.soc), "grid_charge": p.grid_charge}
+                          "power_w": round(p.power_w), "soc": round(p.soc), "grid_charge": p.grid_charge,
+                          **({} if p.sell is None else {"sell": p.sell})}
                          for p in res.programs]}
 
     def _count(self, d: CycleDecision) -> None:

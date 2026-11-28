@@ -63,7 +63,7 @@ def test_goodwe_sell_reports_live_export_others_unchanged():
 
 
 def test_power_kind_none_for_unsupported_intent():
-    assert load_builtin("deye-sg").power_kind("sell") is None
+    assert load_builtin("deye-sg").power_kind("discharge_forced") is None
 
 
 def test_only_goodwe_uses_live_export():

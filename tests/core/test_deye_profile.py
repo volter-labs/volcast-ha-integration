@@ -12,7 +12,8 @@ DEYE = load_builtin("deye-sg")
 def test_draft_and_shape():
     assert (DEYE.status, DEYE.control_model, DEYE.tou_programs, DEYE.time_step_min) == (
         "draft", "time_window", 6, 5)
-    assert DEYE.intent("sell") is None and DEYE.intent("discharge_forced") is None
+    # Okno sprzedaży zapisywalne (bit Sell), ale możliwość wyłączona do etapu „sprzedaż” testu na żywo.
+    assert DEYE.intent("sell") is not None and DEYE.intent("discharge_forced") is None
     assert DEYE.raw["capabilities"]["sell_from_battery"] is False
 
 
@@ -72,3 +73,24 @@ def test_deye_modbus_is_draft_with_fc16_and_tou_enable_146():
     assert (DEYE.nvm_budget.window_s, DEYE.nvm_budget.per_key, DEYE.nvm_budget.total) == (86400.0, 48, 400)
     refs = " ".join(s["ref"] for s in DEYE.raw["sources"])
     assert "three_phase_common.py" in refs and "deye_p3.yaml" in refs and "marklabs" in refs.lower()
+
+
+def test_model_string_never_decides_direct_identification():
+    # Nazwa z tabliczki (np. SUN-8K-SG05LP3-EU-SM2) nie jest czytana: tryb bezpośredni i hub Modbus HA
+    # rozpoznają falownik po kodzie typu z rejestru 0 (`identify.registers.device_type.expect`).
+    # `model_regex` integracji solarman dotyczy wyłącznie modelu z definicji tej integracji („SG0*LP3”).
+    import re
+
+    from custom_components.volcast.core.control.select import InverterHint, select_profile
+    from custom_components.volcast.core.modbus.identity import identity_info
+
+    ident = DEYE.raw["identify"]
+    assert "model_regex" not in ident and "model_register" not in ident
+    for code in ident["registers"]["device_type"]["expect"]:
+        assert identity_info(DEYE, RegisterImage({0: code, 20: 0x1F40, 21: 0}))["matched"] is True
+    assert identity_info(DEYE, RegisterImage({0: 3, 20: 0x1F40, 21: 0}))["matched"] is False   # jednofazowy
+    regex = DEYE.raw["ha"]["integrations"][0]["model_regex"][0]
+    assert re.fullmatch(regex, "Deye SG0*LP3") and not re.fullmatch(regex, "Deye SUN-8K-SG05LP3-EU-SM2")
+    # Tabliczka w integracji solarman: profil Deye rozpoznany po producencie (tylko odczyt), nie odrzucony.
+    c = select_profile([InverterHint("solarman", "Deye", "SUN-8K-SG05LP3-EU-SM2")], [DEYE])
+    assert (c.profile.id, c.integration_domain) == ("deye-sg", None)
