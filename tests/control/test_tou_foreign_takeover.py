@@ -290,3 +290,99 @@ async def test_restart_in_the_middle_of_a_rewrite_never_keeps_our_programs(make_
         assert r.words() == before and not h.ex.owned
     finally:
         await h.close()
+
+
+def _stronger_charge_plan() -> dict:
+    from tests.control.test_executor_direct import tou_raw
+    raw = {**tou_raw(), "schedule_id": "tou2"}
+    for s in raw["slots"]:
+        if s.get("mode") == "charge":
+            s["power_w"] = 5000
+    return raw
+
+
+def _frames(r: _Rig) -> int:
+    return len(r._bank.writes) if r.kind == "direct" else len(r.h.service_writes())
+
+
+@pytest.mark.asyncio
+async def test_store_failure_before_a_rewrite_sends_no_frame(rig):
+    """Odniesienia nie da się zapisać przed sekwencją → żadnej ramki (jak przy migawce). Po restarcie: bez
+    fałszywego przejęcia i pełny powrót."""
+    from custom_components.volcast.core.slot import parse_schedule
+    r = await rig()
+    try:
+        before = r.words()
+        await _owned(r)
+        raw2 = _stronger_charge_plan()
+        await r.h.ex.async_on_plan(raw2, parse_schedule(raw2))
+        real_save = r.h.store.async_save
+
+        async def broken(_state):
+            raise OSError("disk full")
+        r.h.store.async_save = broken
+        n = _frames(r)
+        await r.h.cycle(4000.0)
+        assert _frames(r) == n                                          # nic nie poszło do falownika
+        assert r.h.ex.last_decision.reason == "store_failed"
+        r.h.store.async_save = real_save
+        await r.restart()
+        await r.h.cycle(400.0)
+        assert not r.h.ex.paused and not r.h.ex._state.taken_over
+        await r.h.ex.async_set_consent(False)
+        await r.h.cycle()
+        assert r.words() == before and not r.h.ex.owned
+    finally:
+        await r.h.close()
+
+
+@pytest.mark.asyncio
+async def test_unknown_outcome_write_has_no_reference_and_is_restored_after_restart(rig):
+    """Zapis pola z wynikiem ERROR, który jednak doszedł; powrót od razu niemożliwy (brak świeżego odczytu),
+    potem restart (pamięć niepewności ginie): pole bez odniesienia wraca z migawki, nie zostaje jako „właściciela”."""
+    from custom_components.volcast.core.write_sequence import ERROR as W_ERROR
+    r = await rig()
+    try:
+        before = r.words()
+        ex = r.h.ex
+        failed = []
+        real = ex._writer.async_write
+
+        async def write(w):
+            out = await real(w)
+            if not failed and w.key.startswith("tou."):
+                failed.append(w.key)
+                return W_ERROR                                          # ramka doszła, wynik nieznany
+            return out
+        ex._writer.async_write = write
+        r.h.conn.fresh_wait_s = 0.2
+        await r.h.conn._poll_lock.acquire()
+        try:
+            await ex.async_tick()
+        finally:
+            r.h.conn._poll_lock.release()
+        assert failed and ex.owned and ex._tou_restore_pending
+        assert failed[0] not in ex._memory.last_written and failed[0] not in ex._state.tou_written
+        ex._writer.async_write = real
+        await r.restart()
+        await r.h.ex.async_set_consent(False)
+        await r.h.cycle()
+        assert r.words() == before and not r.h.ex.owned
+    finally:
+        await r.h.close()
+
+
+@pytest.mark.asyncio
+async def test_new_ownership_clears_the_previous_restore_report(rig):
+    r = await rig()
+    try:
+        ours = await _owned(r)
+        r.poke(START2, _owner_start(ours))
+        await r.h.ex.async_set_consent(False)
+        await r.h.cycle()
+        assert r.h.ex.restore_skipped and not r.h.ex.owned
+        await r.h.ex.async_set_consent(True)
+        await r.h.cycle(4000.0)
+        assert r.h.ex.owned and r.h.ex.restore_skipped == []
+    finally:
+        await r.h.close()

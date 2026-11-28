@@ -23,6 +23,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from ..core.control.baseline import SNAPSHOT_KEYS
 from ..core.control.conflict import DriftTracker
 from ..core.control.cycle import EntityContext
+from ..core.control.readback import ReadbackSink
 from ..core.control.entity_fit import control_writes, fit_params
 from ..core.control.readings import RawState, normalize_readings
 from ..core.control.target import EntityTarget, RegisterTarget, WriteTarget
@@ -234,8 +235,10 @@ class DirectIO:
 
     def __init__(self, conn, profile, *, trial: bool, unreadable: Iterable[str] = (),
                  capabilities: Mapping[str, bool] | None = None, salt: bytes,
-                 now_wall: Callable[[], float] = time.time, clock: Callable[[], float] = time.monotonic) -> None:
+                 now_wall: Callable[[], float] = time.time, clock: Callable[[], float] = time.monotonic,
+                 readback: ReadbackSink | None = None) -> None:
         self.conn = conn
+        self.readback = readback              # `ReadbackLog` (encja Status, zdarzenie HA) albo None
         self._profile = profile
         self.trial = bool(trial)
         # klucze bez odczytu zwrotnego z sondy — jedyne źródło dla klienta, pisarza i celu (profil osobno)
@@ -265,7 +268,7 @@ class DirectIO:
         if self._writer is None or self._writer_client is not client:
             self._writer = RegisterWriter(client, self._profile, on_send=self._on_send, unreadable=self.unreadable,
                                           may_resend=self._may_resend, confirm_write_illegal=True,
-                                          illegal_once=self._illegal_once)
+                                          illegal_once=self._illegal_once, readback=self.readback)
             self._writer_client = client
         return self._writer
 

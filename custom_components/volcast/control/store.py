@@ -24,6 +24,10 @@ migawki + ostrzeżenie, powrót idzie wtedy do programów bazowych).
 w tej własności ostatnio zapisaliśmy albo zostawiliśmy z migawki (odniesienie powrotu warunkowego: rejestr
 o innej wartości zmienił właściciel i zostaje jego), żeby reguła działała też po restarcie. None = rekord
 bez pola (poprzednia wersja) albo brak własności okien czasowych — powrót jak dotąd, bezwarunkowy.
+Powrót do wersji bez pola i z powrotem: poprzednia wersja gubi pole przy każdym zapisie rekordu, a zapisuje go
+po każdym cyklu z ramkami (budżet NVM, `nvm_log`) — nieaktualne odniesienie zostaje tylko przy nieudanym zapisie
+w tamtej wersji (przyjęte, bez znacznika wersji). Pola przed sekwencją zapisów są z odniesienia usuwane i zapisane;
+nieudany zapis = sekwencja nie rusza (`executor._async_unpin_tou`).
 
 `verification` — rekord drabiny weryfikacji urządzenia (`core/control/ladder.py`, `Ladder.to_record`);
 zły kształt → pusty (drabina rusza od nowa) + ostrzeżenie. `plan_only` — tryb „tylko plan” (wybór
