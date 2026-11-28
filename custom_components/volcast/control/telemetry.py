@@ -616,7 +616,7 @@ class TelemetrySender:
         tracker = getattr(self.control_runtime, "work_mode", None) or getattr(self._direct, "work_mode", None)
         return getattr(tracker, "state", "unknown")
 
-    def _driver(self) -> dict | None:
+    def _driver(self) -> dict:
         """Blok `driver` (oba tryby) z cechami integracji dopisanymi w jednym miejscu."""
         local = bool(getattr(self._executor, "local_switch", False))
         if self._direct is not None:
@@ -630,8 +630,9 @@ class TelemetrySender:
                                  mapped_keys=[k for k in self._profile_map if k not in unsupported],
                                  local_switch=local, limits=self._limits, readings_source=self._sources,
                                  work_mode=self._work_mode_state())
-        if block is not None:
-            block["features"] = list(DRIVER_FEATURES)
+        # Cechy integracji (np. tryb live) nie zależą od profilu falownika: bez profilu blok niesie
+        # same `features` (serwer czyta je niezależnie od `driver.id` i nie traktuje tego jako zmiany profilu).
+        block = {**(block or {}), "features": list(DRIVER_FEATURES)}
         rt = self.control_runtime
         if rt is not None:
             try:
@@ -639,8 +640,8 @@ class TelemetrySender:
             except Exception as err:  # noqa: BLE001 — stan sterowania nigdy nie zabiera telemetrii
                 _LOGGER.debug("Volcast control block skipped (%s)", type(err).__name__)
             else:
-                # Bez profilu: sam `control` (chmura czyta go niezależnie od `driver.id`).
-                block = {**(block or {}), "control": control}
+                # Bez profilu: `control` obok `features` (chmura czyta go niezależnie od `driver.id`).
+                block = {**block, "control": control}
         return block
 
     def _loads_block(self) -> list | None:

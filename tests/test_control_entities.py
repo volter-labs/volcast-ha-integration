@@ -17,7 +17,7 @@ def raw_plan(n=48):
               "to": (t0 + timedelta(hours=i + 1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "mode": "self_consume", "price_pln_kwh": 0.61, "plan_mode": "SELF_CONSUME",
               "grid_import_kwh": 0.12, "grid_export_kwh": 0.0, "display_kind": "SELF_CONSUME",
-              "soc_target": 20} for i in range(n)]
+              "soc_target": 20, "buy_price_kwh": 0.933, "sell_price_kwh": 0.664} for i in range(n)]
     return {"schedule_id": "p", "slots": list(reversed(slots)),
             "fallback": {"mode": "self_consume", "soc_reserve": 10}, "control_enabled": False}
 
@@ -27,11 +27,30 @@ def test_plan_slots_for_card_fields_order_and_size():
     assert len(out) == 48 and out[0]["from"] < out[1]["from"]
     assert out[10] | {} == out[10] and out[10]["now"] is True and out[10]["plan_mode"] == "SELF_CONSUME"
     assert set(out[0]) == {"from", "to", "action", "charge_source", "discharge_purpose", "power_w", "soc_target",
-                           "price", "export_allowed", "export_limit_w", "plan_mode", "import_kwh",
+                           "price", "buy_price", "sell_price", "export_allowed", "export_limit_w", "plan_mode", "import_kwh",
                            "export_kwh", "display_kind", "now"}
     assert out[0]["from"] == "2026-09-23T00:00:00Z"
-    # HA zapisuje atrybuty zwartym JSON-em
-    assert len(json.dumps(out, separators=(",", ":"))) < 16_000
+    # Limit 16 KB atrybutów dotyczy rejestratora; `slots` jest z niego wyłączone, więc rozmiar nie jest ograniczony.
+    assert "slots" in VolcastPlanSensor._unrecorded_attributes
+    assert out[0]["buy_price"] == 0.933 and out[0]["sell_price"] == 0.664
+
+
+def test_slot_buy_and_sell_price_come_from_server_fields_and_price_stays():
+    raw = raw_plan(2)
+    for r in raw["slots"]:
+        r.update({"price_pln_kwh": 0.664, "buy_price_kwh": 0.933, "sell_price_kwh": 0.664})
+    out = plan_slots_for_card(raw, NOW)
+    assert out[0]["buy_price"] == 0.933 and out[0]["sell_price"] == 0.664 and out[0]["price"] == 0.664
+
+
+def test_slot_prices_absent_or_null_give_none():
+    raw = raw_plan(2)
+    for r in raw["slots"]:
+        r["buy_price_kwh"] = None
+        r["sell_price_kwh"] = "x"
+    out = plan_slots_for_card(raw, NOW)
+    assert all(o["buy_price"] is None and o["sell_price"] is None for o in out)
+    assert out[0]["price"] == 0.61
 
 
 def test_invalid_plan_gives_empty():
@@ -600,3 +619,21 @@ def test_plan_summary_sensor_state_and_unique_id():
 def test_card_does_not_project_soc_from_null_power():
     js = (Path(__file__).parents[1] / "custom_components" / "volcast" / "www" / "volcast-plan-card.js").read_text("utf-8")
     assert "power_w != null" in js and "brakMocy" in js
+
+
+def _strategy_attr(**plan):
+    entry = SimpleNamespace(entry_id="e1", options={})
+    rt = _rt()
+    rt.executor.raw_plan = {**raw_plan(), **plan}
+    return VolcastPlanSensor(entry, rt).extra_state_attributes["strategy"]
+
+
+def test_plan_sensor_strategy_attribute_is_tolerant():
+    assert _strategy_attr(strategy="EARNINGS") == "EARNINGS"
+    assert _strategy_attr(strategy="SELF_CONSUMPTION") == "SELF_CONSUMPTION"
+    assert _strategy_attr(strategy="BACKUP") == "BACKUP"
+    assert _strategy_attr() is None
+    assert _strategy_attr(strategy=None) is None
+    assert _strategy_attr(strategy="FUTURE_MODE") == "FUTURE_MODE"      # nowa wartość serwera nie jest ukrywana
+    assert _strategy_attr(strategy="") is None
+    assert _strategy_attr(strategy=3) is None
