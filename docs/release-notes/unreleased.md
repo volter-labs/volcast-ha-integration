@@ -15,6 +15,7 @@
 
 ### Fixes
 
+- Production tracking: when production tracking starts in the middle of an hour without earlier counter data (first start, or the last run was more than 36 hours ago), that first incomplete hour is no longer sent as a full reading, so it cannot pull the forecast calibration down. The next hours are sent as before, and for energy sensors the nightly reconciliation still fills in the real value of that hour.
 - Missing grid or house load data: when your inverter is recognised but Volcast gets no grid power or no house load power from it (for example a power meter that is not visible in Home Assistant), a Repairs issue now explains that the energy balance, the live view and the forecast calibration from inverter data are limited, and lets you pick the missing sensors. Channels that your inverter integration does not provide at all (for example house load in the Huawei Solar integration) are not reported, because there is nothing to pick. Until grid and house load power (and battery power, when you have a battery) are available, the integration keeps calibrating the forecast from the PV sensors mapped in the Forecast options, instead of relying on inverter telemetry the server cannot use for calibration.
 - Time-window verification: fixed how the integration verifies that a written time window took effect. This also affects direct Deye control.
 - Foreign-write detection: fixed detection of writes to the inverter made by something other than the integration.
