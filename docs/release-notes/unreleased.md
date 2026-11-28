@@ -20,6 +20,7 @@ is unchanged; stay on it unless you were invited to the 2.0 beta.
 
 ## Fixes
 
+- **Production tracking after start** — when production tracking starts in the middle of an hour without earlier counter data (first start, or the last run was more than 36 hours ago), that first incomplete hour is no longer sent as a full reading, so it cannot pull the forecast calibration down. The next hours are sent as before, and for energy sensors the nightly reconciliation still fills in the real value of that hour.
 - **Price source selection** — the integration's own entities are no longer offered as a buy or sell price source and are rejected when submitted.
 - **Time-window verification** — fixed how Volcast verifies that a written time window took effect; the check no longer needs a mode register. This also applies to direct Deye control.
 - **Detection of foreign writes** — changes to the time-of-use block made by something other than Volcast are now detected reliably.
