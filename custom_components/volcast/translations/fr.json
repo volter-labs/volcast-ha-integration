@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Il manque à Volcast les données du réseau ou de la consommation de la maison",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Il manque à Volcast les données du réseau ou de la consommation de la maison",
+            "description": "Volcast a reconnu votre onduleur, mais n'en reçoit pas la puissance réseau, la puissance consommée par la maison, ou aucune des deux. Sans elles, le bilan énergétique, la vue en direct et la calibration de la prévision à partir des données de l'onduleur sont limités. Choisissez ci-dessous les capteurs manquants : ils sont ajoutés à votre association de capteurs, rien d'autre n'est modifié et les réglages de l'onduleur restent inchangés. Volcast attend une puissance réseau positive en soutirage. Si vous n'avez pas un tel capteur (par exemple pas de compteur réseau), vous pouvez ignorer ce signalement.",
+            "data": {
+              "grid_power_w": "Puissance du réseau",
+              "load_power_w": "Puissance de consommation de la maison",
+              "grid_power_negate": "Le capteur réseau indique l'injection comme positive"
+            },
+            "data_description": {
+              "grid_power_negate": "Activez si votre capteur réseau est négatif lors du soutirage."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Choisissez au moins un capteur."
+        },
+        "abort": {
+          "not_loaded": "Volcast ne fonctionne pas pour cette entrée. Rechargez l'intégration et réessayez.",
+          "channels_present": "Volcast reçoit déjà les données du réseau et de la consommation de la maison, aucun capteur n'est à choisir. Rechargez l'intégration si ce signalement est toujours affiché."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Certains réglages de l'onduleur ne sont pas disponibles pour Volcast",
       "description": "Volcast ne peut pas utiliser ces réglages de l'onduleur, car leurs entités sont manquantes, désactivées ou indisponibles : {entities}. Le pilotage continue sans eux et le plan Volcast ne s'appuie plus dessus. Lorsque les entités redeviennent disponibles, Volcast les utilise automatiquement."

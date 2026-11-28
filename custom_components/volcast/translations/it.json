@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "A Volcast mancano i dati di rete o del consumo della casa",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "A Volcast mancano i dati di rete o del consumo della casa",
+            "description": "Volcast ha riconosciuto il tuo inverter, ma non riceve da esso la potenza di rete, la potenza consumata dalla casa o entrambe. Senza questi dati il bilancio energetico, la vista in tempo reale e la calibrazione della previsione dai dati dell'inverter sono limitati. Scegli qui sotto i sensori mancanti: vengono aggiunti alla tua mappa dei sensori, nient'altro cambia e le impostazioni dell'inverter restano invariate. Volcast si aspetta che la potenza di rete sia positiva in prelievo. Se non hai un sensore del genere (ad esempio nessun contatore di rete), puoi ignorare questa segnalazione.",
+            "data": {
+              "grid_power_w": "Potenza di rete",
+              "load_power_w": "Potenza di consumo della casa",
+              "grid_power_negate": "Il sensore di rete mostra l'immissione come positiva"
+            },
+            "data_description": {
+              "grid_power_negate": "Attivalo quando il sensore di rete è negativo durante il prelievo."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Scegli almeno un sensore."
+        },
+        "abort": {
+          "not_loaded": "Volcast non è in esecuzione per questa voce. Ricarica l'integrazione e riprova.",
+          "channels_present": "Volcast riceve già i dati di rete e del consumo della casa, quindi non serve scegliere sensori. Ricarica l'integrazione se questa segnalazione è ancora visibile."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Alcune impostazioni dell'inverter non sono disponibili per Volcast",
       "description": "Volcast non può usare queste impostazioni dell'inverter perché le relative entità sono mancanti, disattivate o non disponibili: {entities}. Il controllo prosegue senza di esse e il piano di Volcast non fa più affidamento su di esse. Quando le entità tornano disponibili, Volcast le usa automaticamente."

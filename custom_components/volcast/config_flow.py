@@ -37,7 +37,7 @@ from .cloud.client import Backend, ClientOutdated, PairingClient, PairingDisable
 from .control import direct_search as ds
 from .control.runtime import async_control_change_allowed, async_no_inverter_integration_now, async_direct_search, map_entities, mapped_with_overrides
 from .control.store import async_installation_salt
-from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_pv_power
+from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_production
 from .core.modbus.identity import device_fingerprint, identity_info
 from .core.registers import RegisterImage
 from .core.transports.ha_modbus import (HA_MODBUS_KIND, HaModbusConfig, HaModbusTransport, MissingRegister,
@@ -921,10 +921,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         # Jak przy złożeniu (`compose_direct`): profil celu; bez niego sterowanie bezpośrednie nie wstanie,
         # więc telemetria nie poniesie produkcji (krok info się nie pokaże).
         profile = next((p for p in profiles if p.id == target.get("profile_id")), None)
-        carries = profile is not None and telemetry_carries_pv_power(
+        carries = profile is not None and telemetry_carries_production(
             ProfileChoice(profile, None, None), profile_map={},
-            manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
-        return await self._enable_control(options, carries_pv_power=carries)
+            manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True,
+            battery_capacity_kwh=options.get(OPT_BATTERY_CAPACITY_KWH))
+        return await self._enable_control(options, carries_production=carries)
 
     def _modbus_hubs(self) -> list[str]:
         """Nazwy hubów integracji `modbus` (z `hass.data`); brak integracji albo zmiana jej wnętrza = pusta lista
@@ -1003,10 +1004,11 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 target["rated_power_w"] = float(rated)
             options = self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
                                     OPT_DIRECT_TRIAL: None, OPT_HUB_CHECK: check})
-            carries = telemetry_carries_pv_power(
+            carries = telemetry_carries_production(
                 ProfileChoice(profile, None, None), profile_map={},
-                manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
-            return await self._enable_control(options, carries_pv_power=carries)
+                manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True,
+                battery_capacity_kwh=options.get(OPT_BATTERY_CAPACITY_KWH))
+            return await self._enable_control(options, carries_production=carries)
         if blocked is not None:
             return await self._hub_blocked(blocked[0], hub, unit, blocked[1])
         return failure
@@ -1134,18 +1136,19 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return self.async_abort(reason="entity_mode_unavailable")
         options = self._merged(entity_mode_options(choice))
         # Ten sam wybór i ta sama mapa encji, z których złożenie zbuduje nadajnik telemetrii.
-        carries = telemetry_carries_pv_power(choice, profile_map=mapped,
-                                             manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=False)
-        return await self._enable_control(options, carries_pv_power=carries)
+        carries = telemetry_carries_production(choice, profile_map=mapped,
+                                               manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=False,
+                                               battery_capacity_kwh=options.get(OPT_BATTERY_CAPACITY_KWH))
+        return await self._enable_control(options, carries_production=carries)
 
     def _mapped_pv_sensors(self) -> list[str]:
         return [e for k in (CONF_PV_ENERGY_ENTITY, CONF_PV_POWER_ENTITY) if (e := self.config_entry.options.get(k))]
 
-    async def _enable_control(self, options: dict[str, Any], *, carries_pv_power: bool) -> ConfigFlowResult:
-        """Wybór sterowania. Przy włączaniu z „wyłączone”, gdy telemetria poniesie moc PV, a w opcjach prognozy
+    async def _enable_control(self, options: dict[str, Any], *, carries_production: bool) -> ConfigFlowResult:
+        """Wybór sterowania. Przy włączaniu z „wyłączone”, gdy serwer przyjmie produkcję z telemetrii, a w opcjach prognozy
         są zmapowane czujniki PV, najpierw informacja: kalibracja idzie odtąd z telemetrii falownika, a te
         czujniki przestają być używane (zapis dopiero po potwierdzeniu). W każdym innym razie zapis od razu."""
-        if (self.config_entry.options.get(OPT_CONTROL_MODE) is not None or not carries_pv_power
+        if (self.config_entry.options.get(OPT_CONTROL_MODE) is not None or not carries_production
                 or not self._mapped_pv_sensors()):
             return await self._finish(options, leave_plan_only=True)
         self._pending_control = options

@@ -2,7 +2,8 @@
 
 Od tego zależy jedno źródło produkcji konta: gdy telemetria niesie moc PV, serwer kalibruje z niej
 i lokalny tracker nie działa. Sam licznik energii PV nie wystarcza — serwer bez mocy PV nie wyliczy
-z niego produkcji, więc wtedy tracker zostaje.
+z niego produkcji, więc wtedy tracker zostaje. Tak samo bez mocy sieci albo zużycia domu: serwer nie
+sprawdzi bilansu próbek, każda godzina idzie tylko na wykres i Kalman nie dostaje pomiaru.
 """
 from collections.abc import Mapping
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.volcast.control.runtime import ControlRuntime
-from custom_components.volcast.control.telemetry import TelemetrySender, telemetry_carries_pv_power
+from custom_components.volcast.control.telemetry import TelemetrySender, telemetry_carries_production
 from custom_components.volcast.core.control.select import ProfileChoice
 from custom_components.volcast.core.profile import load_builtin
 
@@ -21,32 +22,58 @@ SOLAREDGE = ProfileChoice(load_builtin("solaredge-storedge"), "solaredge_modbus"
 COUNTER_ONLY = ProfileChoice(SimpleNamespace(raw={"read": {"pv_energy_total_kwh": {}, "soc": {}}}), None, "X")
 
 
-def _sender(*, choice, profile_map=None, manual=None, direct=None) -> TelemetrySender:
+def _sender(*, choice, profile_map=None, manual=None, direct=None, capacity=None) -> TelemetrySender:
     entry = SimpleNamespace(entry_id="e1", options={})
+    limits = {"battery_capacity_kwh": capacity} if capacity is not None else None
     return TelemetrySender(SimpleNamespace(), entry, None, None, choice=choice,
                            profile_map=profile_map or {}, manual_map=manual or {}, grid_negate=False,
-                           limits=None, direct=direct)
+                           limits=limits, direct=direct)
 
+
+_BAL = {"grid_power_w": "sensor.grid", "load_power_w": "sensor.load"}
+HUAWEI = ProfileChoice(load_builtin("huawei-sun2000"), "huawei_solar", "SUN2000")
+FRONIUS = ProfileChoice(load_builtin("fronius-gen24"), None, "GEN24")
 
 CASES = [
     # tryb encji: liczą się encje faktycznie zmapowane, nie wszystko, co opisuje profil
-    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.gw_pv_power"}}, True),
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.gw_pv_power", **_BAL}}, True),
     ({"choice": GW, "profile_map": {"soc": "sensor.gw_soc"}}, False),
     ({"choice": SOLAREDGE, "profile_map": {"soc": "sensor.se_soc"}}, False),
+    # moc PV bez sieci albo bez zużycia: serwer nie sprawdzi bilansu, godzina idzie tylko na wykres
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.gw_pv_power"}}, False),
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p", "grid_power_w": "sensor.g"}}, False),
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p", "load_power_w": "sensor.l"}}, False),
+    # Huawei w trybie encji: profil nie opisuje zużycia domu — dopiero mapa ręczna je dokłada
+    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in", "grid_power_w": "sensor.hw_m"}}, False),
+    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in", "grid_power_w": "sensor.hw_m"},
+      "manual": {"load_power_w": "sensor.load"}}, True),
     # profil tylko do odczytu (bez integracji): mapa profilu jest pusta, zostaje ręczna
-    ({"choice": GW_READ_ONLY, "profile_map": {"pv_power_w": "sensor.x"}}, False),
-    ({"choice": GW_READ_ONLY, "manual": {"pv_power_w": "sensor.pv_power"}}, True),
+    ({"choice": GW_READ_ONLY, "profile_map": {"pv_power_w": "sensor.x", **_BAL}}, False),
+    ({"choice": GW_READ_ONLY, "manual": {"pv_power_w": "sensor.pv_power", **_BAL}}, True),
+    ({"choice": GW_READ_ONLY, "manual": {"pv_power_w": "sensor.pv_power"}}, False),
     # sam licznik energii PV nie niesie produkcji (serwer potrzebuje mocy PV)
-    ({"choice": GW_READ_ONLY, "manual": {"pv_energy_total_kwh": "sensor.pv_total"}}, False),
-    ({"choice": GW, "profile_map": {"pv_energy_total_kwh": "sensor.gw_pv_total"}}, False),
+    ({"choice": GW_READ_ONLY, "manual": {"pv_energy_total_kwh": "sensor.pv_total", **_BAL}}, False),
+    ({"choice": GW, "profile_map": {"pv_energy_total_kwh": "sensor.gw_pv_total", **_BAL}}, False),
     ({"choice": COUNTER_ONLY, "direct": SimpleNamespace()}, False),
-    # tryb bezpośredni: rejestry profilu (`read`) niosą moc i licznik PV
+    # tryb bezpośredni: rejestry profilu (`read`) niosą moc PV, sieć i zużycie
     ({"choice": GW, "direct": SimpleNamespace()}, True),
+    # rejestry tylko z mocą PV (Fronius): bez sieci i zużycia, chyba że dołoży je mapa ręczna
+    ({"choice": FRONIUS, "direct": SimpleNamespace()}, False),
+    ({"choice": FRONIUS, "direct": SimpleNamespace(), "manual": dict(_BAL)}, True),
     # bez falownika — tylko mapa ręczna
     ({"choice": None}, False),
-    ({"choice": None, "manual": {"pv_power_w": "sensor.pv_power"}}, True),
-    ({"choice": None, "manual": {"pv_power_w": "sensor.p", "pv_energy_total_kwh": "sensor.e"}}, True),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.pv_power", **_BAL}}, True),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.p", "pv_energy_total_kwh": "sensor.e", **_BAL}}, True),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.pv_power"}}, False),
     ({"choice": None, "manual": {"soc": "sensor.soc"}}, False),
+    # bateria bez mocy baterii: serwer nie zadeklaruje jej braku, bilans próbki się nie domknie
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p", "soc": "sensor.soc", **_BAL}}, False),
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p", "soc": "sensor.soc", "battery_power_w": "sensor.b",
+                                    **_BAL}}, True),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.p", **_BAL}, "capacity": 10.0}, False),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.p", "battery_power_w": "sensor.b", **_BAL},
+      "capacity": 10.0}, True),
+    ({"choice": None, "manual": {"pv_power_w": "sensor.p", **_BAL}, "capacity": 0}, True),   # bez magazynu
 ]
 
 
@@ -58,9 +85,10 @@ def test_sender_reports_pv_production_from_its_read_sources(kwargs, expected):
 @pytest.mark.parametrize("kwargs, expected", CASES)
 def test_prediction_before_composing_uses_the_same_rule(kwargs, expected):
     # Opcje (przed złożeniem sterowania) przewidują to samo, co nadajnik powie po złożeniu.
-    assert telemetry_carries_pv_power(kwargs["choice"], profile_map=kwargs.get("profile_map") or {},
-                                      manual_map=kwargs.get("manual") or {},
-                                      direct=kwargs.get("direct") is not None) is expected
+    assert telemetry_carries_production(kwargs["choice"], profile_map=kwargs.get("profile_map") or {},
+                                        manual_map=kwargs.get("manual") or {},
+                                        direct=kwargs.get("direct") is not None,
+                                        battery_capacity_kwh=kwargs.get("capacity")) is expected
 
 
 def _runtime(telemetry) -> ControlRuntime:
@@ -69,12 +97,37 @@ def _runtime(telemetry) -> ControlRuntime:
 
 
 def test_runtime_asks_its_telemetry_sender():
-    assert _runtime(_sender(choice=None, manual={"pv_power_w": "sensor.p"})).telemetry_reports_production
+    assert _runtime(_sender(choice=None, manual={"pv_power_w": "sensor.p", **_BAL})).telemetry_reports_production
+    assert not _runtime(_sender(choice=None, manual={"pv_power_w": "sensor.p"})).telemetry_reports_production
     assert not _runtime(_sender(choice=None)).telemetry_reports_production
 
 
 def test_runtime_without_telemetry_reports_no_production():
     assert _runtime(None).telemetry_reports_production is False
+
+
+MISSING = [
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p", **_BAL}}, ()),
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p"}}, ("grid_power_w", "load_power_w")),
+    # Huawei w trybie encji: profil nie opisuje zużycia domu — tego nie da się naprawić w integracji, więc
+    # zgłaszamy tylko opisaną, a nieznalezioną sieć (np. miernik niewidoczny w HA)
+    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in"}}, ("grid_power_w",)),
+    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in", "grid_power_w": "sensor.hw_m"}}, ()),
+    ({"choice": HUAWEI, "profile_map": {"pv_power_w": "sensor.hw_in"}, "manual": {"grid_power_w": "sensor.g"}}, ()),
+    ({"choice": GW, "profile_map": {"pv_power_w": "sensor.p"}, "manual": {"grid_power_w": "sensor.g"}},
+     ("load_power_w",)),
+    # bezpośrednio: brak w rejestrach da się uzupełnić mapą ręczną (Fronius ma moc sieci i zużycia w integracji)
+    ({"choice": GW, "direct": SimpleNamespace()}, ()),
+    ({"choice": FRONIUS, "direct": SimpleNamespace()}, ("grid_power_w", "load_power_w")),
+    # nic nie jest czytane: tym zajmują się inne zgłoszenia (brak odczytów, mapa czujników)
+    ({"choice": None}, ()),
+    ({"choice": GW, "profile_map": {}}, ()),
+]
+
+
+@pytest.mark.parametrize("kwargs, expected", MISSING)
+def test_sender_names_the_balance_channels_its_read_path_lacks(kwargs, expected):
+    assert _sender(**kwargs).missing_balance_channels == expected
 
 
 def _thaw(v):

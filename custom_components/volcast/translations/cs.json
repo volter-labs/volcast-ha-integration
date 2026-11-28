@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Volcastu chybí data o síti nebo spotřebě domu",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Volcastu chybí data o síti nebo spotřebě domu",
+            "description": "Volcast rozpoznal váš střídač, ale nedostává z něj výkon sítě, výkon spotřeby domu nebo obojí. Bez nich jsou energetická bilance, živý přehled a kalibrace předpovědi z dat střídače omezené. Níže vyberte chybějící senzory - přidají se do vaší mapy senzorů, nic jiného se nezmění a nastavení střídače zůstane beze změny. Volcast očekává, že výkon sítě je při odběru kladný. Pokud takový senzor nemáte (například nemáte elektroměr sítě), můžete toto hlášení ignorovat.",
+            "data": {
+              "grid_power_w": "Výkon sítě",
+              "load_power_w": "Výkon spotřeby domu",
+              "grid_power_negate": "Senzor sítě zobrazuje export jako kladný"
+            },
+            "data_description": {
+              "grid_power_negate": "Zapněte, pokud je senzor sítě při odběru záporný."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Vyberte alespoň jeden senzor."
+        },
+        "abort": {
+          "not_loaded": "Volcast pro tuto položku neběží. Znovu načtěte integraci a zkuste to znovu.",
+          "channels_present": "Volcast už dostává data o síti i spotřebě domu, takže není třeba vybírat senzory. Pokud se hlášení stále zobrazuje, znovu načtěte integraci."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Některá nastavení střídače nejsou pro Volcast dostupná",
       "description": "Volcast nemůže tato nastavení střídače používat, protože jejich entity chybí, jsou vypnuté nebo nedostupné: {entities}. Řízení pokračuje bez nich a plán Volcast se na ně už nespoléhá. Jakmile budou entity opět dostupné, Volcast je použije automaticky."
