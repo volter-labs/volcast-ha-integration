@@ -121,6 +121,13 @@ def test_status_sensor_reports_decision_and_foreign_changes():
     assert s._unrecorded_attributes == frozenset({"notes"})
 
 
+def test_status_sensor_reports_keys_left_to_the_owner_on_restore():
+    skipped = [{"key": "tou.2.start", "snapshot": 120.0, "current": 125.0, "at": "x"}]
+    rt = _rt(foreign_changes=[], restore_skipped=skipped)
+    s = VolcastControlStatusSensor(SimpleNamespace(entry_id="e1", options={}), rt)
+    assert s.extra_state_attributes["restore_skipped"] == skipped
+
+
 # ── lustro zgody konta: przełącznik ↔ zgoda konta przez `set-controller` ──
 
 import pytest  # noqa: E402

@@ -243,7 +243,8 @@ class VolcastControlStatusSensor(_ControlEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         ex = self._rt.executor
         d = ex.last_decision
-        return {**(d.summary() if d else {}), "foreign_changes": list(getattr(ex, "foreign_changes", []))}
+        return {**(d.summary() if d else {}), "foreign_changes": list(getattr(ex, "foreign_changes", [])),
+                "restore_skipped": list(getattr(ex, "restore_skipped", []))}
 
 
 class VolcastPriceSensor(SensorEntity):

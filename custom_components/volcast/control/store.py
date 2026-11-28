@@ -20,6 +20,11 @@ własność przeżywa zmianę IP falownika) leży obok jako `owner_device_target
 zapisu okien czasowych; wczytywana przez osobny, walidujący loader (zły kształt → brak
 migawki + ostrzeżenie, powrót idzie wtedy do programów bazowych).
 
+`tou_written` — okna czasowe: wartości pól programów i włącznika (`tou.<n>.<pole>`, `tou_enabled`), które
+w tej własności ostatnio zapisaliśmy albo zostawiliśmy z migawki (odniesienie powrotu warunkowego: rejestr
+o innej wartości zmienił właściciel i zostaje jego), żeby reguła działała też po restarcie. None = rekord
+bez pola (poprzednia wersja) albo brak własności okien czasowych — powrót jak dotąd, bezwarunkowy.
+
 `verification` — rekord drabiny weryfikacji urządzenia (`core/control/ladder.py`, `Ladder.to_record`);
 zły kształt → pusty (drabina rusza od nowa) + ostrzeżenie. `plan_only` — tryb „tylko plan” (wybór
 własnego sterownika): bez zapisów i bez ponownych napraw o konflikcie. `conflict_ack` — pary
@@ -90,6 +95,16 @@ class ControlState:
     # który poprzednia wersja pomija przy odczycie i gubi przy następnym zapisie
     last_mode: str | None = None
     plan_fetched_at: str | None = None
+    tou_written: dict | None = None
+
+
+def _tou_written(raw) -> dict | None:
+    """Mapa klucz TOU → liczba skończona; inny kształt całości = None (powrót bezwarunkowy), złe wpisy pomijane."""
+    if not isinstance(raw, dict):
+        return None
+    return {k: float(v) for k, v in raw.items()
+            if isinstance(k, str) and (k.startswith("tou.") or k == "tou_enabled")
+            and isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)}
 
 
 def _aware_iso(raw) -> str | None:
@@ -208,12 +223,15 @@ class ControlStore:
             control_meta=control_meta_clean(raw.get("control_meta")),
             trusted_profile=trusted if isinstance(trusted := raw.get("trusted_profile"), dict) else None,
             last_mode=last_mode if owner and isinstance(last_mode, str) and last_mode else None,
-            plan_fetched_at=_aware_iso(raw.get("plan_fetched_at")))
+            plan_fetched_at=_aware_iso(raw.get("plan_fetched_at")),
+            tou_written=_tou_written(raw.get("tou_written")) if b("owned", False) else None)
 
     async def async_save(self, state: ControlState) -> None:
         data = asdict(state)
         if data.get("trusted_profile") is None:
             data.pop("trusted_profile", None)      # bez kopii (profil z pakietu) — rekord jak dotąd
+        if data.get("tou_written") is None:
+            data.pop("tou_written", None)          # bez własności okien czasowych — rekord jak dotąd
         mode_uid = data["owner"].pop("mode_uid", None)
         if mode_uid:
             data[_OWNER_MODE_UID] = mode_uid
