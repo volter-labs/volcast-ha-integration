@@ -121,3 +121,32 @@ async def test_directio_passes_log_to_writer(goodwe_client, goodwe_profile, good
     goodwe_bank.ignore_writes.add(47512)
     assert await io.writer.async_write(RegisterWrite("power_w", 47512, 3000)) == DENIED
     assert io.readback is log and [i["key"] for i in log.items] == ["power_w"]
+
+
+@pytest.mark.asyncio
+async def test_echo_only_denied_is_reported_without_read(goodwe_client, goodwe_profile):
+    from custom_components.volcast.core.write_sequence import UNSUPPORTED
+    log, events = _log()
+    w = RegisterWriter(goodwe_client, goodwe_profile, readback=log, confirm_write_illegal=True)
+    w.echo_only = frozenset({"mode"})
+
+    async def illegal(_w):
+        return UNSUPPORTED
+    w._send = illegal                                  # wyjątek 2 na zapis, bez odczytu zwrotnego
+    assert await w.async_write(RegisterWrite("mode", 47511, 10)) == DENIED
+    [item] = log.items
+    assert item["key"] == "mode" and item["expected"] == 10 and item["read"] is None
+    assert item["result"] == DENIED and len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_exception_after_send_is_reported_as_error(goodwe_client, goodwe_profile):
+    log, events = _log()
+    w = RegisterWriter(goodwe_client, goodwe_profile, readback=log)
+
+    async def boom(_w, **_kw):
+        w._rb_seen, w._rb_expected = True, 7           # ramka poszła, potem nieoczekiwany wyjątek
+        raise RuntimeError
+    w._write = boom
+    assert await w.async_write(RegisterWrite("mode", 47511, 10)) == ERROR
+    assert log.items[0]["expected"] == 7 and log.items[0]["read"] is None and len(events) == 1
