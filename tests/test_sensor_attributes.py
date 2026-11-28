@@ -118,6 +118,30 @@ class TestExistingAttributesRegression:
         assert attrs["cloud_cover_pct"] == 25.0
 
     @patch("custom_components.volcast.sensor.datetime")
+    def test_energy_today_exposes_yield_split_without_changing_state(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 3, 20, 12, 0, tzinfo=TZ)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        data = make_sample_data(energy_today=13.42)
+        data.actual_so_far_kwh, data.remaining_kwh, data.expected_total_kwh = 1.9, 8.1, 10.0
+        sensor = _make_sensor(VolcastEnergyTodaySensor, data)
+        attrs = sensor.extra_state_attributes
+
+        assert attrs["actual_so_far_kwh"] == 1.9
+        assert attrs["remaining_kwh"] == 8.1
+        assert attrs["expected_total_kwh"] == 10.0
+        assert sensor.native_value == 13.42
+
+    @patch("custom_components.volcast.sensor.datetime")
+    def test_energy_today_omits_yield_split_when_server_sends_none(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 3, 20, 12, 0, tzinfo=TZ)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        attrs = _make_sensor(VolcastEnergyTodaySensor, make_sample_data()).extra_state_attributes
+
+        assert not {"actual_so_far_kwh", "remaining_kwh", "expected_total_kwh"} & set(attrs)
+
+    @patch("custom_components.volcast.sensor.datetime")
     def test_energy_today_native_value_unchanged(self, mock_dt):
         mock_dt.now.return_value = datetime(2026, 3, 20, 12, 0, tzinfo=TZ)
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)

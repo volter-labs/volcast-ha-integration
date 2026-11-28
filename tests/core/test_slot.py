@@ -129,3 +129,74 @@ def test_effective_action_never_none():
     assert effective_action(_slot(action=Action.IDLE)) is Action.IDLE
     assert effective_action(_slot(action=Action.HOLD)) is Action.HOLD
     assert effective_action(_slot(discharge_purpose="sell")) is Action.DISCHARGE
+
+
+# ── limit wieku planu bez kontaktu z chmurą ──────────────────────────────────
+from custom_components.volcast.core.slot import STALE_PLAN_S, is_active_slot, plan_stale  # noqa: E402
+
+
+def test_stale_plan_limit_is_six_hours():
+    assert STALE_PLAN_S == 6 * 3600
+
+
+@pytest.mark.parametrize("kw, active", [
+    (dict(mode="charge", charge_source="grid", power_w=3000), True),     # ładowanie z sieci
+    (dict(mode="charge", power_w=3000), True),                           # stary kontrakt: ładowanie z sieci
+    (dict(mode="self_consume", charge_source="grid", power_w=3000), True),
+    (dict(mode="discharge", discharge_purpose="sell", power_w=3000), True),
+    (dict(mode="discharge", power_w=3000), True),                        # wymuszone rozładowanie
+    (dict(mode="charge", charge_source="pv"), False),                    # nadwyżka PV — pasywne
+    (dict(mode="discharge", discharge_purpose="self"), False),           # autokonsumpcja
+    (dict(mode="self_consume"), False),
+    (dict(mode="idle"), False),
+    (dict(mode="hold"), False),
+])
+def test_active_slot_classification(kw, active):
+    assert is_active_slot(parse_schedule(_doc(_s(**kw))).slots[0]) is active
+
+
+def test_plan_stale_by_fetch_age():
+    now = datetime(2026, 9, 1, 12, tzinfo=UTC)
+    assert plan_stale(now - timedelta(hours=7), now) is True
+    assert plan_stale(now - timedelta(hours=5), now) is False
+    assert plan_stale(now - timedelta(seconds=STALE_PLAN_S), now) is False    # granica: dokładnie 6 h — świeży
+    assert plan_stale(None, now) is True                                      # wiek nieznany = przeterminowany
+    assert plan_stale(now + timedelta(hours=1), now) is True                  # znacznik z przyszłości (zegar cofnięty)
+    assert plan_stale(now + timedelta(seconds=60), now) is False              # drobna korekta zegara
+
+
+def _mixed():
+    return parse_schedule(_doc(
+        _s(**{"from": "2026-09-01T10:00:00Z", "to": "2026-09-01T11:00:00Z"}, mode="charge",
+           charge_source="grid", power_w=3000, soc_target=90, price_pln_kwh=0.2),
+        _s(**{"from": "2026-09-01T11:00:00Z", "to": "2026-09-01T12:00:00Z"}, mode="idle", export_allowed=True),
+        _s(**{"from": "2026-09-01T12:00:00Z", "to": "2026-09-01T13:00:00Z"}, mode="discharge",
+           discharge_purpose="sell", power_w=4000, price_pln_kwh=1.1),
+        _s(**{"from": "2026-09-01T13:00:00Z", "to": "2026-09-01T14:00:00Z"}, mode="discharge", power_w=2000)))
+
+
+def test_active_slots_become_fallback_passive_stay():
+    sch = _mixed()
+    masked = sch.active_as_fallback()
+    fb = sch.fallback
+    assert [s.action for s in masked.slots] == [fb.action, Action.IDLE, fb.action, fb.action]
+    for i in (0, 2, 3):
+        s = masked.slots[i]
+        assert (s.start, s.end) == (sch.slots[i].start, sch.slots[i].end)    # granice slotu planu zostają
+        assert s.soc_target == fb.soc_reserve and s.export_allowed is False
+        assert s.power_w is None and s.charge_source is None and s.discharge_purpose is None
+    assert masked.slots[1] == sch.slots[1]                                    # pasywny bez zmian
+    assert (masked.schedule_id, masked.fallback, masked.control_enabled) == (
+        sch.schedule_id, sch.fallback, sch.control_enabled)
+    assert sch.slots[0].action is Action.CHARGE                               # oryginał nietknięty
+
+
+def test_effective_slot_reports_fallback_for_masked_slot():
+    masked = _mixed().active_as_fallback()
+    slot, is_fallback = masked.effective_slot(datetime(2026, 9, 1, 10, 30, tzinfo=UTC))
+    assert is_fallback is True and slot.action is Action.SELF_CONSUME
+    slot, is_fallback = masked.effective_slot(datetime(2026, 9, 1, 11, 30, tzinfo=UTC))
+    assert is_fallback is False and slot.action is Action.IDLE
+    # Świeży plan: slot aktywny jak w planie, nie zapasowy.
+    slot, is_fallback = _mixed().effective_slot(datetime(2026, 9, 1, 10, 30, tzinfo=UTC))
+    assert is_fallback is False and slot.charge_source == "grid"

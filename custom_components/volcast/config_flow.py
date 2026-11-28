@@ -1524,7 +1524,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         if st is None:
             return SeriesCheck("unusable")
         platform = self._platform_of(entity_id)
-        if is_excluded_entity(platform, entity_id):
+        if platform == DOMAIN or is_excluded_entity(platform, entity_id):     # własne encje wtyczki nie są źródłem cen
             return SeriesCheck("unusable")
         try:
             return check_series(enrich_attributes(platform, st.attributes), currency, ZoneInfo(self.hass.config.time_zone), dt_util.utcnow(),
@@ -1543,15 +1543,30 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         """Encja ceny daje pełną serię JUŻ TERAZ (ta sama reguła co w onboardingu)."""
         return self._price_check(entity_id, currency).status == "ok"
 
+    def _own_entity_ids(self) -> list[str]:
+        """Encje tej wtyczki (platforma `volcast`) z rejestru — wykluczane z selektorów źródła cen."""
+        try:
+            return sorted(e.entity_id for e in er.async_get(self.hass).entities.values()
+                          if e.platform == DOMAIN and e.domain in ENTITY_DOMAINS)
+        except Exception:  # noqa: BLE001 — bez rejestru zostaje walidacja w `_price_check`
+            return []
+
     def _usable_price_entities(self) -> list[str]:
         currency = (self.config_entry.options.get(OPT_PRICE_CURRENCY) or "").strip().upper() or None
         try:
             states = [st for domain in ENTITY_DOMAINS for st in self.hass.states.async_all(domain)]
         except Exception:  # noqa: BLE001
             return []
-        return sorted(st.entity_id for st in states
-                      if st is not None and self._price_usable(
-                          st.entity_id, currency or platform_currency(self._platform_of(st.entity_id))))
+        out = []
+        for st in states:
+            if st is None:
+                continue
+            platform = self._platform_of(st.entity_id)
+            if platform == DOMAIN:      # własne encje cen wtyczki nigdy nie są źródłem cen
+                continue
+            if self._price_usable(st.entity_id, currency or platform_currency(platform)):
+                out.append(st.entity_id)
+        return sorted(out)
 
     # ── źródło cen z wykrytych integracji ─────────────────────────────────
     def _option_currency(self) -> str | None:
@@ -1826,17 +1841,21 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
     def _prices_schema(self) -> vol.Schema:
         o = self.config_entry.options
         usable = self._usable_price_entities()
+        own = self._own_entity_ids()
         buy_cfg = {"domain": list(ENTITY_DOMAINS)}          # domeny encji z cenami (rejestr integracji)
+        sell_cfg = {"domain": list(ENTITY_DOMAINS)}
+        if own:
+            buy_cfg["exclude_entities"] = sell_cfg["exclude_entities"] = own
         if usable:
             # Encje, które już teraz dają pełną serię cen — i zapisana, żeby dało się zapisać
             # resztę formularza, gdy chwilowo jej brakuje pełnej serii.
             saved = o.get(OPT_PRICE_BUY)
-            buy_cfg["include_entities"] = sorted({*usable, *([saved] if saved else [])})
+            buy_cfg["include_entities"] = sorted({*usable, *([saved] if saved and saved not in own else [])})
         return vol.Schema({
             _entity_field(OPT_PRICE_BUY, o.get(OPT_PRICE_BUY)):
                 selector.EntitySelector(selector.EntitySelectorConfig(**buy_cfg)),
             _entity_field(OPT_PRICE_SELL, o.get(OPT_PRICE_SELL)):
-                selector.EntitySelector(selector.EntitySelectorConfig(domain=list(ENTITY_DOMAINS))),
+                selector.EntitySelector(selector.EntitySelectorConfig(**sell_cfg)),
             vol.Optional(OPT_PRICE_CURRENCY, description={"suggested_value": o.get(OPT_PRICE_CURRENCY)}): str,
         })
 

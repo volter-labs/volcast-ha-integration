@@ -52,6 +52,12 @@ def _utc(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def plan_strategy(raw: dict | None) -> str | None:
+    """Strategia planera z poziomu planu; nowe wartości serwera przechodzą dalej, brak/null/nie-tekst = None."""
+    value = raw.get("strategy") if isinstance(raw, dict) else None
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def plan_slots_for_card(raw: dict | None, now: datetime) -> list[dict]:
     """Sloty planu dla karty: kontrakt urządzenia + pola wyświetlania z planera, chronologicznie."""
     if not isinstance(raw, dict):
@@ -68,6 +74,8 @@ def plan_slots_for_card(raw: dict | None, now: datetime) -> list[dict]:
             "from": _utc(s.start), "to": _utc(s.end), "action": effective_action(s).value,
             "charge_source": s.charge_source, "discharge_purpose": s.discharge_purpose,
             "power_w": s.power_w, "soc_target": s.soc_target, "price": s.price_pln_kwh,
+            # Ceny jawne (tylko poziomy Plan/Automat; brak = None); `price` zostaje (cena istotna dla akcji).
+            "buy_price": _num(r.get("buy_price_kwh")), "sell_price": _num(r.get("sell_price_kwh")),
             "export_allowed": s.export_allowed, "export_limit_w": s.export_limit_w,
             "plan_mode": _str(r.get("plan_mode")), "import_kwh": _num(r.get("grid_import_kwh")),
             "export_kwh": _num(r.get("grid_export_kwh")), "display_kind": _str(r.get("display_kind")),
@@ -167,9 +175,11 @@ class VolcastPlanSensor(_ControlEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         ex = self._rt.executor
-        if ex.schedule is None:
+        now = dt_util.utcnow()
+        schedule = ex.executed_schedule(now)          # plan przeterminowany: to, co faktycznie wykonujemy
+        if schedule is None:
             return "no_plan"
-        slot, _ = ex.schedule.effective_slot(dt_util.utcnow())
+        slot, _ = schedule.effective_slot(now)
         return effective_action(slot).value
 
     @property
@@ -180,14 +190,20 @@ class VolcastPlanSensor(_ControlEntity, SensorEntity):
         mapped = self._rt.mapped or {}
         d = ex.last_decision
         fallback = None
-        if ex.schedule is not None:
-            _, fallback = ex.schedule.effective_slot(now)
+        schedule = ex.executed_schedule(now)
+        if schedule is not None:
+            _, fallback = schedule.effective_slot(now)
+        fetched = ex.plan_fetched_at
         return {
             "slots": slots, "schedule_id": (ex.raw_plan or {}).get("schedule_id"),
+            "strategy": plan_strategy(ex.raw_plan),
             "valid_until": slots[-1]["to"] if slots else None,
             "control_active": bool(d and (d.status == "write" or d.reason == "nothing_to_write")),
             "account_consent": ex.consent, "local_switch": ex.local_switch,
             "reason": d.reason if d else None, "paused": ex.paused, "fallback": fallback,
+            # `slots` = plan z chmury; przy `plan_stale` jego sloty aktywne wykonuje slot zapasowy
+            "plan_fetched_at": _utc(fetched) if fetched is not None else None,
+            "plan_stale": ex.plan_stale(now),
             "entities": {k: manual.get(key) or mapped.get(key) for k, key in _CARD_ENTITIES.items()},
             "battery_capacity_kwh": self._entry.options.get(OPT_BATTERY_CAPACITY_KWH),
             "tou_preview": ex.tou_preview,

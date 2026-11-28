@@ -135,7 +135,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
@@ -164,7 +164,7 @@ from ..core.modbus.writer import KEPT
 from ..core.params import Params
 from ..core.profile import ORIGIN_FEED_ENDORSED, direct_verified, writes_allowed
 from ..core.registers import RegisterWrite
-from ..core.slot import InvalidSchedule, Schedule, parse_schedule
+from ..core.slot import InvalidSchedule, Schedule, parse_schedule, plan_stale
 from ..core.write_sequence import ERROR as WRITE_ERROR, OK as WRITE_OK
 from .device_io import NO_READING, DeviceIO, DirectIO, EntityIO, Reading
 from .direct import HUB_MAP, START_FAILED
@@ -180,6 +180,8 @@ _MAX_RERUNS = 2
 _FOREIGN_KEEP = 20
 # Rezerwa SoC programów bazowych okien czasowych, gdy nie ma planu (powrót bez migawki).
 _DEFAULT_RESERVE = 10.0
+# Potwierdzenie planu bez zmian trafia do magazynu najwyżej co tyle (wiek po restarcie zawyżony najwyżej o to).
+_FETCH_SAVE_S = 15 * 60
 # Nazwy klas decyzji z blokadą budżetu NVM (zgłoszenie w Naprawach).
 _BUDGET_NOTES = ("nvm_budget", "nvm_budget_restore_ineffective")
 # Nastawa niedostępna dłużej niż tyle jest nieobsługiwana (Naprawy, możliwości dla chmury);
@@ -385,8 +387,28 @@ class VolcastExecutor:
         # profil z feedu stracił prawo zapisu (wycofany, bez ważnego certyfikatu, inna treść): żadnego zapisu
         # planu ani drabiny — każdy cykl już tylko oddaje falownik mapą zaufaną przy przejęciu
         self._withdrawn = withdrawn
+        # czas pobrania planu ostatnio zapisany w magazynie (zapis potwierdzeń najwyżej co `_FETCH_SAVE_S`)
+        self._fetch_saved: datetime | None = None
 
     # ── stan dla encji i telemetrii ───────────────────────────────────────
+    @property
+    def plan_fetched_at(self) -> datetime | None:
+        """Czas ostatniego udanego pobrania planu (trwały); None — nieznany."""
+        raw = self._state.plan_fetched_at
+        return datetime.fromisoformat(raw) if raw else None
+
+    def plan_stale(self, now_utc: datetime) -> bool:
+        return plan_stale(self.plan_fetched_at, now_utc)
+
+    def executed_schedule(self, now_utc: datetime) -> Schedule | None:
+        """Plan do wykonania: przeterminowany (`STALE_PLAN_S` bez udanego pobrania) — sloty aktywne
+        zastępuje slot zapasowy z chmury, pasywne bez zmian. Wszystkie ścieżki wykonania (cykl trybu,
+        okna czasowe, podgląd) biorą plan stąd, nie z `schedule`."""
+        schedule = self.schedule
+        if schedule is None or not self.plan_stale(now_utc):
+            return schedule
+        return schedule.active_as_fallback()
+
     @property
     def raw_plan(self) -> dict | None:
         return self._state.plan_raw
@@ -664,6 +686,7 @@ class VolcastExecutor:
         if changed:
             await self._async_save("control state")
         self._load_budget()
+        self._fetch_saved = self.plan_fetched_at
         if self._state.plan_raw is not None:
             try:
                 self.schedule = parse_schedule(self._state.plan_raw)
@@ -1203,10 +1226,29 @@ class VolcastExecutor:
 
     # ── wejścia ───────────────────────────────────────────────────────────
     async def async_on_plan(self, raw: dict, schedule: Schedule) -> None:
+        now = self._utcnow()
         self._state.plan_raw = raw
+        self._state.plan_fetched_at = now.isoformat()        # przyjęty plan = udane pobranie
         self.schedule = schedule
-        await self._async_save("plan")
+        if await self._async_save("plan"):
+            self._fetch_saved = now
         self._notify()
+
+    async def async_note_plan_confirmed(self) -> None:
+        """Chmura odpowiedziała planem (nowym albo bez zmian) — wiek planu od zera. W pamięci zawsze;
+        w magazynie najwyżej co `_FETCH_SAVE_S` (zapis co 5 min zużywałby kartę SD), od razu po
+        wyjściu z przeterminowania. Restart widzi więc wiek starszy najwyżej o `_FETCH_SAVE_S`
+        (strona bezpieczna)."""
+        now = self._utcnow()
+        was_stale = self.plan_stale(now)
+        self._state.plan_fetched_at = now.isoformat()
+        saved = self._fetch_saved
+        if (saved is None or plan_stale(saved, now)
+                or (now - saved).total_seconds() >= _FETCH_SAVE_S):
+            if await self._async_save("plan fetch time"):
+                self._fetch_saved = now
+        if was_stale:
+            self._notify()
 
     async def async_set_consent(self, value: bool, *, from_cloud: bool = True) -> None:
         """Zgoda konta; `from_cloud=False` = cofnięcie lokalne (401), poza lustrem zgody."""
@@ -1491,7 +1533,7 @@ class VolcastExecutor:
         if self._started_utc is None:
             self._started_utc = now_utc              # pierwszy cykl po starcie
         released = (self._profile.control_model == "mode_setpoint"
-                    and release_without_plan(self._profile, self._window or self.schedule, now_utc,
+                    and release_without_plan(self._profile, self._window or self.executed_schedule(now_utc), now_utc,
                                              self._started_utc))
         if (needs_restore(owned=self._state.owned, consent=gates.consent, local_switch=gates.local_switch,
                           control_mode=gates.control_mode, active_mode=self.io.kind)
@@ -1557,7 +1599,8 @@ class VolcastExecutor:
             # Rejestr z wyjątkiem 2 w tej sesji też jest brakującą nastawą (degradacja akcji, nie zgadywanie).
             target.unavailable = target.unavailable | (self._memory.unsupported & set(self._write_keys()))
         decision = decide_cycle(
-            profile=self._profile, schedule=self._window or self.schedule, now_utc=now_utc, now_mono=now_mono,
+            profile=self._profile, schedule=self._window or self.executed_schedule(now_utc), now_utc=now_utc,
+            now_mono=now_mono,
             tele=tele,
             limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
             gates=dgates, memory=self._memory, **cycle_in,
@@ -1885,7 +1928,8 @@ class VolcastExecutor:
             self._finish(CycleDecision(BLOCKED, "no_reading"))
             return
         snap = self._state.tou_snapshot
-        d = decide_tou_cycle(profile=self._profile, schedule=self.schedule, now_utc=now_utc, now_mono=now_mono,
+        d = decide_tou_cycle(profile=self._profile, schedule=self.executed_schedule(now_utc), now_utc=now_utc,
+                             now_mono=now_mono,
                              tz=self._tz(), tele=tele, limits=Limits(rated_power_w=float(self._rated_power() or 0.0)),
                              reading=rd.source, gates=gates, memory=self._memory,
                              owner_word=snap["tou_word"] if snap else None)
@@ -2777,11 +2821,12 @@ class VolcastExecutor:
             self._set_write_rejected(None)
 
     def _update_tou_preview(self, now_utc) -> None:
-        if not (self._profile and self._profile.control_model == "time_window" and self.schedule
+        schedule = self.executed_schedule(now_utc)
+        if not (self._profile and self._profile.control_model == "time_window" and schedule
                 and self._rated):
             return
         try:
-            res = compress(self.schedule, now_utc, self._profile, soc_reserve=self.schedule.fallback.soc_reserve,
+            res = compress(schedule, now_utc, self._profile, soc_reserve=schedule.fallback.soc_reserve,
                            rated_power_w=float(self._rated), tz=ZoneInfo(self._hass.config.time_zone))
         except Exception as err:  # noqa: BLE001 — podgląd nigdy nie psuje cyklu
             self.tou_preview = {"error": type(err).__name__}
