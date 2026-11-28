@@ -234,8 +234,10 @@ class DirectIO:
 
     def __init__(self, conn, profile, *, trial: bool, unreadable: Iterable[str] = (),
                  capabilities: Mapping[str, bool] | None = None, salt: bytes,
-                 now_wall: Callable[[], float] = time.time, clock: Callable[[], float] = time.monotonic) -> None:
+                 now_wall: Callable[[], float] = time.time, clock: Callable[[], float] = time.monotonic,
+                 readback=None) -> None:
         self.conn = conn
+        self.readback = readback              # `ReadbackLog` (encja Status, zdarzenie HA) albo None
         self._profile = profile
         self.trial = bool(trial)
         # klucze bez odczytu zwrotnego z sondy — jedyne źródło dla klienta, pisarza i celu (profil osobno)
@@ -265,7 +267,7 @@ class DirectIO:
         if self._writer is None or self._writer_client is not client:
             self._writer = RegisterWriter(client, self._profile, on_send=self._on_send, unreadable=self.unreadable,
                                           may_resend=self._may_resend, confirm_write_illegal=True,
-                                          illegal_once=self._illegal_once)
+                                          illegal_once=self._illegal_once, readback=self.readback)
             self._writer_client = client
         return self._writer
 

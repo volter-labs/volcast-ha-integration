@@ -232,8 +232,12 @@ class RegisterWriter:
     def __init__(self, client: RegisterClient, profile, *,
                  on_send: Callable[[str], None] | None = None, unreadable: Iterable[str] = (),
                  may_resend: Callable[[str], bool] | None = None, confirm_write_illegal: bool = False,
-                 illegal_once: set[str] | None = None) -> None:
+                 illegal_once: set[str] | None = None, readback=None) -> None:
         self.client = client
+        # opcjonalny dziennik rozbieżności odczytu zwrotnego (`core/control/readback.py`); pisarz nie zna HA
+        self._readback = readback
+        self._rb_seen = False
+        self._rb_read: int | None = None
         self.profile = profile
         # Wyjątek 2 w odpowiedzi na ZAPIS (odczyt rejestru działa): bez potwierdzenia nie jest werdyktem.
         # Pierwszy raz rozstrzyga odczyt zwrotny (nietknięty → DENIED, zapisany → OK), dopiero powtórka
@@ -281,9 +285,11 @@ class RegisterWriter:
         try:
             async with self._lock:
                 self._budgeted = budgeted              # pod zamkiem pisarza — jeden zapis naraz
+                self._rb_seen, self._rb_read = False, None
                 out = await self._write(w, skip_equal=skip_equal, only_from=only_from)
                 if out in (OK, OK_ADJUSTED):
                     self._illegal_once.discard(w.key)
+                self._report(w, out)
                 return out
         except Exception as err:  # noqa: BLE001 — pisarz nie rzuca; zapis niepewny
             _LOGGER.warning("direct write of %s failed: %s", w.key, type(err).__name__)
@@ -306,6 +312,7 @@ class RegisterWriter:
         # bierze je znowu i dopiero wtedy wybiera długość (`_read_once`).
         w, before = out.w, out.before
         back = await self._settle(w, before)
+        self._rb_seen, self._rb_read = True, back
         if back is None:
             return ERROR
         if back == w.value:
@@ -420,11 +427,23 @@ class RegisterWriter:
         return back
 
     async def _read_back(self, w: RegisterWrite) -> int | None:
+        self._rb_seen = True
         try:
-            return await self._read(w)
+            self._rb_read = await self._read(w)
+            return self._rb_read
         except TransportError as err:
             _LOGGER.debug("read-back failed: %s", type(err).__name__)
+            self._rb_read = None
             return None
+
+    def _report(self, w: RegisterWrite, out: str) -> None:
+        """ERROR/DENIED po próbie odczytu zwrotnego → dziennik; udany zapis klucza kasuje wpisy."""
+        if self._readback is None:
+            return
+        if out in (OK, OK_ADJUSTED):
+            self._readback.ok(w.key)
+        elif out in (ERROR, DENIED) and self._rb_seen:
+            self._readback.issue(w.key, w.value, self._rb_read, out)
 
     def read_retry_delays(self) -> tuple[float, ...]:
         """Przerwy przed kolejnymi ponowieniami odczytu. Transport strumieniowy (TCP, RTU przez TCP,

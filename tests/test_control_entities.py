@@ -117,8 +117,14 @@ def test_status_sensor_reports_decision_and_foreign_changes():
     rt.executor.last_decision = CycleDecision("idle", "no_plan")
     assert s.native_value == "idle" and s.extra_state_attributes["reason"] == "no_plan"
     assert s.extra_state_attributes["foreign_changes"][0]["key"] == "mode"
+    assert s.extra_state_attributes["readback_issues"] == []
+    from custom_components.volcast.core.control.readback import ReadbackLog
+    log = ReadbackLog()
+    log.issue("mode", 10, 3, "error")
+    rt.executor.io = SimpleNamespace(readback=log)
+    assert s.extra_state_attributes["readback_issues"][0]["key"] == "mode"
     # Notatki decyzji zmieniają się co cykl (nastawa sprzedaży) — bez wiersza rekordera na tik.
-    assert s._unrecorded_attributes == frozenset({"notes"})
+    assert s._unrecorded_attributes == frozenset({"notes", "readback_issues"})
 
 
 # ── lustro zgody konta: przełącznik ↔ zgoda konta przez `set-controller` ──

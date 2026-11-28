@@ -68,6 +68,7 @@ from ..const import (DEFAULT_PAIRING_URL, CONF_BACKEND, CONF_PAIRING, CONF_PV_EN
 from ..core.control.caps import direct_capabilities, entity_mode_options, entity_mode_ready, required_write_keys
 from ..core.control.limits import executor_limits, rated_power_from_model
 from ..core.control.ladder import CONTROLLER_CONFLICT, STOPPED
+from ..core.control.readback import EVENT as READBACK_EVENT, ReadbackLog
 from ..core.control.recommend import recommend
 from ..core.control.select import InverterHint, ProfileChoice, control_verified, select_profile
 from ..core.discovery.classify import is_inverter
@@ -1119,7 +1120,8 @@ def compose_direct(hass, entry, profiles, *, salt: bytes, found: tuple[dict, boo
     conn = DirectConnection(hass, entry, profile, target, trial=trial, salt=salt, poll_s=poll_s,
                             unreadable=unreadable, unsupported=unsupported, allow_loopback=ds.ALLOW_LOOPBACK)
     io = DirectIO(conn, profile, trial=trial, unreadable=unreadable,
-                  capabilities=caps if isinstance(caps, Mapping) else None, salt=salt)
+                  capabilities=caps if isinstance(caps, Mapping) else None, salt=salt,
+                  readback=ReadbackLog(lambda d: hass.bus.async_fire(READBACK_EVENT, d)))
     return ProfileChoice(profile, None, None), io, conn
 
 
