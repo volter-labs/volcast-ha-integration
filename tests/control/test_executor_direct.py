@@ -883,6 +883,21 @@ async def test_remove_owned_direct_restores_through_link(make_hass, goodwe_udp_s
     assert "direct_identity_changed_e1" in issues.deleted
 
 
+def test_compose_direct_fires_readback_event_on_hass_bus(make_hass):
+    from custom_components.volcast.control import runtime as rt_mod
+    target = {"profile_id": "goodwe-et", "transport": "goodwe_udp", "host": "192.168.1.9", "port": 8899,
+              "unit_id": 247, "device_fp": "0123456789abcdef"}
+    entry = SimpleNamespace(domain=DOMAIN, entry_id="e1", options={"control_mode": "direct", "direct_target": target}, data={},
+                            disabled_by=None)
+    hass = make_hass(entries=[entry])
+    fired = []
+    hass.bus = SimpleNamespace(async_fire=lambda name, data=None, *a, **k: fired.append((name, data)))
+    _choice, io, _conn = rt_mod.compose_direct(hass, entry, [GW_V], salt=SALT)
+    io.readback.issue("mode", 10, 3, "error")
+    assert fired[0][0] == "volcast_control_readback"
+    assert set(fired[0][1]) == {"key", "expected", "read", "result", "at"}
+
+
 def test_compose_direct_trial_uses_no_write_writer(make_hass):
     from custom_components.volcast.control import runtime as rt_mod
     target = {"profile_id": "goodwe-et", "transport": "goodwe_udp", "host": "192.168.1.9", "port": 8899,
