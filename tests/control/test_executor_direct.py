@@ -766,7 +766,9 @@ async def test_tou_commit_uses_time_after_the_write_sequence(make_hass, rtu_tcp_
 
 
 @pytest.mark.asyncio
-async def test_owner_program_edit_twice_pauses_and_is_not_restored(make_hass, rtu_tcp_sim, deye_bank, issues):
+async def test_owner_program_edit_pauses_at_first_change_and_is_not_restored(make_hass, rtu_tcp_sim, deye_bank,
+                                                                            issues):
+    """Okna czasowe: już pierwsza zmiana pola programu to przejęcie (nie dopiero druga, jak w trybie + nastawie)."""
     h = await _deye(make_hass, rtu_tcp_sim).start(raw=TOU_RAW)
     try:
         await h.ex.async_tick()
@@ -774,10 +776,9 @@ async def test_owner_program_edit_twice_pauses_and_is_not_restored(make_hass, rt
         ours = deye_bank.read(soc_reg, 1)[0]
         deye_bank.poke(soc_reg, 55)
         await h.cycle(400.0)
-        assert not h.ex.paused
-        await h.cycle(400.0)                                  # ta sama wartość trwa — liczy się raz
-        assert not h.ex.paused
-        deye_bank.poke(soc_reg, 60)                           # druga ZMIANA właściciela w 30 min
+        assert h.ex.paused and "tou.1.soc" in h.ex._state.taken_over
+        assert deye_bank.read(soc_reg, 1)[0] == 55            # nie nadpisane w następnym cyklu
+        deye_bank.poke(soc_reg, 60)                           # kolejna zmiana właściciela
         await h.cycle(400.0)
         assert h.ex.paused and "tou.1.soc" in h.ex._state.taken_over
         await h.ex.async_set_consent(False)
@@ -881,6 +882,21 @@ async def test_remove_owned_direct_restores_through_link(make_hass, goodwe_udp_s
     await rt_mod.async_remove_control(hass, entry)
     assert gw_raw_word(goodwe_bank, MODE) == 1 and hass.data[DOMAIN]["direct_hosts"] == {}
     assert "direct_identity_changed_e1" in issues.deleted
+
+
+def test_compose_direct_fires_readback_event_on_hass_bus(make_hass):
+    from custom_components.volcast.control import runtime as rt_mod
+    target = {"profile_id": "goodwe-et", "transport": "goodwe_udp", "host": "192.168.1.9", "port": 8899,
+              "unit_id": 247, "device_fp": "0123456789abcdef"}
+    entry = SimpleNamespace(domain=DOMAIN, entry_id="e1", options={"control_mode": "direct", "direct_target": target}, data={},
+                            disabled_by=None)
+    hass = make_hass(entries=[entry])
+    fired = []
+    hass.bus = SimpleNamespace(async_fire=lambda name, data=None, *a, **k: fired.append((name, data)))
+    _choice, io, _conn = rt_mod.compose_direct(hass, entry, [GW_V], salt=SALT)
+    io.readback.issue("mode", 10, 3, "error")
+    assert fired[0][0] == "volcast_control_readback"
+    assert set(fired[0][1]) == {"key", "expected", "read", "result", "at"}
 
 
 def test_compose_direct_trial_uses_no_write_writer(make_hass):

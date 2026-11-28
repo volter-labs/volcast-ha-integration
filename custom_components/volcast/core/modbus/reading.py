@@ -74,6 +74,7 @@ def current_programs(profile, image: RegisterImage) -> tuple[TouProgram, ...] | 
     if tp is None:
         return None
     bit = 1 << tp["grid_charge"]["bit"]
+    sell_bit = (1 << tp["sell"]["bit"]) if "sell" in tp else None      # to samo słowo flag
     out: list[TouProgram] = []
     for i in range(tp["count"]):
         words = [_word(image, tp[f]["addr"] + i) for f in ("start", "power_w", "soc", "grid_charge")]
@@ -84,7 +85,8 @@ def current_programs(profile, image: RegisterImage) -> tuple[TouProgram, ...] | 
         if h > 23 or m > 59:
             return None
         out.append(TouProgram(start_min=h * 60 + m, power_w=float(power), soc=float(soc),
-                              grid_charge=bool(charge & bit)))
+                              grid_charge=bool(charge & bit),
+                              sell=None if sell_bit is None else bool(charge & sell_bit)))
     return tuple(out)
 
 
@@ -127,6 +129,8 @@ def build_reading(profile, image: RegisterImage, *, at_mono: float, at_utc: date
         device[f"tou.{i}.power_w"] = float(p.power_w)
         device[f"tou.{i}.soc"] = float(p.soc)
         device[f"tou.{i}.grid_charge"] = 1.0 if p.grid_charge else 0.0
+        if p.sell is not None:
+            device[f"tou.{i}.sell"] = 1.0 if p.sell else 0.0
     enabled = _tou_enabled(profile, image)
     if enabled is not None:
         device["tou_enabled"] = 1.0 if enabled else 0.0

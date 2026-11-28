@@ -54,7 +54,7 @@ from ..core.control.ladder import (RUNG_CONTROL_WRITE, RUNG_IDENTIFY, RUNG_READ,
 from ..core.control.select import control_verified
 from ..core.control.tou_cycle import EN_KEY
 from ..core.engines.mode_setpoint import SLOT_POWER_KINDS
-from ..core.params import TOU_FIELDS
+from ..core.params import TOU_FIELDS, TOU_OPTIONAL_FIELDS
 from ..core.profile import direct_verified, is_packaged, writes_allowed
 from ..core.slot import Action, Fallback, Schedule, Slot
 
@@ -91,15 +91,18 @@ def writing_supported(profile, kind: str) -> bool:
 
 
 def tou_block_keys(profile) -> frozenset[str]:
-    """Klucze odczytu bloku okien czasowych (konwencja `Params.flatten`): pola każdego programu i włącznik.
+    """Klucze odczytu bloku okien czasowych (konwencja `Params.flatten`): pola każdego programu (z polami
+    opcjonalnymi profilu, np. bitem sprzedaży) i włącznik.
     Pusty zbiór dla profilu bez programów albo bez słowa włącznika."""
     if profile is None or profile.control_model != "time_window":
         return frozenset()
     write = profile.raw.get("write") or {}
-    count = int((write.get("tou_program") or {}).get("count") or 0)
+    tp = write.get("tou_program") or {}
+    count = int(tp.get("count") or 0)
     if count <= 0 or "tou_enable" not in write:
         return frozenset()
-    return frozenset({f"tou.{i}.{f}" for i in range(1, count + 1) for f in TOU_FIELDS} | {EN_KEY})
+    fields = TOU_FIELDS + tuple(f for f in TOU_OPTIONAL_FIELDS if f in tp)     # np. bit sprzedaży
+    return frozenset({f"tou.{i}.{f}" for i in range(1, count + 1) for f in fields} | {EN_KEY})
 
 
 def window_capable(profile) -> bool:

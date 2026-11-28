@@ -793,7 +793,7 @@ def _tou_block(**over) -> dict:
     out: dict = {"tou_enabled": 1.0}
     for i in range(1, 7):
         out.update({f"tou.{i}.start": float((i - 1) * 240), f"tou.{i}.power_w": 5000.0,
-                    f"tou.{i}.soc": 20.0, f"tou.{i}.grid_charge": 0.0})
+                    f"tou.{i}.soc": 20.0, f"tou.{i}.grid_charge": 0.0, f"tou.{i}.sell": 0.0})
     out.update(over)
     return out
 
@@ -809,7 +809,7 @@ def _deye_env(monkeypatch, kind="direct", *, start=1):
 def test_tou_block_keys_cover_every_program_field_and_the_enable_word():
     keys = ver_mod.tou_block_keys(DEYE_V)
     assert keys == frozenset(_tou_block())
-    assert len(keys) == 6 * 4 + 1
+    assert len(keys) == 6 * 5 + 1                               # start, moc, SoC, bit sieci, bit sprzedaży
     assert ver_mod.tou_block_keys(GW_V) == frozenset()          # model trybu i nastawy — bez bloku
 
 

@@ -181,12 +181,21 @@ Pick one with `control_model`.
 **`time_window`** (the inverter has a programmable time-of-use table)
 
 * requires `write.tou_program` (`count`, and `start`/`power_w`/`soc` with encodes `hhmm`/`watts`/`percent`,
-  `grid_charge` `{addr, bit}`), optional `write.tou_enable` (`addr`, `enable_bit`, `day_mask`), and
+  `grid_charge` `{addr, bit}`), optional `tou_program.sell` `{addr, bit}` (sell-from-battery bit in the
+  same flag register as `grid_charge`, on a different bit; written read-modify-write like `grid_charge`),
+  optional `write.tou_enable` (`addr`, `enable_bit`, `day_mask`), and
   a `tou` block: `programs` (1-12, equal to `tou_program.count`), `time_step_min` (divides 60),
-  `soc_tolerance_pp`, `power_tolerance_w`, `field_order` (a permutation of the four program fields).
+  `soc_tolerance_pp`, `power_tolerance_w`, `field_order` (a permutation of the program fields, `sell`
+  included when the profile has it).
 * `baseline: {"intent": "self_consume"}`; the `self_consume` intent is mandatory, the others are
   `{"grid_charge": bool, "soc": target_or_max|reserve|hold, "power": slot|max}` or `null` when
-  unsupported. All six intent keys must be present.
+  unsupported. All six intent keys must be present. With `tou_program.sell`, the `sell` or
+  `discharge_forced` intent may add `"sell": true` (never together with `"grid_charge": true`): its window
+  sets the sell bit, the program SoC is the discharge floor and the program power caps the discharge.
+  A `sell` slot runs as `self_consume` unless `capabilities.sell_from_battery` is `true`; fallback and
+  stale-plan windows and the baseline always clear the sell bit, and merging windows to fit the program count
+  never extends a sell window over non-sell slots (the sell window shrinks or is dropped instead). The sell bit
+  is direct mode only: a profile with `tou_program.sell` cannot declare HA `tou_<n>_*` entities.
 * `capabilities.time_windows` equals `tou.programs`.
 
 Intents are chosen from `charge_grid`, `charge_pv`, `discharge_forced`, `sell`, `self_consume`,

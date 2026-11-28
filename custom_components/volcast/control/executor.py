@@ -107,6 +107,18 @@ pauzie, gdy epizod się skończył. Pauza nie przeżywa restartu (zegar monotoni
 Zgłoszenie da się naprawić („Wznów sterowanie teraz", `async_resume_control`, też serwis
 `volcast.resume_control`): koniec pauzy bez przeładowania wpisu i od razu cykl z planem.
 
+Okna czasowe (`control_model == "time_window"`): już PIERWSZA obca zmiana pola programu albo włącznika
+harmonogramu jest przejęciem tego klucza (`takeover.first_change_takes_over`; inne modele — dwa rozjazdy).
+Odczyt równy wartości planu nie jest zmianą właściciela (np. nasz zapis zgłoszony jako odrzucony, który doszedł
+później). Pole z nieznanym wynikiem zapisu (ERROR) traci odniesienie: nie ma rozjazdu ani powrotu warunkowego,
+dopóki następny zapis albo powrót tego pola go nie ustali.
+Każde przejęcie wysyła zdarzenie HA `volcast_control_takeover` (`entry_id`, `key`, `value`, `at`).
+Powrót do programów właściciela jest warunkowy: rejestr wraca z migawki tylko, gdy ma jeszcze wartość, którą
+ostatnio zapisaliśmy albo zostawiliśmy z migawki (pamięć `last_written`, trwała kopia `tou_written` —
+także po restarcie); inaczej zostaje wartość właściciela, wpis w `restore_skipped` (`key`, `snapshot`,
+`current`, `at`) i zdarzenie `volcast_control_restore_skipped`. Rekord bez `tou_written` (poprzednia
+wersja) — powrót bezwarunkowy jak dotąd.
+
 Tryb „tylko plan” (`plan_only` w magazynie, wybór własnego sterownika — `own_ems`): bramki jak przy
 wyłączonym sterowaniu (zero zapisów planu i drabiny; przy własności — powrót do trybu bazowego), bez
 pauzy i zgłoszeń o obcej zmianie ani kolizji na łączu. Konflikty sterowników liczy `control/conflicts.py`
@@ -154,10 +166,10 @@ from ..core.control.cycle import (BLOCKED, DRY_RUN, ERROR, IDLE, WRITE, ControlM
 from ..core.control.group_writes import GROUP_KEYS, GroupReport, async_run_group_writes, order_group
 from ..core.control.readings import RawState, normalize_readings
 from ..core.control.select import ProfileChoice, control_verified
-from ..core.control.takeover import FOREIGN_PAUSE_S, is_foreign_change
+from ..core.control.takeover import FOREIGN_PAUSE_S, first_change_takes_over, is_foreign_change
 from ..core.control.tou_cycle import EN_KEY, commit_tou, decide_tou_cycle, safety_off_decision
 from ..core.control.tou_writes import (ENABLE, TOU_WORD, TouReport, _snapshot_programs, async_run_tou_writes,
-                                       tou_restore_writes, tou_snapshot)
+                                       restore_skips, tou_restore_writes, tou_snapshot)
 from ..core.engines.time_window import baseline_programs, compress
 from ..core.guard_state import WriteBudget
 from ..core.modbus.writer import KEPT
@@ -284,6 +296,11 @@ _CONSENT_ERROR_KEY = "consent_mirror_error"           # każda inna odmowa / bł
 CONSENT_ISSUE_KEYS = (*_CONSENT_REFUSAL_KEYS.values(), _CONSENT_ERROR_KEY)
 
 
+def _is_tou_key(key) -> bool:
+    """Pole programu albo włącznik harmonogramu w widoku urządzenia (`tou.<n>.<pole>`, `tou_enabled`)."""
+    return isinstance(key, str) and (key.startswith("tou.") or key == EN_KEY)
+
+
 class VolcastExecutor:
     def __init__(self, hass, entry, *, choice: ProfileChoice | None, mapped: Mapping[str, str],
                  rated_power_w: float | None, store: ControlStore, writer=None,
@@ -311,6 +328,8 @@ class VolcastExecutor:
         self.last_decision: CycleDecision | None = None
         self.tou_preview: dict | None = None
         self.foreign_changes: list[dict] = []
+        # ostatni powrót okien czasowych: klucze zostawione właścicielowi `{key, snapshot, current, at}`
+        self.restore_skipped: list[dict] = []
         self._prev_soc: tuple[float, float] | None = None
         # Próbka odrzucona jako skok SoC — czeka na potwierdzenie następną (`_remember_soc`).
         self._soc_candidate: tuple[float, float] | None = None
@@ -685,6 +704,9 @@ class VolcastExecutor:
             changed = True
         if changed:
             await self._async_save("control state")
+        if self._state.owned and self._state.tou_written and self._memory is not None:
+            # Odniesienie powrotu warunkowego i wykrywania obcej zmiany przeżywa restart.
+            self._memory.last_written.update(self._state.tou_written)
         self._load_budget()
         self._fetch_saved = self.plan_fetched_at
         if self._state.plan_raw is not None:
@@ -1067,6 +1089,7 @@ class VolcastExecutor:
             st.restore_keys = None
             st.taken_over = []
             st.tou_snapshot = None
+            st.tou_written = None
             st.trusted_profile = None
             return True
         if not (self._state.owned or self._state.snapshot) or not self._state.owner:
@@ -1092,6 +1115,7 @@ class VolcastExecutor:
         self._state.restore_keys = None
         self._state.taken_over = []
         self._state.tou_snapshot = None
+        self._state.tou_written = None
         self._state.trusted_profile = None
         return True
 
@@ -1141,10 +1165,10 @@ class VolcastExecutor:
         if foreign_option:
             self._foreign_episode = True     # sygnał poziomu nie powtórzy tego epizodu
         _LOGGER.warning("Volcast control paused for 30 min: %s changed outside Volcast", key)
-        self._pause_for_foreign(key, eid)
+        self._pause_for_foreign(key, eid, value)
         return True
 
-    def _pause_for_foreign(self, key: str, eid: str | None) -> None:
+    def _pause_for_foreign(self, key: str, eid: str | None, value: float | str | None = None) -> None:
         if self._state.owned and "enable" in ((self._profile.raw.get("write") or {}) if self._profile else {}):
             # Profil z przełącznikiem zdalnego sterowania: ktoś inny steruje — oddanie (tryb neutralny,
             # nastawy z migawki, przełącznik) zamiast trzymania naszej komendy przez pauzę.
@@ -1153,8 +1177,10 @@ class VolcastExecutor:
         # Ktoś inny zmienia falownik: zapisana nastawa sprzedaży nie jest już pewna.
         self._memory.live_export = self._memory.live_export.forget_written()
         self._take_over_key(key)
+        at = self._utcnow().isoformat()
         self.foreign_changes = (self.foreign_changes + [
-            {"key": key, "entity_id": eid, "at": self._utcnow().isoformat()}])[-_FOREIGN_KEEP:]
+            {"key": key, "entity_id": eid, "at": at}])[-_FOREIGN_KEEP:]
+        self._fire("volcast_control_takeover", {"key": key, "value": value, "at": at})
         if not self._foreign_issue_open:
             self._foreign_issue_open = True
             # Parametr tekstu Napraw zostaje lokalnie w UI — to nie jest log.
@@ -1164,6 +1190,16 @@ class VolcastExecutor:
                 self._create_issue(self._foreign_issue_id, "foreign_control", {"entity_id": eid or ""},
                                    fixable=True, data={"entry_id": self._entry.entry_id})
         self._notify()
+
+    def _fire(self, event_type: str, data: dict) -> None:
+        """Zdarzenie HA wpisu (automatyzacje właściciela); błąd szyny nie wywraca cyklu."""
+        fire = getattr(getattr(self._hass, "bus", None), "async_fire", None)
+        if not callable(fire):
+            return
+        try:
+            fire(event_type, {"entry_id": self._entry.entry_id, **data})
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Volcast control: event %s not sent (%s)", event_type, type(err).__name__)
 
     def _take_over_key(self, key: str) -> None:
         """Klucz zmieniony przez właściciela: nie wraca do migawki, dopóki go znowu nie zapiszemy."""
@@ -1562,8 +1598,10 @@ class VolcastExecutor:
                 # po potwierdzeniu cykl wykonuje plan albo hamuje (nieświeży odczyt → `_async_direct_brake`).
                 self._finish(CycleDecision(BLOCKED, "identity"))
                 return
-            if self._note_drift(rd, now_mono):
+            taken = self._note_drift(rd, now_mono)
+            if self._sync_tou_written() or taken:
                 await self._async_save("control state")
+            if taken:
                 if self._handback_pending and self._state.owned:
                     await self._restore(rd)              # obce sterowanie: oddanie w tym samym cyklu
                     if not self._state.owned:
@@ -1817,6 +1855,7 @@ class VolcastExecutor:
         if not drift.usable(reading.at_mono):
             return False
         memory = self._memory
+        model = self._profile.control_model
         drifted = drifted_keys(memory.last_written, reading.device)
         for key in [k for k in self._drift_values if k not in drifted]:
             del self._drift_values[key]            # wartość wróciła do naszej — epizod skończony
@@ -1825,19 +1864,31 @@ class VolcastExecutor:
             if key in memory.uncertain:
                 continue                    # nasz zapis o nieznanym wyniku — to nie zmiana właściciela
             value = reading.device[key]
+            first = first_change_takes_over(model, key)
+            planned = self._planned.get(key)
+            if first and planned is not None and same_value(planned, value):
+                # Okna czasowe: odczyt równy planowi to nasz zapis (np. zgłoszony jako odrzucony, a doszedł
+                # później), nie zmiana właściciela — staje się odniesieniem.
+                memory.last_written[key] = value
+                self._drift_values.pop(key, None)
+                continue
             seen = self._drift_values.get(key)
             if seen is not None and same_value(seen, value):
                 continue                    # ta sama wartość co w policzonym już rozjeździe
             self._drift_values[key] = value
             # Wyłączony przełącznik zdalnego sterowania (włączony przez nas) = koniec zdalnego sterowania
-            # przez kogoś innego — od pierwszego odczytu, bez czekania na drugi rozjazd.
+            # przez kogoś innego — od pierwszego odczytu, bez czekania na drugi rozjazd. Okna czasowe:
+            # pierwsza zmiana pola programu albo włącznika harmonogramu.
             switch_off = key == "enable" and value == 0.0
-            if switch_off or drift.note_drift(key, now_mono):
+            if switch_off or first or drift.note_drift(key, now_mono):
                 _LOGGER.warning("Volcast control paused for 30 min: %s changed outside Volcast", key)
+                # Diagnostyka fałszywych przejęć (np. normalizacja wartości przez firmware): same liczby.
+                _LOGGER.info("Volcast control: %s was %s (our last value), now %s", key,
+                             memory.last_written.get(key), value)
                 memory.last_written[key] = value          # wartość właściciela = punkt odniesienia
                 self._drift_values.pop(key, None)
-                self._owner_held[key] = self._planned.get(key)
-                self._pause_for_foreign(key, None)
+                self._owner_held[key] = planned
+                self._pause_for_foreign(key, None, value)
                 taken = True
         return taken
 
@@ -1943,14 +1994,23 @@ class VolcastExecutor:
                 d = replace(d, status=BLOCKED, reason="gates_changed")
         elif d.status == WRITE and self._state.tou_snapshot is None:
             self._snapshot_lost()               # nigdy nowa migawka przy własności — powrót do programów bazowych
+        if d.status == WRITE and not await self._async_unpin_tou(d.writes):
+            # Bez trwałego odniesienia sprzed sekwencji restart wziąłby nasze nowe programy za zmianę
+            # właściciela (i nie oddałby ich) — jak przy migawce: żadnej ramki.
+            d = replace(d, status=ERROR, reason="store_failed")
         if d.status == WRITE:
             report = await async_run_tou_writes(d.writes, self._writer.async_write, pre_held=d.pre_held,
                                                 on_exception=self._log_write_exception)
             end = self._clock()                     # po końcu sekwencji — odczyt z jej trakcie jest nieświeży
             self._end_direct_writes()
             commit_tou(d, report, self._memory, end, now_wall=None)   # ramki liczy `on_send` pisarza
+            for key in report.ambiguous:
+                # Nieznany wynik zapisu pola: bez odniesienia (ani rozjazdu, ani powrotu warunkowego — powrót
+                # bezwarunkowy), dopóki następny zapis albo powrót tego pola go nie ustali. Trwała kopia też.
+                self._memory.last_written.pop(key, None)
             self.last_tou_report = report
             changed = self._note_written([*report.written, *report.ambiguous])
+            changed = self._sync_tou_written() or changed
             if report.restore_needed:
                 _LOGGER.warning("Volcast control: time-of-use rewrite interrupted — restoring the owner's programs")
                 self._tou_restore_pending = True
@@ -1962,9 +2022,10 @@ class VolcastExecutor:
 
     def _tou_without_owner_held(self, d, reading, gates: Gates, now_mono: float):
         """Pola programów przejęte przez właściciela nie są pisane (zostaje jego wartość), reszta przepisania
-        idzie. Gdy tego nie da się zrobić bezpiecznie (przejęty start programu — kolejność startów), a zmiana
-        idzie w stronę bezpieczną: wyłączenie harmonogramu (poza budżetem, z limitem); nigdy żywy, nieaktualny
-        program ładowania z sieci."""
+        idzie. Gdy tego nie da się zrobić bezpiecznie (przejęty start programu — kolejność startów; przejęty
+        bit sprzedaży ustawiony przez właściciela, gdy plan nie sprzedaje), a zmiana idzie w stronę bezpieczną:
+        wyłączenie harmonogramu (poza budżetem, z limitem); nigdy żywy, nieaktualny program ładowania z sieci
+        ani sprzedaży."""
         if d.status not in (WRITE, DRY_RUN) or not self._owner_held or "tou_safety_off" in d.notes:
             return d
 
@@ -1972,10 +2033,16 @@ class VolcastExecutor:
             return EN_KEY if w.key in (ENABLE, TOU_WORD) else w.key
 
         held = {key(w) for w in d.writes} & self._held_keys()
-        if not held:
+        # Przejęty bit sprzedaży właściciela tam, gdzie plan nie sprzedaje: program sprzedawałby baterię pod
+        # NASZĄ podłogą SoC i mocą (codziennie, do rezerwy) — jak przy przejętym starcie: tylko wyłączenie
+        # harmonogramu w stronę bezpieczną albo nic; nigdy przepisywanie wokół jego bitu.
+        selling = {k for k in self._held_keys() if k.endswith(".sell")
+                   and same_value(float(reading.device.get(k, 0.0)), 1.0)
+                   and not same_value(float(d.flat.get(k, 0.0)), 1.0)}
+        if not held and not selling:
             return d
         programs = [w for w in d.writes if w.key not in (ENABLE, TOU_WORD)]
-        if any(k.endswith(".start") for k in held):
+        if selling or any(k.endswith(".start") for k in held):
             safe = safety_off_decision(d, reading, self._profile, gates, self._memory, now_mono)
             if safe is not None:
                 return replace(safe, notes=(*safe.notes, "owner_kept"))
@@ -2009,7 +2076,7 @@ class VolcastExecutor:
             return replace(d, status=BLOCKED, reason="baseline_unknown")
         prev = (self._state.owned, dict(self._state.snapshot), dict(self._state.owner),
                 self._state.restore_keys, list(self._state.taken_over), self._state.tou_snapshot,
-                self._state.trusted_profile)
+                self._state.trusted_profile, self._state.tou_written)
         snapshot = take_snapshot(rd.readings)
         if snapshot_missing(snapshot, self.io.snapshot_keys()):
             return replace(d, status=BLOCKED, reason="baseline_unknown")
@@ -2020,10 +2087,18 @@ class VolcastExecutor:
         self._state.taken_over = []
         self._state.tou_snapshot = snap
         self._state.trusted_profile = self._trusted_copy()
+        # Odniesienie powrotu warunkowego: pola, których nie zapiszemy, zostawiamy z wartością z migawki.
+        reference = self._tou_target(snap)
+        self._state.tou_written = dict(reference)
         if not await self._async_save("baseline snapshot"):
             (self._state.owned, self._state.snapshot, self._state.owner, self._state.restore_keys,
-             self._state.taken_over, self._state.tou_snapshot, self._state.trusted_profile) = prev
+             self._state.taken_over, self._state.tou_snapshot, self._state.trusted_profile,
+             self._state.tou_written) = prev
             return replace(d, status=ERROR, reason="store_failed")
+        self._memory.last_written.update(reference)
+        if self.restore_skipped:
+            self.restore_skipped = []                # raport poprzedniego oddania nie dotyczy nowej własności
+            self._notify()
         return d
 
     async def _tou_restore_after_failure(self, *, record_decision: bool = True) -> None:
@@ -2054,16 +2129,84 @@ class VolcastExecutor:
             _LOGGER.debug("Volcast control: time-of-use restore not possible now (%s)", type(err).__name__)
             return None
         taken = set(self._state.taken_over)
+        if self._state.tou_written is not None:
+            # Powrót warunkowy: rejestr o wartości innej niż nasza ostatnia zostaje właściciela.
+            ours = {k: v for k, v in self._memory.last_written.items() if _is_tou_key(k)}
+            skips = restore_skips(self._tou_target(self._state.tou_snapshot), reading.device, ours,
+                                  self._memory.uncertain)
+            self._note_restore_skips({k: v for k, v in skips.items() if k not in taken})
+            taken |= set(skips)
+        else:
+            self._note_restore_skips({})
         if EN_KEY in taken:
             taken |= {ENABLE, TOU_WORD}
         writes = [w for w in writes if w.key not in taken]
         if not writes:
             return TouReport()
+        # Powrót idzie i bez zapisu: nieaktualne odniesienie wskazuje tu tylko wartości, które powrót nadpisuje.
+        await self._async_unpin_tou(writes)
         report = await async_run_tou_writes(writes, self._writer.async_write, on_exception=self._log_write_exception)
         end = self._clock()
         self._end_direct_writes()
         self._record_tou_restore(report, end)
+        if self._sync_tou_written():
+            await self._async_save("control state")
         return report
+
+    def _tou_target(self, snap) -> dict[str, float]:
+        """Programy i włącznik powrotu w widoku urządzenia: z migawki właściciela, bez niej — bazowe, OFF."""
+        if snap is not None:
+            flat = Params(tou=_snapshot_programs(self._profile, snap)).flatten()
+            ebit = 1 << self._profile.raw["write"]["tou_enable"]["enable_bit"]
+            flat[EN_KEY] = 1.0 if int(snap["tou_word"]) & ebit else 0.0
+            return flat
+        flat = Params(tou=baseline_programs(self._profile, *self._tou_restore_params())).flatten()
+        flat[EN_KEY] = 0.0
+        return flat
+
+    async def _async_unpin_tou(self, writes) -> bool:
+        """Przed zapisem: pola, które zaraz piszemy, znikają z trwałego odniesienia (zapisane od razu). Restart
+        w trakcie sekwencji zostawia je bez odniesienia — powrót przywróci je bezwarunkowo, zamiast wziąć nasz
+        nowy program za zmianę właściciela. Po sekwencji `_sync_tou_written` wpisuje to, co doszło.
+        False = odniesienia nie udało się zapisać."""
+        st = self._state
+        if not st.owned or not st.tou_written:
+            return True
+        keys = {EN_KEY if w.key in (ENABLE, TOU_WORD) else w.key for w in writes}
+        if not keys & set(st.tou_written):
+            return True
+        st.tou_written = {k: v for k, v in st.tou_written.items() if k not in keys}
+        return await self._async_save("control state")
+
+    def _sync_tou_written(self) -> bool:
+        """Trwała kopia odniesienia okien czasowych = pola TOU pamięci `last_written`; True, gdy się zmieniła."""
+        st = self._state
+        if not st.owned or st.tou_written is None or self._memory is None:
+            return False
+        now = {k: float(v) for k, v in self._memory.last_written.items()
+               if _is_tou_key(k) and isinstance(v, (int, float)) and not isinstance(v, bool)}
+        if now == st.tou_written:
+            return False
+        st.tou_written = now
+        return True
+
+    def _note_restore_skips(self, skips: Mapping[str, tuple[float, float]]) -> None:
+        """Klucze zostawione właścicielowi przy powrocie: atrybut, zdarzenie i ostrzeżenie — raz na zmianę."""
+        prev = {(s["key"], s["current"]) for s in self.restore_skipped}
+        at = self._utcnow().isoformat()
+        self.restore_skipped = [{"key": k, "snapshot": snap, "current": cur, "at": at}
+                                for k, (snap, cur) in skips.items()]
+        new = [s for s in self.restore_skipped if (s["key"], s["current"]) not in prev]
+        if not new:
+            if prev and not skips:
+                self._notify()
+            return
+        _LOGGER.warning("Volcast control: %s changed on the inverter after our last write — left as set by "
+                        "the owner instead of the saved copy", [s["key"] for s in new])
+        for s in new:
+            self._fire("volcast_control_restore_skipped",
+                       {"key": s["key"], "snapshot": s["snapshot"], "current": s["current"], "at": at})
+        self._notify()
 
     def _tou_restore_params(self) -> tuple[float, float]:
         reserve = self.schedule.fallback.soc_reserve if self.schedule is not None else _DEFAULT_RESERVE
@@ -2072,11 +2215,8 @@ class VolcastExecutor:
     def _record_tou_restore(self, report: TouReport, end: float) -> None:
         """Zapisy powrotu są NASZE: pamięć zna wartości, więc odczyt po nich nie jest rozjazdem."""
         memory, snap = self._memory, self._state.tou_snapshot
-        if snap is not None:
-            programs = _snapshot_programs(self._profile, snap)
-        else:
-            programs = baseline_programs(self._profile, *self._tou_restore_params())
-        flat = Params(tou=programs).flatten()
+        flat = self._tou_target(snap)
+        flat.pop(EN_KEY, None)
         ebit = 1 << self._profile.raw["write"]["tou_enable"]["enable_bit"]
         for key in report.written:
             if key in flat:
@@ -2725,6 +2865,7 @@ class VolcastExecutor:
         self._state.restore_keys = None
         self._state.taken_over = []
         self._state.tou_snapshot = None
+        self._state.tou_written = None
         self._state.trusted_profile = None
         self._memory.last_written.clear()
         self._memory.live_export = self._memory.live_export.forget_written()
@@ -2834,7 +2975,8 @@ class VolcastExecutor:
         self.tou_preview = {
             "lost_value_pln": round(res.lost_value_pln, 2), "merges": len(res.merges),
             "programs": [{"start": f"{p.start_min // 60:02d}:{p.start_min % 60:02d}",
-                          "power_w": round(p.power_w), "soc": round(p.soc), "grid_charge": p.grid_charge}
+                          "power_w": round(p.power_w), "soc": round(p.soc), "grid_charge": p.grid_charge,
+                          **({} if p.sell is None else {"sell": p.sell})}
                          for p in res.programs]}
 
     def _count(self, d: CycleDecision) -> None:

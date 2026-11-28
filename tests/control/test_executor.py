@@ -200,9 +200,9 @@ def test_no_restore_and_no_rewrite_after_reload(monkeypatch):
 def test_plan_from_store_after_restart_without_cloud(monkeypatch):
     h = goodwe_hass()
     store = ControlStore(h, "e1")
-    # Plan pobrany godzinę wcześniej (w limicie wieku); bez znacznika — `test_executor_stale_plan`.
+    # Plan pobrany pół godziny wcześniej (w limicie wieku); bez znacznika — `test_executor_stale_plan`.
     asyncio.run(store.async_save(ControlState(plan_raw=plan(), consent=True, local_switch=True,
-                                              plan_fetched_at=(NOW - timedelta(hours=1)).isoformat())))
+                                              plan_fetched_at=(NOW - timedelta(minutes=30)).isoformat())))
     _, ex = make(h, store=store, monkeypatch=monkeypatch)
 
     async def go():
