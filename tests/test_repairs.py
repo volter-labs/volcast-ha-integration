@@ -363,3 +363,115 @@ async def test_assignment_fix_saves_nothing_when_the_live_choice_fails(monkeypat
     monkeypatch.setattr(rt_mod.ds, "load_profiles", boom)
     done = await flow.async_step_assign({"pv_power_w": "sensor.pv_now"})
     assert done == {"type": "abort", "reason": "inverter_recognised"} and updates == []
+
+
+# ── rozpoznany falownik bez kanału sieci / zużycia domu ───────────────────────
+
+_CHANNELS = "telemetry_channels_missing_e1"
+
+
+def _channels_world(*, missing=("grid_power_w", "load_power_w"), options=None, loaded=True, entry_exists=True):
+    from custom_components.volcast import repairs
+
+    entry = SimpleNamespace(entry_id="e1", data={"api_key": "vk_x"}, options=dict(options or {}))
+    updates = []
+
+    def update(e, **kw):
+        updates.append(kw)
+        for k, v in kw.items():
+            setattr(e, k, v)
+        return True
+
+    hass = FakeHass()
+    rt = SimpleNamespace(choice=SimpleNamespace(integration_domain="huawei_solar"), direct=None,
+                         telemetry=SimpleNamespace(missing_balance_channels=tuple(missing)))
+    hass.data["volcast"] = {"e1": {"control": rt}} if loaded else {}
+    hass.config_entries = SimpleNamespace(async_get_entry=lambda eid: entry if entry_exists and eid == "e1" else None,
+                                          async_update_entry=update)
+    return hass, entry, updates, repairs
+
+
+async def _open_channels(hass, repairs):
+    flow = await repairs.async_create_fix_flow(hass, _CHANNELS, {"entry_id": "e1"})
+    flow.hass = hass
+    shown = {}
+    flow.async_show_form = lambda **k: shown.update(k) or {"type": "form", "step_id": k["step_id"]}
+    first = await flow.async_step_init()
+    return flow, shown, first
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing, fields", [
+    (("grid_power_w", "load_power_w"), {"grid_power_w", "load_power_w", "grid_power_negate"}),
+    (("load_power_w",), {"load_power_w"}),                     # sieć jest z profilu — bez pola i bez znaku sieci
+    (("grid_power_w",), {"grid_power_w", "grid_power_negate"}),
+])
+async def test_channels_fix_offers_only_the_missing_channels(missing, fields):
+    hass, entry, updates, repairs = _channels_world(missing=missing, options={"x": 1})
+    flow, shown, first = await _open_channels(hass, repairs)
+    assert first["type"] == "form" and first["step_id"] == "assign"
+    assert set(_suggested(shown)) == fields
+    assert updates == [] and entry.options == {"x": 1}
+
+
+@pytest.mark.asyncio
+async def test_channels_fix_adds_to_the_map_and_keeps_everything_else(monkeypatch):
+    hass, entry, updates, repairs = _channels_world(
+        options={"control_mode": "entities", "battery_power_negate": True,
+                 "telemetry_map": {"battery_power_w": "sensor.bat"}})
+    flow, _, _ = await _open_channels(hass, repairs)
+    done = await flow.async_step_assign({"grid_power_w": " sensor.meter ", "load_power_w": "sensor.house",
+                                         "grid_power_negate": True})
+    assert done["type"] == "create_entry" and len(updates) == 1
+    assert entry.options == {"control_mode": "entities", "battery_power_negate": True,
+                             "grid_power_negate": True,
+                             "telemetry_map": {"battery_power_w": "sensor.bat", "grid_power_w": "sensor.meter",
+                                               "load_power_w": "sensor.house"}}
+
+
+@pytest.mark.asyncio
+async def test_channels_fix_saves_one_channel_and_never_touches_the_grid_sign_without_grid():
+    hass, entry, updates, repairs = _channels_world(options={"grid_power_negate": True})
+    flow, _, _ = await _open_channels(hass, repairs)
+    # Pole znaku sieci przyszło, ale bez czujnika sieci — zapisana wartość znaku zostaje.
+    await flow.async_step_assign({"load_power_w": "sensor.house", "grid_power_negate": False})
+    assert entry.options == {"grid_power_negate": True, "telemetry_map": {"load_power_w": "sensor.house"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_input", [{}, {"grid_power_w": "  ", "load_power_w": ""}, {"pv_power_w": "sensor.pv"}])
+async def test_channels_fix_without_any_sensor_shows_the_form_again(user_input):
+    hass, entry, updates, repairs = _channels_world(options={"x": 1})
+    flow, shown, _ = await _open_channels(hass, repairs)
+    shown.clear()
+    result = await flow.async_step_assign(user_input)
+    assert result["type"] == "form" and shown["errors"] == {"base": "channel_required"}
+    assert updates == [] and entry.options == {"x": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kw, reason", [
+    ({"loaded": False}, "not_loaded"),
+    ({"entry_exists": False}, "not_loaded"),
+    ({"missing": ()}, "channels_present"),                     # kanały już są (np. po przeładowaniu z mapą)
+])
+async def test_channels_fix_aborts_clearly(kw, reason):
+    hass, entry, updates, repairs = _channels_world(**kw)
+    flow, shown, first = await _open_channels(hass, repairs)
+    assert first == {"type": "abort", "reason": reason}
+    done = await flow.async_step_assign({"grid_power_w": "sensor.g"})
+    assert done["type"] == "abort" and updates == []
+
+
+@pytest.mark.parametrize("name", ["strings.json", "translations/en.json"])
+def test_channels_fix_labels_match_the_installation_details_step(name):
+    import json
+    from pathlib import Path
+
+    raw = json.loads((Path(__file__).parents[1] / "custom_components" / "volcast" / name).read_text("utf-8"))
+    issue = raw["issues"]["telemetry_channels_missing"]
+    step = issue["fix_flow"]["step"]["assign"]
+    details = raw["options"]["step"]["details"]["data"]
+    assert step["data"] == {k: details[k] for k in ("grid_power_w", "load_power_w", "grid_power_negate")}
+    assert {"channel_required"} <= set(issue["fix_flow"]["error"])
+    assert {"not_loaded", "channels_present"} <= set(issue["fix_flow"]["abort"])

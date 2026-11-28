@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Volcast fehlen Netz- oder Hausverbrauchsdaten",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Volcast fehlen Netz- oder Hausverbrauchsdaten",
+            "description": "Volcast hat deinen Wechselrichter erkannt, erhält von ihm aber keine Netzleistung, keine Hausverbrauchsleistung oder beides nicht. Ohne sie sind Energiebilanz, Live-Ansicht und die Kalibrierung der Prognose aus Wechselrichterdaten eingeschränkt. Wähle unten die fehlenden Sensoren - sie werden deiner Sensorzuordnung hinzugefügt, sonst ändert sich nichts und die Einstellungen des Wechselrichters bleiben unverändert. Volcast erwartet, dass die Netzleistung beim Bezug positiv ist. Wenn du keinen solchen Sensor hast (zum Beispiel keinen Netzzähler), kannst du diese Meldung ignorieren.",
+            "data": {
+              "grid_power_w": "Netzleistung",
+              "load_power_w": "Hausverbrauchsleistung",
+              "grid_power_negate": "Netzsensor zeigt Einspeisung als positiv"
+            },
+            "data_description": {
+              "grid_power_negate": "Aktivieren, wenn dein Netzsensor beim Bezug negativ ist."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Wähle mindestens einen Sensor."
+        },
+        "abort": {
+          "not_loaded": "Volcast läuft für diesen Eintrag nicht. Lade die Integration neu und versuche es erneut.",
+          "channels_present": "Volcast erhält bereits Netz- und Hausverbrauchsdaten, es müssen keine Sensoren gewählt werden. Lade die Integration neu, wenn diese Meldung weiterhin angezeigt wird."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Einige Wechselrichter-Einstellungen sind für Volcast nicht verfügbar",
       "description": "Volcast kann diese Wechselrichter-Einstellungen nicht verwenden, weil ihre Entitäten fehlen, deaktiviert oder nicht verfügbar sind: {entities}. Die Steuerung läuft ohne sie weiter, und der Volcast-Plan verlässt sich nicht mehr auf sie. Sobald die Entitäten wieder verfügbar sind, nutzt Volcast sie automatisch."

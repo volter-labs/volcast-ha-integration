@@ -37,7 +37,7 @@ from .cloud.client import Backend, ClientOutdated, PairingClient, PairingDisable
 from .control import direct_search as ds
 from .control.runtime import async_control_change_allowed, async_no_inverter_integration_now, async_direct_search, map_entities, mapped_with_overrides
 from .control.store import async_installation_salt
-from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_pv_power
+from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_production
 from .core.modbus.identity import device_fingerprint, identity_info
 from .core.registers import RegisterImage
 from .core.transports.ha_modbus import (HA_MODBUS_KIND, HaModbusConfig, HaModbusTransport, MissingRegister,
@@ -921,7 +921,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         # Jak przy złożeniu (`compose_direct`): profil celu; bez niego sterowanie bezpośrednie nie wstanie,
         # więc telemetria nie poniesie produkcji (krok info się nie pokaże).
         profile = next((p for p in profiles if p.id == target.get("profile_id")), None)
-        carries = profile is not None and telemetry_carries_pv_power(
+        carries = profile is not None and telemetry_carries_production(
             ProfileChoice(profile, None, None), profile_map={},
             manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
         return await self._enable_control(options, carries_pv_power=carries)
@@ -1003,7 +1003,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
                 target["rated_power_w"] = float(rated)
             options = self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
                                     OPT_DIRECT_TRIAL: None, OPT_HUB_CHECK: check})
-            carries = telemetry_carries_pv_power(
+            carries = telemetry_carries_production(
                 ProfileChoice(profile, None, None), profile_map={},
                 manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
             return await self._enable_control(options, carries_pv_power=carries)
@@ -1134,8 +1134,8 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             return self.async_abort(reason="entity_mode_unavailable")
         options = self._merged(entity_mode_options(choice))
         # Ten sam wybór i ta sama mapa encji, z których złożenie zbuduje nadajnik telemetrii.
-        carries = telemetry_carries_pv_power(choice, profile_map=mapped,
-                                             manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=False)
+        carries = telemetry_carries_production(choice, profile_map=mapped,
+                                               manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=False)
         return await self._enable_control(options, carries_pv_power=carries)
 
     def _mapped_pv_sensors(self) -> list[str]:

@@ -1,6 +1,6 @@
-"""Jedno źródło produkcji na prawdziwym rdzeniu HA: telemetria sterowania z mocą PV wyłącza lokalny
-tracker (zgłoszenie o nieużywanych czujnikach), telemetria bez mocy PV zostawia tracker; zgłoszenie
-i timery znikają przy rozładunku i usunięciu wpisu."""
+"""Jedno źródło produkcji na prawdziwym rdzeniu HA: telemetria sterowania z mocą PV, siecią i poborem wyłącza
+lokalny tracker (zgłoszenie o nieużywanych czujnikach), telemetria bez mocy PV albo bez kanału bilansu zostawia
+tracker; zgłoszenie i timery znikają przy rozładunku i usunięciu wpisu."""
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntryState
@@ -152,3 +152,36 @@ async def test_remove_of_loaded_entry_leaves_no_mapping_issue_or_timers(hass: Ho
     assert _mapping_issues(hass) == []
     assert volcast_timers(hass) == []
     assert not hass.data.get(DOMAIN)
+
+
+async def test_recognised_inverter_without_grid_keeps_tracker_and_raises_channels_issue(
+        hass: HomeAssistant, network_down, hass_storage):
+    """Falownik rozpoznany, ale bez encji mocy sieci: serwer nie przyjmie produkcji z telemetrii, więc tracker
+    zostaje, a Naprawy proponują wskazanie brakującego czujnika. Rozładunek zdejmuje zgłoszenie."""
+    ents = add_goodwe(hass)
+    er.async_get(hass).async_remove(ents["grid_power_w"])
+    hass.states.async_remove(ents["grid_power_w"])
+    _pv_sensors(hass)
+    store_state(hass_storage, "paired01", dict(GATES))
+    entry = make_entry(hass, options={**ENTITY_OPTIONS, **PV})
+    await setup_entry(hass, entry)
+    rt = control_of(hass, entry)
+    assert "pv_power_w" in rt.mapped and "grid_power_w" not in rt.mapped
+    assert rt.telemetry.missing_balance_channels == ("grid_power_w",)
+    _assert_tracker_source(hass, entry)
+    issue = _issue(hass, f"telemetry_channels_missing_{entry.entry_id}")
+    assert issue is not None and issue.is_fixable and issue.severity is ir.IssueSeverity.WARNING
+    assert issue.translation_key == "telemetry_channels_missing" and issue.data == {"entry_id": entry.entry_id}
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _issue(hass, f"telemetry_channels_missing_{entry.entry_id}") is None
+
+
+async def test_complete_inverter_telemetry_raises_no_channels_issue(hass: HomeAssistant, network_down,
+                                                                   hass_storage):
+    add_goodwe(hass)
+    store_state(hass_storage, "paired01", dict(GATES))
+    entry = make_entry(hass, options=dict(ENTITY_OPTIONS))
+    await setup_entry(hass, entry)
+    assert control_of(hass, entry).telemetry.missing_balance_channels == ()
+    assert _issue(hass, f"telemetry_channels_missing_{entry.entry_id}") is None

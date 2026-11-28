@@ -186,22 +186,49 @@ def _declared_keys(choice: ProfileChoice | None, manual_keys: Iterable[str], *, 
     return frozenset(keys | set(manual_keys))
 
 
-def telemetry_carries_pv_power(choice: ProfileChoice | None, *, profile_map: Mapping[str, str],
-                               manual_map: Mapping[str, str], direct: bool) -> bool:
-    """Czy ścieżka odczytu ma źródło mocy PV — wtedy serwer liczy z niej produkcję.
+# Kanały, bez których serwer nie sprawdzi bilansu próbki (pv + sieć + bateria − zużycie): sieć i zużycie ma
+# każde konto, więc ich braku nie da się zadeklarować. Bez nich każde okno jest „niesprawdzone”, a godzina
+# produkcji z telemetrii idzie tylko na wykres — Kalman nie dostaje pomiaru.
+BALANCE_KEYS = ("grid_power_w", "load_power_w")
 
-    Liczy się tylko `pv_power_w`: serwer całkuje moc PV, a sam licznik energii PV bez mocy nie daje
-    mu produkcji (skali licznika nie ma czym potwierdzić). Bezpośrednio: rejestry profilu (`read`)
-    i mapa ręczna (= klucze deklarowane). W trybie encji tylko encje faktycznie zmapowane (mapa profilu
-    liczy się tylko przy wybranej integracji) i mapa ręczna — profil może opisywać encję, której w HA nie ma.
-    Jedna reguła dla nadajnika i dla opcji, które przewidują ją przed złożeniem sterowania.
+
+def _read_sources(choice: ProfileChoice | None, *, profile_map: Mapping[str, str],
+                  manual_map: Mapping[str, str], direct: bool) -> frozenset[str]:
+    """Klucze, które ścieżka odczytu ma skąd czytać — znane od złożenia, przed pierwszą wysyłką.
+
+    Bezpośrednio: rejestry profilu (`read`) i mapa ręczna (= klucze deklarowane). W trybie encji tylko encje
+    faktycznie zmapowane (mapa profilu liczy się tylko przy wybranej integracji) i mapa ręczna — profil może
+    opisywać encję, której w HA nie ma.
     """
     if direct:
-        sources = _declared_keys(choice, manual_map, direct=True)
-    else:
-        profile_keys = profile_map if choice and choice.integration_domain else {}
-        sources = frozenset(profile_keys) | frozenset(manual_map)
-    return "pv_power_w" in sources
+        return _declared_keys(choice, manual_map, direct=True)
+    profile_keys = profile_map if choice and choice.integration_domain else {}
+    return frozenset(profile_keys) | frozenset(manual_map)
+
+
+def missing_balance_keys(choice: ProfileChoice | None, *, profile_map: Mapping[str, str],
+                         manual_map: Mapping[str, str], direct: bool) -> tuple[str, ...]:
+    """Kanały bilansu (`BALANCE_KEYS`), których ścieżka odczytu nie ma. Ścieżka bez żadnego źródła = `()`:
+    to brak odczytów w ogóle, nie brak kanału (zgłaszają to inne naprawy)."""
+    sources = _read_sources(choice, profile_map=profile_map, manual_map=manual_map, direct=direct)
+    if not sources:
+        return ()
+    return tuple(k for k in BALANCE_KEYS if k not in sources)
+
+
+def telemetry_carries_production(choice: ProfileChoice | None, *, profile_map: Mapping[str, str],
+                                 manual_map: Mapping[str, str], direct: bool) -> bool:
+    """Czy serwer policzy z telemetrii produkcję dla kalibracji — wtedy lokalny tracker nie działa.
+
+    Potrzebna moc PV (serwer całkuje moc; sam licznik energii PV bez mocy nie daje mu produkcji — skali
+    licznika nie ma czym potwierdzić) i oba kanały bilansu (`BALANCE_KEYS`): bez sieci albo zużycia serwer
+    oznacza godzinę „tylko na wykres” i produkcja dla Kalmana płynie wyłącznie z trackera. Kanał dołożony
+    później (mapa ręczna) zmienia opcje, a przeładowanie wpisu przełącza źródło — serwer i tak nie nadpisuje
+    godziny zgłoszonej przez wtyczkę (bramka `juz_zgloszone`) i robi jeden krok Kalmana na godzinę.
+    Jedna reguła dla nadajnika i dla opcji, które przewidują ją przed złożeniem sterowania.
+    """
+    sources = _read_sources(choice, profile_map=profile_map, manual_map=manual_map, direct=direct)
+    return "pv_power_w" in sources and all(k in sources for k in BALANCE_KEYS)
 
 
 
@@ -346,9 +373,15 @@ class TelemetrySender:
 
     @property
     def reports_pv_production(self) -> bool:
-        """Czy ścieżka odczytu ma źródło mocy PV (wiadomo od złożenia) — reguła `telemetry_carries_pv_power`."""
-        return telemetry_carries_pv_power(self._choice, profile_map=self._profile_map, manual_map=self._manual_map,
-                                          direct=self._direct is not None)
+        """Czy serwer policzy z tej telemetrii produkcję (wiadomo od złożenia) — reguła `telemetry_carries_production`."""
+        return telemetry_carries_production(self._choice, profile_map=self._profile_map,
+                                            manual_map=self._manual_map, direct=self._direct is not None)
+
+    @property
+    def missing_balance_channels(self) -> tuple[str, ...]:
+        """Kanały bilansu, których ta ścieżka odczytu nie ma (`missing_balance_keys`)."""
+        return missing_balance_keys(self._choice, profile_map=self._profile_map, manual_map=self._manual_map,
+                                    direct=self._direct is not None)
 
     async def async_start(self) -> None:
         if self._unsub is None:

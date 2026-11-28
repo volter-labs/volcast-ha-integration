@@ -488,9 +488,11 @@ async def _run_production(monkeypatch, *, options, data=None, control=None):
         monkeypatch.setattr(obj, name, value)
 
     issues: list[str] = []
-    # Zgłoszenie mapy czujników ma własne testy (`test_setup_issues.py`); tu liczą się tylko zgłoszenia produkcji.
+    # Zgłoszenia mapy czujników i brakujących kanałów mają własne testy (`test_setup_issues.py`); tu liczą się tylko
+    # zgłoszenia produkcji.
     monkeypatch.setattr(integ.ir, "async_create_issue",
-                        lambda *a, **k: None if a[2].startswith("sensor_assignment_") else issues.append(a[2]))
+                        lambda *a, **k: None if a[2].startswith(("sensor_assignment_", "telemetry_channels_"))
+                        else issues.append(a[2]))
     hass, entry, ok = await sh.run_setup(setattr_, options=options, data=data)
     assert ok is True
     tracker = _RecTracker.instances[0] if _RecTracker.instances else None
@@ -527,12 +529,16 @@ async def test_entry_without_mapping_or_control_keeps_repair_issue(monkeypatch):
     assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
 
 
+# Sieć i zużycie domu — bez nich serwer nie przyjmie produkcji z telemetrii (tracker zostaje).
+_BALANCE = {"grid_power_w": "sensor.grid", "load_power_w": "sensor.load"}
+
+
 async def test_control_with_inverter_telemetry_drops_the_mapped_tracker(monkeypatch, caplog):
     import logging
     caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
         monkeypatch, options=MAPPING, data=_PAIRED,
-        control=_runtime(choice=_gw(), profile_map={"pv_power_w": "sensor.gw_pv_power"}))
+        control=_runtime(choice=_gw(), profile_map={"pv_power_w": "sensor.gw_pv_power", **_BALANCE}))
     assert tracker is None and rec == []
     assert hass.data[DOMAIN][entry.entry_id].get("reconciler") is None
     assert issues == ["production_mapping_unused_test_entry_id"]
@@ -620,15 +626,26 @@ async def test_entity_mode_without_mapped_pv_entities_keeps_the_mapped_tracker(m
 
 
 async def test_manual_telemetry_pv_power_drops_the_mapped_tracker(monkeypatch, caplog):
-    """Bez falownika, ale ręczna mapa telemetrii ma moc PV — produkcja płynie telemetrią."""
+    """Bez falownika, ale ręczna mapa telemetrii ma moc PV, sieć i zużycie — produkcja płynie telemetrią."""
     import logging
     caplog.set_level(logging.INFO)
     hass, entry, tracker, rec, issues = await _run_production(
         monkeypatch, options=MAPPING, data=_PAIRED,
-        control=_runtime(manual={"pv_power_w": "sensor.pv_power"}))
+        control=_runtime(manual={"pv_power_w": "sensor.pv_power", **_BALANCE}))
     assert tracker is None and rec == []
     assert issues == ["production_mapping_unused_test_entry_id"]
     assert len(_disabled_logs(caplog)) == 1
+
+
+async def test_manual_pv_power_without_balance_channels_keeps_the_mapped_tracker(monkeypatch, caplog):
+    """Moc PV bez sieci albo zużycia: serwer daje godzinie tylko wykres, więc kalibruje tracker wtyczki."""
+    import logging
+    caplog.set_level(logging.INFO)
+    for manual in ({"pv_power_w": "sensor.pv_power"}, {"pv_power_w": "sensor.pv_power", "grid_power_w": "sensor.g"}):
+        hass, entry, tracker, rec, issues = await _run_production(
+            monkeypatch, options=MAPPING, data=_PAIRED, control=_runtime(manual=manual))
+        assert tracker is not None and rec == ["sensor.ext_energy"]
+        assert issues == [] and _disabled_logs(caplog) == []
 
 
 async def test_pv_energy_counter_alone_keeps_the_mapped_tracker(monkeypatch, caplog):
@@ -759,7 +776,7 @@ async def test_platform_forward_failure_stops_the_started_tracker(monkeypatch):
 
 async def test_failed_setup_leaves_no_mapping_unused_issue(monkeypatch):
     """Zgłoszenie „czujniki nieużywane” powstaje przed platformami — nieudany setup je zdejmuje."""
-    control = _runtime(manual={"pv_power_w": "sensor.pv_power"})      # telemetria niesie moc PV
+    control = _runtime(manual={"pv_power_w": "sensor.pv_power", **_BALANCE})      # telemetria niesie produkcję
     hass, entry, tracker, control, unloaded = await _run_failing_setup(
         monkeypatch, forward_error=RuntimeError("platforms"), control=control)
     issue_id = f"production_mapping_unused_{entry.entry_id}"

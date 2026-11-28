@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "Volcast mist gegevens over net of huisverbruik",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "Volcast mist gegevens over net of huisverbruik",
+            "description": "Volcast heeft je omvormer herkend, maar ontvangt er geen netvermogen, geen huisverbruik of beide niet van. Zonder deze gegevens zijn de energiebalans, de live-weergave en de kalibratie van de voorspelling uit omvormergegevens beperkt. Kies hieronder de ontbrekende sensoren - ze worden aan je sensorkoppeling toegevoegd, verder verandert er niets en de instellingen van de omvormer blijven zoals ze zijn. Volcast verwacht dat het netvermogen positief is bij afname. Als je zo'n sensor niet hebt (bijvoorbeeld geen netmeter), kun je deze melding negeren.",
+            "data": {
+              "grid_power_w": "Netvermogen",
+              "load_power_w": "Huisverbruiksvermogen",
+              "grid_power_negate": "Netsensor toont teruglevering als positief"
+            },
+            "data_description": {
+              "grid_power_negate": "Schakel in als je netsensor negatief is tijdens afname."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Kies minstens één sensor."
+        },
+        "abort": {
+          "not_loaded": "Volcast draait niet voor deze invoer. Laad de integratie opnieuw en probeer het nog eens.",
+          "channels_present": "Volcast ontvangt al gegevens over net en huisverbruik, er hoeven geen sensoren gekozen te worden. Laad de integratie opnieuw als deze melding nog steeds wordt getoond."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Sommige omvormerinstellingen zijn niet beschikbaar voor Volcast",
       "description": "Volcast kan deze omvormerinstellingen niet gebruiken omdat hun entiteiten ontbreken, uitgeschakeld of niet beschikbaar zijn: {entities}. De besturing gaat zonder deze instellingen door en het Volcast-plan vertrouwt er niet meer op. Zodra de entiteiten weer beschikbaar zijn, gebruikt Volcast ze automatisch."

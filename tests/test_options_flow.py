@@ -142,13 +142,17 @@ def test_entities_with_pv_power_but_nothing_mapped_skip_telemetry_info():
 
 
 def test_entities_manual_pv_power_shows_telemetry_info():
-    f = flow(options={**MAPPED_PV, "telemetry_map": {"pv_power_w": "sensor.inv_pv"}}, runtime=rt())
+    tmap = {"pv_power_w": "sensor.inv_pv", "grid_power_w": "sensor.grid", "load_power_w": "sensor.house"}
+    f = flow(options={**MAPPED_PV, "telemetry_map": tmap}, runtime=rt())
     assert asyncio.run(f.async_step_control_entities())["step_id"] == "control_telemetry_info"
+    # sama moc PV, bez sieci i zużycia: serwer nie przyjmie produkcji z telemetrii — bez informacji
+    f = flow(options={**MAPPED_PV, "telemetry_map": {"pv_power_w": "sensor.inv_pv"}}, runtime=rt())
+    assert asyncio.run(f.async_step_control_entities())["type"] == "create_entry"
 
 
 def test_enabling_entities_from_off_shows_telemetry_info_with_mapped_sensors():
     shown = []
-    runtime = rt(mapped=WITH_PV)
+    runtime = rt(mapped=(*WITH_PV, "grid_power_w", "load_power_w"))
     left = []
 
     async def leave():

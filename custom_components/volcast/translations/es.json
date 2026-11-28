@@ -623,6 +623,32 @@
         }
       }
     },
+    "telemetry_channels_missing": {
+      "title": "A Volcast le faltan datos de red o de consumo de la casa",
+      "fix_flow": {
+        "step": {
+          "assign": {
+            "title": "A Volcast le faltan datos de red o de consumo de la casa",
+            "description": "Volcast ha reconocido tu inversor, pero no recibe de él la potencia de red, la potencia de consumo de la casa o ninguna de las dos. Sin ellas, el balance energético, la vista en directo y la calibración de la previsión con datos del inversor son limitados. Elige abajo los sensores que faltan: se añadirán a tu mapa de sensores, no se cambia nada más y los ajustes del inversor no se modifican. Volcast espera que la potencia de red sea positiva al importar. Si no tienes ese sensor (por ejemplo, no hay medidor de red), puedes ignorar este aviso.",
+            "data": {
+              "grid_power_w": "Potencia de la red",
+              "load_power_w": "Potencia de consumo de la casa",
+              "grid_power_negate": "El sensor de red muestra la exportación como positiva"
+            },
+            "data_description": {
+              "grid_power_negate": "Actívalo cuando tu sensor de red sea negativo al importar."
+            }
+          }
+        },
+        "error": {
+          "channel_required": "Elige al menos un sensor."
+        },
+        "abort": {
+          "not_loaded": "Volcast no está en ejecución para esta entrada. Recarga la integración e inténtalo de nuevo.",
+          "channels_present": "Volcast ya recibe datos de red y de consumo de la casa, así que no hace falta elegir sensores. Vuelve a cargar la integración si este aviso sigue apareciendo."
+        }
+      }
+    },
     "unsupported_setting": {
       "title": "Algunos ajustes del inversor no están disponibles para Volcast",
       "description": "Volcast no puede usar estos ajustes del inversor porque sus entidades faltan, están desactivadas o no están disponibles: {entities}. El control continúa sin ellos y el plan de Volcast ya no depende de ellos. Cuando las entidades vuelvan a estar disponibles, Volcast las usará automáticamente."

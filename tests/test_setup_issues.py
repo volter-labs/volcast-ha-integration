@@ -82,11 +82,12 @@ def _paired(monkeypatch, *, carries: bool):
     async def setup_control(hass, entry, *, report):
         rt = fake_runtime()
         if carries:
-            # Nadajnik telemetrii z mocą/licznikiem PV — jedyne źródło odpowiedzi „niesie produkcję".
+            # Nadajnik telemetrii z mocą PV, siecią i zużyciem — jedyne źródło odpowiedzi „niesie produkcję".
             from custom_components.volcast.control.telemetry import TelemetrySender
             rt.telemetry = TelemetrySender(None, SimpleNamespace(entry_id="e1", options={}), None, None,
                                            choice=None, profile_map={}, grid_negate=False, limits=None,
-                                           manual_map={"pv_power_w": "sensor.pv_power"})
+                                           manual_map={"pv_power_w": "sensor.pv_power", "grid_power_w": "sensor.g",
+                                                       "load_power_w": "sensor.l"})
         return rt
     monkeypatch.setattr(integ, "async_setup_control", setup_control)
 
@@ -252,3 +253,137 @@ async def test_assignment_issue_clears_once_the_map_has_pv_power(monkeypatch):
     hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED,
                                       options={"telemetry_map": {"pv_power_w": "sensor.pv"}})
     assert ok and any(c.args[2].startswith("sensor_assignment_missing_") for c in delete.call_args_list)
+
+
+# --- Rozpoznany falownik bez kanału sieci albo zużycia domu -----------------------------------
+
+_GW = SimpleNamespace(integration_domain="goodwe", profile=SimpleNamespace(raw={}))
+
+
+def _channels_calls(mock):
+    return [c for c in mock.call_args_list if c.args[2].startswith("telemetry_channels_missing_")]
+
+
+def _paired_reading(monkeypatch, *, profile_map, choice=_GW, manual=None, direct=None):
+    """Sterowanie z rozpoznanym falownikiem i prawdziwym nadajnikiem telemetrii czytającym `profile_map`."""
+    import custom_components.volcast as integ
+    from custom_components.volcast.control.telemetry import TelemetrySender
+    from .test_setup_paired import fake_runtime
+
+    async def setup_control(hass, entry, *, report):
+        rt = fake_runtime()
+        rt.choice = choice
+        rt.direct = direct
+        rt.telemetry = TelemetrySender(None, SimpleNamespace(entry_id="e1", options={}), None, None,
+                                       choice=choice, profile_map=profile_map, grid_negate=False, limits=None,
+                                       manual_map=manual or {})
+        return rt
+    monkeypatch.setattr(integ, "async_setup_control", setup_control)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile_map", [
+    {"pv_power_w": "sensor.pv"},                                         # ani sieci, ani zużycia (Huawei bez miernika)
+    {"pv_power_w": "sensor.pv", "grid_power_w": "sensor.grid"},          # bez zużycia domu
+    {"pv_power_w": "sensor.pv", "load_power_w": "sensor.load"},          # bez sieci
+])
+async def test_recognised_inverter_without_grid_or_load_raises_fixable_issue(monkeypatch, profile_map):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_reading(monkeypatch, profile_map=profile_map)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok
+    calls = _channels_calls(create)
+    assert len(calls) == 1
+    assert calls[0].args[2] == f"telemetry_channels_missing_{entry.entry_id}"
+    kw = calls[0].kwargs
+    assert kw["translation_key"] == "telemetry_channels_missing" and kw["is_fixable"] is True
+    assert kw["severity"] == "warning" and kw["data"] == {"entry_id": entry.entry_id}
+    assert not _assignment_calls(create)                       # profil rozpoznany: bez naprawy „wskaż czujniki”
+
+
+@pytest.mark.asyncio
+async def test_channels_issue_absent_when_grid_and_load_are_read(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_reading(monkeypatch, profile_map={"pv_power_w": "sensor.pv", "grid_power_w": "sensor.grid"},
+                    manual={"load_power_w": "sensor.load"})    # brakujący kanał z mapy ręcznej
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and not _channels_calls(create)
+    assert any(c.args[2] == f"telemetry_channels_missing_{entry.entry_id}" for c in delete.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_channels_issue_absent_without_recognised_inverter_or_reading_path(monkeypatch):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    # bez rozpoznanego falownika: od tego jest naprawa mapy czujników (wszystkie pola, także sieć i zużycie)
+    _paired_reading(monkeypatch, choice=None, profile_map={}, manual={"pv_power_w": "sensor.pv"})
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and not _channels_calls(create)
+    # rozpoznany falownik, ale telemetria nic nie czyta — to zgłoszenie „brak odczytów”, nie tej naprawy
+    create.reset_mock()
+    _paired_reading(monkeypatch, profile_map={})
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and not _channels_calls(create)
+    # sterowanie nie wstało / wpis bez konta / tylko rozpoznanie
+    create.reset_mock()
+    _paired_with(monkeypatch, control=False)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok and not _channels_calls(create)
+    hass, entry, ok = await run_setup(monkeypatch.setattr)
+    assert ok and not _channels_calls(create)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data={"mode": "discovery_only"})
+    assert ok and not _channels_calls(create)
+
+
+@pytest.mark.asyncio
+async def test_channels_issue_goes_away_on_unload_and_removal(monkeypatch):
+    import custom_components.volcast as integ
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_reading(monkeypatch, profile_map={"pv_power_w": "sensor.pv"})
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    issue = f"telemetry_channels_missing_{entry.entry_id}"
+    monkeypatch.setattr(integ, "async_unload_control", AsyncMock())
+    delete.reset_mock()
+    assert await integ.async_unload_entry(hass, entry) is True
+    assert any(c.args[2] == issue for c in delete.call_args_list)
+    delete.reset_mock()
+    monkeypatch.setattr(integ, "async_remove_control", AsyncMock())
+    await integ.async_remove_entry(hass, entry)
+    assert any(c.args[2] == issue for c in delete.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_channels_issue_survives_a_failing_issue_registry(monkeypatch):
+    # Błąd rejestru zgłoszeń nie może wywrócić setupu (sterowanie już stoi).
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+
+    def boom(hass, domain, issue_id, **kw):
+        if issue_id.startswith("telemetry_channels_missing_"):
+            raise RuntimeError("registry")
+    create.side_effect = boom
+    _paired_reading(monkeypatch, profile_map={"pv_power_w": "sensor.pv"})
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED)
+    assert ok
+
+
+# --- Produkcja: tracker wtyczki zostaje, gdy serwer nie przyjmie produkcji z telemetrii ---------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile_map, tracker_on", [
+    ({"pv_power_w": "sensor.pv"}, True),                                        # bez sieci i zużycia
+    ({"pv_power_w": "sensor.pv", "grid_power_w": "sensor.grid"}, True),         # bez zużycia
+    ({"pv_power_w": "sensor.pv", "grid_power_w": "sensor.grid", "load_power_w": "sensor.load"}, False),
+])
+async def test_tracker_stays_on_while_telemetry_lacks_a_balance_channel(monkeypatch, profile_map, tracker_on):
+    from .test_setup_paired import PAIRED
+    create, delete = _patch_issues(monkeypatch)
+    _paired_reading(monkeypatch, profile_map=profile_map)
+    hass, entry, ok = await run_setup(monkeypatch.setattr, data=PAIRED, options=_MAPPED)
+    assert ok
+    assert (hass.data["volcast"][entry.entry_id]["tracker"] is not None) is tracker_on
+    # „zmapowane czujniki nieużywane” tylko wtedy, gdy produkcję naprawdę niesie telemetria
+    assert bool(_unused_calls(create)) is not tracker_on
