@@ -239,3 +239,10 @@ def test_constant_lives_in_one_place():
     assert STALE_PLAN_S == 60 * 60
     assert not hasattr(ex_mod, "STALE_PLAN_S") or ex_mod.STALE_PLAN_S is STALE_PLAN_S
     assert parse_schedule(charge_plan()).slots[0].from_fallback is False
+
+
+
+def test_fetch_time_save_throttle_stays_well_below_the_stale_limit():
+    # Po restarcie wiek liczy się od ostatniego ZAPISANEGO pobrania (zapis najwyżej co `_FETCH_SAVE_S`),
+    # więc limit widziany po restarcie to STALE_PLAN_S − _FETCH_SAVE_S. Zapas nie może zjeść limitu.
+    assert ex_mod._FETCH_SAVE_S <= STALE_PLAN_S / 3

@@ -964,3 +964,46 @@ async def test_flush_completes_when_the_repair_api_raises(monkeypatch):
     await rt.telemetry.async_flush()            # nie rzuca
     monkeypatch.undo()
     await rt_mod.async_unload_control(hass, rt)
+
+
+class _TickCounter:
+    def __init__(self):
+        self.ticks = 0
+
+    async def async_tick(self):
+        self.ticks += 1
+
+
+@pytest.mark.asyncio
+async def test_first_tick_is_skipped_when_the_first_fetch_finishes_in_time():
+    # Pobranie zakończone na czas samo kończy się cyklem (`refresh_and_tick`) — bez drugiego cyklu.
+    ex = _TickCounter()
+    fetch = asyncio.get_running_loop().create_task(asyncio.sleep(0.01))
+    await rt_mod.first_tick_after_fetch(fetch, ex, wait_s=1.0)
+    assert ex.ticks == 0
+
+
+@pytest.mark.asyncio
+async def test_first_tick_runs_after_the_bounded_wait():
+    ex = _TickCounter()
+    fetch = asyncio.get_running_loop().create_task(asyncio.sleep(10))
+    await rt_mod.first_tick_after_fetch(fetch, ex, wait_s=0.01)
+    assert ex.ticks == 1 and not fetch.done()                   # pobranie trwa dalej, nieprzerwane
+    fetch.cancel()
+
+
+@pytest.mark.asyncio
+async def test_first_tick_runs_when_the_first_fetch_fails():
+    async def boom():
+        raise RuntimeError("x")
+    ex = _TickCounter()
+    fetch = asyncio.get_running_loop().create_task(boom())
+    await rt_mod.first_tick_after_fetch(fetch, ex, wait_s=1.0)
+    assert ex.ticks == 1
+
+
+@pytest.mark.asyncio
+async def test_first_tick_without_a_fetch_task_runs_at_once():
+    ex = _TickCounter()
+    await rt_mod.first_tick_after_fetch(None, ex)
+    assert ex.ticks == 1

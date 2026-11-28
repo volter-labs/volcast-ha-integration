@@ -573,6 +573,9 @@ def _patch_control(monkeypatch, store, schedule):
         async def async_get_schedule(self):
             if schedule == "auth":
                 raise CloudAuthError
+            if isinstance(schedule, dict):
+                await asyncio.sleep(0.05)                            # odpowiedź chmury po chwili
+                return dict(schedule)
             return None                                              # chmura nieosiągalna
 
         async def async_post_telemetry(self, reading):
@@ -610,9 +613,9 @@ def _stored_plan():
     from .control.ha_fakes import NOW
     from .control.test_executor import plan
     store = ControlStore(object(), "test_entry_id")
-    # Plan pobrany godzinę przed startem bez sieci — w limicie wieku planu.
+    # Plan pobrany pół godziny przed startem bez sieci — w limicie wieku planu.
     asyncio.run(store.async_save(ControlState(plan_raw=plan(), consent=True, local_switch=True,
-                                              plan_fetched_at=(NOW - timedelta(hours=1)).isoformat())))
+                                              plan_fetched_at=(NOW - timedelta(minutes=30)).isoformat())))
     return store
 
 
@@ -641,6 +644,32 @@ def test_forecast_failure_at_setup_never_blocks_control(monkeypatch, case):
     assert FORECAST_IDS <= unique_ids(hass.entities)
     assert after_setup == "sell_power"                     # cykl z planu z magazynu, bez chmury
     assert hass.states.get(E["mode"]).state == "auto" and not rt.executor.owned
+    asyncio.run(rt_mod.async_unload_control(hass, rt))
+
+
+def test_restart_with_stale_stored_plan_waits_for_the_first_fetch(monkeypatch):
+    # Po przerwie HA dłuższej niż limit wieku planu: pierwszy cykl czeka na pierwsze pobranie, więc
+    # udane pobranie nie zostawia na falowniku zbędnej pary zapisów (zapas, potem znów plan).
+    from custom_components.volcast.control.store import ControlState, ControlStore
+
+    from .control.ha_fakes import GOODWE_ENTITIES as E
+    from .control.ha_fakes import NOW
+    from .control.test_executor import plan
+    store = ControlStore(object(), "test_entry_id")
+    asyncio.run(store.async_save(ControlState(plan_raw=plan(), consent=True, local_switch=True,
+                                              plan_fetched_at=(NOW - timedelta(minutes=61)).isoformat())))
+    _patch_control(monkeypatch, store, plan())
+    hass = _control_hass()
+    from .setup_harness import FakeCoordinator
+
+    async def go():
+        entry, ok = await _setup(monkeypatch, hass, FakeCoordinator)
+        return hass.data["volcast"][entry.entry_id]["control"]
+    rt = asyncio.run(go())
+    writes = [(c[0], c[1], c[2]) for c in hass.services.calls]
+    # pierwszy zapis to plan (sprzedaż), bez wcześniejszych zapisów slotu zapasowego (rezerwa, eksport)
+    assert writes and writes[0] == ("select", "select_option", {"entity_id": E["mode"], "option": "sell_power"}), writes
+    assert rt.executor.plan_stale(NOW) is False
     asyncio.run(rt_mod.async_unload_control(hass, rt))
 
 

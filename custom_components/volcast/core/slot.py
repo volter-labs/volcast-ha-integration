@@ -17,7 +17,8 @@ from .ev.model import LoadSlot, LoadsMeta, parse_loads
 # Limit wieku planu baterii bez kontaktu z chmurą (od ostatniego UDANEGO pobrania, nie od wygenerowania):
 # po nim sloty aktywne wykonuje slot zapasowy. Jedyne miejsce tej liczby. Plan pobierany co 300 s (12 prób
 # w limicie); slot zapasowy (autokonsumpcja z rezerwą) jest bezpieczny — stary plan kosztuje więcej niż
-# pominięte tanie ładowanie.
+# pominięte tanie ładowanie. Po restarcie limit widziany w praktyce to 45–60 min: czas pobrania trafia do
+# magazynu najwyżej co `_FETCH_SAVE_S` (15 min, `control/executor.py`; test pilnuje ≤ 1/3 tego limitu).
 STALE_PLAN_S = 60 * 60
 # Znacznik pobrania z przyszłości ponad ten zapas (zegar ścienny cofnięty) = wiek nieznany.
 _FUTURE_FETCH_TOLERANCE_S = 300
