@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Tramite l'integrazione dell'inverter (entità)",
           "control_direct": "Direttamente tramite la rete locale",
+          "control_hub": "Tramite un hub Modbus di Home Assistant (sensori grezzi)",
           "control_off": "Disattivato — solo previsione e monitoraggio",
           "entity_map": "Scegli manualmente le entità dell'inverter"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Tramite l'integrazione dell'inverter (entità) (consigliato)",
           "control_direct": "Direttamente tramite la rete locale",
+          "control_hub": "Tramite un hub Modbus di Home Assistant (sensori grezzi)",
           "control_off": "Disattivato — solo previsione e monitoraggio",
           "entity_map": "Scegli manualmente le entità dell'inverter"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Tramite l'integrazione dell'inverter (entità)",
           "control_direct": "Direttamente tramite la rete locale (consigliato)",
+          "control_hub": "Tramite un hub Modbus di Home Assistant (sensori grezzi)",
           "control_off": "Disattivato — solo previsione e monitoraggio",
           "entity_map": "Scegli manualmente le entità dell'inverter"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Tramite l'integrazione dell'inverter (entità)",
           "control_direct": "Direttamente tramite la rete locale (consigliato)",
+          "control_hub": "Tramite un hub Modbus di Home Assistant (sensori grezzi)",
           "control_off": "Disattivato — solo previsione e monitoraggio",
           "entity_map": "Scegli manualmente le entità dell'inverter"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Tramite l'integrazione dell'inverter (entità)",
           "control_direct": "Direttamente tramite la rete locale",
+          "control_hub": "Tramite un hub Modbus di Home Assistant (sensori grezzi)",
           "control_off": "Disattivato — solo previsione e monitoraggio",
           "entity_map": "Scegli manualmente le entità dell'inverter"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Usare questa fonte prezzi?",
         "description": "Questa fonte fornisce una previsione dei prezzi per le prossime {hours} h. I prezzi sono letti in {currency}. La fonte del prezzo di vendita {source} non fornisce ancora i prezzi di domani, mentre i prezzi di acquisto di domani sono già disponibili. Finché non li fornisce, il piano di domani si baserà sui prezzi del giorno precedente. Conferma per usare comunque questa fonte prezzi nella pianificazione."
+      },
+      "control_hub": {
+        "title": "Controllo dell'inverter tramite un hub Modbus",
+        "description": "Volcast controlla l'inverter tramite l'hub Modbus che usi già in Home Assistant e legge sensori di registri grezzi che definisci in YAML. Scegli l'hub e inserisci l'indirizzo del dispositivo dell'inverter. Il modello dei sensori si trova nel repository dell'integrazione Volcast: {yaml_path}. Dopo aver modificato il YAML e ricaricato Modbus, invia di nuovo per controllare ancora.\n\n{problems}",
+        "data": {
+          "hub": "Hub Modbus",
+          "unit_id": "Indirizzo del dispositivo"
+        },
+        "data_description": {
+          "hub": "Il nome dell'hub nella tua configurazione Modbus.",
+          "unit_id": "Indirizzo slave dell'inverter su quell'hub (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,9 @@
       "no_ev_chargers": "Non è ancora stato trovato alcun caricatore EV. Esegui prima la rilevazione e verifica che l'integrazione del caricatore sia configurata.",
       "no_price_sources": "In Home Assistant non è stata trovata alcuna integrazione prezzi nota. Scegli un sensore in Prezzi dell'energia.",
       "price_source_invalid": "Le impostazioni della fonte prezzi non sono più valide. Ricomincia.",
-      "price_sell_tomorrow": "Le impostazioni dei prezzi dell'energia sono salvate. La fonte del prezzo di vendita {source} non fornisce ancora i prezzi di domani, mentre i prezzi di acquisto di domani sono già disponibili. Finché non li fornisce, il piano di domani si baserà sui prezzi del giorno precedente."
+      "price_sell_tomorrow": "Le impostazioni dei prezzi dell'energia sono salvate. La fonte del prezzo di vendita {source} non fornisce ancora i prezzi di domani, mentre i prezzi di acquisto di domani sono già disponibili. Finché non li fornisce, il piano di domani si baserà sui prezzi del giorno precedente.",
+      "hub_unsupported": "Il profilo dell'inverter per il controllo tramite un hub Modbus non è disponibile. Aggiorna l'integrazione.",
+      "hub_check_control_off": "Il controllo Volcast è stato disattivato: la verifica dell'hub Modbus non è riuscita ({problems}). Correggi la causa ed esegui di nuovo il passaggio dell'hub Modbus."
     },
     "error": {
       "prices_not_usable": "Questo sensore al momento non fornisce una serie di prezzi completa.",
@@ -463,7 +482,13 @@
       "price_sell_unusable": "Il lato vendita di questa fonte non ha una serie di prezzi utilizzabile.",
       "price_source_invalid": "Queste impostazioni non descrivono una fonte utilizzabile (controlla zona, unità e valuta).",
       "currency_conflict": "La valuta della fonte ({source_currency}) differisce da quella impostata in Prezzi dell'energia ({option_currency}). Modifica quella valuta perché coincida, oppure cancellala.",
-      "currency_missing": "Indica la valuta: questa fonte non la specifica."
+      "currency_missing": "Indica la valuta: questa fonte non la specifica.",
+      "hub_invalid": "Inserisci il nome di un hub Modbus configurato.",
+      "unit_invalid": "L'indirizzo del dispositivo deve essere compreso tra 1 e 247.",
+      "hub_map_incomplete": "I sensori Modbus non corrispondono al profilo dell'inverter. Correggi il YAML, ricarica Modbus e invia di nuovo.",
+      "hub_identity_unreadable": "Non è stato possibile identificare l'inverter dai sensori. Controlla i registri e invia di nuovo.",
+      "hub_sensors_unavailable": "Alcuni sensori associati non hanno al momento un valore utilizzabile. Controlla i sensori elencati sotto e invia di nuovo.",
+      "hub_check_failed": "I valori letti dall'hub Modbus non corrispondono ai tuoi sensori esistenti, oppure il dispositivo non è l'inverter previsto. Il controllo non è stato attivato: vedi i dettagli sotto e il sensore di verifica, correggi la causa e invia di nuovo."
     },
     "progress": {
       "direct_search": "Ricerca dell'inverter sulla rete locale. Può richiedere fino a un minuto."
@@ -555,6 +580,14 @@
     "direct_start_failed": {
       "title": "Volcast non è riuscito ad avviare la connessione diretta all'inverter",
       "description": "La connessione diretta all'inverter non si è avviata a causa di un errore imprevisto. Volcast riprova alcune volte; finché non si connette, non può modificare né ripristinare le impostazioni dell'inverter. Se il problema persiste, ricarica Volcast e controlla i log di Home Assistant."
+    },
+    "ha_modbus_map": {
+      "title": "Volcast non può controllare l'inverter tramite i sensori dell'hub Modbus",
+      "description": "Volcast controlla questo inverter tramite il tuo hub Modbus di Home Assistant e lo legge da sensori di registri grezzi. Mancano alcuni registri necessari, oppure i loro sensori non leggono dall'inverter su cui Volcast scrive (stesso hub e stesso indirizzo dispositivo, un registro holding per sensore): {registers}. Finché non viene corretto, Volcast non modifica le impostazioni dell'inverter. Aggiungi o correggi i sensori dallo snippet YAML di Volcast, poi ricarica Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Un'entità Modbus scrive nei registri controllati da Volcast",
+      "description": "Queste entità Modbus sullo stesso hub e dispositivo possono scrivere nei registri dell'inverter controllati da Volcast (numeri di registro, ? = registro sconosciuto): {entities}. Finché sono attive, Volcast non modifica le impostazioni dell'inverter, così due programmi non si sovrascrivono. Disattivale in Impostazioni → Entità o rimuovile dal tuo YAML Modbus."
     },
     "sensor_assignment_missing": {
       "title": "Volcast deve sapere quali sensori usare",
@@ -670,6 +703,18 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Verifica dell'hub Modbus non riuscita",
+      "description": "I valori letti dall'hub Modbus non corrispondono ai tuoi sensori, oppure il dispositivo non è l'inverter previsto ({problems}). Il controllo Volcast resta disattivato. Correggi i sensori o l'associazione dei registri ed esegui di nuovo il passaggio dell'hub Modbus nelle opzioni dell'integrazione."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast non ha potuto verificare del tutto il tuo hub Modbus",
+      "description": "Non è stato possibile confrontare le letture dell'hub con i tuoi sensori per: {quantities} (nessun sensore recente o batteria inattiva). Il controllo è stato attivato solo in base all'identificazione del dispositivo. Associa i sensori di potenza e carica della batteria in Installation details ed esegui di nuovo il passaggio dell'hub Modbus mentre la batteria si carica o si scarica."
+    },
+    "hub_check_control_on": {
+      "title": "Il controllo Volcast è ANCORA ATTIVO dopo una verifica fallita dell'hub Modbus",
+      "description": "La verifica dell'hub Modbus non è riuscita ({problems}), ma Volcast non è riuscito a riportare l'inverter allo stato base: non è stato modificato nulla e il controllo è ancora in funzione. Assicurati che l'inverter sia raggiungibile, apri le opzioni dell'integrazione, scegli di nuovo l'hub Modbus e invia; il controllo si disattiverà quando l'inverter sarà ripristinato. Per fermarlo subito, disattiva l'interruttore di controllo Volcast."
     }
   },
   "services": {

@@ -3,3 +3,4 @@ pytest-asyncio>=0.23
 voluptuous>=0.13
 aiohttp>=3.9
 cryptography>=42
+pyyaml>=6

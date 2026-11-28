@@ -18,6 +18,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_change
 
 from .cloud.client import Backend
+from .core.control import hub_check
 from .const import (
     PAIRING_ONLY_UPDATE_KEY,
     ATTR_CONFIG_ENTRY_ID,
@@ -759,5 +760,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     try:
         ir.async_delete_issue(hass, DOMAIN, f"production_mapping_unused_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, _assignment_issue_id(entry))
+        for issue_id in hub_check.issue_ids(entry.entry_id):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Volcast: repair cleanup on removal failed (%s)", type(err).__name__)

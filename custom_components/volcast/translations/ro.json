@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Prin integrarea invertorului (entități)",
           "control_direct": "Direct prin rețeaua locală",
+          "control_hub": "Printr-un hub Modbus din Home Assistant (senzori bruți)",
           "control_off": "Dezactivat — doar prognoză și monitorizare",
           "entity_map": "Alege manual entitățile invertorului"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Prin integrarea invertorului (entități) (recomandat)",
           "control_direct": "Direct prin rețeaua locală",
+          "control_hub": "Printr-un hub Modbus din Home Assistant (senzori bruți)",
           "control_off": "Dezactivat — doar prognoză și monitorizare",
           "entity_map": "Alege manual entitățile invertorului"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Prin integrarea invertorului (entități)",
           "control_direct": "Direct prin rețeaua locală (recomandat)",
+          "control_hub": "Printr-un hub Modbus din Home Assistant (senzori bruți)",
           "control_off": "Dezactivat — doar prognoză și monitorizare",
           "entity_map": "Alege manual entitățile invertorului"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Prin integrarea invertorului (entități)",
           "control_direct": "Direct prin rețeaua locală (recomandat)",
+          "control_hub": "Printr-un hub Modbus din Home Assistant (senzori bruți)",
           "control_off": "Dezactivat — doar prognoză și monitorizare",
           "entity_map": "Alege manual entitățile invertorului"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Prin integrarea invertorului (entități)",
           "control_direct": "Direct prin rețeaua locală",
+          "control_hub": "Printr-un hub Modbus din Home Assistant (senzori bruți)",
           "control_off": "Dezactivat — doar prognoză și monitorizare",
           "entity_map": "Alege manual entitățile invertorului"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Folosești această sursă de prețuri?",
         "description": "Această sursă oferă o prognoză de prețuri pentru următoarele {hours} h. Prețurile sunt citite în {currency}. Sursa prețului de vânzare {source} nu oferă încă prețuri pentru mâine, deși prețurile de cumpărare pentru mâine sunt deja disponibile. Până când le oferă, planul pentru mâine se va baza pe prețurile din ziua anterioară. Confirmă pentru a folosi totuși această sursă de prețuri la planificare."
+      },
+      "control_hub": {
+        "title": "Controlul invertorului printr-un hub Modbus",
+        "description": "Volcast controlează invertorul prin hubul Modbus pe care îl folosiți deja în Home Assistant și citește senzori de registre brute definiți de dvs. în YAML. Alegeți hubul și introduceți adresa dispozitivului invertorului. Șablonul de senzori se află în depozitul integrării Volcast: {yaml_path}. După editarea YAML și reîncărcarea Modbus, trimiteți din nou pentru a verifica încă o dată.\n\n{problems}",
+        "data": {
+          "hub": "Hub Modbus",
+          "unit_id": "Adresa dispozitivului"
+        },
+        "data_description": {
+          "hub": "Numele hubului din configurația Modbus.",
+          "unit_id": "Adresa slave a invertorului pe acel hub (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,9 @@
       "no_ev_chargers": "Încă nu a fost găsit niciun încărcător EV. Rulează mai întâi detectarea și verifică dacă integrarea încărcătorului este configurată.",
       "no_price_sources": "Nu a fost găsită nicio integrare de prețuri cunoscută în Home Assistant. Alege un senzor la Prețurile energiei.",
       "price_source_invalid": "Setările sursei de prețuri nu mai sunt valide. Începe din nou.",
-      "price_sell_tomorrow": "Setările prețurilor energiei sunt salvate. Sursa prețului de vânzare {source} nu oferă încă prețuri pentru mâine, deși prețurile de cumpărare pentru mâine sunt deja disponibile. Până când le oferă, planul pentru mâine se va baza pe prețurile din ziua anterioară."
+      "price_sell_tomorrow": "Setările prețurilor energiei sunt salvate. Sursa prețului de vânzare {source} nu oferă încă prețuri pentru mâine, deși prețurile de cumpărare pentru mâine sunt deja disponibile. Până când le oferă, planul pentru mâine se va baza pe prețurile din ziua anterioară.",
+      "hub_unsupported": "Profilul invertorului pentru controlul printr-un hub Modbus nu este disponibil. Actualizați integrarea.",
+      "hub_check_control_off": "Controlul Volcast a fost dezactivat: verificarea hub-ului Modbus a eșuat ({problems}). Remediază cauza și rulează din nou pasul hub-ului Modbus."
     },
     "error": {
       "prices_not_usable": "Acest senzor nu oferă acum o serie completă de prețuri.",
@@ -463,7 +482,13 @@
       "price_sell_unusable": "Partea de vânzare a acestei surse nu are o serie de prețuri utilizabilă.",
       "price_source_invalid": "Aceste setări nu descriu o sursă utilizabilă (verifică zona, unitatea și moneda).",
       "currency_conflict": "Moneda sursei ({source_currency}) diferă de cea setată la Prețurile energiei ({option_currency}). Schimb-o pe aceea ca să coincidă sau șterge-o.",
-      "currency_missing": "Indică moneda: această sursă nu o specifică."
+      "currency_missing": "Indică moneda: această sursă nu o specifică.",
+      "hub_invalid": "Introduceți numele unui hub Modbus configurat.",
+      "unit_invalid": "Adresa dispozitivului trebuie să fie între 1 și 247.",
+      "hub_map_incomplete": "Senzorii Modbus nu se potrivesc cu profilul invertorului. Corectați YAML, reîncărcați Modbus și trimiteți din nou.",
+      "hub_identity_unreadable": "Invertorul nu a putut fi identificat din senzori. Verificați registrele și trimiteți din nou.",
+      "hub_sensors_unavailable": "Unii senzori asociați nu au acum o valoare utilizabilă. Verificați senzorii listați mai jos și trimiteți din nou.",
+      "hub_check_failed": "Valorile citite din hub-ul Modbus nu se potrivesc cu senzorii tăi existenți sau dispozitivul nu este invertorul așteptat. Controlul nu a fost activat — vezi detaliile de mai jos și senzorul de verificare, remediază cauza și trimite din nou."
     },
     "progress": {
       "direct_search": "Se caută invertorul în rețeaua locală. Poate dura până la un minut."
@@ -555,6 +580,14 @@
     "direct_start_failed": {
       "title": "Volcast nu a putut porni conexiunea directă la invertor",
       "description": "Conexiunea directă la invertor nu a putut porni din cauza unei erori neașteptate. Volcast reîncearcă de câteva ori; până se conectează, nu poate modifica sau readuce setările invertorului. Dacă persistă, reîncarcă Volcast și verifică jurnalele Home Assistant."
+    },
+    "ha_modbus_map": {
+      "title": "Volcast nu poate controla invertorul prin senzorii hub-ului Modbus",
+      "description": "Volcast controlează acest invertor prin hub-ul Modbus din Home Assistant și îl citește din senzori de registre brute. Lipsesc unele registre necesare sau senzorii lor nu citesc de la invertorul în care scrie Volcast (același hub și aceeași adresă de dispozitiv, un registru holding per senzor): {registers}. Până la remediere, Volcast nu schimbă setările invertorului. Adaugă sau corectează senzorii din fragmentul YAML Volcast, apoi reîncarcă Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "O entitate Modbus scrie în registrele controlate de Volcast",
+      "description": "Aceste entități Modbus de pe același hub și dispozitiv pot scrie în registrele invertorului controlate de Volcast (numere de registru, ? = registru necunoscut): {entities}. Cât timp sunt active, Volcast nu schimbă setările invertorului, ca două programe să nu se suprascrie. Dezactivează-le din Setări → Entități sau elimină-le din YAML-ul Modbus."
     },
     "sensor_assignment_missing": {
       "title": "Volcast trebuie să știe ce senzori să folosească",
@@ -670,6 +703,18 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Verificarea hub-ului Modbus a eșuat",
+      "description": "Valorile citite din hub-ul Modbus nu se potrivesc cu senzorii tăi sau dispozitivul nu este invertorul așteptat ({problems}). Controlul Volcast rămâne dezactivat. Corectează senzorii sau maparea registrelor și rulează din nou pasul hub-ului Modbus în opțiunile integrării."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast nu a putut verifica complet hub-ul tău Modbus",
+      "description": "Citirile hub-ului nu au putut fi comparate cu senzorii tăi pentru: {quantities} (fără senzor recent sau bateria era inactivă). Controlul a fost activat doar pe baza identificării dispozitivului. Mapează senzorii de putere și de încărcare ai bateriei în Installation details și rulează din nou pasul hub-ului Modbus cât timp bateria se încarcă sau se descarcă."
+    },
+    "hub_check_control_on": {
+      "title": "Controlul Volcast RĂMÂNE ACTIV după o verificare eșuată a hub-ului Modbus",
+      "description": "Verificarea hub-ului Modbus a eșuat ({problems}), dar Volcast nu a putut readuce invertorul la starea de bază, așa că nu s-a modificat nimic, iar controlul încă funcționează. Asigură-te că invertorul este accesibil, deschide opțiunile integrării, alege din nou hub-ul Modbus și trimite; controlul se oprește după restaurarea invertorului. Pentru a opri controlul imediat, dezactivează comutatorul de control Volcast."
     }
   },
   "services": {

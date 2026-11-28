@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten) (empfohlen)",
           "control_direct": "Direkt über das lokale Netzwerk",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk (empfohlen)",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk (empfohlen)",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Über die Wechselrichter-Integration (Entitäten)",
           "control_direct": "Direkt über das lokale Netzwerk",
+          "control_hub": "Über einen Modbus-Hub von Home Assistant (Rohsensoren)",
           "control_off": "Aus — nur Prognose und Überwachung",
           "entity_map": "Wechselrichter-Entitäten manuell wählen"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Diese Preisquelle verwenden?",
         "description": "Diese Quelle liefert eine Preisprognose für {hours} h im Voraus. Die Preise werden in {currency} gelesen. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags. Bestätige, um diese Preisquelle trotzdem für die Planung zu nutzen."
+      },
+      "control_hub": {
+        "title": "Wechselrichtersteuerung über einen Modbus-Hub",
+        "description": "Volcast steuert den Wechselrichter über den Modbus-Hub, den Sie in Home Assistant bereits nutzen, und liest Rohwert-Sensoren für Register, die Sie in YAML definieren. Wählen Sie den Hub und geben Sie die Geräteadresse des Wechselrichters ein. Die Sensorvorlage liegt im Volcast-Integrations-Repository: {yaml_path}. Senden Sie nach dem Bearbeiten des YAML und dem Neuladen von Modbus erneut ab, um noch einmal zu prüfen.\n\n{problems}",
+        "data": {
+          "hub": "Modbus-Hub",
+          "unit_id": "Geräteadresse"
+        },
+        "data_description": {
+          "hub": "Der Hub-Name aus Ihrer Modbus-Konfiguration.",
+          "unit_id": "Slave-Adresse des Wechselrichters an diesem Hub (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,9 @@
       "no_ev_chargers": "Es wurde noch kein E-Auto-Ladegerät gefunden. Starte zuerst die Erkennung und stelle sicher, dass die Integration des Ladegeräts eingerichtet ist.",
       "no_price_sources": "In Home Assistant wurde keine bekannte Preisintegration gefunden. Wähle unter Energiepreise einen Sensor.",
       "price_source_invalid": "Die Einstellungen der Preisquelle sind nicht mehr gültig. Beginne neu.",
-      "price_sell_tomorrow": "Die Einstellungen der Energiepreise sind gespeichert. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags."
+      "price_sell_tomorrow": "Die Einstellungen der Energiepreise sind gespeichert. Die Verkaufspreisquelle {source} liefert noch keine Preise für morgen, obwohl die Einkaufspreise für morgen bereits verfügbar sind. Bis dahin basiert der Plan für morgen auf den Preisen des Vortags.",
+      "hub_unsupported": "Das Wechselrichterprofil für die Steuerung über einen Modbus-Hub ist nicht verfügbar. Aktualisieren Sie die Integration.",
+      "hub_check_control_off": "Die Volcast-Steuerung wurde ausgeschaltet: Die Prüfung des Modbus-Hubs ist fehlgeschlagen ({problems}). Beheben Sie die Ursache und führen Sie den Modbus-Hub-Schritt erneut aus."
     },
     "error": {
       "prices_not_usable": "Dieser Sensor liefert derzeit keine vollständige Preisreihe.",
@@ -463,7 +482,13 @@
       "price_sell_unusable": "Die Verkaufsseite dieser Quelle hat keine brauchbare Preisreihe.",
       "price_source_invalid": "Diese Einstellungen beschreiben keine brauchbare Quelle (Zone, Einheit und Währung prüfen).",
       "currency_conflict": "Die Währung der Quelle ({source_currency}) weicht von der unter Energiepreise gesetzten ({option_currency}) ab. Ändere jene Währung passend oder leere sie.",
-      "currency_missing": "Gib die Währung an: Diese Quelle nennt sie nicht."
+      "currency_missing": "Gib die Währung an: Diese Quelle nennt sie nicht.",
+      "hub_invalid": "Geben Sie den Namen eines konfigurierten Modbus-Hubs ein.",
+      "unit_invalid": "Die Geräteadresse muss zwischen 1 und 247 liegen.",
+      "hub_map_incomplete": "Die Modbus-Sensoren passen nicht zum Wechselrichterprofil. Korrigieren Sie das YAML, laden Sie Modbus neu und senden Sie erneut ab.",
+      "hub_identity_unreadable": "Der Wechselrichter konnte anhand der Sensoren nicht erkannt werden. Prüfen Sie die Register und senden Sie erneut ab.",
+      "hub_sensors_unavailable": "Einige zugeordnete Sensoren haben derzeit keinen verwertbaren Wert. Prüfen Sie die unten aufgeführten Sensoren und senden Sie erneut ab.",
+      "hub_check_failed": "Die vom Modbus-Hub gelesenen Werte stimmen nicht mit Ihren vorhandenen Sensoren überein, oder das Gerät ist nicht der erwartete Wechselrichter. Die Steuerung wurde nicht aktiviert — Details unten und im Verifizierungssensor; beheben Sie die Ursache und senden Sie erneut ab."
     },
     "progress": {
       "direct_search": "Das lokale Netzwerk wird nach dem Wechselrichter durchsucht. Das kann bis zu einer Minute dauern."
@@ -555,6 +580,14 @@
     "direct_start_failed": {
       "title": "Volcast konnte die direkte Wechselrichter-Verbindung nicht starten",
       "description": "Die Direktverbindung zum Wechselrichter konnte wegen eines unerwarteten Fehlers nicht gestartet werden. Volcast versucht es einige Male erneut; bis die Verbindung steht, kann es Wechselrichter-Einstellungen weder ändern noch zurücksetzen. Falls das so bleibt, lade Volcast neu und prüfe die Home-Assistant-Logs."
+    },
+    "ha_modbus_map": {
+      "title": "Volcast kann den Wechselrichter nicht über die Modbus-Hub-Sensoren steuern",
+      "description": "Volcast steuert diesen Wechselrichter über deinen Modbus-Hub in Home Assistant und liest ihn über Rohregister-Sensoren. Einige benötigte Register fehlen oder ihre Sensoren lesen nicht von dem Wechselrichter, auf den Volcast schreibt (gleicher Hub und gleiche Geräteadresse, ein Holding-Register pro Sensor): {registers}. Bis das behoben ist, ändert Volcast keine Wechselrichter-Einstellungen. Ergänze oder korrigiere die Sensoren aus dem Volcast-YAML-Ausschnitt und lade Volcast neu."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Eine Modbus-Entität schreibt in die Register, die Volcast steuert",
+      "description": "Diese Modbus-Entitäten am selben Hub und Gerät können in die Wechselrichter-Register schreiben, die Volcast steuert (Registernummern, ? = unbekanntes Register): {entities}. Solange sie aktiv sind, ändert Volcast keine Wechselrichter-Einstellungen, damit sich zwei Programme nicht gegenseitig überschreiben. Deaktiviere sie unter Einstellungen → Entitäten oder entferne sie aus deiner Modbus-YAML."
     },
     "sensor_assignment_missing": {
       "title": "Volcast muss wissen, welche Sensoren verwendet werden sollen",
@@ -670,6 +703,18 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Prüfung des Modbus-Hubs fehlgeschlagen",
+      "description": "Die vom Modbus-Hub gelesenen Werte stimmen nicht mit Ihren Sensoren überein, oder das Gerät ist nicht der erwartete Wechselrichter ({problems}). Die Volcast-Steuerung bleibt aus. Korrigieren Sie die Sensoren oder die Registerzuordnung und führen Sie den Modbus-Hub-Schritt in den Integrationsoptionen erneut aus."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast konnte Ihren Modbus-Hub nicht vollständig prüfen",
+      "description": "Die Hub-Werte konnten für {quantities} nicht mit Ihren Sensoren verglichen werden (kein aktueller Sensor oder Batterie im Leerlauf). Die Steuerung wurde allein anhand der Geräteerkennung aktiviert. Ordnen Sie Batterieleistung und Ladestand unter Installation details zu und führen Sie den Modbus-Hub-Schritt erneut aus, während die Batterie lädt oder entlädt."
+    },
+    "hub_check_control_on": {
+      "title": "Die Volcast-Steuerung läuft nach fehlgeschlagener Modbus-Hub-Prüfung WEITER",
+      "description": "Die Prüfung des Modbus-Hubs ist fehlgeschlagen ({problems}), aber Volcast konnte den Wechselrichter nicht in den Basiszustand zurückversetzen. Es wurde nichts geändert, die Steuerung läuft weiter. Stellen Sie sicher, dass der Wechselrichter erreichbar ist, öffnen Sie dann die Integrationsoptionen, wählen Sie erneut den Modbus-Hub und senden Sie ab; die Steuerung schaltet sich nach der Wiederherstellung aus. Um die Steuerung sofort zu stoppen, schalten Sie den Volcast-Steuerungsschalter aus."
     }
   },
   "services": {

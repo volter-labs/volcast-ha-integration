@@ -324,3 +324,24 @@ async def _async_propose(hass, entry, with_proposal: bool = True) -> AssignmentR
         sign_check=check_signs(samples), basis=basis,
         samples=len(samples), sources=sources, source_origin=origin, excluded=excluded,
         notes=tuple(notes))
+
+
+async def async_user_sources(hass, entry, *, exclude: frozenset[str] = frozenset()) -> dict[str, str]:
+    """Encje użytkownika dla pól {pole: entity_id}: mapa telemetrii z opcji, a przy pustym polu kandydat pewny
+    z propozycji (bez historii i oceny znaku — tanio). `exclude` — encje, których nie wolno podać (np. surowe
+    czujniki huba, które porównanie ma sprawdzić). Tylko odczyt; nigdy nie rzuca."""
+    try:
+        tmap, _, _ = _current_options(entry)
+    except Exception:  # noqa: BLE001
+        tmap = {}
+    out = {k: v for k, v in tmap.items() if v not in exclude}
+    try:
+        snap = _snapshot(hass)
+        entities = [e for e in snap.entities if e.entity_id not in exclude]
+        states = {k: v for k, v in snap.states.items() if k not in exclude}
+        for field, eid in propose(entities, states, snap.devices, snap.inverters).chosen().items():
+            if not tmap.get(field):
+                out.setdefault(field, eid)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Volcast user sources failed (%s)", type(err).__name__)
+    return out

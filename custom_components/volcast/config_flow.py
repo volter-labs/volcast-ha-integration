@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import timedelta
+from collections.abc import Mapping
+from datetime import datetime, timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,7 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import instance_id, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -34,8 +36,16 @@ except ImportError:  # HA sprzed sekcji formularza — pole adresu płasko w for
 from .cloud.client import Backend, ClientOutdated, PairingClient, PairingDisabled, PairingError, PollResult, is_https_url
 from .control import direct_search as ds
 from .control.runtime import async_control_change_allowed, async_no_inverter_integration_now, async_direct_search, map_entities, mapped_with_overrides
+from .control.store import async_installation_salt
 from .control.telemetry import TELEMETRY_FIELDS, telemetry_carries_pv_power
+from .core.modbus.identity import device_fingerprint, identity_info
+from .core.registers import RegisterImage
+from .core.transports.ha_modbus import (HA_MODBUS_KIND, HaModbusConfig, HaModbusTransport, MissingRegister,
+                                         RegisterValueError)
+from .core.transports.ha_modbus_map import build_register_map
+from .core.control import hub_check
 from .core.control.caps import entity_mode_options, entity_mode_ready
+from .core.entity_map import canonical_value
 from .core.control.select import ProfileChoice
 from .core.entity_map import KEY_DESCRIPTORS, field_group, preview_entity
 from .core.control.limits import BATTERY_CAPACITY_RANGE_KWH, RATED_POWER_RANGE_W
@@ -48,7 +58,7 @@ from .core.price_setup import (ActionCandidate, SeriesCheck, action_candidates, 
 from .core.transports.base import check_target
 from .key_format import account_unique_id, check_api_key_format
 from .pairing import PairingPoller
-from .sensor_assignment import AssignmentResult, async_propose
+from .sensor_assignment import AssignmentResult, async_propose, async_user_sources
 from .version import async_integration_version
 from .const import (
     DEFAULT_PAIRING_URL,
@@ -75,6 +85,7 @@ from .const import (
     OPT_BATTERY_CAPACITY_KWH,
     OPT_CONTROL_MODE,
     OPT_BATTERY_NEGATE,
+    OPT_HUB_CHECK,
     OPT_GRID_NEGATE,
     OPT_INVERTER_DOMAIN,
     OPT_LOAD_ENERGY,
@@ -93,6 +104,78 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Sterowanie przez hub `modbus` HA: tylko profil z odczytem/zapisem programów TOU, bez wykrywania (domena `modbus`
+# nigdy nie jest falownikiem w `classify`); fragment YAML czujników surowych leży w dokumentacji repozytorium.
+HUB_PROFILES = ("deye-sg",)      # profile obsługiwane przez hub; wybór po zgodności tożsamości z czujnikami
+HUB_MODBUS_DOMAIN = "modbus"
+HUB_TEMPLATE_URL = "https://github.com/volter-labs/volcast-ha-integration/blob/{ref}/"
+_RELEASE_VERSION = re.compile(r"(\d+\.\d+\.\d+)(?:b(\d+))?")
+
+
+def release_ref(version: str | None) -> str:
+    """Tag wydania dla wersji integracji: `2.0.0b17` -> `v2.0.0-beta17`, `2.0.0` -> `v2.0.0`; wersja nieznana
+    albo deweloperska -> `main` (bbety wychodzą z gałęzi `release/*` i tagów, nie z `main`)."""
+    m = _RELEASE_VERSION.fullmatch(version or "")
+    if m is None:
+        return "main"
+    return f"v{m.group(1)}-beta{m.group(2)}" if m.group(2) else f"v{m.group(1)}"
+
+
+def hub_template_path(profile_id: str) -> str:
+    """Ścieżka (w repozytorium) fragmentu YAML czujników surowych dla profilu."""
+    return f"docs/profiles/{profile_id}-ha-modbus.yaml"
+
+
+_WARNING = getattr(getattr(ir, "IssueSeverity", None), "WARNING", "warning")
+HUB_USER_MAX_AGE = timedelta(minutes=10)   # starszy odczyt encji użytkownika nie służy do porównania
+
+
+def hub_check_problems(check: Mapping[str, Any]) -> str:
+    """Opis rozjazdu do formularza: liczby i kody, bez nazw encji."""
+    if not check.get("identity_ok"):
+        return f"Register 0 holds {check.get('device_type')}, which is not an expected device type for this profile."
+    parts = []
+    for key, q in check.get("quantities", {}).items():
+        if q.get("verdict") == hub_check.MISMATCH:
+            hint = " (sign looks inverted)" if q.get("sign_inverted") else ""
+            parts.append(f"{key}: hub {q.get('hub')}, your sensor {q.get('user')}, tolerance {q.get('tolerance')}{hint}")
+    return "; ".join(parts) or "-"
+
+
+def compact_ranges(addrs) -> str:
+    """Adresy jako zwięzłe zakresy: [0, 3, 4, 5, 9] -> "0, 3-5, 9"."""
+    out: list[str] = []
+    run: list[int] = []
+    for a in sorted(set(addrs)):
+        if run and a == run[-1] + 1:
+            run.append(a)
+            continue
+        if run:
+            out.append(f"{run[0]}-{run[-1]}" if len(run) > 1 else str(run[0]))
+        run = [a]
+    if run:
+        out.append(f"{run[0]}-{run[-1]}" if len(run) > 1 else str(run[0]))
+    return ", ".join(out)
+
+
+def hub_map_problems(report) -> str:
+    """Wynik walidacji mapy czujników dla użytkownika (lokalnie w kreatorze: bez nazw encji)."""
+    lines: list[str] = []
+    if not report.registry_available:
+        lines.append("Entity registry is not available.")
+    if report.missing:
+        lines.append(f"Missing registers: {compact_ranges(report.missing)}")
+    for cause in sorted({u.cause for u in report.unsupported}):
+        lines.append(f"Not usable ({cause}): registers {compact_ranges(u.addr for u in report.unsupported if u.cause == cause)}")
+    if report.duplicates:
+        lines.append(f"Ambiguous registers (several sensors): {compact_ranges(report.duplicates)}")
+    for b in report.blocks:
+        if b.cause is not None:
+            lines.append(f"Block {b.start}-{b.start + b.count - 1} not supported ({b.cause})")
+    if report.unregistered_sensors:
+        lines.append(f"Modbus sensors without unique_id: {len(report.unregistered_sensors)} (add unique_id)")
+    return "\n".join(lines) or "-"
 
 PAIR_POLL_INTERVAL_S = 3.0
 # Chmura zamyka niepotwierdzoną sesję po 10 min (poll → 410). Lokalny termin to tylko
@@ -687,8 +770,10 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             await rt.async_leave_plan_only()
         if saved_notice is not None:
             self.hass.config_entries.async_update_entry(self.config_entry, options=options)
+            self._sync_hub_issues(options)
             reason, placeholders = saved_notice
             return self.async_abort(reason=reason, description_placeholders=placeholders)
+        self._sync_hub_issues(options)
         return self.async_create_entry(data=options)
 
     def _forecast_options(self, user_input: dict[str, Any]) -> dict[str, Any]:
@@ -726,6 +811,9 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         rt = self._runtime()
         step_id = _CONTROL_STEPS.get(getattr(getattr(rt, "recommendation", None), "reason", None), "control")
         options = ["control_entities", "control_direct", "control_off"]
+        # ścieżka przez hub `modbus` tylko, gdy integracja jest załadowana (publiczne `hass.config.components`)
+        if HUB_MODBUS_DOMAIN in (getattr(self.hass.config, "components", None) or ()):
+            options.insert(2, "control_hub")
         if getattr(getattr(rt, "choice", None), "integration_domain", None):
             options.append("entity_map")
         return self.async_show_menu(step_id=step_id, menu_options=options)
@@ -838,6 +926,206 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
             manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
         return await self._enable_control(options, carries_pv_power=carries)
 
+    def _modbus_hubs(self) -> list[str]:
+        """Nazwy hubów integracji `modbus` (z `hass.data`); brak integracji albo zmiana jej wnętrza = pusta lista
+        (wtedy pole tekstowe). Hub nie jest wykrywany jako falownik — ta ścieżka istnieje tylko z wyboru użytkownika."""
+        try:
+            data = self.hass.data.get(HUB_MODBUS_DOMAIN)
+            return sorted(k for k in data if isinstance(k, str) and k) if isinstance(data, Mapping) else []
+        except Exception:  # noqa: BLE001 — wnętrze cudzej integracji
+            return []
+
+    def _hub_form(self, hub: str | None, unit: int | None, errors: dict[str, str], problems: str = "-",
+                  profile_id: str = HUB_PROFILES[0]) -> ConfigFlowResult:
+        saved = self.config_entry.options.get(OPT_DIRECT_TARGET)
+        if hub is None and unit is None and isinstance(saved, Mapping) and saved.get("transport") == HA_MODBUS_KIND:
+            hub, unit = saved.get("hub"), saved.get("unit_id")       # ponowne wejście: podpowiedź zapisanego celu
+        hubs = self._modbus_hubs()
+        hub_sel: Any = vol.In(hubs) if hubs else str
+        schema = vol.Schema({
+            vol.Required("hub", description={"suggested_value": hub}): hub_sel,
+            vol.Required("unit_id", description={"suggested_value": unit if unit is not None else 1}): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=247)),
+        })
+        return self.async_show_form(step_id="control_hub", data_schema=schema, errors=errors or None,
+                                    description_placeholders={"problems": problems, "yaml_path": HUB_TEMPLATE_URL.format(
+                                            ref=getattr(self, "_hub_ref", "main")) + hub_template_path(profile_id)})
+
+    async def async_step_control_hub(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Sterowanie przez hub `modbus` HA użytkownika (transport `ha_modbus`): hub, adres urządzenia i walidacja
+        mapy surowych czujników względem profilu. Ponowne wysłanie formularza = „sprawdź jeszcze raz” (po edycji
+        YAML); sterowanie włączamy dopiero przy zgodnej mapie."""
+        self._hub_ref = release_ref(await async_integration_version(self.hass))
+        if user_input is None:
+            return self._hub_form(None, None, {})
+        hub = user_input.get("hub")
+        unit = user_input.get("unit_id")
+        errors: dict[str, str] = {}
+        if not isinstance(hub, str) or not hub or hub != hub.strip():
+            errors["hub"] = "hub_invalid"
+        if not isinstance(unit, int) or isinstance(unit, bool) or not 1 <= unit <= 247:
+            errors["unit_id"] = "unit_invalid"
+        if errors:
+            return self._hub_form(hub if isinstance(hub, str) else None, unit if isinstance(unit, int) else None, errors)
+        loaded = await self._async_profiles()
+        profiles = [p for pid in HUB_PROFILES if (p := next((x for x in loaded if x.id == pid), None)) is not None]
+        if not profiles:
+            return self.async_abort(reason="hub_unsupported")
+        failure: ConfigFlowResult | None = None
+        blocked: tuple[dict[str, Any], str] | None = None
+        for profile in profiles:
+            report = build_register_map(self.hass, profile, device=(hub, unit))
+            if not report.ok:
+                failure = failure or self._hub_form(hub, unit, {"base": "hub_map_incomplete"},
+                                                    hub_map_problems(report), profile.id)
+                continue
+            fp, rated, unreadable, image = await self._hub_identity(profile, hub, unit, report)
+            if unreadable:
+                failure = failure or self._hub_form(hub, unit, {"base": "hub_sensors_unavailable"},
+                                                    f"Sensors without a usable value: {unreadable}", profile.id)
+                continue
+            check = None
+            if image is not None:
+                check = hub_check.build_report(profile, image, await self._hub_user_values(report), now=dt_util.utcnow())
+            if hub_check.blocks_control(check):
+                if not check["identity_ok"]:
+                    # Inny typ urządzenia pod adresem: próbujemy następny profil, blokada dopiero gdy żaden nie pasuje.
+                    blocked = blocked or (check, profile.id)
+                    continue
+                return await self._hub_blocked(check, hub, unit, profile.id)
+            if fp is None:
+                failure = failure or self._hub_form(hub, unit, {"base": "hub_identity_unreadable"},
+                                                    profile_id=profile.id)
+                continue
+            target = {"profile_id": profile.id, "transport": HA_MODBUS_KIND, "hub": hub, "unit_id": unit,
+                      "device_fp": fp, "capabilities": {"tou": True}}
+            if rated is not None:
+                target["rated_power_w"] = float(rated)
+            options = self._merged({OPT_CONTROL_MODE: CONTROL_MODE_DIRECT, OPT_DIRECT_TARGET: target,
+                                    OPT_DIRECT_TRIAL: None, OPT_HUB_CHECK: check})
+            carries = telemetry_carries_pv_power(
+                ProfileChoice(profile, None, None), profile_map={},
+                manual_map=options.get(OPT_TELEMETRY_MAP) or {}, direct=True)
+            return await self._enable_control(options, carries_pv_power=carries)
+        if blocked is not None:
+            return await self._hub_blocked(blocked[0], hub, unit, blocked[1])
+        return failure
+
+    def _sync_hub_issues(self, options: Mapping[str, Any]) -> None:
+        """Zgłoszenia Napraw wynikają z ZAPISANYCH opcji (wołane po zapisie, nie przed): nieudana weryfikacja huba
+        przy wyłączonym sterowaniu, albo pominięte porównanie. Inny tryb sterowania / brak raportu = sprzątanie."""
+        failed_id, skipped_id, still_on_id = hub_check.issue_ids(self.config_entry.entry_id)
+        check = options.get(OPT_HUB_CHECK)
+        target = options.get(OPT_DIRECT_TARGET)
+        other_mode = (options.get(OPT_CONTROL_MODE) is not None
+                      and not (isinstance(target, Mapping) and target.get("transport") == HA_MODBUS_KIND))
+        # „Sterowanie wciąż włączone” znika dopiero, gdy zapisane opcje pokazują sterowanie wyłączone, inny tryb albo
+        # zdany raport — nie przy niepowiązanym zapisie.
+        passing = isinstance(check, Mapping) and bool(check) and not hub_check.blocks_control(check)
+        if options.get(OPT_CONTROL_MODE) is None or other_mode or passing:
+            ir.async_delete_issue(self.hass, DOMAIN, still_on_id)
+        if not isinstance(check, Mapping) or not check or other_mode:
+            ir.async_delete_issue(self.hass, DOMAIN, failed_id)
+            ir.async_delete_issue(self.hass, DOMAIN, skipped_id)
+            return
+        if hub_check.blocks_control(check):
+            ir.async_create_issue(self.hass, DOMAIN, failed_id, is_fixable=False, severity=_WARNING,
+                                  translation_key="hub_check_failed",
+                                  translation_placeholders={"problems": hub_check_problems(check)})
+            ir.async_delete_issue(self.hass, DOMAIN, skipped_id)
+            return
+        ir.async_delete_issue(self.hass, DOMAIN, failed_id)
+        skipped = [k for k, q in check.get("quantities", {}).items()
+                   if q.get("verdict") in (hub_check.CANNOT_COMPARE, hub_check.INCONCLUSIVE)]
+        if skipped:
+            ir.async_create_issue(self.hass, DOMAIN, skipped_id, is_fixable=False, severity=_WARNING,
+                                  translation_key="hub_check_not_compared",
+                                  translation_placeholders={"quantities": ", ".join(skipped)})
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, skipped_id)
+
+    async def _hub_blocked(self, check: dict[str, Any], hub: str, unit: int, profile_id: str) -> ConfigFlowResult:
+        """Rozjazd weryfikacji: raport zamiast sterowania. Sterowanie już włączone (wcześniejszy cel) wyłączamy przez
+        bramkę przywracania (kopia TOU wraca do falownika); gdy powrót się nie uda, nic nie zapisujemy, a zgłoszenie
+        mówi, że sterowanie NADAL działa."""
+        problems = hub_check_problems(check)
+        if self.config_entry.options.get(OPT_CONTROL_MODE) is not None:
+            result = await self._finish(
+                self._merged({OPT_CONTROL_MODE: None, OPT_HUB_CHECK: check}),
+                retry_form=lambda errors: self._hub_form(hub, unit, errors, problems, profile_id),
+                saved_notice=("hub_check_control_off", {"problems": problems}))
+            if (result.get("errors") or {}).get("base") == RESTORE_FAILED:
+                ir.async_create_issue(self.hass, DOMAIN, hub_check.issue_ids(self.config_entry.entry_id)[2],
+                                      is_fixable=False, severity=_WARNING, translation_key="hub_check_control_on",
+                                      translation_placeholders={"problems": problems})
+            return result
+        options = self._merged({OPT_HUB_CHECK: check})
+        self.hass.config_entries.async_update_entry(self.config_entry, options=options)
+        self._sync_hub_issues(options)
+        return self._hub_form(hub, unit, {"base": "hub_check_failed"}, problems, profile_id)
+
+    async def _hub_identity(self, profile, hub: str, unit: int,
+                            report) -> tuple[str | None, float | None, str, RegisterImage | None]:
+        """(odcisk, moc znamionowa, niedostępne zakresy) z czujników mapy — tylko odczyty stanów, jak przy sondzie.
+        Odcisk nowego urządzenia odrzuca serial-zaślepkę (jak wykrywanie); zakresy niepuste = czujnik bez wartości."""
+        transport = None
+        try:
+            # tylko odczyt (bez zapisu i migawki): stany odtworzone po restarcie HA wolno tu czytać od razu — odcisk
+            # i tak sprawdza połączenie sterowania na stanach „żywych” (`HaModbusTransport.live_only`)
+            transport = HaModbusTransport(self.hass, HaModbusConfig(hub=hub, device_address=unit,
+                                                                     registers=dict(report.registers)), live_only=False)
+            bad: list[int] = []
+            blocks: dict[int, list[int]] = {}
+            for start, count in report.mapped_ranges:
+                try:
+                    blocks[start] = list(await transport.read(start, count))
+                except (MissingRegister, RegisterValueError) as err:
+                    bad.extend(getattr(err, "addrs", ()) or range(start, start + count))
+            if bad:
+                return None, None, compact_ranges(bad), None
+            for b in profile.modbus.identify_reads:
+                blocks[b[0]] = list(await transport.read(b[0], b[1]))
+            image = RegisterImage.from_blocks(blocks)
+            fp = device_fingerprint(await async_installation_salt(self.hass), profile, image, reject_placeholder=True)
+            rated = identity_info(profile, image)["rated_power_w"]
+            ok = isinstance(rated, (int, float)) and not isinstance(rated, bool) and rated > 0
+            return fp, (float(rated) if ok else None), "", image
+        except Exception as err:  # noqa: BLE001 — nieczytelne czujniki: błąd formularza, nie wyjątek
+            _LOGGER.debug("Volcast hub identity read failed: %s", type(err).__name__)
+            return None, None, "", None
+        finally:
+            if transport is not None:
+                await transport.close()
+
+    async def _hub_user_values(self, report) -> dict[str, float | None]:
+        """Bieżące wartości użytkownika dla porównania z hubem (kanoniczne: SoC w %, moc baterii w W, dodatnia =
+        rozładowanie). Encje to mapa telemetrii albo pewny kandydat — nigdy surowe czujniki huba. Brak encji,
+        stan niedostępny albo nieliczbowy = None (nie da się porównać)."""
+        sources = await async_user_sources(self.hass, self.config_entry,
+                                           exclude=frozenset(report.registers.values()))
+        # Moc baterii tylko z czujnika, który użytkownik sam zmapował (jego flaga znaku jest wtedy znana);
+        # kandydat z propozycji ma niezweryfikowany znak — nie może ani blokować, ani przepuszczać.
+        sources = {k: v for k, v in sources.items() if k != hub_check.BATTERY_POWER}
+        if (mapped := (self.config_entry.options.get(OPT_TELEMETRY_MAP) or {}).get(hub_check.BATTERY_POWER)) \
+                and mapped not in report.registers.values():
+            sources[hub_check.BATTERY_POWER] = mapped
+        flip = -1.0 if self.config_entry.options.get(OPT_BATTERY_NEGATE) else 1.0
+        now = dt_util.utcnow()
+        out: dict[str, float | None] = {}
+        for key in hub_check.QUANTITIES:
+            st = self.hass.states.get(sources[key]) if sources.get(key) else None
+            stamps = [x for x in (getattr(st, "last_reported", None), getattr(st, "last_updated", None))
+                      if isinstance(x, datetime)]
+            # Świeżość jak w transporcie: późniejszy z `last_reported` i `last_updated` (czujnik o stałej wartości
+            # zmienia tylko `last_reported`).
+            if st is None or (stamps and now - max(stamps) > HUB_USER_MAX_AGE):
+                out[key] = None            # brak encji albo nieświeży odczyt (np. chmura) — nie da się porównać
+                continue
+            attrs = getattr(st, "attributes", None) or {}
+            value = canonical_value(key, getattr(st, "state", None), attrs.get("unit_of_measurement"))
+            out[key] = value * flip if value is not None and key == hub_check.BATTERY_POWER else value
+        return out
+
     async def async_step_control_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         rt = self._runtime()
         choice = getattr(rt, "choice", None)
@@ -877,7 +1165,7 @@ class VolcastOptionsFlow(OptionsFlowWithConfigEntry):
         return await self._finish(options, leave_plan_only=True)
 
     async def async_step_control_off(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self._finish(self._merged({OPT_CONTROL_MODE: None}))
+        return await self._finish(self._merged({OPT_CONTROL_MODE: None, OPT_HUB_CHECK: None}))
 
     _assignment: AssignmentResult | None = None
 

@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Cez integráciu striedača (entity)",
           "control_direct": "Priamo cez lokálnu sieť",
+          "control_hub": "Cez hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuté — iba predpoveď a sledovanie",
           "entity_map": "Ručne vybrať entity striedača"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Cez integráciu striedača (entity) (odporúčané)",
           "control_direct": "Priamo cez lokálnu sieť",
+          "control_hub": "Cez hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuté — iba predpoveď a sledovanie",
           "entity_map": "Ručne vybrať entity striedača"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Cez integráciu striedača (entity)",
           "control_direct": "Priamo cez lokálnu sieť (odporúčané)",
+          "control_hub": "Cez hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuté — iba predpoveď a sledovanie",
           "entity_map": "Ručne vybrať entity striedača"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Cez integráciu striedača (entity)",
           "control_direct": "Priamo cez lokálnu sieť (odporúčané)",
+          "control_hub": "Cez hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuté — iba predpoveď a sledovanie",
           "entity_map": "Ručne vybrať entity striedača"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Cez integráciu striedača (entity)",
           "control_direct": "Priamo cez lokálnu sieť",
+          "control_hub": "Cez hub Modbus Home Assistantu (surové senzory)",
           "control_off": "Vypnuté — iba predpoveď a sledovanie",
           "entity_map": "Ručne vybrať entity striedača"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Použiť tento zdroj cien?",
         "description": "Tento zdroj poskytuje predpoveď cien na {hours} h dopredu. Ceny sa čítajú v {currency}. Zdroj predajnej ceny {source} zatiaľ neposkytuje ceny na zajtra, hoci nákupné ceny na zajtra sú už k dispozícii. Kým ich neposkytne, plán na zajtra bude vychádzať z cien predchádzajúceho dňa. Potvrďte a tento zdroj cien sa aj tak použije na plánovanie."
+      },
+      "control_hub": {
+        "title": "Riadenie striedača cez hub Modbus",
+        "description": "Volcast riadi striedač cez hub Modbus, ktorý už v Home Assistantovi používate, a číta surové senzory registrov, ktoré si definujete v YAML. Vyberte hub a zadajte adresu zariadenia striedača. Šablóna senzorov je v repozitári integrácie Volcast: {yaml_path}. Po úprave YAML a opätovnom načítaní Modbus formulár odošlite znova a skontrolujte to ešte raz.\n\n{problems}",
+        "data": {
+          "hub": "Hub Modbus",
+          "unit_id": "Adresa zariadenia"
+        },
+        "data_description": {
+          "hub": "Názov hubu z vašej konfigurácie Modbus.",
+          "unit_id": "Slave adresa striedača na tomto hube (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,9 @@
       "no_ev_chargers": "Nabíjačka EV zatiaľ nebola nájdená. Najprv spustite zisťovanie a overte, že je integrácia nabíjačky nastavená.",
       "no_price_sources": "V Home Assistante sa nenašla žiadna známa cenová integrácia. Vyberte senzor v Cenách energie.",
       "price_source_invalid": "Nastavenia zdroja cien už neplatia. Začnite odznova.",
-      "price_sell_tomorrow": "Nastavenia cien energie sú uložené. Zdroj predajnej ceny {source} zatiaľ neposkytuje ceny na zajtra, hoci nákupné ceny na zajtra sú už k dispozícii. Kým ich neposkytne, plán na zajtra bude vychádzať z cien predchádzajúceho dňa."
+      "price_sell_tomorrow": "Nastavenia cien energie sú uložené. Zdroj predajnej ceny {source} zatiaľ neposkytuje ceny na zajtra, hoci nákupné ceny na zajtra sú už k dispozícii. Kým ich neposkytne, plán na zajtra bude vychádzať z cien predchádzajúceho dňa.",
+      "hub_unsupported": "Profil striedača na riadenie cez hub Modbus nie je dostupný. Aktualizujte integráciu.",
+      "hub_check_control_off": "Riadenie Volcast bolo vypnuté: overenie Modbus hubu zlyhalo ({problems}). Odstráňte príčinu a spustite krok Modbus hubu znova."
     },
     "error": {
       "prices_not_usable": "Tento senzor teraz neposkytuje úplný cenový rad.",
@@ -463,7 +482,13 @@
       "price_sell_unusable": "Predajná strana tohto zdroja nemá použiteľný rad cien.",
       "price_source_invalid": "Tieto nastavenia nepopisujú použiteľný zdroj (skontrolujte zónu, jednotku a menu).",
       "currency_conflict": "Mena zdroja ({source_currency}) sa líši od meny nastavenej v Cenách energie ({option_currency}). Zmeňte tú menu tak, aby súhlasila, alebo ju vymažte.",
-      "currency_missing": "Zadajte menu: tento zdroj ju neuvádza."
+      "currency_missing": "Zadajte menu: tento zdroj ju neuvádza.",
+      "hub_invalid": "Zadajte názov nakonfigurovaného hubu Modbus.",
+      "unit_invalid": "Adresa zariadenia musí byť v rozsahu 1 až 247.",
+      "hub_map_incomplete": "Senzory Modbus nezodpovedajú profilu striedača. Opravte YAML, znova načítajte Modbus a odošlite znova.",
+      "hub_identity_unreadable": "Striedač sa nepodarilo rozpoznať zo senzorov. Skontrolujte registre a odošlite znova.",
+      "hub_sensors_unavailable": "Niektoré priradené senzory teraz nemajú použiteľnú hodnotu. Skontrolujte senzory uvedené nižšie a odošlite znova.",
+      "hub_check_failed": "Hodnoty prečítané z Modbus hubu nezodpovedajú vašim existujúcim senzorom, alebo zariadenie nie je očakávaný striedač. Riadenie nebolo zapnuté — podrobnosti sú nižšie a v senzore overenia; odstráňte príčinu a odošlite znova."
     },
     "progress": {
       "direct_search": "Vyhľadávanie striedača v miestnej sieti. Môže to trvať až minútu."
@@ -555,6 +580,14 @@
     "direct_start_failed": {
       "title": "Volcast nemohol spustiť priame pripojenie k striedaču",
       "description": "Priame pripojenie k striedaču sa kvôli neočakávanej chybe nepodarilo spustiť. Volcast to niekoľkokrát zopakuje; kým sa nepripojí, nemôže meniť ani vracať nastavenia striedača. Ak to trvá, znova načítajte Volcast a skontrolujte protokoly Home Assistanta."
+    },
+    "ha_modbus_map": {
+      "title": "Volcast nemôže riadiť striedač cez senzory Modbus hubu",
+      "description": "Volcast riadi tento striedač cez váš Modbus hub v Home Assistante a číta ho zo surových senzorov registrov. Niektoré potrebné registre chýbajú alebo ich senzory nečítajú zo striedača, do ktorého Volcast zapisuje (rovnaký hub a adresa zariadenia, jeden holding register na senzor): {registers}. Kým to nebude opravené, Volcast nemení nastavenia striedača. Pridajte alebo opravte senzory z YAML ukážky Volcast a potom Volcast znovu načítajte."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Entita Modbus zapisuje do registrov, ktoré riadi Volcast",
+      "description": "Tieto entity Modbus na rovnakom hube a zariadení môžu zapisovať do registrov striedača, ktoré riadi Volcast (čísla registrov, ? = neznámy register): {entities}. Kým sú aktívne, Volcast nemení nastavenia striedača, aby sa dva programy navzájom neprepisovali. Vypnite ich v Nastavenia → Entity alebo ich odstráňte z vášho Modbus YAML."
     },
     "sensor_assignment_missing": {
       "title": "Volcast potrebuje vedieť, ktoré senzory použiť",
@@ -670,6 +703,18 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Overenie Modbus hubu zlyhalo",
+      "description": "Hodnoty z Modbus hubu nezodpovedajú vašim senzorom, alebo zariadenie nie je očakávaný striedač ({problems}). Riadenie Volcast zostáva vypnuté. Opravte senzory alebo mapovanie registrov a spustite krok Modbus hubu znova v nastaveniach integrácie."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast nedokázal plne overiť váš Modbus hub",
+      "description": "Hodnoty z hubu sa nedali porovnať s vašimi senzormi pre: {quantities} (žiadny aktuálny senzor alebo bola batéria nečinná). Riadenie bolo zapnuté len na základe identifikácie zariadenia. Namapujte senzory výkonu a nabitia batérie v Installation details a spustite krok Modbus hubu znova, keď sa batéria nabíja alebo vybíja."
+    },
+    "hub_check_control_on": {
+      "title": "Riadenie Volcast je STÁLE ZAPNUTÉ po neúspešnom overení Modbus hubu",
+      "description": "Overenie Modbus hubu zlyhalo ({problems}), ale Volcast nedokázal vrátiť striedač do základného stavu, takže sa nič nezmenilo a riadenie stále beží. Overte, že je striedač dostupný, otvorte nastavenia integrácie, znova zvoľte Modbus hub a odošlite; riadenie sa vypne po obnovení striedača. Ak chcete riadenie zastaviť okamžite, vypnite prepínač riadenia Volcast."
     }
   },
   "services": {

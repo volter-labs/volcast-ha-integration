@@ -79,7 +79,7 @@ from ..core.profile import ORIGIN_FEED_ENDORSED, load_builtin, profile_from_dict
 from ..registry_compat import all_devices, device_config_entry_ids
 from . import direct_search as ds
 from .device_io import DirectIO, EntityIO
-from .direct import DirectConnection, serial_identity
+from .direct import HUB_SERVICE_WRITE, DirectConnection, serial_identity
 from .conflicts import ConflictMonitor
 from .executor import ControlGaps, VolcastExecutor
 from .ha_writer import EntityServiceWriter
@@ -457,7 +457,8 @@ class ControlRuntime:
 
 
 # Pola celu, które wyznaczają połączenie i urządzenie; odświeżone możliwości z ponownej sondy to nie zmiana.
-_TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp")
+# `hub` — cel przez hub `modbus` HA (transport `ha_modbus`); w celu sieciowym go nie ma (None po obu stronach).
+_TARGET_IDENTITY = ("profile_id", "transport", "host", "port", "unit_id", "logger_serial", "device_fp", "hub")
 # Adres tego samego egzemplarza (odcisk z seriala, `serial_identity`): jego zmiana to nie zmiana sterowania —
 # własność nie zależy od adresu (`DirectIO.owner`), więc bez powrotu przez starego wykonawcę po martwym łączu.
 _TARGET_ADDRESS = ("host", "logger_serial")
@@ -485,6 +486,8 @@ def lan_client_seen(conn) -> str | None:
     monitor = getattr(conn, "monitor", None)
     if getattr(monitor, "state", None) == "conflict":
         return monitor.reason or "bus"
+    if getattr(conn, "service_write_conflict", False) is True:
+        return HUB_SERVICE_WRITE             # hub `modbus` HA: obce wywołanie usługi zapisu na naszym urządzeniu
     return None
 
 
@@ -1588,6 +1591,8 @@ def start_relocator(hass, entry, rt) -> Relocator | None:
     if conn is None or getattr(conn, "trial", True) is not False \
             or (entry.options or {}).get(OPT_CONTROL_MODE) != CONTROL_MODE_DIRECT:
         return None
+    if getattr(conn, "hub_mode", False):
+        return None                          # hub `modbus` HA: nie ma adresu w sieci do szukania
     rel = Relocator(hass, entry, conn,
                     control_change=lambda old, new: control_identity_changed(rt, old, new),
                     onboarding_active=lambda: onboarding_running(hass, entry.entry_id))

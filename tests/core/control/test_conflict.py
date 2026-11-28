@@ -209,3 +209,75 @@ def test_drifted_keys_uses_register_quantum():
     device = {"power_w": 626.0, "mode": "auto", "soc_min": 22.0}
     assert drifted_keys(last, device) == ("mode", "soc_min")
     assert drifted_keys(last, {**device, "soc_min": None}) == ("mode",)
+
+
+# ── statycznie: transport przez hub `modbus` HA (bez adresu IP celu) ──────
+
+
+from custom_components.volcast.core.control.conflict import (  # noqa: E402
+    HubWriter, conflicting_writers, hub_static_conflicts)
+
+HUB, UNIT = "deye_hub", 1
+
+
+def test_hub_chosen_as_transport_is_not_a_conflict():
+    # hub `modbus` wpisu konfiguracji o tej samej nazwie = nasz transport, nie drugi sterownik
+    entries = [EntrySnap("modbus", ("192.168.1.70",), False, hub=(HUB, None))]
+    assert hub_static_conflicts(HUB, UNIT, entries, []) == ()
+
+
+def test_other_modbus_hub_entry_or_unknown_name_conflicts():
+    assert hub_static_conflicts(HUB, UNIT, [EntrySnap("modbus", ("192.168.1.70",), False, hub=("other", None))],
+                                []) == ("modbus",)
+    assert hub_static_conflicts(HUB, UNIT, [EntrySnap("modbus", None, False)], []) == ("modbus",)
+
+
+def test_local_inverter_integration_conflicts_without_an_address_to_compare():
+    # adresu bramki huba nie znamy — integracja falownika w sieci lokalnej może pisać do tego samego falownika
+    entries = [EntrySnap("solarman", ("192.168.1.60",), False), EntrySnap("goodwe", None, False),
+               EntrySnap("growatt_server", (), False), EntrySnap("sunsynk", ("192.168.1.61",), True)]
+    assert hub_static_conflicts(HUB, UNIT, entries, []) == ("solarman", "goodwe")
+
+
+def test_other_volcast_entry_conflicts_unless_another_hub_or_device():
+    same = EntrySnap("volcast", ("",), False, hub=(HUB, UNIT))
+    other_unit = EntrySnap("volcast", ("",), False, hub=(HUB, 2))
+    other_hub = EntrySnap("volcast", ("",), False, hub=("other", UNIT))
+    host_target = EntrySnap("volcast", ("192.168.1.80",), False)
+    no_direct = EntrySnap("volcast", (), False)
+    me = EntrySnap("volcast", ("",), False, is_self=True, hub=(HUB, UNIT))
+    assert hub_static_conflicts(HUB, UNIT, [me, other_unit, other_hub, no_direct], []) == ()
+    assert hub_static_conflicts(HUB, UNIT, [same], []) == ("volcast",)
+    assert hub_static_conflicts(HUB, UNIT, [host_target], []) == ("volcast",)       # ta sama bramka? nie wiemy
+
+
+WRITES = frozenset(range(146, 178))                     # rejestry, które pisze Volcast (blok TOU)
+
+
+def test_modbus_write_entities_on_our_hub_and_device_conflict_only_on_our_registers():
+    # encje zapisu platformy `modbus` piszą przez hub bez usługi — słuchacz usług ich nie widzi
+    def clash(*writers):
+        return hub_static_conflicts(HUB, UNIT, [], list(writers), WRITES)
+    assert clash(HubWriter(HUB, UNIT, frozenset({166}))) == ("modbus_write_entity",)
+    assert clash(HubWriter(HUB, 0, frozenset({146}))) == ("modbus_write_entity",)          # rozgłoszenie
+    assert clash(HubWriter(None, UNIT, frozenset({146}))) == ("modbus_write_entity",)      # hub nieustalony
+    assert clash(HubWriter(HUB, None, frozenset({146}))) == ("modbus_write_entity",)       # urządzenie nieustalone
+    assert clash(HubWriter(HUB, UNIT, None)) == ("modbus_write_entity",)                   # rejestr nieustalony
+    assert clash(HubWriter(HUB, UNIT, frozenset({300}))) == ()                             # inny rejestr
+    assert clash(HubWriter(HUB, UNIT, frozenset())) == ()                                  # cewka, nie rejestr
+    assert clash(HubWriter(HUB, 2, frozenset({146})), HubWriter("heat_pump", UNIT, frozenset({146}))) == ()
+
+
+def test_conflicting_writers_lists_only_the_offending_entities():
+    w1, w2 = HubWriter(HUB, UNIT, frozenset({166}), "switch.a"), HubWriter(HUB, UNIT, frozenset({300}), "switch.b")
+    assert conflicting_writers(HUB, UNIT, [w1, w2], WRITES) == [w1]
+    assert conflicting_writers(HUB, UNIT, [w2], None) == [w2]                # nasze rejestry nieznane — każdy
+
+
+def test_hub_writer_list_unknown_is_a_conflict():
+    assert hub_static_conflicts(HUB, UNIT, [], None, WRITES) == ("modbus_write_entity",)
+
+
+def test_entry_snap_repr_hides_the_hub_name():
+    assert HUB not in repr(EntrySnap("volcast", ("",), False, hub=(HUB, UNIT)))
+    assert HUB not in repr(HubWriter(HUB, UNIT, None, "switch.a")) and "switch.a" not in repr(HubWriter(HUB, 1))

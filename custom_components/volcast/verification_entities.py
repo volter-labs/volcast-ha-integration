@@ -5,6 +5,7 @@ sterowania, który drabina wysyła przy zmianie szczebla, stanu, stopu albo urz�
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -12,8 +13,10 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import SIGNAL_CONTROL_STATE_UPDATED
+from .const import OPT_DIRECT_TARGET, OPT_HUB_CHECK, SIGNAL_CONTROL_STATE_UPDATED
+from .core.control import hub_check
 from .core.control.ladder import IDLE, RUNG_WINDOW, STOPPED, VERIFIED
+from .core.transports.ha_modbus import HA_MODBUS_KIND
 from .discovery_entities import _device_info
 
 _ATTRS = ("rung", "state", "since", "next_at", "stop_reason", "migrated")
@@ -30,6 +33,7 @@ class VolcastVerificationSensor(SensorEntity):
 
     def __init__(self, entry, control) -> None:
         self._control = control
+        self._entry = entry
         self._entry_id = entry.entry_id
         self._attr_unique_id = f"{entry.entry_id}_control_verification"
         self._attr_device_info = _device_info(entry.entry_id)
@@ -38,11 +42,22 @@ class VolcastVerificationSensor(SensorEntity):
         runner = getattr(self._control, "verification", None)
         return runner.payload() if runner is not None else None
 
+    def _hub_check(self) -> dict[str, Any] | None:
+        """Raport weryfikacji huba `modbus` (tryb tylko-odczyt: bez sterowania jest jedyną treścią encji)."""
+        options = getattr(self._entry, "options", None) or {}
+        report = options.get(OPT_HUB_CHECK)
+        if self._control is not None:
+            # Sterowanie działa innym trybem niż hub: stary raport nic już nie mówi o urządzeniu pod sterowaniem.
+            target = options.get(OPT_DIRECT_TARGET)
+            if not (isinstance(target, Mapping) and target.get("transport") == HA_MODBUS_KIND):
+                return None
+        return report if isinstance(report, dict) and report else None
+
     @property
     def native_value(self) -> str:
         data = self._payload()
         if not data or data.get("state") == IDLE:
-            return "idle"
+            return "hub_check_failed" if hub_check.blocks_control(self._hub_check()) and not data else "idle"
         if data["state"] in (VERIFIED, STOPPED):
             return data["state"]
         return f"rung {data.get('rung')}/{RUNG_WINDOW}"
@@ -52,6 +67,9 @@ class VolcastVerificationSensor(SensorEntity):
         data = self._payload() or {}
         out = {k: data[k] for k in _ATTRS if k in data}
         out.update(data.get("trial") or {})
+        report = self._hub_check()
+        if report is not None:
+            out["hub_check"] = report
         return out
 
     async def async_added_to_hass(self) -> None:

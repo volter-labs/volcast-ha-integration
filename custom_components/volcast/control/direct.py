@@ -18,7 +18,16 @@ Warstwa HA robi wyłącznie I/O i cykl życia; decyzje są w rdzeniu (`core/`).
   Zapisy i decyzje trybu próbnego wymagają `identity == "confirmed"` (rozstrzyga wykonawca).
 * Odpytywanie z zegara HA biegnie na pętli zdarzeń (`@callback`), zadanie w tle wpisu.
 
-Logi: wyłącznie nazwy klas błędów i liczniki — nigdy host, port, numer seryjny ani numer loggera.
+* Cel przez hub `modbus` HA (`transport: ha_modbus`, `hub`, `unit_id`): ten sam `kind == "direct"` i te
+  same bramki, inny transport (`HaModbusTransport` — zapis usługą `modbus.write_register` huba użytkownika,
+  odczyt z jego surowych czujników). Bez gniazda i bez adresu IP: rejestracja celu po `hub|urządzenie`,
+  kolizje statyczne bez porównania adresów (`hub_static_conflicts`; nasz hub nie jest kolizją, encje zapisu
+  platformy `modbus` na nim — tak). Start wymaga mapy czujników zgodnej z profilem (`MapReport.ok`: każdy
+  blok odczytu w całości zmapowany) — inaczej odmowa `ha_modbus_map` z ponowieniem (czujniki mogą dojść
+  później, np. po starcie HA). Obcy zapis usługą na naszym hubie i urządzeniu (`transport.conflict`) to
+  kolizja od razu, bez progu monitora. Bez relokatora (nie ma adresu do szukania).
+
+Logi: wyłącznie nazwy klas błędów i liczniki — nigdy host, port, numer seryjny, numer loggera ani nazwa huba.
 """
 from __future__ import annotations
 
@@ -38,15 +47,20 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from ..const import (CONTROL_MODE_DIRECT, DIRECT_POLL_S, DIRECT_SLOW_POLL_S, DOMAIN, OPT_CONTROL_MODE,
                      OPT_DIRECT_TARGET, OPT_DIRECT_TRIAL)
-from ..core.control.conflict import CONFLICT_DOMAINS, SELF_DOMAIN, ContentionMonitor, EntrySnap, static_conflicts
+from ..core.control.conflict import (CONFLICT_DOMAINS, MODBUS_DOMAIN, MODBUS_WRITE_DOMAINS, SELF_DOMAIN,
+                                    ContentionMonitor, EntrySnap, HubWriter, conflicting_writers, hub_static_conflicts,
+                                    static_conflicts)
 from ..core.discovery.known import HOST_KEYS
 from ..core.discovery.relocate import FP_SERIAL
-from ..core.modbus.blocks import make_block
+from ..core.modbus.blocks import make_block, write_addresses
 from ..core.modbus.client import RegisterClient
 from ..core.modbus.reading import DirectReading
 from ..core.transports.base import (
     ModbusException, RequestTimeout, TransportConfig, TransportError, TransportStats, check_target, validate_config)
 from ..core.transports.factory import make_transport
+from ..core.transports.ha_modbus import (HA_MODBUS_KIND, HaModbusConfig, HaModbusTransport, modbus_entity_device,
+                                         modbus_writer_registers)
+from ..core.transports.ha_modbus_map import MapReport, build_register_map
 from .work_mode import WorkModeTracker, classify_direct
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,15 +80,39 @@ IDENTITY_MAX_AGE_S = 3600.0         # przed sesją zapisów: potwierdzenie nie s
 TIMEOUT_STREAK = 3
 RESOLVE_TIMEOUT_S = 2.0
 FRESH_WAIT_S = 10.0                 # powrót czeka na odpytywanie w toku najwyżej tyle
+HUB_MAP = "ha_modbus_map"           # odmowa: mapa czujników huba nie pokrywa bloków odczytu profilu
+HUB_WRITER_ISSUE = "ha_modbus_write_entity"  # zgłoszenie: encje zapisu `modbus` na naszych rejestrach
+HUB_SERVICE_WRITE = "modbus_service_write"   # przyczyna kolizji: obce wywołanie usługi zapisu na naszym hubie
+HUB_DEFAULT_SCAN_S = 60.0           # odpytywanie czujników huba, gdy nie da się go ustalić
+_ISSUE_LIST_MAX = 16                # najwyżej tyle pozycji w opisie zgłoszenia (Naprawy)
 _FP_HEX = frozenset("0123456789abcdef")
 
 Resolver = Callable[[str], Awaitable[Iterable[str] | None]]
 
 
 def target_fingerprint(target: Mapping, salt: bytes) -> str:
-    """Odcisk celu połączenia (własność w trybie bezpośrednim): HMAC z solą instalacji — bez adresu jawnie."""
-    msg = f"{target.get('transport')}|{target.get('host')}|{target.get('port')}|{target.get('unit_id')}"
+    """Odcisk celu połączenia (własność w trybie bezpośrednim): HMAC z solą instalacji — bez adresu jawnie.
+    Cel przez hub `modbus` HA: hub i adres urządzenia zamiast hosta i portu."""
+    if target.get("transport") == HA_MODBUS_KIND:
+        msg = f"{HA_MODBUS_KIND}|{target.get('hub')}|{target.get('unit_id')}"
+    else:
+        msg = f"{target.get('transport')}|{target.get('host')}|{target.get('port')}|{target.get('unit_id')}"
     return hmac.new(bytes(salt), msg.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def hub_key(target: Mapping) -> str | None:
+    """Klucz celu przez hub `modbus` HA (`hub|urządzenie`) albo None przy złym celu: niepusta nazwa huba bez
+    białych znaków na brzegach, adres urządzenia 1..247 (0 = rozgłoszenie — nigdy)."""
+    hub, unit = target.get("hub"), target.get("unit_id")
+    if not isinstance(hub, str) or not hub or hub != hub.strip():
+        return None
+    if not isinstance(unit, int) or isinstance(unit, bool) or not 1 <= unit <= 247:
+        return None
+    return f"{HA_MODBUS_KIND}|{hub}|{unit}"
+
+
+def _make_hub_transport(hass, cfg: HaModbusConfig, *, clock) -> HaModbusTransport:
+    return HaModbusTransport(hass, cfg, clock=clock)
 
 
 def serial_identity(target: Mapping, profile) -> str | None:
@@ -87,6 +125,10 @@ def serial_identity(target: Mapping, profile) -> str | None:
     brak odcisku, odcisk słaby `model|moc` (dwa identyczne modele są nie do odróżnienia) albo brak profilu.
     """
     if not isinstance(target, Mapping) or profile is None:
+        return None
+    if target.get("transport") == HA_MODBUS_KIND:
+        # hub `modbus` HA: tożsamość z czujników wiąże się z hubem i urządzeniem celu (`build_register_map`
+        # z `device`) — zmiana huba albo adresu urządzenia to inne sterowanie, bez własności po samym serialu
         return None
     fp = _expected_fp(target.get("device_fp"))
     if fp is None or target.get("profile_id") != getattr(profile, "id", None):
@@ -159,6 +201,49 @@ async def _addresses(hosts: list[str], resolve: Resolver, timeout_s: float) -> t
     return tuple(out)
 
 
+def _active_target(entry) -> Mapping | None:
+    opts = getattr(entry, "options", None) or {}
+    target = opts.get(OPT_DIRECT_TARGET)
+    active = opts.get(OPT_CONTROL_MODE) == CONTROL_MODE_DIRECT or opts.get(OPT_DIRECT_TRIAL) is True
+    return target if isinstance(target, Mapping) and active else None
+
+
+def _direct_hub(entry) -> tuple[str, int | None] | None:
+    """Cel przez hub `modbus` innego wpisu `volcast`: (hub, urządzenie); None = brak takiego celu."""
+    target = _active_target(entry)
+    if target is None or target.get("transport") != HA_MODBUS_KIND:
+        return None
+    hub, unit = target.get("hub"), target.get("unit_id")
+    if not isinstance(hub, str):
+        return None                                      # nieznany hub — jak cel bez adresu (kolizja)
+    return hub, unit if isinstance(unit, int) and not isinstance(unit, bool) else None
+
+
+def hub_writers(hass) -> list[HubWriter] | None:
+    """Encje zapisu platformy `modbus` (piszą przez hub bez usługi): hub, adres urządzenia i rejestry zapisu.
+
+    Publiczne: komponent domeny w `hass.data[<domena>]` (`EntityComponent.entities`),
+    `entity.platform.platform_name`. Hub, urządzenie i rejestry — prywatne atrybuty encji `modbus`, czytane
+    wyłącznie przez pomocników `ha_modbus` (brak = nieustalone = kolizja). Wyjątek = None (kolizja)."""
+    out: list[HubWriter] = []
+    try:
+        data = getattr(hass, "data", None)
+        for domain in sorted(MODBUS_WRITE_DOMAINS):
+            component = data.get(domain) if isinstance(data, Mapping) else None
+            for entity in list(getattr(component, "entities", None) or ()):
+                platform = getattr(entity, "platform", None)
+                if getattr(platform, "platform_name", None) != MODBUS_DOMAIN:
+                    continue
+                hub, unit = modbus_entity_device(entity)
+                eid = getattr(entity, "entity_id", None)
+                out.append(HubWriter(hub, unit, modbus_writer_registers(entity, domain),
+                                     eid if isinstance(eid, str) else None))
+    except Exception as err:  # noqa: BLE001 — „nie wiemy” = kolizja
+        _LOGGER.debug("Volcast modbus hub writer check failed: %s", type(err).__name__)
+        return None
+    return out
+
+
 def _direct_host(entry) -> tuple[str, ...]:
     """Cel połączenia bezpośredniego innego wpisu `volcast` (() = wpis bez takiego połączenia)."""
     opts = getattr(entry, "options", None) or {}
@@ -185,10 +270,17 @@ async def async_entry_snaps(hass, self_entry_id: str, *, resolve: Resolver | Non
         disabled = getattr(entry, "disabled_by", None) is not None
         if domain == SELF_DOMAIN:
             snaps.append(EntrySnap(domain, _direct_host(entry), disabled,
-                                   is_self=getattr(entry, "entry_id", None) == self_entry_id))
+                                   is_self=getattr(entry, "entry_id", None) == self_entry_id,
+                                   hub=_direct_hub(entry)))
         elif domain in CONFLICT_DOMAINS:
             addresses = None if disabled else await _addresses(_hosts(entry), resolve, timeout_s)
-            snaps.append(EntrySnap(domain, addresses, disabled))
+            # HA (do 2026.9) konfiguruje `modbus` tylko w YAML — wpisów tej domeny nie ma; gdyby powstały,
+            # nazwa huba to `data["name"]` (jak w YAML), a tytuł tylko zapasowo. Inna nazwa = kolizja (fail-closed).
+            data = getattr(entry, "data", None)
+            name = data.get("name") if isinstance(data, Mapping) else None
+            name = name if isinstance(name, str) else getattr(entry, "title", None)
+            hub = (name, None) if domain == MODBUS_DOMAIN and isinstance(name, str) else None
+            snaps.append(EntrySnap(domain, addresses, disabled, hub=hub))
     return snaps
 
 
@@ -196,7 +288,8 @@ class DirectConnection:
     def __init__(self, hass, entry, profile, target: Mapping, *, trial: bool, salt: bytes,
                  poll_s: float = DIRECT_POLL_S, transport_factory=make_transport, clock=time.monotonic,
                  utcnow=dt_util.utcnow, allow_loopback: bool = False, unreadable: Iterable[str],
-                 resolve: Resolver | None = None, unsupported: Iterable[str] = ()) -> None:
+                 resolve: Resolver | None = None, unsupported: Iterable[str] = (),
+                 hub_transport_factory=_make_hub_transport) -> None:
         self._hass = hass
         self._entry = entry
         self.profile = profile
@@ -205,6 +298,13 @@ class DirectConnection:
         self._salt = bytes(salt)
         self.poll_s = float(poll_s)
         self._factory = transport_factory
+        self._hub_factory = hub_transport_factory
+        # cel przez hub `modbus` HA: wynik walidacji mapy czujników przy ostatnim starcie (adresy i przyczyny)
+        self.map_report: MapReport | None = None
+        self._map_issue = f"ha_modbus_map_{getattr(entry, 'entry_id', '')}"
+        self._writer_issue = f"ha_modbus_write_entity_{getattr(entry, 'entry_id', '')}"
+        self._map_issue_open = False
+        self._writer_issue_open = False
         self._clock = clock
         self._utcnow = utcnow
         self._allow_loopback = allow_loopback
@@ -261,8 +361,40 @@ class DirectConnection:
         return getattr(t, "stats", None) or TransportStats()
 
     @property
+    def hub_mode(self) -> bool:
+        """Cel przez hub `modbus` HA (transport `ha_modbus`) zamiast połączenia sieciowego."""
+        return self.target.get("transport") == HA_MODBUS_KIND
+
+    @property
+    def image_slack_s(self) -> float:
+        """Hub HA: obraz rejestrów jest tak stary jak najwolniej odpytywany czujnik — o tyle (×2) więcej wolno mu
+        mieć lat, zanim encje i telemetria uznają odczyt za nieaktualny. Bramki zapisu liczą prawdziwy wiek."""
+        if not self.hub_mode:
+            return 0.0
+        scan = self.map_report.max_scan_s if self.map_report is not None else None
+        return 2.0 * (scan if scan is not None else HUB_DEFAULT_SCAN_S)
+
+    @property
+    def conflict_reason(self) -> str | None:
+        """Kod przyczyny bieżącej kolizji (do zgłoszenia w Naprawach i dowodów sterownika); None = brak."""
+        if self.monitor.state == "conflict":
+            return self.monitor.reason or "bus"
+        if self.static_conflicts:
+            return self.static_conflicts[0]
+        return HUB_SERVICE_WRITE if self.service_write_conflict else None
+
+    @property
+    def service_write_conflict(self) -> bool:
+        """Hub HA: obce wywołanie usługi zapisu na naszym hubie i urządzeniu (niezależnie od innych kolizji)."""
+        transport = self.client.transport if self.client is not None else None
+        return getattr(transport, "conflict", False) is True
+
+    @property
     def conflict(self) -> bool:
-        return bool(self.static_conflicts) or self.monitor.state == "conflict"
+        # transport przez hub HA widzi obce wywołania usługi zapisu na naszym hubie — kolizja od razu
+        transport = self.client.transport if self.client is not None else None
+        return bool(self.static_conflicts) or self.monitor.state == "conflict" \
+            or getattr(transport, "conflict", False) is True
 
     def refused(self) -> str | None:
         return self._refused
@@ -294,6 +426,7 @@ class DirectConnection:
         Dla bramek zapisu to za mało: zapis i decyzja próbna wymagają też `identity == "confirmed"`."""
         now = self._clock() if now_mono is None else now_mono
         self._observe_link()
+        self._hub_binding_lost()
         if self.identity != "confirmed" or self._recheck or self._identity_at is None:
             return True
         limit = IDENTITY_UDP_MAX_AGE_S if self.target.get("transport") == "goodwe_udp" else IDENTITY_MAX_AGE_S
@@ -318,14 +451,18 @@ class DirectConnection:
         if self._started or self._stopped:
             return
         self._started = True
-        try:
-            cfg = self._config()
-            host = check_target(str(self.target.get("host")), allow_loopback=self._allow_loopback)
-        except (ValueError, TypeError, KeyError):
-            cfg, host = None, None
-        if cfg is None or host is None:
+        if self.hub_mode:
+            cfg, host = None, hub_key(self.target)
+        else:
+            try:
+                cfg = self._config()
+                host = check_target(str(self.target.get("host")), allow_loopback=self._allow_loopback)
+            except (ValueError, TypeError, KeyError):
+                cfg, host = None, None
+        if (cfg is None and not self.hub_mode) or host is None:
             self._refused = "bad_target"
-            _LOGGER.warning("Volcast direct connection refused: target is not a valid local address")
+            _LOGGER.warning("Volcast direct connection refused: target is not a valid %s",
+                            "modbus hub and device address" if self.hub_mode else "local address")
             return
         hosts = self._hass.data.setdefault(DOMAIN, {}).setdefault("direct_hosts", {})
         if hosts.get(host) is not None:                  # inne połączenie (także tego samego wpisu) żyje
@@ -349,7 +486,10 @@ class DirectConnection:
         hosts[host] = self
         self._host = host
         try:
-            await self._start_registered(cfg)
+            if self.hub_mode:
+                await self._start_hub()
+            else:
+                await self._start_registered(cfg)
         except Exception as err:  # noqa: BLE001 — nieoczekiwany wyjątek: odmowa z ponowieniem, nie „łączenie”
             await self._release()                        # bez rejestracji hosta i bez otwartego transportu
             self.client = None
@@ -416,6 +556,109 @@ class DirectConnection:
             self._refused = "bad_target"
             await self._release()
             return
+        await self._start_client(transport)
+
+    async def _start_hub(self) -> None:
+        """Cel przez hub `modbus` HA: mapa czujników → transport `ha_modbus`. Mapa niezgodna z profilem
+        (`MapReport.ok` — każdy blok odczytu i identyfikacji w całości zmapowany na czujniki bazowe huba) →
+        odmowa `ha_modbus_map` z ponowieniem; czytamy wyłącznie zmapowane rejestry."""
+        report = self._hub_map()
+        self.map_report = report
+        if not report.ok:
+            await self._release()
+            self._sync_map_issue(report)
+            self._refuse(HUB_MAP, "the modbus hub sensors do not cover the inverter profile registers")
+            return
+        self._sync_map_issue(report)
+        try:
+            cfg = HaModbusConfig(hub=str(self.target.get("hub")), device_address=int(self.target.get("unit_id")),
+                                 registers=dict(report.registers))
+            transport = self._hub_factory(self._hass, cfg, clock=self._clock)
+        except Exception as err:  # noqa: BLE001 — zła konfiguracja: bez połączenia
+            _LOGGER.warning("Volcast direct connection not started: %s", type(err).__name__)
+            self._refused = "bad_target"
+            await self._release()
+            return
+        await self._start_client(transport)
+
+    def _hub_map(self, *, hints: bool = True) -> MapReport:
+        """Mapa czujników celu przez hub, związana z hubem i urządzeniem ZAPISU: każdy czujnik (także tożsamości)
+        musi dowodnie czytać z tego samego huba i adresu urządzenia, do którego piszemy."""
+        explicit = self.target.get("registers")
+        return build_register_map(self._hass, self.profile,
+                                  explicit=explicit if isinstance(explicit, Mapping) else None,
+                                  device=(str(self.target.get("hub")), int(self.target.get("unit_id"))), hints=hints)
+
+    def _hub_map_valid(self) -> bool:
+        """Ponowne sprawdzenie mapy (YAML mógł się zmienić pod działającym połączeniem): zgodna z profilem
+        i z celem zapisu oraz ta sama, na której zbudowano transport."""
+        try:
+            report = self._hub_map(hints=False)
+        except Exception as err:  # noqa: BLE001 — „nie wiemy” = niepotwierdzone
+            _LOGGER.debug("Volcast modbus hub map check failed: %s", type(err).__name__)
+            return False
+        self.map_report = report
+        self._sync_map_issue(report)
+        cfg = getattr(self.client.transport, "cfg", None) if self.client is not None else None
+        return report.ok and dict(getattr(cfg, "registers", {}) or {}) == dict(report.registers)
+
+    def _hub_binding_lost(self) -> bool:
+        """Hub HA: mapa sprawdzana na nowo przy KAŻDYM odpytaniu i przed każdą sesją zapisów (tylko lokalne
+        wyszukania w rejestrze encji). Niezgodna → tożsamość `pending`, bez odczytów — żadna decyzja, migawka TOU
+        ani zapis nie powstaje z obrazu innego urządzenia albo przekłamanych czujników. True = utracona."""
+        if not self.hub_mode or self.client is None or self._hub_map_valid():
+            return False
+        if self.identity != "pending":
+            _LOGGER.warning("Volcast direct control: the modbus hub sensors no longer read the raw registers of the "
+                            "controlled device — writes stopped")
+        self.identity = "pending"
+        self._recheck = True
+        self.reading = None
+        return True
+
+    def _sync_issue(self, issue_id: str, attr: str, key: str, placeholders: dict | None) -> None:
+        """Zgłoszenie w Naprawach: utworzone (z treścią) albo usunięte; bez powtórzeń."""
+        try:
+            if placeholders is not None:
+                if getattr(self, attr) == placeholders:
+                    return                       # ta sama treść — bez ponownego zgłoszenia przy każdym odpytaniu
+                ir.async_create_issue(self._hass, DOMAIN, issue_id, is_fixable=False, severity=_WARNING,
+                                      translation_key=key, translation_placeholders=placeholders)
+                setattr(self, attr, dict(placeholders))
+            elif getattr(self, attr):
+                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+                setattr(self, attr, False)
+        except Exception as err:  # noqa: BLE001 — zgłoszenie nie psuje połączenia
+            _LOGGER.debug("Volcast modbus hub issue update failed: %s", type(err).__name__)
+
+    def _sync_map_issue(self, report: MapReport | None) -> None:
+        """Adresy i przyczyny (bez entity_id) — co poprawić w czujnikach."""
+        if report is None or report.ok:
+            self._sync_issue(self._map_issue, "_map_issue_open", HUB_MAP, None)
+            return
+        items = [f"{a}: missing" for a in report.missing]
+        items += [f"{u.addr}: {u.cause}" for u in report.unsupported]
+        items += [f"{a}: duplicate" for a in report.duplicates]
+        if not report.registry_available:
+            items.append("entity_registry_unavailable")
+        more = " …" if len(items) > _ISSUE_LIST_MAX else ""
+        self._sync_issue(self._map_issue, "_map_issue_open", HUB_MAP,
+                         {"registers": ", ".join(items[:_ISSUE_LIST_MAX]) + more})
+
+    def _sync_writer_issue(self, clash: list[HubWriter], ours: frozenset[int]) -> None:
+        """Encje zapisu `modbus` na naszych rejestrach: encja i rejestr (`?` = nieustalony) — lokalnie."""
+        if not clash:
+            self._sync_issue(self._writer_issue, "_writer_issue_open", HUB_WRITER_ISSUE, None)
+            return
+        items = []
+        for w in clash:
+            regs = sorted(w.addrs & ours) if w.addrs is not None else []
+            items.append(f"{w.entity_id or '?'}: {', '.join(str(a) for a in regs) or '?'}")
+        more = " …" if len(items) > _ISSUE_LIST_MAX else ""
+        self._sync_issue(self._writer_issue, "_writer_issue_open", HUB_WRITER_ISSUE,
+                         {"entities": "; ".join(items[:_ISSUE_LIST_MAX]) + more})
+
+    async def _start_client(self, transport) -> None:
         # Połączenie próbne nagrywa surowe ramki odczytów (diagnostyka, złote wektory — zamaskowane).
         self.client = RegisterClient(transport, self.profile, clock=self._clock, utcnow=self._utcnow, salt=self._salt,
                                      unreadable=self.unreadable | self.unsupported, record=self.trial)
@@ -444,6 +687,8 @@ class DirectConnection:
                 ir.async_delete_issue(self._hass, DOMAIN, self._start_issue)
             except Exception:  # noqa: BLE001
                 pass
+        self._sync_issue(self._map_issue, "_map_issue_open", HUB_MAP, None)
+        self._sync_issue(self._writer_issue, "_writer_issue_open", HUB_WRITER_ISSUE, None)
         if self._unsub_timer is not None:
             try:
                 self._unsub_timer()
@@ -549,6 +794,7 @@ class DirectConnection:
             self._notify()
             return self.reading
         self._observe_link()
+        self._hub_binding_lost()                       # hub HA: mapa czujników przy każdym odpytaniu
         if self.identity == "confirmed" and self._identity_stale(now):
             self.identity = "pending"                  # UDP: tożsamość co godzinę, przed odczytem stanu
         if self.identity != "confirmed" or self._recheck:
@@ -586,6 +832,8 @@ class DirectConnection:
         wm = getattr(self.profile, "work_mode", None)
         if wm is None or self.conflict or self.client is None or self._work_mode_off:
             return
+        if self.hub_mode and (self.map_report is None or wm.read_addr not in self.map_report.registers):
+            return                       # hub HA: wyłącznie rejestry z mapy czujników
         if self._work_mode_at is not None and now - self._work_mode_at < self._work_mode_interval(wm.poll_s):
             return
         self._work_mode_at = now
@@ -679,6 +927,11 @@ class DirectConnection:
         self._last_static = self._clock()
         try:
             snaps = await async_entry_snaps(self._hass, self._entry.entry_id, resolve=self._resolve)
+            if self.hub_mode:
+                hub, unit = str(self.target.get("hub")), int(self.target.get("unit_id"))
+                ours, writers = write_addresses(self.profile), hub_writers(self._hass)
+                self._sync_writer_issue(conflicting_writers(hub, unit, writers or (), ours), ours)
+                return hub_static_conflicts(hub, unit, snaps, writers, ours)
             return static_conflicts(host, snaps)
         except Exception as err:  # noqa: BLE001 — „nie wiemy” = kolizja
             _LOGGER.debug("Volcast direct conflict check failed: %s", type(err).__name__)
@@ -694,6 +947,8 @@ class DirectConnection:
             return self.identity
         now = self._clock()
         self._identity_tried = now
+        if self._hub_binding_lost():
+            return self.identity             # czujniki (także tożsamości) nie czytają dowodnie z celu zapisu
         try:
             fp = await self.client.read_identity()
         except Exception as err:  # noqa: BLE001

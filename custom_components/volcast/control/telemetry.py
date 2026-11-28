@@ -80,7 +80,7 @@ from ..core.price_actions import InvalidPriceSource, PriceActionPoller, parse_so
 from ..core.price_setup import enrich_attributes
 from ..core.prices import currency_from_attributes, fingerprint, intervals_from_attributes, series_end
 from .loads_reader import LoadsReader
-from .direct_sensors import STALE_FACTOR as _STALE_FACTOR   # jedna reguła świeżości z sensorami
+from .direct_sensors import stale_limit_s   # jedna reguła świeżości z sensorami
 
 _LOGGER = logging.getLogger(__name__)
 TELEMETRY_INTERVAL_S = 60
@@ -566,6 +566,10 @@ class TelemetrySender:
                                  "status": self._direct_status(), "stray": int(stats.stray),
                                  "timeouts": int(stats.timeouts),
                                  "nvm_budget_hit": bool(getattr(self._executor, "nvm_budget_hit", False))}
+            report = getattr(self._direct, "map_report", None)
+            if report is not None:
+                # hub `modbus` HA: walidacja mapy czujników — adresy, przyczyny i liczniki, bez entity_id
+                summary["direct"]["map"] = report.telemetry()
         if self._fz_frozen:
             summary["frozen"] = True
         if self._signal_connected is not None:
@@ -578,7 +582,7 @@ class TelemetrySender:
     def _direct_fresh(self):
         conn = self._direct
         r = conn.reading
-        if r is None or not conn.age_s() < _STALE_FACTOR * float(conn.poll_s):
+        if r is None or not conn.age_s() < stale_limit_s(conn):
             return None
         return r
 

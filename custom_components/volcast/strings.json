@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities) (recommended)",
           "control_direct": "Directly over the local network",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network (recommended)",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network (recommended)",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Through the inverter integration (entities)",
           "control_direct": "Directly over the local network",
+          "control_hub": "Through a Home Assistant Modbus hub (raw sensors)",
           "control_off": "Off — forecast and monitoring only",
           "entity_map": "Choose inverter entities manually"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Use this price source?",
         "description": "This source provides a price forecast for {hours} h ahead. Prices are read in {currency}. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices. Submit to use this price source for planning anyway."
+      },
+      "control_hub": {
+        "title": "Inverter control through a Modbus hub",
+        "description": "Volcast controls the inverter through the Modbus hub you already use in Home Assistant and reads raw register sensors that you define in YAML. Choose the hub and enter the inverter's device address. The sensor template is in the Volcast integration repository: {yaml_path}. After editing the YAML and reloading Modbus, submit again to check again.\n\n{problems}",
+        "data": {
+          "hub": "Modbus hub",
+          "unit_id": "Device address"
+        },
+        "data_description": {
+          "hub": "The hub name from your Modbus configuration.",
+          "unit_id": "Slave address of the inverter on that hub (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,9 @@
       "no_ev_chargers": "No EV charger was found yet. Run discovery first and make sure the charger integration is set up.",
       "no_price_sources": "No known price integration was found in Home Assistant. Use Energy prices to pick a sensor.",
       "price_source_invalid": "The price source settings are no longer valid. Start again.",
-      "price_sell_tomorrow": "The energy price settings are saved. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices."
+      "price_sell_tomorrow": "The energy price settings are saved. The sale price source {source} does not provide prices for tomorrow yet, although the purchase prices for tomorrow are already available. Until it does, tomorrow's plan will be based on the previous day's prices.",
+      "hub_unsupported": "The inverter profile for Modbus hub control is not available. Update the integration.",
+      "hub_check_control_off": "Volcast control was turned off: the Modbus hub check failed ({problems}). Fix the cause, then run the Modbus hub step again."
     },
     "error": {
       "prices_not_usable": "This sensor does not provide a complete price series right now.",
@@ -463,7 +482,13 @@
       "price_sell_unusable": "The sale side of this source has no usable price series.",
       "price_source_invalid": "These settings do not describe a usable source (check the zone, unit and currency).",
       "currency_conflict": "The source currency ({source_currency}) differs from the currency set under Energy prices ({option_currency}). Change that currency to match, or clear it.",
-      "currency_missing": "Enter the currency: this source does not state it."
+      "currency_missing": "Enter the currency: this source does not state it.",
+      "hub_invalid": "Enter the name of a configured Modbus hub.",
+      "unit_invalid": "The device address must be between 1 and 247.",
+      "hub_map_incomplete": "The Modbus sensors do not match the inverter profile. Fix the YAML, reload Modbus and submit again.",
+      "hub_identity_unreadable": "The inverter could not be identified from the sensors. Check the registers and submit again.",
+      "hub_sensors_unavailable": "Some mapped sensors have no usable value right now. Check the sensors listed below and submit again.",
+      "hub_check_failed": "The values read from the Modbus hub do not match your existing sensors, or the device is not the expected inverter. Control was not enabled — see the details below and the verification sensor, fix the cause and submit again."
     },
     "progress": {
       "direct_search": "Searching the local network for the inverter. This can take up to a minute."
@@ -572,6 +597,14 @@
       "title": "Volcast could not start the direct inverter connection",
       "description": "The direct connection to the inverter failed to start because of an unexpected error. Volcast retries a few times; until it connects, it cannot change or return the inverter settings. If this stays, reload Volcast and check the Home Assistant logs."
     },
+    "ha_modbus_map": {
+      "title": "Volcast cannot control the inverter through the Modbus hub sensors",
+      "description": "Volcast controls this inverter through your Home Assistant Modbus hub and reads it from raw register sensors. Some registers it needs are missing, or their sensors do not read from the inverter it writes to (the same hub and device address, one holding register per sensor): {registers}. Volcast does not change inverter settings until this is fixed. Add or correct the sensors from the Volcast YAML snippet, then reload Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "A Modbus entity writes to the registers Volcast controls",
+      "description": "These Modbus entities on the same hub and device can write to the inverter registers Volcast controls (register numbers, ? = unknown register): {entities}. Volcast does not change inverter settings while they are active, so two programs do not overwrite each other. Disable them in Settings → Entities or remove them from your Modbus YAML."
+    },
     "sensor_assignment_missing": {
       "title": "Volcast needs to know which sensors to use",
       "fix_flow": {
@@ -670,6 +703,18 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Volcast Modbus hub check failed",
+      "description": "The values read from the Modbus hub do not match your existing sensors, or the device is not the expected inverter ({problems}). Volcast control stays off. Fix the sensors or the register mapping, then run the Modbus hub step again in the integration options."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast could not fully check your Modbus hub",
+      "description": "The hub readings could not be compared with your own sensors for: {quantities} (no fresh sensor, or the battery was idle). Control was enabled on the strength of the device identification alone. Map your battery power and state of charge sensors under Installation details and run the Modbus hub step again while the battery is charging or discharging."
+    },
+    "hub_check_control_on": {
+      "title": "Volcast control is STILL ON after a failed Modbus hub check",
+      "description": "The Modbus hub check failed ({problems}), but Volcast could not return the inverter to its baseline, so nothing was changed and Volcast control is still running. Make sure the inverter is reachable, then open the integration options, choose Modbus hub again and submit; control turns off once the inverter is restored. To stop control right away, turn off the Volcast control switch."
     }
   },
   "services": {

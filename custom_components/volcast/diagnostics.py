@@ -130,6 +130,9 @@ def _direct(rt: Any, conn: Any) -> dict:
                 "restore_ineffective": bool(getattr(memory, "budget_restore_ineffective", False))},
         "last_decision": decision.summary() if decision is not None else None,
     }
+    report = getattr(conn, "map_report", None)
+    if report is not None:
+        out["map"] = report.telemetry()          # hub `modbus` HA: adresy i przyczyny, bez entity_id
     client = conn.client
     if conn.trial and client is not None and getattr(client, "record", False):
         out["frames"] = redact_frames(str(conn.target.get("transport")), client.recorded(), conn.profile)

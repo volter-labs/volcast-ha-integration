@@ -209,6 +209,7 @@
         "menu_options": {
           "control_entities": "Przez integrację falownika (encje)",
           "control_direct": "Bezpośrednio w sieci lokalnej",
+          "control_hub": "Przez hub Modbus Home Assistanta (czujniki surowe)",
           "control_off": "Wyłączone — tylko prognoza i monitoring",
           "entity_map": "Wskaż encje falownika ręcznie"
         }
@@ -305,6 +306,7 @@
         "menu_options": {
           "control_entities": "Przez integrację falownika (encje) (zalecane)",
           "control_direct": "Bezpośrednio w sieci lokalnej",
+          "control_hub": "Przez hub Modbus Home Assistanta (czujniki surowe)",
           "control_off": "Wyłączone — tylko prognoza i monitoring",
           "entity_map": "Wskaż encje falownika ręcznie"
         }
@@ -315,6 +317,7 @@
         "menu_options": {
           "control_entities": "Przez integrację falownika (encje)",
           "control_direct": "Bezpośrednio w sieci lokalnej (zalecane)",
+          "control_hub": "Przez hub Modbus Home Assistanta (czujniki surowe)",
           "control_off": "Wyłączone — tylko prognoza i monitoring",
           "entity_map": "Wskaż encje falownika ręcznie"
         }
@@ -325,6 +328,7 @@
         "menu_options": {
           "control_entities": "Przez integrację falownika (encje)",
           "control_direct": "Bezpośrednio w sieci lokalnej (zalecane)",
+          "control_hub": "Przez hub Modbus Home Assistanta (czujniki surowe)",
           "control_off": "Wyłączone — tylko prognoza i monitoring",
           "entity_map": "Wskaż encje falownika ręcznie"
         }
@@ -335,6 +339,7 @@
         "menu_options": {
           "control_entities": "Przez integrację falownika (encje)",
           "control_direct": "Bezpośrednio w sieci lokalnej",
+          "control_hub": "Przez hub Modbus Home Assistanta (czujniki surowe)",
           "control_off": "Wyłączone — tylko prognoza i monitoring",
           "entity_map": "Wskaż encje falownika ręcznie"
         }
@@ -427,6 +432,18 @@
       "price_source_confirm_sell": {
         "title": "Użyć tego źródła cen?",
         "description": "To źródło daje prognozę cen na {hours} h do przodu. Ceny są liczone w {currency}. Źródło ceny sprzedaży {source} nie podaje jeszcze cen na jutro, choć ceny zakupu na jutro są już dostępne. Dopóki ich nie poda, plan na jutro będzie liczony z cen z poprzedniego dnia. Zatwierdź, aby mimo to użyć tego źródła cen do planowania."
+      },
+      "control_hub": {
+        "title": "Sterowanie falownikiem przez hub Modbus",
+        "description": "Volcast steruje falownikiem przez hub Modbus, którego już używasz w Home Assistancie, i odczytuje surowe czujniki rejestrów zdefiniowane w YAML. Wybierz hub i podaj adres urządzenia falownika. Wzór czujników jest w repozytorium integracji Volcast: {yaml_path}. Po edycji YAML i przeładowaniu Modbus wyślij formularz ponownie, aby sprawdzić jeszcze raz.\n\n{problems}",
+        "data": {
+          "hub": "Hub Modbus",
+          "unit_id": "Adres urządzenia"
+        },
+        "data_description": {
+          "hub": "Nazwa huba z konfiguracji Modbus.",
+          "unit_id": "Adres slave falownika na tym hubie (1-247)."
+        }
       }
     },
     "abort": {
@@ -439,7 +456,9 @@
       "no_ev_chargers": "Nie znaleziono jeszcze ładowarki EV. Najpierw uruchom wykrywanie i upewnij się, że integracja ładowarki jest skonfigurowana.",
       "no_price_sources": "Nie znaleziono w Home Assistancie żadnej znanej integracji cenowej. Wybierz czujnik w Cenach energii.",
       "price_source_invalid": "Ustawienia źródła cen są już nieważne. Zacznij od nowa.",
-      "price_sell_tomorrow": "Ustawienia cen energii są zapisane. Źródło ceny sprzedaży {source} nie podaje jeszcze cen na jutro, choć ceny zakupu na jutro są już dostępne. Dopóki ich nie poda, plan na jutro będzie liczony z cen z poprzedniego dnia."
+      "price_sell_tomorrow": "Ustawienia cen energii są zapisane. Źródło ceny sprzedaży {source} nie podaje jeszcze cen na jutro, choć ceny zakupu na jutro są już dostępne. Dopóki ich nie poda, plan na jutro będzie liczony z cen z poprzedniego dnia.",
+      "hub_unsupported": "Profil falownika do sterowania przez hub Modbus jest niedostępny. Zaktualizuj integrację.",
+      "hub_check_control_off": "Sterowanie Volcast zostało wyłączone: weryfikacja huba Modbus nie powiodła się ({problems}). Usuń przyczynę i uruchom krok huba Modbus ponownie."
     },
     "error": {
       "prices_not_usable": "Ten czujnik nie dostarcza teraz kompletnej serii cen.",
@@ -463,7 +482,13 @@
       "price_sell_unusable": "Strona sprzedaży tego źródła nie ma użytecznej serii cen.",
       "price_source_invalid": "Te ustawienia nie opisują użytecznego źródła (sprawdź strefę, jednostkę i walutę).",
       "currency_conflict": "Waluta źródła ({source_currency}) różni się od waluty ustawionej w Cenach energii ({option_currency}). Zmień tamtą walutę tak, by się zgadzała, albo ją wyczyść.",
-      "currency_missing": "Podaj walutę: to źródło jej nie podaje."
+      "currency_missing": "Podaj walutę: to źródło jej nie podaje.",
+      "hub_invalid": "Podaj nazwę skonfigurowanego huba Modbus.",
+      "unit_invalid": "Adres urządzenia musi mieścić się w zakresie 1-247.",
+      "hub_map_incomplete": "Czujniki Modbus nie pasują do profilu falownika. Popraw YAML, przeładuj Modbus i wyślij ponownie.",
+      "hub_identity_unreadable": "Nie udało się rozpoznać falownika z czujników. Sprawdź rejestry i wyślij ponownie.",
+      "hub_sensors_unavailable": "Część zmapowanych czujników nie ma teraz użytecznej wartości. Sprawdź czujniki z listy poniżej i wyślij ponownie.",
+      "hub_check_failed": "Wartości odczytane z huba Modbus nie zgadzają się z Twoimi dotychczasowymi czujnikami albo urządzenie nie jest oczekiwanym falownikiem. Sterowanie nie zostało włączone — szczegóły poniżej i w czujniku weryfikacji; usuń przyczynę i wyślij ponownie."
     },
     "progress": {
       "direct_search": "Wyszukiwanie falownika w sieci lokalnej. Może to potrwać do minuty."
@@ -555,6 +580,14 @@
     "direct_start_failed": {
       "title": "Volcast nie mógł uruchomić bezpośredniego połączenia z falownikiem",
       "description": "Bezpośrednie połączenie z falownikiem nie uruchomiło się z powodu nieoczekiwanego błędu. Volcast ponawia próbę kilka razy; do czasu połączenia nie może zmieniać ani przywracać ustawień falownika. Jeśli problem trwa, przeładuj Volcast i sprawdź logi Home Assistanta."
+    },
+    "ha_modbus_map": {
+      "title": "Volcast nie może sterować falownikiem przez czujniki huba Modbus",
+      "description": "Volcast steruje tym falownikiem przez hub Modbus w Home Assistancie i odczytuje go z surowych czujników rejestrów. Brakuje części potrzebnych rejestrów albo ich czujniki nie czytają z falownika, do którego Volcast zapisuje (ten sam hub i adres urządzenia, jeden rejestr holding na czujnik): {registers}. Do czasu poprawki Volcast nie zmienia ustawień falownika. Dodaj lub popraw czujniki z fragmentu YAML Volcast, a potem przeładuj Volcast."
+    },
+    "ha_modbus_write_entity": {
+      "title": "Encja Modbus zapisuje rejestry, którymi steruje Volcast",
+      "description": "Te encje Modbus na tym samym hubie i urządzeniu mogą zapisywać rejestry falownika, którymi steruje Volcast (numery rejestrów, ? = rejestr nieznany): {entities}. Dopóki są aktywne, Volcast nie zmienia ustawień falownika, żeby dwa programy się nie nadpisywały. Wyłącz je w Ustawienia → Encje albo usuń z konfiguracji YAML Modbus."
     },
     "sensor_assignment_missing": {
       "title": "Volcast musi wiedzieć, których czujników użyć",
@@ -670,6 +703,18 @@
           }
         }
       }
+    },
+    "hub_check_failed": {
+      "title": "Weryfikacja huba Modbus nie powiodła się",
+      "description": "Wartości odczytane z huba Modbus nie zgadzają się z Twoimi czujnikami albo urządzenie nie jest oczekiwanym falownikiem ({problems}). Sterowanie Volcast pozostaje wyłączone. Popraw czujniki lub mapowanie rejestrów i uruchom krok huba Modbus ponownie w opcjach integracji."
+    },
+    "hub_check_not_compared": {
+      "title": "Volcast nie mógł w pełni sprawdzić huba Modbus",
+      "description": "Odczytów z huba nie dało się porównać z Twoimi czujnikami dla: {quantities} (brak świeżego czujnika albo bateria była bezczynna). Sterowanie włączono wyłącznie na podstawie identyfikacji urządzenia. Zmapuj czujniki mocy baterii i SoC w „Installation details” i uruchom krok huba Modbus ponownie, gdy bateria się ładuje lub rozładowuje."
+    },
+    "hub_check_control_on": {
+      "title": "Sterowanie Volcast NADAL DZIAŁA mimo nieudanej weryfikacji huba Modbus",
+      "description": "Weryfikacja huba Modbus nie powiodła się ({problems}), ale Volcast nie mógł przywrócić falownika do ustawień bazowych, więc nic nie zmieniono i sterowanie nadal działa. Upewnij się, że falownik jest osiągalny, następnie otwórz opcje integracji, wybierz ponownie hub Modbus i wyślij; sterowanie wyłączy się po przywróceniu falownika. Aby zatrzymać sterowanie od razu, wyłącz przełącznik sterowania Volcast."
     }
   },
   "services": {

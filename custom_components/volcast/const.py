@@ -107,6 +107,7 @@ DEFAULT_PAIRING_URL = "https://jzihchpmkhawegqcfbeo.supabase.co/functions/v1/pai
 CONTROL_MODE_DIRECT = "direct"
 OPT_DIRECT_TARGET = "direct_target"
 OPT_DIRECT_TRIAL = "direct_trial"
+OPT_HUB_CHECK = "hub_check"           # raport weryfikacji huba `modbus` (kody i liczby, bez entity_id)
 OPT_DIRECT_POLL_S = "direct_poll_s"
 DIRECT_POLL_S = 10
 DIRECT_SLOW_POLL_S = 60

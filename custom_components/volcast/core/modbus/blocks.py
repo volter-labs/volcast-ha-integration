@@ -134,6 +134,23 @@ def _named_runs(profile, *, include_write_keys: bool = True, include_tou: bool =
     return runs
 
 
+def write_addresses(profile) -> frozenset[int]:
+    """Słowa holding, które zapisuje sterowanie profilu: klucze zapisu, pola programów TOU i włącznik
+    (bez względu na adres urządzenia klucza — ostrożnie: więcej, nie mniej)."""
+    write = profile.raw["write"]
+    out: set[int] = set()
+    for key, spec in write.items():
+        if key not in ("tou_program", "tou_enable"):
+            out.update(spec_addresses(spec))
+    if "tou_program" in write:
+        tp = write["tou_program"]
+        for field in _TOU_REG_FIELDS:
+            out.update(range(tp[field]["addr"], tp[field]["addr"] + tp["count"]))
+    if "tou_enable" in write:
+        out.add(write["tou_enable"]["addr"])
+    return frozenset(out)
+
+
 def _key_runs(profile, fc: int = FC_HOLDING, unit: int | None = None, **kw) -> list[tuple[int, int]]:
     return [(start, n) for _, start, n, f, u in _named_runs(profile, **kw) if f == fc and u == unit]
 
