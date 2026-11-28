@@ -5,10 +5,16 @@ wyłącznie nazwę klucza rejestru, wartości liczbowe, wynik i czas — bez enc
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 MAX_ISSUES = 5
 EVENT = "volcast_control_readback"
+
+
+class ReadbackSink(Protocol):
+    def issue(self, key: str, expected: int | None, read: int | None, result: str) -> None: ...
+
+    def ok(self, key: str) -> None: ...
 
 
 class ReadbackLog:

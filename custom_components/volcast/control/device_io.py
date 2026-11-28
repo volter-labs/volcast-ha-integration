@@ -23,6 +23,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from ..core.control.baseline import SNAPSHOT_KEYS
 from ..core.control.conflict import DriftTracker
 from ..core.control.cycle import EntityContext
+from ..core.control.readback import ReadbackSink
 from ..core.control.entity_fit import control_writes, fit_params
 from ..core.control.readings import RawState, normalize_readings
 from ..core.control.target import EntityTarget, RegisterTarget, WriteTarget
@@ -235,7 +236,7 @@ class DirectIO:
     def __init__(self, conn, profile, *, trial: bool, unreadable: Iterable[str] = (),
                  capabilities: Mapping[str, bool] | None = None, salt: bytes,
                  now_wall: Callable[[], float] = time.time, clock: Callable[[], float] = time.monotonic,
-                 readback=None) -> None:
+                 readback: ReadbackSink | None = None) -> None:
         self.conn = conn
         self.readback = readback              # `ReadbackLog` (encja Status, zdarzenie HA) albo None
         self._profile = profile
