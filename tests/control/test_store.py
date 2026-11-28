@@ -158,3 +158,14 @@ def test_saved_empty_verification_loads_without_a_warning(caplog):
     loaded = asyncio.run(st.async_load())
     assert loaded.verification == {}
     assert "malformed" not in caplog.text
+
+
+def test_plan_fetch_time_roundtrip_and_bad_values_are_unknown():
+    st = ControlStore(object(), "e1")
+    s = ControlState(plan_raw={"slots": []}, plan_fetched_at="2026-09-23T04:00:30+00:00")
+    asyncio.run(st.async_save(s))
+    assert asyncio.run(st.async_load()).plan_fetched_at == "2026-09-23T04:00:30+00:00"
+    # Zły kształt = wiek nieznany (plan przeterminowany do najbliższego pobrania), nigdy „świeży”.
+    for bad in (123, "wczoraj", "2026-09-23T04:00:30", "", None, True):
+        asyncio.run(st._store.async_save({"plan_raw": {"slots": []}, "plan_fetched_at": bad}))
+        assert asyncio.run(st.async_load()).plan_fetched_at is None

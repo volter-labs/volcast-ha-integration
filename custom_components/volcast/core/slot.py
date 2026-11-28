@@ -7,12 +7,18 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from .ev.model import LoadSlot, LoadsMeta, parse_loads
+
+# Limit wieku planu baterii bez kontaktu z chmurą (od ostatniego UDANEGO pobrania, nie od wygenerowania):
+# po nim sloty aktywne wykonuje slot zapasowy. Jedyne miejsce tej liczby.
+STALE_PLAN_S = 6 * 3600
+# Znacznik pobrania z przyszłości ponad ten zapas (zegar ścienny cofnięty) = wiek nieznany.
+_FUTURE_FETCH_TOLERANCE_S = 300
 
 
 class Action(str, Enum):
@@ -43,6 +49,8 @@ class Slot:
     price_pln_kwh: float | None = None
     export_allowed: bool = True
     export_limit_w: float | None = None
+    # Slot zapasowy z chmury (luka w planie albo slot aktywny przeterminowanego planu); poza równością.
+    from_fallback: bool = field(default=False, compare=False)
 
     @property
     def hours(self) -> float:
@@ -63,7 +71,7 @@ class Fallback:
     def as_slot(self, start: datetime, end: datetime) -> Slot:
         # Fallback nie ma ceny, więc eksport jest ślepy — zablokowany (jak urządzenie brzegowe).
         return Slot(start=start, end=end, action=self.action,
-                    soc_target=self.soc_reserve, export_allowed=False)
+                    soc_target=self.soc_reserve, export_allowed=False, from_fallback=True)
 
 
 @dataclass(frozen=True)
@@ -90,8 +98,15 @@ class Schedule:
         """
         s = self.slot_for(moment)
         if s is not None:
-            return s, False
+            return s, s.from_fallback
         return self.fallback.as_slot(moment, moment + timedelta(hours=1)), True
+
+    def active_as_fallback(self) -> Schedule:
+        """Plan przeterminowany: każdy slot aktywny (`is_active_slot`) zastąpiony slotem zapasowym
+        w tych samych granicach; sloty pasywne bez zmian. Granice zostają, więc pokrycie „teraz”
+        (np. `release_without_plan_s`) i okna czasowe liczą się jak dla planu."""
+        return replace(self, slots=tuple(self.fallback.as_slot(s.start, s.end) if is_active_slot(s) else s
+                                         for s in self.slots))
 
 
 _SOURCES = ("pv", "grid")
@@ -241,6 +256,26 @@ def slot_direction(slot: Slot) -> Action | None:
     if slot.charge_source is not None:
         return Action.CHARGE
     return None
+
+
+def is_active_slot(slot: Slot) -> bool:
+    """Slot, który bez świeżego planu jest ryzykiem: ładowanie z sieci, sprzedaż z baterii, wymuszone
+    rozładowanie. Pasywne: autokonsumpcja (też rozładowanie „na dom”), ładowanie z nadwyżki PV, spoczynek."""
+    d = slot_direction(slot)
+    if d is Action.CHARGE:
+        return slot.charge_source != "pv"
+    if d is Action.DISCHARGE:
+        return slot.discharge_purpose != "self"
+    return False
+
+
+def plan_stale(fetched_at: datetime | None, now: datetime) -> bool:
+    """Plan przeterminowany: od ostatniego udanego pobrania minęło > `STALE_PLAN_S`. Wiek nieznany
+    (brak znacznika, znacznik z przyszłości po cofnięciu zegara) = przeterminowany."""
+    if fetched_at is None:
+        return True
+    age = (now - fetched_at).total_seconds()
+    return age > STALE_PLAN_S or age < -_FUTURE_FETCH_TOLERANCE_S
 
 
 def effective_action(slot: Slot) -> Action:

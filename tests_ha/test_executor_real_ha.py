@@ -204,7 +204,7 @@ async def test_live_cycle_writes_through_real_entities_and_echo_is_ours(
     # Dom: PV 1000 W, pobór 600 W — nastawa eksportu = bateria 2000 + PV 1000 - pobór 600 = 2400 W.
     hass.states.async_set("sensor.goodwe_pv_power", "1000", {"unit_of_measurement": "W"})
     hass.states.async_set("sensor.goodwe_house_consumption", "600", {"unit_of_measurement": "W"})
-    store_state(hass_storage, "paired01", {**GATES, "plan_raw": plan,
+    store_state(hass_storage, "paired01", {**GATES, "plan_raw": plan, "plan_fetched_at": dt_util.utcnow().isoformat(),
                                            "verification": _verified_device(hass, hass_storage)})
     entry = make_entry(hass, options={**ENTITY_OPTIONS, "rated_power_w": 8000})
     await setup_entry(hass, entry)
@@ -273,6 +273,7 @@ async def test_no_write_without_consent_or_with_switch_off_first_write_when_all_
     hass.states.async_set("sensor.goodwe_pv_power", "1000", {"unit_of_measurement": "W"})
     hass.states.async_set("sensor.goodwe_house_consumption", "600", {"unit_of_measurement": "W"})
     store_state(hass_storage, "paired01", {"consent": False, "local_switch": True, "plan_raw": plan,
+                                           "plan_fetched_at": dt_util.utcnow().isoformat(),
                                            "verification": _verified_device(hass, hass_storage)})
     entry = make_entry(hass, options={**ENTITY_OPTIONS, "rated_power_w": 8000})
     await setup_entry(hass, entry)
@@ -289,6 +290,30 @@ async def test_no_write_without_consent_or_with_switch_off_first_write_when_all_
     await ex.async_tick()
     await hass.async_block_till_done()
     assert inv["mode"].calls == 1 and ex.owned              # wszystkie bramki otwarte
+
+
+async def test_stored_plan_without_fetch_time_is_stale_and_never_sells(
+        hass: HomeAssistant, network_down, hass_storage, freezer):
+    """Plan w magazynie bez czasu pobrania (np. zapis starszej wersji) ma wiek nieznany = przeterminowany:
+    slot sprzedaży z baterii nie trafia na falownik, choć wszystkie bramki są otwarte."""
+    freezer.move_to("2026-09-23T10:00:30+00:00")
+    plan = {"schedule_id": "p1", "control_enabled": True,
+            "slots": [{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "discharge",
+                       "discharge_purpose": "sell", "power_w": 2000, "price_pln_kwh": 0.8}],
+            "fallback": {"mode": "self_consume", "soc_reserve": 10}}
+    await async_setup_inverter(hass)
+    hass.states.async_set("sensor.goodwe_pv_power", "1000", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.goodwe_house_consumption", "600", {"unit_of_measurement": "W"})
+    store_state(hass_storage, "paired01", {**GATES, "plan_raw": plan,
+                                           "verification": _verified_device(hass, hass_storage)})
+    entry = make_entry(hass, options={**ENTITY_OPTIONS, "rated_power_w": 8000})
+    await setup_entry(hass, entry)
+    rt = control_of(hass, entry)
+    ex = rt.executor
+    await ex.async_tick()
+    await hass.async_block_till_done()
+    assert ex.plan_fetched_at is None and ex.plan_stale(dt_util.utcnow())
+    assert hass.states.get(rt.mapped["mode"]).state != "sell_power"
 
 
 # ── przełącznik zdalnego sterowania i moc wg kierunku: przejęcie i oddanie na prawdziwych encjach ──

@@ -200,7 +200,9 @@ def test_no_restore_and_no_rewrite_after_reload(monkeypatch):
 def test_plan_from_store_after_restart_without_cloud(monkeypatch):
     h = goodwe_hass()
     store = ControlStore(h, "e1")
-    asyncio.run(store.async_save(ControlState(plan_raw=plan(), consent=True, local_switch=True)))
+    # Plan pobrany godzinę wcześniej (w limicie wieku); bez znacznika — `test_executor_stale_plan`.
+    asyncio.run(store.async_save(ControlState(plan_raw=plan(), consent=True, local_switch=True,
+                                              plan_fetched_at=(NOW - timedelta(hours=1)).isoformat())))
     _, ex = make(h, store=store, monkeypatch=monkeypatch)
 
     async def go():
@@ -226,7 +228,8 @@ def test_invalid_stored_plan_is_dropped_fail_closed(monkeypatch):
 
 def test_wall_clock_jump_does_not_unthrottle(monkeypatch):
     clock = Clock()
-    times = iter([NOW + timedelta(minutes=3), NOW + timedelta(minutes=1), NOW + timedelta(minutes=1)])
+    # Przyjęcie planu też czyta zegar ścienny (czas pobrania): plan, cykl, plan, cykl, cykl.
+    times = iter([NOW + timedelta(minutes=3)] * 3 + [NOW + timedelta(minutes=1)] * 2)
     h, ex = make(monkeypatch=monkeypatch, clock=clock, utc=lambda: next(times))
 
     async def go():
