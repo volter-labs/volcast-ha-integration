@@ -9,6 +9,10 @@
 - Before any control is enabled, the integration runs a read-only check of the hub and the sensors. Nothing is written to the inverter during the check. Problems found are listed in the hub step of the options.
 - Known limitation in this beta: the problems list in the hub step is shown in English only.
 
+### Diagnostics
+
+- Register write read-back problems (ERROR or DENIED) are now visible: the control Status entity has a `readback_issues` attribute with the last 5 items (`key`, `expected`, `read`, `result`, `at`), cleared per key after a successful write, and a `volcast_control_readback` event is fired for each one.
+
 ### Fixes
 
 - Time-window verification: fixed how the integration verifies that a written time window took effect. This also affects direct Deye control.

@@ -229,7 +229,7 @@ class VolcastPlanSummarySensor(_ControlEntity, SensorEntity):
 class VolcastControlStatusSensor(_ControlEntity, SensorEntity):
     _attr_icon = "mdi:content-save-check-outline"
     # notatki decyzji zmieniają się co cykl (nastawa sprzedaży) — widoczne na żywo, bez historii
-    _unrecorded_attributes = frozenset({"notes"})
+    _unrecorded_attributes = frozenset({"notes", "readback_issues"})
 
     def __init__(self, entry, rt) -> None:
         super().__init__(entry, rt, "status")
@@ -243,7 +243,9 @@ class VolcastControlStatusSensor(_ControlEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         ex = self._rt.executor
         d = ex.last_decision
+        rb = getattr(getattr(ex, "io", None), "readback", None)
         return {**(d.summary() if d else {}), "foreign_changes": list(getattr(ex, "foreign_changes", [])),
+                "readback_issues": rb.items if rb is not None else [],
                 "restore_skipped": list(getattr(ex, "restore_skipped", []))}
 
 

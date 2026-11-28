@@ -916,3 +916,19 @@ async def test_write_runs_as_a_home_assistant_background_task_when_available(inv
     with pytest.raises(WriteUnconfirmed):
         await t.write(146, [0xFF], function=FC_WRITE_MULTIPLE)
     assert made == [BACKGROUND_TASK_NAME] and inv.bank[146] == 0xFF
+
+
+@pytest.mark.asyncio
+async def test_ha_modbus_transport_reports_dropped_write(clock, deye_profile):
+    from custom_components.volcast.core.modbus.client import RegisterClient
+    from custom_components.volcast.core.control.readback import ReadbackLog
+    from custom_components.volcast.core.modbus.writer import RegisterWriter
+    from custom_components.volcast.core.registers import RegisterWrite
+    from custom_components.volcast.core.write_sequence import ERROR
+    events = []
+    log = ReadbackLog(events.append)
+    inv = Inverter(clock, {146: 0xFE, 166: 55})
+    inv.drop_writes = True
+    w = RegisterWriter(RegisterClient(_transport(inv, clock), deye_profile), deye_profile, readback=log)
+    assert await w.async_write(RegisterWrite("tou.1.soc", 166, 60)) == ERROR
+    assert log.items[0]["key"] == "tou.1.soc" and log.items[0]["read"] == 55 and len(events) == 1
