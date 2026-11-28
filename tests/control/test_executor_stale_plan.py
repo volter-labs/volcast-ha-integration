@@ -25,9 +25,9 @@ class WallClock:
         return self.at
 
 
-def _charge_hours_ago(hours, monkeypatch, *, h=None, store=None):
-    """Plan z ładowaniem z sieci 10:00–11:00 pobrany `hours` godzin przed cyklem o 10:00:30."""
-    wall = WallClock(NOW + timedelta(seconds=30) - timedelta(hours=hours))
+def _charge_minutes_ago(minutes, monkeypatch, *, h=None, store=None):
+    """Plan z ładowaniem z sieci 10:00–11:00 pobrany `minutes` minut przed cyklem o 10:00:30."""
+    wall = WallClock(NOW + timedelta(seconds=30) - timedelta(minutes=minutes))
     h, ex = make(h, store=store, monkeypatch=monkeypatch, utc=wall)
 
     async def go():
@@ -38,24 +38,24 @@ def _charge_hours_ago(hours, monkeypatch, *, h=None, store=None):
     return h, ex, wall
 
 
-def test_grid_charge_fetched_7h_ago_runs_the_fallback_slot(monkeypatch):
-    h, ex, _ = _charge_hours_ago(7, monkeypatch)
+def test_grid_charge_fetched_61_min_ago_runs_the_fallback_slot(monkeypatch):
+    h, ex, _ = _charge_minutes_ago(61, monkeypatch)
     d = ex.last_decision
     assert d.intent == "self_consume" and d.fallback is True
     assert h.states.get(E["mode"]).state != "charge_battery"
     assert ex.plan_stale(NOW) is True
 
 
-def test_grid_charge_fetched_5h_ago_runs_the_plan_slot(monkeypatch):
-    h, ex, _ = _charge_hours_ago(5, monkeypatch)
+def test_grid_charge_fetched_59_min_ago_runs_the_plan_slot(monkeypatch):
+    h, ex, _ = _charge_minutes_ago(59, monkeypatch)
     d = ex.last_decision
     assert d.intent == "charge_grid" and d.fallback is False
     assert h.states.get(E["mode"]).state == "charge_battery"
     assert ex.plan_stale(NOW) is False
 
 
-def test_sell_slot_fetched_7h_ago_does_not_sell(monkeypatch):
-    wall = WallClock(NOW - timedelta(hours=7))
+def test_sell_slot_fetched_61_min_ago_does_not_sell(monkeypatch):
+    wall = WallClock(NOW - timedelta(minutes=61))
     h, ex = make(monkeypatch=monkeypatch, utc=wall)
 
     async def go():
@@ -69,7 +69,7 @@ def test_sell_slot_fetched_7h_ago_does_not_sell(monkeypatch):
 
 def test_passive_slot_is_unchanged_when_stale(monkeypatch):
     idle = plan(slots=[{"from": "2026-09-23T10:00:00Z", "to": "2026-09-23T11:00:00Z", "mode": "idle"}])
-    wall = WallClock(NOW - timedelta(hours=7))
+    wall = WallClock(NOW - timedelta(minutes=61))
     _, ex = make(monkeypatch=monkeypatch, utc=wall)
 
     async def go():
@@ -83,11 +83,11 @@ def test_passive_slot_is_unchanged_when_stale(monkeypatch):
 def test_restart_without_network_keeps_the_plan_age(monkeypatch):
     h = goodwe_hass()
     store = ControlStore(h, "e1")
-    _charge_hours_ago(7, monkeypatch, h=h, store=store)
+    _charge_minutes_ago(61, monkeypatch, h=h, store=store)
     # Restart HA bez sieci: nowy wykonawca z tego samego magazynu, bez pobrania planu.
     _, ex2 = make(h, store=store, monkeypatch=monkeypatch, utc=lambda: NOW + timedelta(seconds=30))
     asyncio.run(_start_and_tick(ex2))
-    assert ex2.raw_plan is not None and ex2.plan_fetched_at == NOW + timedelta(seconds=30) - timedelta(hours=7)
+    assert ex2.raw_plan is not None and ex2.plan_fetched_at == NOW + timedelta(seconds=30) - timedelta(minutes=61)
     assert ex2.last_decision.intent == "self_consume" and ex2.last_decision.fallback is True
     assert h.states.get(E["mode"]).state != "charge_battery"
 
@@ -95,7 +95,7 @@ def test_restart_without_network_keeps_the_plan_age(monkeypatch):
 def test_restart_with_a_fresh_fetch_time_runs_the_plan(monkeypatch):
     h = goodwe_hass()
     store = ControlStore(h, "e1")
-    fetched = NOW - timedelta(hours=5)
+    fetched = NOW - timedelta(minutes=59)
     asyncio.run(store.async_save(ControlState(
         plan_raw=charge_plan(), consent=True, local_switch=True, plan_fetched_at=fetched.isoformat())))
     _, ex = make(h, store=store, monkeypatch=monkeypatch)
@@ -131,7 +131,7 @@ class _Fetcher:
 
 
 def test_network_back_returns_the_plan_at_the_next_fetch(monkeypatch):
-    h, ex, wall = _charge_hours_ago(7, monkeypatch)
+    h, ex, wall = _charge_minutes_ago(61, monkeypatch)
     assert ex.last_decision.intent == "self_consume"
 
     asyncio.run(refresh_and_tick(_Fetcher("network"), ex, None))    # nadal bez sieci
@@ -145,7 +145,7 @@ def test_network_back_returns_the_plan_at_the_next_fetch(monkeypatch):
 
 
 def test_rejected_or_auth_failed_fetch_does_not_refresh_the_age(monkeypatch):
-    _, ex, wall = _charge_hours_ago(7, monkeypatch)
+    _, ex, wall = _charge_minutes_ago(61, monkeypatch)
     before = ex.plan_fetched_at
     for result in ("rejected", "auth", "error"):
         asyncio.run(refresh_and_tick(_Fetcher(result), ex, None))
@@ -188,14 +188,14 @@ def test_stale_plan_is_saved_at_once_when_confirmed(monkeypatch):
     # Po przerwie dłuższej niż limit pierwsze pobranie zapisuje się od razu (restart nie wróci do „stary”).
     h = goodwe_hass()
     store = ControlStore(h, "e1")
-    _, ex, wall = _charge_hours_ago(7, monkeypatch, h=h, store=store)
+    _, ex, wall = _charge_minutes_ago(61, monkeypatch, h=h, store=store)
     asyncio.run(ex.async_note_plan_confirmed())
     assert asyncio.run(store.async_load()).plan_fetched_at == wall().isoformat()
 
 
 def test_time_window_preview_uses_the_stale_masked_plan():
     deye = ProfileChoice(load_builtin("deye-sg"), None, "SUN-10K-SG04LP3-EU")
-    wall = WallClock(NOW - timedelta(hours=7))
+    wall = WallClock(NOW - timedelta(minutes=61))
     _, ex = make(choice=deye, options={}, utc=wall)
 
     async def go():
@@ -223,7 +223,7 @@ def test_time_window_cycle_gets_the_stale_masked_plan(monkeypatch):
         raise RuntimeError("stop")
     monkeypatch.setattr(ex_mod, "decide_tou_cycle", spy)
     deye = ProfileChoice(load_builtin("deye-sg"), None, "SUN-10K-SG04LP3-EU")
-    wall = WallClock(NOW - timedelta(hours=7))
+    wall = WallClock(NOW - timedelta(minutes=61))
     _, ex = make(choice=deye, options={}, utc=wall)
     asyncio.run(ready(ex, raw=charge_plan()))
     wall.at = NOW + timedelta(seconds=30)
@@ -236,6 +236,6 @@ def test_time_window_cycle_gets_the_stale_masked_plan(monkeypatch):
 
 
 def test_constant_lives_in_one_place():
-    assert STALE_PLAN_S == 6 * 3600
+    assert STALE_PLAN_S == 60 * 60
     assert not hasattr(ex_mod, "STALE_PLAN_S") or ex_mod.STALE_PLAN_S is STALE_PLAN_S
     assert parse_schedule(charge_plan()).slots[0].from_fallback is False

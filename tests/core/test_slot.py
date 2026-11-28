@@ -135,8 +135,8 @@ def test_effective_action_never_none():
 from custom_components.volcast.core.slot import STALE_PLAN_S, is_active_slot, plan_stale  # noqa: E402
 
 
-def test_stale_plan_limit_is_six_hours():
-    assert STALE_PLAN_S == 6 * 3600
+def test_stale_plan_limit_is_sixty_minutes():
+    assert STALE_PLAN_S == 60 * 60
 
 
 @pytest.mark.parametrize("kw, active", [
@@ -157,9 +157,9 @@ def test_active_slot_classification(kw, active):
 
 def test_plan_stale_by_fetch_age():
     now = datetime(2026, 9, 1, 12, tzinfo=UTC)
-    assert plan_stale(now - timedelta(hours=7), now) is True
-    assert plan_stale(now - timedelta(hours=5), now) is False
-    assert plan_stale(now - timedelta(seconds=STALE_PLAN_S), now) is False    # granica: dokładnie 6 h — świeży
+    assert plan_stale(now - timedelta(minutes=61), now) is True
+    assert plan_stale(now - timedelta(minutes=59), now) is False
+    assert plan_stale(now - timedelta(seconds=STALE_PLAN_S), now) is False    # granica: dokładnie 60 min — świeży
     assert plan_stale(None, now) is True                                      # wiek nieznany = przeterminowany
     assert plan_stale(now + timedelta(hours=1), now) is True                  # znacznik z przyszłości (zegar cofnięty)
     assert plan_stale(now + timedelta(seconds=60), now) is False              # drobna korekta zegara

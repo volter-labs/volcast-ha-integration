@@ -15,8 +15,10 @@ from typing import Any
 from .ev.model import LoadSlot, LoadsMeta, parse_loads
 
 # Limit wieku planu baterii bez kontaktu z chmurą (od ostatniego UDANEGO pobrania, nie od wygenerowania):
-# po nim sloty aktywne wykonuje slot zapasowy. Jedyne miejsce tej liczby.
-STALE_PLAN_S = 6 * 3600
+# po nim sloty aktywne wykonuje slot zapasowy. Jedyne miejsce tej liczby. Plan pobierany co 300 s (12 prób
+# w limicie); slot zapasowy (autokonsumpcja z rezerwą) jest bezpieczny — stary plan kosztuje więcej niż
+# pominięte tanie ładowanie.
+STALE_PLAN_S = 60 * 60
 # Znacznik pobrania z przyszłości ponad ten zapas (zegar ścienny cofnięty) = wiek nieznany.
 _FUTURE_FETCH_TOLERANCE_S = 300
 
